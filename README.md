@@ -1,0 +1,113 @@
+# Desktop Agent Enterprise Environment
+
+원하는 LLM을 연결해 쓰는 데스크톱 지식 관리·업무 자동화 앱입니다. Electron, Next.js, Python으로 구성되어 있으며, 문서·대화·작업 기록을 사용자가 지정한 폴더의 SQLite 데이터베이스에 저장합니다.
+
+사이트 주소와 인증 방식, LLM 연결은 사용 환경에 맞게 직접 등록합니다.
+
+## 주요 기능
+
+- Wiki 문서 작성, Markdown·이미지 가져오기, 문서 검색과 지식 관계도
+- Windows Office 문서(Word·Excel·PowerPoint·Visio), RTF, 텍스트 파일·폴더 가져오기
+- JIRA 티켓·프로젝트 및 Confluence 페이지 가져오기
+- OpenAI 호환 또는 Anthropic 형식의 LLM 연결(클라우드 API, 게이트웨이, 로컬 LLM), 사용자 지정 헤더와 사설 CA 인증서 설정
+- 문서를 근거로 한 AI 질문·답변, 요약, 키워드 분석, 긴 문서의 목차 색인
+- 프롬프트 템플릿, 예약 실행, 할 일·알림, 대시보드 위젯
+- JIRA·Confluence 변경 확인, 파일 갱신, 새 문서 분석, 업무 보고 자동화
+- 로컬 REST API·MCP를 통한 도구 연동, 작업 기록과 진단 로그
+- 가져온 Office 문서의 변경 사항을 원본 파일에 반영하고 백업 보관
+
+## 개발 환경
+
+Node.js 22와 Python 3.10 이상을 사용합니다. 데스크톱 실행에는 그래픽 환경이 필요합니다. Windows Office·RTF 가져오기와 원본 반영에는 해당 Office 데스크톱 앱이 설치되어 있어야 합니다. Windows 텍스트 가져오기는 메모장을 사용합니다.
+
+```bash
+npm ci
+npm run setup:python
+npm run setup:browser
+npm run setup:electron
+npm run dev
+```
+
+Windows에서는 `run-dev.cmd`를 사용할 수 있습니다. 처음 실행할 때 Wiki 저장 폴더를 선택합니다. 웹 화면만 개발하려면 `npm run dev:web`를 실행합니다.
+
+## LLM 연결
+
+**관리 → LLM 연결**에서 다음 값을 설정합니다.
+
+1. API 형식: OpenAI 호환 또는 Anthropic
+2. 전체 API 엔드포인트: 요청을 보낼 서버의 주소(OpenAI·Anthropic API, 게이트웨이, 로컬 LLM 서버 등)
+3. 모델 이름과 필요한 경우 API Key
+4. 필요한 사용자 지정 HTTP 헤더
+5. 사설·자체 서명 인증서를 쓰는 서버라면 CA 인증서의 PEM 경로
+
+사용자 지정 헤더 값의 `{api_key}`는 API Key로, `{uuid}`는 요청마다 새 ID로 바뀝니다. 키가 필요 없는 로컬 LLM도 연결할 수 있습니다. TLS 인증서 검증은 항상 활성화됩니다. 서버 주소를 다른 서버로 바꾸면 기존 키를 다시 입력해야 하며, 저장된 헤더 값도 명시적으로 다시 전달해야 합니다.
+
+개발 환경에서는 `.env.example`을 `.env`로 복사해 초기값을 지정할 수 있습니다. 기본 엔드포인트와 모델은 비어 있습니다. 패키징한 앱에는 `.env`가 포함되지 않으며, 환경변수는 `PRIVATE_AGENT_` 접두사가 있는 이름만 읽습니다.
+
+문서는 로컬에 저장됩니다. AI 기능을 실행하면 해당 기능에 필요한 내용이 설정된 LLM 서버로 전송됩니다.
+
+## 사이트 로그인
+
+**관리 → 사이트 계정**에서 JIRA 또는 Confluence 주소를 등록합니다. 예시는 `https://jira.example.com/jira`, `https://wiki.example.com/wiki`처럼 실제로 쓰는 주소로 바꿔 입력합니다.
+
+- 표준 SSO 링크, Microsoft ADFS, Atlassian Server/Data Center·Cloud 및 일반 로그인 폼을 감지합니다.
+- 그 밖의 로그인 화면은 사용자 지정 단계에서 CSS 선택자나 XPath를 직접 등록합니다.
+- 추가 인증이 필요하면 **자동 입력 안 함**과 **로그인 창 열기**로 세션을 생성합니다.
+- 자격 증명은 등록한 사이트와 그 사이트가 직접 이동시킨 인증 화면에만 입력합니다.
+- `http://` 또는 `https://`를 생략하면 HTTPS부터 시도하며, 연결 실패 시 HTTP로 시도합니다. HTTPS만 사용하려면 전체 HTTPS 주소를 입력합니다.
+
+API Key와 사이트 비밀번호는 운영체제 보안 저장소로 암호화합니다. 보안 저장소를 사용할 수 없으면 새 비밀 값은 앱 실행 중 메모리에만 보관합니다.
+
+## 자료 가져오기
+
+**지식 보관함 → 자료 가져오기**에서 파일·폴더 경로나 JIRA·Confluence 링크를 입력합니다.
+
+| 종류       | 입력                                | 실행 환경                   |
+| ---------- | ----------------------------------- | --------------------------- |
+| Markdown   | `.md`, `.markdown`                  | 모든 지원 OS                |
+| 이미지     | PNG, JPEG, SVG, TIFF 등             | EMF/WMF 변환은 Windows 필요 |
+| Office     | Word, Excel, PowerPoint, Visio 파일 | Windows와 해당 앱           |
+| RTF        | `.rtf` 파일                         | Windows와 Word              |
+| 텍스트     | `.txt` 파일                         | Windows와 메모장            |
+| Confluence | 페이지 링크                         | 사이트 접근 권한과 브라우저 |
+| JIRA       | 티켓·프로젝트 링크                  | 사이트 접근 권한과 브라우저 |
+
+같은 경로나 링크를 다시 가져오면 원본의 변경 사항을 기존 문서에 반영합니다. Wiki에서 직접 고친 내용은 명시적으로 덮어쓰기를 선택하기 전까지 보존합니다. 폴더는 5,000개씩 나누어 처리하며, 진행 중 취소할 수 있습니다. Office 문서는 해당 앱이 실제로 열 수 있어야 합니다.
+
+## API와 MCP
+
+**관리 → AI 도구 연동**에서 서버를 활성화하고 연결 정보를 복사합니다. 기능별 매개변수와 접근 권한은 **API 매뉴얼**에서 확인합니다.
+
+읽기, 쓰기, 전체 접근 권한을 구분합니다. 로컬 파일 가져오기와 원본 반영에는 전체 접근 권한이 필요합니다. Python 백엔드는 별도 공개 HTTP 포트 없이 표준 입출력 JSON RPC로 Electron과 통신합니다.
+
+## 검증과 빌드
+
+```bash
+npm run format:check
+npm run check
+npm run build:web
+npm run build:python
+npm run test:e2e
+```
+
+`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 브라우저 테스트에는 `setup:browser`가 필요합니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
+
+Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
+
+## 저장소 구조
+
+```text
+backend/agent/       Wiki, 검색, LLM, 가져오기와 자동화
+backend/tests/       Python 단위·브라우저 테스트
+src/                Next.js 기반 화면과 공유 타입
+electron/           데스크톱 실행, 계정 저장, 로컬 API와 MCP
+scripts/            개발 환경과 패키징 도구
+tests/              Electron 단위 테스트와 Playwright E2E
+assets/             앱 아이콘
+```
+
+## 데이터와 배포
+
+Wiki 데이터는 선택한 폴더의 `wiki.db`에 저장됩니다. 백업할 때는 앱을 종료한 뒤 데이터 폴더를 복사합니다. 연결 설정과 브라우저 로그인 세션은 운영체제의 앱 설정 폴더에 저장되며, 개발 환경의 기본 설정 폴더는 `.local-data/dev-user-data`입니다.
+
+`.env`, 인증서·키, 데이터베이스, 브라우저 프로필, 로그와 빌드 결과를 저장소에 추가하지 마세요.

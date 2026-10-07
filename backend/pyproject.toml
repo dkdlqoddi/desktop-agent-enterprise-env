@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "private-agent-backend"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.32.3,<3",
+    "python-dotenv>=1.1,<2",
+    "pywin32>=310; sys_platform == 'win32'",
+    "markdownify>=1.2,<2",
+    "beautifulsoup4>=4.12,<5",
+    # Pictures of imported files: TIFF and, on Windows, EMF/WMF metafiles become PNG.
+    "pillow>=11.3,<13",
+    # Pinned: npm run setup:browser and build:browser install the Chromium build of this release, which the backend
+    # needs, so a new release needs both run again.
+    "playwright==1.63.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "pyinstaller>=6.12,<7"]
+
+[tool.setuptools.packages.find]
+include = ["agent*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

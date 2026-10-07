@@ -1,0 +1,127 @@
+{
+  "version": 2,
+  "methods": [
+    {
+      "id": "sso-link",
+      "label": "SSO 링크 · 표준 로그인 폼",
+      "description": "SSO 로그인 링크나 버튼(SSO Login, Single sign-on, Log in with SSO 등)을 누른 뒤 일반 ID·비밀번호 폼으로 로그인합니다. 다른 화면은 사용자 지정 단계나 수동 로그인으로 설정합니다.",
+      "priority": true,
+      "detect": [
+        ":is(a, button):visible:text-matches(\"^(SSO|SSO ?Login|SSO 로그인|AD SSO|Single sign-on|(Log ?in|Sign in|Continue) with SSO)$\", \"i\")"
+      ],
+      "steps": [
+        {
+          "action": "click",
+          "target": ":is(a, button):visible:text-matches(\"^(SSO|SSO ?Login|SSO 로그인|AD SSO|Single sign-on|(Log ?in|Sign in|Continue) with SSO)$\", \"i\")"
+        },
+        {
+          "action": "fill",
+          "value": "id",
+          "target": "input[type=\"password\"]:visible >> xpath=preceding::input[not(@type) or @type=\"text\" or @type=\"email\" or @type=\"tel\"][1]"
+        },
+        {
+          "action": "fill",
+          "value": "password",
+          "target": "input[type=\"password\"]:visible"
+        },
+        {
+          "action": "submit",
+          "target": "input[type=\"password\"]:visible >> xpath=ancestor::form[1]//*[self::button[not(@type) or @type=\"submit\"] or self::input[@type=\"submit\" or @type=\"image\"]]"
+        }
+      ]
+    },
+    {
+      "id": "adfs",
+      "label": "AD SSO · ADFS 로그인 화면",
+      "description": "Microsoft ADFS 표준 로그인 화면의 ID·비밀번호 입력란과 제출 버튼을 사용합니다.",
+      "priority": true,
+      "detect": ["#userNameInput:visible"],
+      "steps": [
+        {
+          "action": "fill",
+          "value": "id",
+          "target": "#userNameInput:visible"
+        },
+        {
+          "action": "fill",
+          "value": "password",
+          "target": "#passwordInput:visible"
+        },
+        {
+          "action": "submit",
+          "target": "#submitButton:visible"
+        }
+      ]
+    },
+    {
+      "id": "atlassian",
+      "label": "JIRA·Confluence 기본 로그인",
+      "description": "Server·Data Center의 자체 로그인 화면(os_username·os_password 입력란)을 사용합니다.",
+      "detect": ["input[name=\"os_username\"]:visible"],
+      "steps": [
+        {
+          "action": "fill",
+          "value": "id",
+          "target": "input[name=\"os_username\"]:visible"
+        },
+        {
+          "action": "fill",
+          "value": "password",
+          "target": "input[name=\"os_password\"]:visible"
+        },
+        {
+          "action": "submit",
+          "target": "input[name=\"os_password\"]:visible >> xpath=ancestor::form[1]//*[self::button[not(@type) or @type=\"submit\"] or self::input[@type=\"submit\"]]"
+        }
+      ]
+    },
+    {
+      "id": "atlassian-cloud",
+      "label": "Atlassian Cloud · ID → 비밀번호 2단계",
+      "description": "ID를 입력하고 계속을 누른 뒤 비밀번호를 입력하는 id.atlassian.com 로그인입니다.",
+      "detect": ["input#username:visible"],
+      "steps": [
+        {
+          "action": "fill",
+          "value": "id",
+          "target": "input#username:visible"
+        },
+        {
+          "action": "click",
+          "target": "#login-submit:visible"
+        },
+        {
+          "action": "fill",
+          "value": "password",
+          "target": "input#password:visible"
+        },
+        {
+          "action": "submit",
+          "target": "#login-submit:visible"
+        }
+      ]
+    },
+    {
+      "id": "generic",
+      "label": "일반 로그인 폼 · 자동 탐색",
+      "description": "화면의 비밀번호 입력란과 그 앞의 ID 입력란을 찾아 입력하고, 같은 폼의 제출 버튼(없으면 Enter)으로 로그인합니다.",
+      "detect": ["input[type=\"password\"]:visible"],
+      "steps": [
+        {
+          "action": "fill",
+          "value": "id",
+          "target": "input[type=\"password\"]:visible >> xpath=preceding::input[not(@type) or @type=\"text\" or @type=\"email\" or @type=\"tel\"][1]"
+        },
+        {
+          "action": "fill",
+          "value": "password",
+          "target": "input[type=\"password\"]:visible"
+        },
+        {
+          "action": "submit",
+          "target": "input[type=\"password\"]:visible >> xpath=ancestor::form[1]//*[self::button[not(@type) or @type=\"submit\"] or self::input[@type=\"submit\" or @type=\"image\"]]"
+        }
+      ]
+    }
+  ]
+}

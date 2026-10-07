@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+dist
+release
+build
+backend/.venv
+package-lock.json
+test-results
+next-env.d.ts

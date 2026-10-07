@@ -1,0 +1,231 @@
+/* Search results: highlighted words, passages, AI picks and steps, PageIndex outlines. */
+mark.search-hit {
+  background: var(--mark);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+mark.search-hit.current {
+  background: #f0c419;
+  box-shadow: 0 0 0 2px #f0c419;
+}
+.search-steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.search-steps li {
+  counter-increment: step;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+}
+.search-steps li::before {
+  content: counter(step);
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  font-family: var(--font-num);
+  font-size: 10px;
+}
+.search-steps strong {
+  flex-shrink: 0;
+  color: var(--ink-2);
+}
+.search-steps li.fallback::before {
+  background: var(--danger);
+}
+.search-steps li.fallback span {
+  color: var(--danger);
+}
+.result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.result-card.selected {
+  border-color: #d8c948;
+  box-shadow: inset 3px 0 0 var(--mark);
+}
+/* The title's button reaches over the card's text, so the card opens wherever that is clicked; the badges stay above it
+   for their tooltips. */
+.result-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.result-card .document-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.result-card .document-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+}
+.result-card .document-open:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.result-badges [title],
+.result-main .status-label {
+  position: relative;
+  z-index: 1;
+}
+.result-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.document-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.result-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.result-reason {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.result-reason svg {
+  margin-top: 3px;
+}
+.result-sections,
+.citation-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.result-sections > span,
+.citation-sections > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.result-snippets {
+  display: grid;
+  gap: 4px;
+}
+.result-snippets > span {
+  display: block;
+  padding: 4px 10px;
+  border-left: 2px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.result-snippets small {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--accent);
+}
+.result-summary {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.document-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* The drawer's scroll area has 22px of padding; the bar sticks to its top edge. */
+.match-nav {
+  position: sticky;
+  top: -22px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: -22px -28px 16px;
+  padding: 6px 14px 6px 28px;
+  background: var(--mark-soft);
+  border-bottom: 1px solid #ece08c;
+  font-size: 13px;
+}
+.match-nav > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+}
+.outline-list li button {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font-size: 12px;
+  color: var(--ink-2);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.outline-list li button:not(:disabled):hover {
+  background: var(--panel);
+}
+.outline-list li button:disabled {
+  cursor: default;
+  color: var(--muted);
+  opacity: 1;
+}
+.outline-list li button span {
+  flex-shrink: 0;
+  font-family: var(--font-num);
+  color: var(--faint);
+}
+.outline-list li.chosen button {
+  background: var(--mark-soft);
+  color: var(--ink);
+}
+.outline-list li small {
+  display: block;
+  padding: 2px 6px 4px 24px;
+  font-size: 11px;
+}

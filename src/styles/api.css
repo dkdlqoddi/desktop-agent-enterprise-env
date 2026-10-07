@@ -1,0 +1,205 @@
+/* AI tool integration: the local API settings and its manual on the admin page. */
+.api-settings h3,
+.api-manual h3 {
+  margin: 10px 0 0;
+  font-size: 15px;
+}
+.api-manual h4 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+}
+.api-settings .setting > select {
+  flex: none;
+  width: auto;
+  min-width: 190px;
+  margin-top: 0;
+}
+.api-port,
+.api-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.api-port input {
+  width: 110px;
+}
+.api-settings .segmented {
+  align-self: flex-start;
+  flex-wrap: wrap;
+}
+.api-snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.api-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.api-snippet-head .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+.api-snippet pre {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+}
+.api-notes {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.api-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.api-recent li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.api-recent li > span:first-child {
+  min-width: 30px;
+  font-weight: 600;
+}
+.api-ok {
+  color: var(--ok);
+}
+.api-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.api-manual code {
+  overflow-wrap: anywhere;
+}
+.api-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+}
+.api-filter input {
+  flex: 1;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.api-filter input:focus {
+  box-shadow: none;
+}
+.api-group {
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 0 16px;
+  background: #ffffffb3;
+}
+.api-group > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+.api-group[open] > summary {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.api-group > p {
+  margin: 10px 0 0;
+}
+.api-route {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.api-route:last-child {
+  border-bottom: 0;
+}
+.api-route header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.api-route header > code {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.api-route p {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+.api-verb {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: 600 11.5px/1.5 var(--font-mono);
+}
+.api-verb.get {
+  background: var(--ok);
+}
+.api-verb.put {
+  background: #a2620b;
+}
+.api-verb.delete {
+  background: var(--danger);
+}
+.api-scope {
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.api-scope.public {
+  color: var(--ok);
+}
+.api-scope.admin,
+.api-scope.files,
+.api-scope.slow {
+  color: #a2620b;
+}
+.api-params {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.api-methods {
+  width: 100%;
+  margin: 8px 0 12px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.api-methods td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+.api-methods td:first-child {
+  white-space: nowrap;
+}

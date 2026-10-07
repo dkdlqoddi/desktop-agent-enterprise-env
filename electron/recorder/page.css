@@ -1,0 +1,138 @@
+/* The recorder's two pages: the recording panel above the app and the window that makes the video. Ink and the
+   highlighter yellow of the app (src/styles/app.css). */
+:root {
+  --ink: #1c2433;
+  --ink-deep: #141a26;
+  --text: #f4f6f9;
+  --muted: #9aa4b2;
+  --mark: #f6e94b;
+  --rec: #e5484d;
+  font-family: 'Segoe UI', 'Malgun Gothic', '맑은 고딕', 'Noto Sans KR', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--ink);
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+}
+[hidden] {
+  display: none !important;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.capture {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 14px 0 16px;
+  border: 1px solid #ffffff22;
+  -webkit-app-region: drag;
+}
+.dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--rec);
+  animation: blink 1.2s ease-in-out infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+.status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+.status strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+#elapsed {
+  font-variant-numeric: tabular-nums;
+}
+#step {
+  color: var(--mark);
+  font-weight: 600;
+}
+#caption {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capture button {
+  -webkit-app-region: no-drag;
+  flex: none;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--rec);
+  color: #fff;
+  font-weight: 600;
+}
+.capture button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.render {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 18px 22px;
+  gap: 14px;
+}
+.render h1 {
+  margin: 0;
+  font-size: 18px;
+}
+.render p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink-deep);
+  border-radius: 8px;
+}
+.stage canvas {
+  max-width: 100%;
+  max-height: 100%;
+  box-shadow: 0 10px 40px #00000055;
+}
+.render footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.render progress {
+  flex: 1;
+  height: 8px;
+  accent-color: var(--mark);
+}
+#percent {
+  width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,31 @@
+name: Check
+# Every push to main and every pull request, in a few minutes on Linux: formatting, types (the screens and the E2E
+# specs) and the Electron main process's tests, which need neither Python nor a browser. The Windows build with the
+# Python tests and E2E is build.yml, on a v* tag or by hand.
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+# A newer push replaces the check of the one before it.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+# Pinning the actions to commits: see build.yml.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run test:main

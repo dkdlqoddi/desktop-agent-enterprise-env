@@ -1,0 +1,41 @@
+name: Build Windows desktop
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+# The job reads the repository and keeps the exe as an artifact: its token can do nothing else.
+permissions:
+  contents: read
+# The actions run at their major-version tags. To pin each to a commit, replace `@v4` with the full SHA of the release
+# it points to (`gh api repos/actions/checkout/commits/v4 --jq .sha`, likewise for the others) and keep the tag in a
+# comment after it, e.g. `actions/checkout@<40-character SHA> # v4`.
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # No git credentials left in the workspace for the build's scripts and dependencies to find.
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            backend/constraints.txt
+      - run: npm run build:exe
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          NEXT_TELEMETRY_DISABLED: '1'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: private-agent-windows
+          path: |
+            release/*.exe
+            release/record-demo.cmd
+          if-no-files-found: error

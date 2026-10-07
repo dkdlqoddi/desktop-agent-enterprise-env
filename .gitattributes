@@ -1,0 +1,9 @@
+# Text files are kept with LF in the repository, whatever a PC's core.autocrlf says; checkouts get the line breaks that
+# setting asks for (CRLF on the Windows PCs that build the app). Every file in the repository is LF already, so this
+# changes no file and needs no renormalization.
+* text=auto
+# cmd.exe misreads labels and blocks of a .cmd with LF line breaks: these are CRLF in every checkout.
+*.cmd text eol=crlf
+# Never converted.
+*.ico binary
+*.png binary
