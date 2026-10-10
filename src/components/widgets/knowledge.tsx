@@ -109,7 +109,7 @@ export function KeywordCloud() {
               <li key={node.id}>
                 <button
                   className={`cloud-word w${Math.round(weight * 4)}`}
-                  style={{ fontSize: `${12 + weight * 14}px` }}
+                  style={{ fontSize: `${(12 + weight * 14) / 16}rem` }}
                   aria-label={`${node.label}, 문서 ${node.count}개`}
                   onClick={() => searchKeyword(node.label)}
                 >

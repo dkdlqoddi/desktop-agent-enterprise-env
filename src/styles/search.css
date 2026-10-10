@@ -8,8 +8,8 @@ mark.search-hit {
   -webkit-box-decoration-break: clone;
 }
 mark.search-hit.current {
-  background: #f0c419;
-  box-shadow: 0 0 0 2px #f0c419;
+  background: var(--mark-current);
+  box-shadow: 0 0 0 2px var(--mark-current);
 }
 .search-steps {
   list-style: none;
@@ -24,7 +24,7 @@ mark.search-hit.current {
   display: flex;
   gap: 8px;
   align-items: baseline;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .search-steps li::before {
@@ -35,10 +35,10 @@ mark.search-hit.current {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--ink);
-  color: #fff;
+  background: var(--inverse);
+  color: var(--on-inverse);
   font-family: var(--font-num);
-  font-size: 10px;
+  font-size: 0.6875rem;
 }
 .search-steps strong {
   flex-shrink: 0;
@@ -60,7 +60,6 @@ mark.search-hit.current {
   background: var(--panel);
 }
 .result-card.selected {
-  border-color: #d8c948;
   box-shadow: inset 3px 0 0 var(--mark);
 }
 /* The title's button reaches over the card's text, so the card opens wherever that is clicked; the badges stay above it
@@ -93,7 +92,7 @@ mark.search-hit.current {
   z-index: 1;
 }
 .result-card h3 {
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
@@ -113,7 +112,7 @@ mark.search-hit.current {
   display: flex;
   gap: 6px;
   align-items: flex-start;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink-2);
 }
 .result-reason svg {
@@ -134,7 +133,7 @@ mark.search-hit.current {
   border-radius: 4px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
 .result-snippets {
@@ -145,7 +144,7 @@ mark.search-hit.current {
   display: block;
   padding: 4px 10px;
   border-left: 2px solid var(--rule);
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
@@ -153,19 +152,19 @@ mark.search-hit.current {
   display: flex;
   align-items: center;
   gap: 3px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--accent);
 }
 .result-summary {
   display: block;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink-2);
 }
 .document-card-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 /* The drawer's scroll area has 22px of padding; the bar sticks to its top edge. */
@@ -179,8 +178,8 @@ mark.search-hit.current {
   margin: -22px -28px 16px;
   padding: 6px 14px 6px 28px;
   background: var(--mark-soft);
-  border-bottom: 1px solid #ece08c;
-  font-size: 13px;
+  border-bottom: 1px solid var(--highlight-edge);
+  font-size: 0.8125rem;
 }
 .match-nav > span {
   flex: 1;
@@ -202,7 +201,7 @@ mark.search-hit.current {
   border: 0;
   border-radius: 4px;
   background: none;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-2);
   text-align: left;
   overflow-wrap: anywhere;
@@ -218,7 +217,7 @@ mark.search-hit.current {
 .outline-list li button span {
   flex-shrink: 0;
   font-family: var(--font-num);
-  color: var(--faint);
+  color: var(--muted);
 }
 .outline-list li.chosen button {
   background: var(--mark-soft);
@@ -227,5 +226,5 @@ mark.search-hit.current {
 .outline-list li small {
   display: block;
   padding: 2px 6px 4px 24px;
-  font-size: 11px;
+  font-size: 0.6875rem;
 }

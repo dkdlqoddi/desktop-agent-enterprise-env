@@ -28,6 +28,9 @@ function Markdown({ children, highlight }: Props) {
               {children}
             </span>
           ),
+          // Code and tables scroll sideways when wide; focusable, a keyboard can scroll them too.
+          pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
+          table: ({ children }) => <table tabIndex={0}>{children}</table>,
         }}
       >
         {children}

@@ -1,0 +1,366 @@
+/*
+ * The palette: every color the screens use, as custom properties, in a light and a dark set. The other stylesheets
+ * use these names only, so a theme is one block here. `data-theme` on <html> is absent (follow Windows), "light" or
+ * "dark" (components/theme.ts); the dark set therefore appears twice below, once for the setting and once for the
+ * system preference, and the two blocks must stay the same. A color the dark set leaves out (the fills under white
+ * text, the brand, the paper of imported pages) is the same in both themes.
+ *
+ * Text colors meet WCAG AA (4.5:1) on every surface they are used on, glass included: tests/theme.test.cjs measures
+ * the pairs and tests/a11y.spec.ts checks the screens with axe in both themes. Translucent surfaces mix --glass,
+ * --edge or --shadow with transparency where they are used (color-mix), so one value per theme serves every opacity.
+ */
+:root {
+  color-scheme: light;
+
+  /* Surfaces: the window behind everything, panels on it, recessed areas inside panels, translucent glass. */
+  --canvas: #f3f5fa;
+  --canvas-base: #f4f6fa;
+  --glow-violet: #e6e6fb8c;
+  --glow-blue: #e2edf96e;
+  --panel: #ffffff;
+  --inset: #f5f7fb;
+  --inset-2: #eef1f7;
+  --glass: #ffffff;
+  /* The light edge of glass surfaces and what a fainter edge fades to: transparency on the light screen, the glass
+     itself on the dark one, where a translucent edge on a rounded box draws seams on some GPUs. The glint is the
+     highlight on top of glass, and on the greeting's sculpture. */
+  --edge: #ffffff;
+  --edge-fade: transparent;
+  --glint: #ffffff;
+  --backdrop: #424d6b33;
+  --shadow: #53628b;
+  --shadow-tint: #7c8cbb;
+
+  /* Text, strongest first; --faint and --faint-soft are for icons and marks, never for text. */
+  --ink: #252c40;
+  --ink-soft: #434f6b;
+  --ink-2: #515d73;
+  --muted: #606d86;
+  --faint: #8a94a8;
+  --faint-blue: #919fc0;
+  --faint-soft: #a5aec0;
+
+  /* Rules and borders. */
+  --rule: #e0e5ef;
+  --rule-soft: #edf0f6;
+  --rule-strong: #cdd5e6;
+
+  /* The accent: text, marks and selections in --accent; filled buttons in --accent-fill with --on-fill text. */
+  --accent: #4e64cb;
+  --accent-muted: #576aa6;
+  --accent-fill: #4e64cb;
+  --accent-fill-hover: #4155ba;
+  --on-fill: #ffffff;
+  --accent-soft: #edf0ff;
+  --accent-tint: #ebf0fd;
+  --accent-tint-2: #d3dcf3;
+  --accent-tint-3: #c3cef0;
+  --accent-border: #b6c3ea;
+  --accent-border-strong: #8b9ce3;
+  --accent-icon: #8a9bd4;
+  --focus: #7289e6;
+  --mark: #dce3ff;
+  --mark-soft: #f1f3ff;
+  --mark-current: #f0c419;
+  /* The highlighter yellow of the knowledge lists and matched keywords. */
+  --highlight: #fcf7c9;
+  --highlight-edge: #e8da75;
+
+  /* Status: text on panels and their soft backgrounds; fills carry --on-fill text. */
+  --ok: #287a67;
+  --ok-strong: #1f5f4f;
+  --ok-soft: #e7f5ee;
+  --ok-fill: #287a67;
+  --warn: #9a5f10;
+  --warn-soft: #fbf0db;
+  --warn-fill: #9a5f10;
+  --danger: #b63a34;
+  --danger-strong: #8f2d3b;
+  --danger-soft: #fbe8e6;
+  --danger-fill: #b63a34;
+  --online: #58a995;
+  --offline: #d5aa6c;
+
+  /* Dark chips and tooltips on light screens (light ones on dark screens), and the notice toast. */
+  --inverse: #252c40;
+  --on-inverse: #ffffff;
+  --on-inverse-muted: #c8d0dc;
+  --toast: #3e4964ee;
+  --toast-edge: #ffffff38;
+  --toast-ink: #ffffff;
+  --toast-ink-muted: #ffffffb3;
+  --knob: #ffffff;
+
+  /* Charts: bars, rings and tracks; the run chart's success and failure (a pair checked for color vision). */
+  --chart: #6d82cc;
+  --chart-soft: #a5b5ee;
+  --chart-track: #eef1f7;
+  --chart-mint: #52a487;
+  --chart-mint-soft: #9ad8c3;
+  --chart-success: #2bb08c;
+  --chart-error: #b8384a;
+
+  /* Tinted tiles of the dashboard: background, figure and icon. */
+  --tint-blue: #f0f3fc;
+  --tint-blue-ink: #6275b0;
+  --tint-blue-icon: #7798d6;
+  --tint-peach: #faf4ef;
+  --tint-peach-ink: #9b795a;
+  --tint-peach-icon: #c09d83;
+  --tint-mint: #eff6f3;
+  --tint-mint-ink: #527f6c;
+  --tint-mint-icon: #75a795;
+  --tint-violet: #f1edfa;
+  --tint-violet-icon: #a08acb;
+
+  /* The brand mark and the ask button, the greeting card and its glass sculpture, the demo's click highlight. */
+  --brand-1: #a9b6ef;
+  --brand-2: #7c8fdb;
+  --brand-3: #6479cc;
+  --ask-light: #91a6ea;
+  --welcome-mid: #e7ecfc8c;
+  --welcome-end: #e8e5f5b5;
+  --welcome-glow-1: #c8bde54a;
+  --welcome-glow-2: #aecaf951;
+  --sculpture-halo: #8a97d926;
+  --sculpture-ring: #d7e2ff51;
+  --sculpture-ring-back: #d6ccf448;
+  --sculpture-ring-front: #c6dbf944;
+  --sculpture-tint: #879fda0b;
+  --sculpture-spark: #a5add9;
+  --sculpture-spark-end: #f0f1ff33;
+  --sculpture-orb: #c0d4f070;
+  --sculpture-orb-edge: #a4b2d364;
+  --sculpture-orb-shade: #aab6d850;
+  --demo-pulse: #f6e94b;
+
+  /* The knowledge graph: keywords in blue, documents in orange, links in gray. */
+  --graph-keyword: #2b59c3;
+  --graph-keyword-light: #8eaaea;
+  --graph-keyword-soft: #e8eefb;
+  --graph-keyword-ring: #a9bde9;
+  --graph-document: #d9822b;
+  --graph-document-light: #efb878;
+  --graph-document-soft: #fbe6cf;
+  --graph-document-ink: #7d6550;
+  --graph-member: #eedcc7;
+  --graph-member-3d: #e2b98c;
+  --graph-link: #b8c2cf;
+  --graph-dot: #dde2e8;
+  --graph-label-halo: #ffffff;
+
+  /* An imported HTML page is paper with its own colors, light in both themes. */
+  --paper: #ffffff;
+  --paper-ink: #252c40;
+  --paper-rule: #e3e8f2;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #0f121a;
+  --canvas-base: #10131c;
+  --glow-violet: #2a2b5c59;
+  --glow-blue: #17324f4d;
+  --panel: #181c27;
+  --inset: #1e2330;
+  --inset-2: #252a39;
+  --glass: #181c27;
+  --edge: #2c3140;
+  --edge-fade: #181c27;
+  --glint: #ffffff17;
+  --backdrop: #05070cb3;
+  --shadow: #000000;
+  --shadow-tint: #000000;
+  --ink: #e5e8f0;
+  --ink-soft: #cfd5e3;
+  --ink-2: #b9c0d0;
+  --muted: #9aa3b7;
+  --faint: #6f788d;
+  --faint-blue: #6c7898;
+  --faint-soft: #565e72;
+  --rule: #2c3243;
+  --rule-soft: #232838;
+  --rule-strong: #3a4256;
+  --accent: #9aabf2;
+  --accent-muted: #a8b4e8;
+  --accent-soft: #222944;
+  --accent-tint: #283050;
+  --accent-tint-2: #303a62;
+  --accent-tint-3: #3c4778;
+  --accent-border: #3f4a7a;
+  --accent-border-strong: #6677c8;
+  --accent-icon: #7f8fd0;
+  --focus: #8fa1f0;
+  --mark: #3a4580;
+  --mark-soft: #20264a;
+  --mark-current: #7a5c0e;
+  --highlight: #39331a;
+  --highlight-edge: #6b5f22;
+  --ok: #5cc8a3;
+  --ok-strong: #8fdcc0;
+  --ok-soft: #142f29;
+  --ok-fill: #23725f;
+  --warn: #e3a857;
+  --warn-soft: #35280f;
+  --warn-fill: #8f5810;
+  --danger: #f2857f;
+  --danger-strong: #f5a5a0;
+  --danger-soft: #3a1b1e;
+  --danger-fill: #b13a36;
+  --inverse: #e5e8f0;
+  --on-inverse: #151924;
+  --on-inverse-muted: #4a5266;
+  --toast: #3a4459f2;
+  --toast-edge: #ffffff24;
+  --chart: #7f93df;
+  --chart-soft: #4b5c9e;
+  --chart-track: #252a39;
+  --chart-mint: #4fb592;
+  --chart-mint-soft: #2d6b57;
+  --chart-success: #34b892;
+  --chart-error: #c44758;
+  --tint-blue: #1d2439;
+  --tint-blue-ink: #aab8ee;
+  --tint-blue-icon: #8ea6e6;
+  --tint-peach: #2a221d;
+  --tint-peach-ink: #e3bf9c;
+  --tint-peach-icon: #d6b093;
+  --tint-mint: #16282a;
+  --tint-mint-ink: #8fd3b8;
+  --tint-mint-icon: #84c2ab;
+  --tint-violet: #241f36;
+  --tint-violet-icon: #b9a3e6;
+  --welcome-mid: #222a4a8c;
+  --welcome-end: #2a2546b5;
+  --welcome-glow-1: #5a4a9a40;
+  --welcome-glow-2: #2d4f8a40;
+  --sculpture-halo: #6070c033;
+  --sculpture-ring: #9aaaf033;
+  --sculpture-ring-back: #a090e033;
+  --sculpture-ring-front: #80a8e833;
+  --sculpture-tint: #879fda14;
+  --sculpture-spark-end: #3a427433;
+  --sculpture-orb: #6f86c470;
+  --sculpture-orb-edge: #4a5a9064;
+  --sculpture-orb-shade: #1a223a80;
+  --graph-keyword: #7d9cf0;
+  --graph-keyword-light: #b3c6f7;
+  --graph-keyword-soft: #1f2b4d;
+  --graph-keyword-ring: #4a64a8;
+  --graph-document: #e8a25c;
+  --graph-document-light: #f3c792;
+  --graph-document-soft: #3a2a18;
+  --graph-document-ink: #e8c9a6;
+  --graph-member: #5a4632;
+  --graph-member-3d: #8a6a48;
+  --graph-link: #4c556a;
+  --graph-dot: #262c3a;
+  --graph-label-halo: #1e2330;
+  --paper-rule: #3a4152;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --canvas: #0f121a;
+    --canvas-base: #10131c;
+    --glow-violet: #2a2b5c59;
+    --glow-blue: #17324f4d;
+    --panel: #181c27;
+    --inset: #1e2330;
+    --inset-2: #252a39;
+    --glass: #181c27;
+    --edge: #2c3140;
+    --edge-fade: #181c27;
+    --glint: #ffffff17;
+    --backdrop: #05070cb3;
+    --shadow: #000000;
+    --shadow-tint: #000000;
+    --ink: #e5e8f0;
+    --ink-soft: #cfd5e3;
+    --ink-2: #b9c0d0;
+    --muted: #9aa3b7;
+    --faint: #6f788d;
+    --faint-blue: #6c7898;
+    --faint-soft: #565e72;
+    --rule: #2c3243;
+    --rule-soft: #232838;
+    --rule-strong: #3a4256;
+    --accent: #9aabf2;
+    --accent-muted: #a8b4e8;
+    --accent-soft: #222944;
+    --accent-tint: #283050;
+    --accent-tint-2: #303a62;
+    --accent-tint-3: #3c4778;
+    --accent-border: #3f4a7a;
+    --accent-border-strong: #6677c8;
+    --accent-icon: #7f8fd0;
+    --focus: #8fa1f0;
+    --mark: #3a4580;
+    --mark-soft: #20264a;
+    --mark-current: #7a5c0e;
+    --highlight: #39331a;
+    --highlight-edge: #6b5f22;
+    --ok: #5cc8a3;
+    --ok-strong: #8fdcc0;
+    --ok-soft: #142f29;
+    --ok-fill: #23725f;
+    --warn: #e3a857;
+    --warn-soft: #35280f;
+    --warn-fill: #8f5810;
+    --danger: #f2857f;
+    --danger-strong: #f5a5a0;
+    --danger-soft: #3a1b1e;
+    --danger-fill: #b13a36;
+    --inverse: #e5e8f0;
+    --on-inverse: #151924;
+    --on-inverse-muted: #4a5266;
+    --toast: #3a4459f2;
+    --toast-edge: #ffffff24;
+    --chart: #7f93df;
+    --chart-soft: #4b5c9e;
+    --chart-track: #252a39;
+    --chart-mint: #4fb592;
+    --chart-mint-soft: #2d6b57;
+    --chart-success: #34b892;
+    --chart-error: #c44758;
+    --tint-blue: #1d2439;
+    --tint-blue-ink: #aab8ee;
+    --tint-blue-icon: #8ea6e6;
+    --tint-peach: #2a221d;
+    --tint-peach-ink: #e3bf9c;
+    --tint-peach-icon: #d6b093;
+    --tint-mint: #16282a;
+    --tint-mint-ink: #8fd3b8;
+    --tint-mint-icon: #84c2ab;
+    --tint-violet: #241f36;
+    --tint-violet-icon: #b9a3e6;
+    --welcome-mid: #222a4a8c;
+    --welcome-end: #2a2546b5;
+    --welcome-glow-1: #5a4a9a40;
+    --welcome-glow-2: #2d4f8a40;
+    --sculpture-halo: #6070c033;
+    --sculpture-ring: #9aaaf033;
+    --sculpture-ring-back: #a090e033;
+    --sculpture-ring-front: #80a8e833;
+    --sculpture-tint: #879fda14;
+    --sculpture-spark-end: #3a427433;
+    --sculpture-orb: #6f86c470;
+    --sculpture-orb-edge: #4a5a9064;
+    --sculpture-orb-shade: #1a223a80;
+    --graph-keyword: #7d9cf0;
+    --graph-keyword-light: #b3c6f7;
+    --graph-keyword-soft: #1f2b4d;
+    --graph-keyword-ring: #4a64a8;
+    --graph-document: #e8a25c;
+    --graph-document-light: #f3c792;
+    --graph-document-soft: #3a2a18;
+    --graph-document-ink: #e8c9a6;
+    --graph-member: #5a4632;
+    --graph-member-3d: #8a6a48;
+    --graph-link: #4c556a;
+    --graph-dot: #262c3a;
+    --graph-label-halo: #1e2330;
+    --paper-rule: #3a4152;
+  }
+}

@@ -39,6 +39,7 @@ const { Restarts } = require('./restarts.cjs');
 const { Recorder, PRIVILEGES: RECORDER_SCHEME } = require('./recorder.cjs');
 const { DemoRun, demoLaunch, renderAgain } = require('./demo.cjs');
 const demoPlan = require('./demo-plan.cjs');
+const { ScreenZoom } = require('./zoom.cjs');
 
 // The backend, which runs every browser of the app with Python Playwright, uses the Chromium packaged with the app.
 if (app.isPackaged)
@@ -229,6 +230,8 @@ let changeTimer;
 // The demo being recorded, and its run until the video is made.
 let demo;
 let demoRunning;
+// The zoom of the window's screen (electron/zoom.cjs).
+let zoom;
 
 // Tests shorten the schedule check; bounded so it can never poll the backend in a tight loop.
 const SCHEDULE_INTERVAL = Math.min(
@@ -1485,6 +1488,7 @@ function createWindow() {
     },
   });
   window = current;
+  zoom?.attach(current.webContents);
   const screen = DEV_URL || 'agent://bundle/';
   // The packaged app has no menu: Electron's default one would reload the screen (Ctrl+R), open the developer tools
   // (Ctrl+Shift+I) and close the only window (Ctrl+W), quitting the app. Chromium itself still copies, pastes and undoes
@@ -1620,6 +1624,14 @@ else {
         }
       }
       diagnostics = new Diagnostics({ directory: path.join(app.getPath('userData'), 'logs') });
+      // Ctrl+= / Ctrl+- / Ctrl+0 and Ctrl+wheel zoom the screen, which opens at the last zoom again; a demo records at
+      // 100% and leaves the user's zoom as it is. Read now, so the window opens at it.
+      zoom = new ScreenZoom({
+        file: plan ? null : path.join(app.getPath('userData'), 'window.json'),
+        failed: (error) =>
+          void diagnostics.record(`화면 배율 설정을 읽거나 저장하지 못했습니다: ${error.message}`),
+      });
+      void zoom.load();
       restarts = new Restarts({
         start: () => startBackend(storage.directory),
         stop: stopBackend,

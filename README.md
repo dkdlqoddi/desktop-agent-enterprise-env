@@ -82,6 +82,12 @@ API Key, 사용자 지정 헤더 값과 사이트 비밀번호는 운영체제 �
 
 읽기, 쓰기, 전체 접근 권한을 구분합니다. 로컬 파일 가져오기와 원본 반영, 등록하지 않은 사이트의 링크 가져오기, 휴지통 비우기, 앱 화면의 삭제 확인 버튼에는 전체 접근 권한이 필요합니다. 쓰기 권한의 문서 삭제는 휴지통으로 가며 복원할 수 있습니다. Python 백엔드는 별도 공개 HTTP 포트 없이 표준 입출력 JSON RPC로 Electron과 통신합니다.
 
+## 화면 테마와 배율
+
+**관리 → 화면·검색·대시보드**의 **화면 테마**에서 시스템 설정(Windows의 밝은·어두운 모드를 따름), 밝게, 어둡게 중 하나를 고릅니다. 테마는 이 PC의 앱에 저장되어 Wiki 저장 위치를 바꿔도 유지됩니다. 가져온 HTML 문서는 문서 고유의 색이 그대로 보이도록 어두운 테마에서도 흰 바탕으로 표시합니다.
+
+화면 배율은 `Ctrl` + `=`(또는 `Ctrl` + 마우스 휠)로 키우고 `Ctrl` + `-`로 줄이며, `Ctrl` + `0`으로 100%로 되돌립니다. 50%~200% 사이에서 바뀌고 다음 실행 때도 유지됩니다.
+
 ## 검증과 빌드
 
 ```bash
@@ -92,7 +98,7 @@ npm run build:python
 npm run test:e2e
 ```
 
-`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 브라우저 테스트에는 `setup:browser`가 필요합니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
+`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요합니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
 
 Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
 

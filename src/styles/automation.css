@@ -5,7 +5,7 @@
   gap: 3px;
   padding: 0 6px;
   border-radius: 9px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 700;
 }
 .run-badge.success {
@@ -27,13 +27,13 @@
   height: 18px;
   flex-shrink: 0;
   border-radius: 50%;
-  color: #fff;
+  color: var(--on-fill);
 }
 .run-status.success {
-  background: #2bb08c;
+  background: var(--chart-success);
 }
 .run-status.error {
-  background: #b8384a;
+  background: var(--chart-error);
 }
 .run-dashboard {
   display: flex;
@@ -74,18 +74,18 @@
   background: var(--panel);
 }
 .stat-tile > span {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .stat-tile > strong {
   font-family: var(--font-num);
-  font-size: 26px;
+  font-size: 1.625rem;
   font-weight: 600;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 .stat-tile > small {
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .running-now {
   padding: 10px 14px;
@@ -96,7 +96,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--accent);
 }
 .running-row {
@@ -105,7 +105,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 0 10px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .running-time {
   margin-left: auto;
@@ -120,7 +120,7 @@
   bottom: 2px;
   height: 3px;
   border-radius: 2px;
-  background: #d3dcf3;
+  background: var(--accent-tint-2);
   overflow: hidden;
 }
 .running-bar::after {
@@ -149,18 +149,18 @@
 }
 .chart-card h3,
 .history-filters h3 {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 700;
 }
 .chart-card header p {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .chart-legend {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--ink-2);
 }
 .chart-legend > span {
@@ -185,7 +185,7 @@
 }
 .chart-tick {
   font-family: var(--font-num);
-  font-size: 11px;
+  font-size: 0.6875rem;
   fill: var(--muted);
 }
 .chart-hit {
@@ -193,7 +193,7 @@
   outline: none;
 }
 .chart-hit:focus-visible {
-  fill: #1c24330d;
+  fill: color-mix(in srgb, var(--ink) 5%, transparent);
   stroke: var(--ink);
   stroke-width: 1.5;
 }
@@ -203,7 +203,7 @@
   right: 0;
   top: 42%;
   text-align: center;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
   pointer-events: none;
 }
@@ -216,9 +216,9 @@
   min-width: 110px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: var(--ink);
-  color: #fff;
-  font-size: 12px;
+  background: var(--inverse);
+  color: var(--on-inverse);
+  font-size: 0.75rem;
   pointer-events: none;
 }
 .chart-tooltip > span {
@@ -235,7 +235,7 @@
   font-variant-numeric: tabular-nums;
 }
 .chart-tooltip small {
-  color: #c8d0dc;
+  color: var(--on-inverse-muted);
 }
 .chart-table-wrap {
   max-height: 240px;
@@ -244,7 +244,7 @@
 .chart-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .chart-table th,
 .chart-table td {
@@ -283,9 +283,10 @@
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   font-weight: 400;
-  color: var(--faint);
+  color: var(--muted);
 }
 .history-search input {
+  color: var(--ink);
   margin: 0;
   padding: 5px 0;
   border: 0;
@@ -303,7 +304,7 @@
 }
 .run-day h4 {
   padding: 12px 0 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .run-row {
@@ -324,7 +325,7 @@
 .run-time,
 .run-duration {
   font-family: var(--font-num);
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -337,13 +338,13 @@
   min-width: 0;
 }
 .run-main strong {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .run-main span {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .run-kind {
@@ -354,7 +355,7 @@
   padding: 1px 7px;
   border-radius: 9px;
   background: var(--inset);
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--ink-2);
   overflow: hidden;
   white-space: nowrap;
@@ -406,7 +407,7 @@
 }
 .routine-catalog h3 {
   margin-bottom: 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--muted);
 }
@@ -431,7 +432,7 @@
 .recipe-card:hover,
 .recipe-card:focus-visible {
   border-color: var(--accent);
-  box-shadow: 0 4px 14px -8px #5870d866;
+  box-shadow: 0 4px 14px -8px color-mix(in srgb, var(--accent-fill) 40%, transparent);
 }
 .recipe-card > span:last-child {
   display: flex;
@@ -440,10 +441,10 @@
   min-width: 0;
 }
 .recipe-card strong {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .recipe-card small {
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.45;
   color: var(--ink-2);
 }
@@ -460,7 +461,7 @@
   padding: 1px 7px;
   border-radius: 9px;
   background: var(--inset);
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--ink-2);
 }
 .recipe-needs .chip.strong {
@@ -483,16 +484,16 @@
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--inset);
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--ink-2);
 }
 .routine-form-lead strong {
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--ink);
 }
 .routine-form .frequency-field legend {
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--ink-2);
 }
@@ -508,7 +509,7 @@
   display: block;
   margin-top: 3px;
   font-weight: 400;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .routine-form .required {
@@ -559,12 +560,12 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 .routine-main small {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .routine-main .routine-last {
@@ -596,7 +597,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .routine-docs .text-button {
@@ -617,10 +618,10 @@
   gap: 4px 12px;
 }
 .routine-run-head strong {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .routine-run-head small {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .routine-text {
@@ -631,17 +632,17 @@
 .routine-text summary,
 .change-lines summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--ink-2);
 }
 .routine-text .markdown {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .routine-text .markdown :is(h1, h2, h3, h4) {
   margin: 10px 0 4px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .routine-items {
   display: flex;
@@ -665,7 +666,7 @@
   padding: 1px 6px;
   border-radius: 9px;
   background: var(--inset);
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 700;
   text-align: center;
   color: var(--ink-2);
@@ -698,10 +699,10 @@
   gap: 2px;
 }
 .routine-item-main strong {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .routine-item-main small {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .change-lines ul {
@@ -711,7 +712,7 @@
   border-radius: 6px;
   background: var(--inset);
   font-family: ui-monospace, Consolas, 'D2Coding', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .change-lines li {
   display: flex;
@@ -721,14 +722,14 @@
   overflow-wrap: anywhere;
 }
 .change-lines li.added {
-  background: #e7f5ee;
-  color: #1f5f4f;
+  background: var(--ok-soft);
+  color: var(--ok-strong);
 }
 .change-lines li.removed {
-  background: #fbe8e6;
-  color: #8f2d3b;
+  background: var(--danger-soft);
+  color: var(--danger-strong);
   text-decoration: line-through;
-  text-decoration-color: #8f2d3b66;
+  text-decoration-color: color-mix(in srgb, var(--danger-strong) 40%, transparent);
 }
 .change-lines li.more {
   color: var(--muted);
@@ -749,7 +750,7 @@
   border: 0;
   border-radius: 6px;
   background: none;
-  font-size: 12px;
+  font-size: 0.75rem;
   text-align: left;
   color: var(--ink-2);
 }
@@ -781,7 +782,7 @@
 .run-dot.cancelled,
 .run-dot.queued,
 .run-dot.running {
-  background: var(--faint);
+  background: var(--muted);
 }
 .routine-feed {
   display: flex;
@@ -810,13 +811,13 @@
   min-width: 0;
 }
 .routine-feed strong {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .routine-feed small {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .routine-feed li.changed .routine-icon {

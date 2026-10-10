@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Bot,
   BookOpenText,
@@ -19,6 +20,7 @@ import TemplatesSection from './admin/templates';
 import Confirm from './confirm';
 import ErrorBoundary from './error-boundary';
 import { rove } from './roving';
+import { saveTheme, storedTheme, THEMES, type Theme } from './theme';
 import { layoutOf, templateOf } from './widgets';
 
 export type AdminSection =
@@ -29,7 +31,7 @@ const SECTIONS: [AdminSection, string, typeof Unplug][] = [
   ['llm', 'LLM 연결', Unplug],
   ['sites', '사이트 계정', KeyRound],
   ['templates', '프롬프트 템플릿', MessageSquareText],
-  ['preferences', '검색·대시보드', LayoutGrid],
+  ['preferences', '화면·검색·대시보드', LayoutGrid],
   ['api', 'AI 도구 연동', Bot],
   ['manual', 'API 매뉴얼', BookOpenText],
   ['about', '저장 위치·정보', Database],
@@ -92,10 +94,48 @@ export default function Admin({
 
 function Preferences() {
   const { preferences, savePreferences, notify } = useApp();
+  const [theme, setTheme] = useState<Theme>(storedTheme);
   const layout = layoutOf(preferences.widgets);
   const template = templateOf(layout);
   return (
     <div className="admin-form">
+      <div className="setting">
+        <span>
+          <strong id="theme-setting">화면 테마</strong>
+          <small>
+            시스템 설정을 고르면 Windows의 밝은 모드·어두운 모드를 따릅니다. 이 PC의 앱에 저장되며
+            Wiki 저장 위치를 바꿔도 그대로입니다.
+          </small>
+        </span>
+        <div className="segmented" role="radiogroup" aria-labelledby="theme-setting">
+          {THEMES.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={theme === value}
+              tabIndex={theme === value ? 0 : -1}
+              className={theme === value ? 'active' : ''}
+              onClick={() => {
+                saveTheme(value);
+                setTheme(value);
+              }}
+              onKeyDown={rove}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting">
+        <span>
+          <strong>화면 배율</strong>
+          <small>
+            Ctrl+= 또는 Ctrl+마우스 휠로 크게, Ctrl+-로 작게 보고 Ctrl+0으로 원래 크기로 돌아갑니다
+            (50%~200%). 바꾼 배율은 앱을 다시 열어도 그대로입니다.
+          </small>
+        </span>
+      </div>
       <label className="setting">
         <span>
           <strong>검색할 때 AI 답변 만들기</strong>

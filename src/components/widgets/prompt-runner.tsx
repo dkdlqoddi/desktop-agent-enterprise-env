@@ -184,7 +184,9 @@ export default function PromptWidget() {
             {busy === 'run' ? (
               <p className="thinking">
                 <LoaderCircle size={15} className="spin" />
-                LLM이 응답하고 있어요 · {seconds(Math.max(0, now - startedAt))}
+                LLM이 응답하고 있어요
+                {/* The seconds tick on screen only; the live region speaks when the run starts and ends. */}
+                <span aria-hidden="true"> · {seconds(Math.max(0, now - startedAt))}</span>
               </p>
             ) : output ? (
               <>

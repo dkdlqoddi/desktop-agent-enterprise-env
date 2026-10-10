@@ -25,8 +25,9 @@ import Highlight from './highlight';
 import { rove } from './roving';
 
 const PAGE = 30;
-// Validated as a pair: CVD ΔE 14 (deutan). Marks also carry an icon and a label.
-export const STATUS_FILL = { success: '#2bb08c', error: '#b8384a' };
+// The theme's pair (theme.css), validated for color vision: CVD ΔE 14 (deutan), and 16 for the dark theme's (CIEDE2000
+// on a Machado deuteranopia simulation). Marks also carry an icon and a label.
+export const STATUS_FILL = { success: 'var(--chart-success)', error: 'var(--chart-error)' };
 
 /** Runs in progress anywhere (this window, "run now", or the scheduler); calls onDone as they finish. It looks every
  * 2.5 seconds while a run is in progress and every 5 seconds otherwise, and draws again only when the runs change. */
@@ -182,8 +183,15 @@ export default function RunHistory() {
   }, [items]);
   const totals = stats?.totals;
   const rate = totals?.total ? Math.round((totals.success / totals.total) * 100) : null;
+  // What a screen reader hears of the runs in progress: which ones, once as they start and end, never their seconds.
+  const running = active.length
+    ? `지금 실행 중 ${active.length}개: ${active.map((run) => run.title).join(', ')}`
+    : '';
   return (
     <div className="run-dashboard">
+      <p className="sr-only" role="status">
+        {running}
+      </p>
       <div className="history-scope">
         <label>
           프롬프트
@@ -235,7 +243,7 @@ export default function RunHistory() {
         </div>
       </div>
       {active.length > 0 && (
-        <section className="running-now" aria-live="polite">
+        <section className="running-now">
           <h3>
             <LoaderCircle className="spin" size={16} />
             지금 실행 중 <span>{active.length}</span>
@@ -497,11 +505,11 @@ export function RunChart({ days }: { days: RunStats['days'] }) {
       <svg
         width={width}
         height={height}
-        role="img"
+        role="group"
         aria-label={`최근 ${days.length}일 동안의 일별 실행 수. 표로 보기에서 날짜별 값을 확인할 수 있습니다.`}
       >
         {ticks.map((tick) => (
-          <g key={tick}>
+          <g key={tick} aria-hidden="true">
             <line
               className="chart-grid"
               x1={margin.left}
@@ -526,14 +534,23 @@ export function RunChart({ days }: { days: RunStats['days'] }) {
               {day.success > 0 && (
                 <path
                   d={segment(x, split, bar, base, day.error === 0)}
-                  fill={STATUS_FILL.success}
+                  style={{ fill: STATUS_FILL.success }}
                 />
               )}
               {day.error > 0 && (
-                <path d={segment(x, top, bar, errorBase, true)} fill={STATUS_FILL.error} />
+                <path
+                  d={segment(x, top, bar, errorBase, true)}
+                  style={{ fill: STATUS_FILL.error }}
+                />
               )}
               {(days.length - 1 - i) % every === 0 && (
-                <text className="chart-tick" x={x + bar / 2} y={height - 10} textAnchor="middle">
+                <text
+                  className="chart-tick"
+                  x={x + bar / 2}
+                  y={height - 10}
+                  textAnchor="middle"
+                  aria-hidden="true"
+                >
                   {day.date === today
                     ? '오늘'
                     : `${Number(day.date.slice(5, 7))}/${Number(day.date.slice(8))}`}
@@ -546,6 +563,7 @@ export function RunChart({ days }: { days: RunStats['days'] }) {
                 width={slot}
                 height={plot.h}
                 tabIndex={0}
+                role="img"
                 aria-label={`${dayLabel(day.date)} 성공 ${day.success}회, 실패 ${day.error}회`}
                 onPointerEnter={() => setHover(i)}
                 onPointerLeave={() => setHover(null)}

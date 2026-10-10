@@ -1,5 +1,5 @@
 'use client';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   Box,
@@ -125,6 +125,7 @@ export default function KnowledgeExplorer({
   const [docs, setDocs] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const hint = useId();
   const model = useModel(graph, limit, docs);
   const flat = useLayout(model, 2, mode === '2d');
   const deep = useLayout(model, 3, mode === '3d');
@@ -222,7 +223,7 @@ export default function KnowledgeExplorer({
       <div className="explorer-body">
         <div className="explorer-canvas">
           {mode === '2d'
-            ? flat && <Graph2D {...props} positions={flat} scope={`${limit}:${docs}`} />
+            ? flat && <Graph2D {...props} positions={flat} scope={`${limit}:${docs}`} hint={hint} />
             : deep && (
                 <Graph3D
                   {...props}
@@ -230,9 +231,9 @@ export default function KnowledgeExplorer({
                   label={`3D 지식 그래프 · 키워드 ${Math.min(limit, graph.nodes.length)}개`}
                 />
               )}
-          <p className="explorer-hint">
+          <p className="explorer-hint" id={hint}>
             {mode === '2d'
-              ? '드래그로 이동 · 휠로 확대 · 키워드를 눌러 연결 보기'
+              ? '드래그로 이동 · 휠로 확대 · 키워드를 눌러 연결 보기 · 화살표 키로 이동, Enter로 선택'
               : '드래그로 회전 · 휠로 확대 · 키워드를 눌러 연결 보기'}
             {model.omitted > 0 && ` · 문서는 키워드가 많은 ${DOCUMENT_LIMIT}개만 표시`}
           </p>
@@ -267,6 +268,34 @@ type Spot = { layout: Point; dx: number; dy: number };
 
 const WIDTH = 880;
 const HEIGHT = 560;
+const ARROWS: Record<string, [number, number]> = {
+  ArrowRight: [1, 0],
+  ArrowLeft: [-1, 0],
+  ArrowDown: [0, 1],
+  ArrowUp: [0, -1],
+};
+
+// The node an arrow key moves to from `from`: the nearest one that way, a node off to the side counting as farther.
+function nextNode(
+  from: string,
+  [dx, dy]: [number, number],
+  at: Map<string, { x: number; y: number }>,
+): string | null {
+  const start = at.get(from);
+  if (!start) return null;
+  let best: string | null = null;
+  let score = Infinity;
+  for (const [id, point] of at) {
+    const along = (point.x - start.x) * dx + (point.y - start.y) * dy;
+    if (id === from || along <= 0) continue;
+    const across = Math.abs((point.x - start.x) * dy - (point.y - start.y) * dx);
+    if (along + across * 2 < score) {
+      score = along + across * 2;
+      best = id;
+    }
+  }
+  return best;
+}
 
 function Graph2D({
   nodes,
@@ -278,9 +307,12 @@ function Graph2D({
   onSelect,
   onHover,
   scope,
-}: RendererProps & { scope: string }) {
+  hint,
+}: RendererProps & { scope: string; hint: string }) {
   const svg = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  // The node that takes Tab focus (a roving tabindex): the last one focused, else the selected one, else the first.
+  const [focused, setFocused] = useState<string | null>(null);
   const pan = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   // The last placement of each choice of keywords and documents (`scope`): a node the layout left nearly in place
   // starts where the overlap pass put it then, as pushing crowded nodes apart afresh shuffled them on every reload.
@@ -330,6 +362,26 @@ function Graph2D({
     placements.current.set(placed.scope, placed.spots);
   }, [placed]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const tabStop =
+    focused && byId.has(focused)
+      ? focused
+      : selected && byId.has(selected)
+        ? selected
+        : nodes[0]?.id;
+  // Moves focus to a node, panning the view so it is in sight when the keyboard reaches it off screen.
+  const focusNode = (id: string) => {
+    const point = placed.at.get(id);
+    if (point) {
+      setView((v) => {
+        const x = v.x + point.x * v.k;
+        const y = v.y + point.y * v.k;
+        const inside = x > 40 && x < WIDTH - 40 && y > 40 && y < HEIGHT - 40;
+        return inside ? v : { ...v, x: WIDTH / 2 - point.x * v.k, y: HEIGHT / 2 - point.y * v.k };
+      });
+    }
+    setFocused(id);
+    svg.current?.querySelector<SVGGElement>(`[data-node="${CSS.escape(id)}"]`)?.focus();
+  };
   // React's wheel listener is passive, so zoom needs a native one that can stop page scrolling.
   useEffect(() => {
     const element = svg.current;
@@ -357,18 +409,40 @@ function Graph2D({
       };
     });
   const dim = (id: string, set?: Set<string>) => !!highlight && !set?.has(id);
+  // One node is in the Tab order; the arrow keys move between nodes by where they are drawn, Home and End go to the
+  // first and the last, and Enter or Space opens a node's connections and details as a click does.
   const nodeEvents = (node: GraphNode) => ({
     role: 'button',
-    tabIndex: 0,
+    'data-node': node.id,
+    tabIndex: node.id === tabStop ? 0 : -1,
+    'aria-pressed': node.id === selected,
     onClick: () => onSelect(node.id === selected ? null : node.id),
     onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
-      e.preventDefault();
-      onSelect(node.id === selected ? null : node.id);
+      const arrow = ARROWS[e.key];
+      const target = arrow
+        ? nextNode(node.id, arrow, placed.at)
+        : e.key === 'Home'
+          ? nodes[0]?.id
+          : e.key === 'End'
+            ? nodes.at(-1)?.id
+            : undefined;
+      if (target !== undefined) {
+        e.preventDefault();
+        if (target) focusNode(target);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onSelect(node.id === selected ? null : node.id);
+      } else if (e.key === 'Escape' && selected) {
+        e.preventDefault();
+        onSelect(null);
+      }
     },
     onPointerEnter: () => onHover(node.id),
     onPointerLeave: () => onHover(null),
-    onFocus: () => onHover(node.id),
+    onFocus: () => {
+      setFocused(node.id);
+      onHover(node.id);
+    },
     onBlur: () => onHover(null),
   });
   return (
@@ -378,6 +452,7 @@ function Graph2D({
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="group"
         aria-label="2D 지식 그래프"
+        aria-describedby={hint}
         onPointerDown={(e) => {
           if ((e.target as Element).closest('.graph-node, .graph-doc')) return;
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -402,7 +477,7 @@ function Graph2D({
       >
         <defs>
           <pattern id="graph-dots" width="24" height="24" patternUnits="userSpaceOnUse">
-            <circle cx="1" cy="1" r="1" fill="#dde2e8" />
+            <circle className="graph-dot" cx="1" cy="1" r="1" />
           </pattern>
           {['arrow', 'arrow-lit'].map((id) => (
             <marker
@@ -415,7 +490,10 @@ function Graph2D({
               orient="auto"
               markerUnits="userSpaceOnUse"
             >
-              <path d="M0,0 L8,4 L0,8 Z" fill={id === 'arrow' ? '#b8c2cf' : '#1c2433'} />
+              <path
+                className={id === 'arrow' ? 'graph-arrow' : 'graph-arrow lit'}
+                d="M0,0 L8,4 L0,8 Z"
+              />
             </marker>
           ))}
         </defs>

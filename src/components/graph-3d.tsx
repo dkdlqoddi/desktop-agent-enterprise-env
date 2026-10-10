@@ -5,7 +5,47 @@ import type { Point } from '@/lib/graph-layout';
 import type { GraphEdge, GraphNode, Highlight } from './graph';
 
 const DISTANCE = 3.2; // Camera distance, in radii of the graph's bounding sphere.
-const FILL = { keyword: ['#8eaaea', '#2b59c3'], document: ['#efb878', '#d9822b'] } as const;
+// The canvas draws with the theme's graph colors (theme.css), read again when the theme changes.
+const COLORS = {
+  keywordLight: '--graph-keyword-light',
+  keyword: '--graph-keyword',
+  documentLight: '--graph-document-light',
+  document: '--graph-document',
+  member: '--graph-member-3d',
+  link: '--graph-link',
+  lit: '--ink',
+  label: '--ink-2',
+  halo: '--graph-label-halo',
+};
+type Palette = Record<keyof typeof COLORS, string>;
+const paletteOf = (element: Element) => {
+  const style = getComputedStyle(element);
+  return Object.fromEntries(
+    Object.entries(COLORS).map(([name, token]) => [name, style.getPropertyValue(token).trim()]),
+  ) as Palette;
+};
+
+// Whether the screen is dark now, by the theme setting or by Windows (components/theme.ts); it changes when either
+// does, and the canvas, which CSS cannot reach, draws again with it.
+function useDarkScreen() {
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const root = document.documentElement;
+    const update = () =>
+      setDark(root.dataset.theme ? root.dataset.theme === 'dark' : media.matches);
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    media.addEventListener('change', update);
+    return () => {
+      observer.disconnect();
+      media.removeEventListener('change', update);
+    };
+  }, []);
+  return dark;
+}
+
 const nodeRadius = (node: GraphNode) =>
   node.kind === 'keyword' ? 6 + Math.sqrt(node.count) * 2.8 : 6;
 const clip = (value: string) => (value.length > 18 ? `${value.slice(0, 17)}…` : value);
@@ -34,10 +74,16 @@ export default function Graph3D(props: {
     null,
   );
   const hits = useRef<{ id: string; x: number; y: number; r: number }[]>([]);
+  const dark = useDarkScreen();
+  const palette = useRef<Palette | null>(null);
   useEffect(() => {
     latest.current = props;
     dirty.current = true;
   });
+  useEffect(() => {
+    if (canvas.current) palette.current = paletteOf(canvas.current);
+    dirty.current = true;
+  }, [dark]);
   useEffect(() => {
     spinning.current = spin;
   }, [spin]);
@@ -75,6 +121,7 @@ export default function Graph3D(props: {
     function draw() {
       const { nodes: shown, edges, positions, highlight, selected, hover } = latest.current;
       if (!shown.length) return;
+      const colors = (palette.current ??= paletteOf(element!));
       // Center the shown nodes and scale them into a unit sphere.
       const center = { x: 0, y: 0, z: 0 };
       for (const node of shown) {
@@ -134,7 +181,11 @@ export default function Graph3D(props: {
         const lit = !!highlight?.edges.has(edge.id);
         const alpha = highlight && !lit ? 0.07 : edge.kind === 'membership' ? 0.45 : 0.75;
         ctx.globalAlpha = alpha * fog(depth);
-        ctx.strokeStyle = lit ? '#1c2433' : edge.kind === 'membership' ? '#e2b98c' : '#b8c2cf';
+        ctx.strokeStyle = lit
+          ? colors.lit
+          : edge.kind === 'membership'
+            ? colors.member
+            : colors.link;
         ctx.lineWidth = lit ? 2 : edge.kind === 'membership' ? 0.8 : 1.3;
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
@@ -152,7 +203,10 @@ export default function Graph3D(props: {
       for (const { node, p, r } of order) {
         const faded = highlight && !highlight.nodes.has(node.id);
         ctx.globalAlpha = (faded ? 0.16 : 1) * fog(p.depth);
-        const [light, base] = FILL[node.kind];
+        const [light, base] =
+          node.kind === 'keyword'
+            ? [colors.keywordLight, colors.keyword]
+            : [colors.documentLight, colors.document];
         const shade = ctx.createRadialGradient(p.x - r * 0.4, p.y - r * 0.4, r * 0.15, p.x, p.y, r);
         shade.addColorStop(0, light);
         shade.addColorStop(1, base);
@@ -162,12 +216,12 @@ export default function Graph3D(props: {
         else ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.fill();
         ctx.lineWidth = 1.5;
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = colors.halo;
         ctx.stroke();
         if (node.id === selected || node.id === hover) {
           ctx.globalAlpha = 1;
           ctx.lineWidth = 2;
-          ctx.strokeStyle = '#1c2433';
+          ctx.strokeStyle = colors.lit;
           ctx.beginPath();
           ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
           ctx.stroke();
@@ -190,9 +244,9 @@ export default function Graph3D(props: {
         const text = clip(node.label);
         ctx.globalAlpha = Math.max(0.4, fog(p.depth));
         ctx.lineWidth = 4;
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = colors.halo;
         ctx.strokeText(text, p.x, p.y + r + 13);
-        ctx.fillStyle = '#445063';
+        ctx.fillStyle = colors.label;
         ctx.fillText(text, p.x, p.y + r + 13);
       }
       ctx.globalAlpha = 1;

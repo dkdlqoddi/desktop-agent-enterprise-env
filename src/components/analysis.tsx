@@ -123,7 +123,8 @@ export function AnalysisJobView() {
     api(method, params).then(analysis.watch, (error: Error) => notify(error.message, true));
   return (
     <div className={`job analysis-job ${job.status}`}>
-      <div className="job-head" role="status">
+      {/* Only the state is live, so a screen reader hears it change, not every document counted. */}
+      <div className="job-head">
         {running ? (
           <LoaderCircle className="spin" size={15} />
         ) : job.results.length || job.error ? (
@@ -132,7 +133,7 @@ export function AnalysisJobView() {
           <Check size={15} />
         )}
         <strong>AI 분석</strong>
-        <span>{statusText(job)}</span>
+        <span role="status">{statusText(job)}</span>
         <span className="job-progress">
           {job.processed} / {job.total}
         </span>

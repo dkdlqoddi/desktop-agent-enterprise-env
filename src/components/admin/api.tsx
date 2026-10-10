@@ -218,7 +218,8 @@ export default function ApiSection({ onManual }: { onManual: () => void }) {
               <Copy size={13} /> 토큰 넣어 복사
             </button>
           </div>
-          <pre>
+          {/* Focusable, so a keyboard can scroll a long line into view. */}
+          <pre tabIndex={0}>
             <code>{snippet.text}</code>
           </pre>
         </div>

@@ -3,7 +3,7 @@
 .knowledge-explorer {
   margin: -10px -16px -16px;
   border-radius: 0 0 var(--radius) var(--radius);
-  background: #fff;
+  background: var(--panel);
   overflow: hidden;
 }
 .explorer-toolbar {
@@ -19,17 +19,17 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 10.5px;
+  font-size: 0.75rem;
   font-weight: 500;
-  color: #445063;
+  color: var(--ink-2);
 }
 .explorer-select select {
-  border: 1px solid #d9dfe6;
+  border: 1px solid var(--rule);
   border-radius: 6px;
-  background: #fff;
+  background: var(--panel);
   padding: 5px 8px;
-  font-size: 10.5px;
-  color: #445063;
+  font-size: 0.75rem;
+  color: var(--ink-2);
 }
 .explorer-toggle input {
   width: auto;
@@ -40,8 +40,8 @@
   margin-left: auto;
   display: flex;
   gap: 14px;
-  font-size: 10px;
-  color: #6f7b8c;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 .explorer-legend span {
   display: inline-flex;
@@ -55,21 +55,21 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #e8eefb;
-  border: 1.5px solid #2b59c3;
+  background: var(--graph-keyword-soft);
+  border: 1.5px solid var(--graph-keyword);
 }
 .key-document {
   width: 10px;
   height: 10px;
   border-radius: 3px;
-  background: #fbe6cf;
-  border: 1.5px solid #d9822b;
+  background: var(--graph-document-soft);
+  border: 1.5px solid var(--graph-document);
 }
 .key-relation {
   position: relative;
   width: 18px;
   height: 1.5px;
-  background: #b8c2cf;
+  background: var(--graph-link);
 }
 .key-relation::after {
   content: '';
@@ -77,7 +77,7 @@
   right: -1px;
   top: -3px;
   border: 3.5px solid transparent;
-  border-left: 5px solid #b8c2cf;
+  border-left: 5px solid var(--graph-link);
 }
 .explorer-body {
   display: grid;
@@ -87,14 +87,16 @@
 .explorer-canvas {
   position: relative;
   min-width: 0;
-  background: #f6f8fa;
+  background: var(--inset);
 }
+/* Clear of the zoom buttons at the bottom right; it wraps rather than runs under them. */
 .explorer-hint {
   position: absolute;
   left: 16px;
+  right: 140px;
   bottom: 14px;
-  font-size: 9.5px;
-  color: #9aa4b2;
+  font-size: 0.75rem;
+  color: var(--muted);
   pointer-events: none;
 }
 .graph-2d,
@@ -120,14 +122,14 @@
   touch-action: none;
 }
 .graph-3d > canvas:focus-visible {
-  outline: 3px solid #1c2433;
+  outline: 3px solid var(--ink);
   outline-offset: -3px;
 }
 .graph-zoom {
   position: absolute;
   right: 14px;
   bottom: 12px;
-  background: #fff;
+  background: var(--panel);
 }
 .graph-node,
 .graph-doc {
@@ -136,30 +138,30 @@
   outline: none;
 }
 .graph-node .halo {
-  fill: #e8eefb;
-  stroke: #a9bde9;
+  fill: var(--graph-keyword-soft);
+  stroke: var(--graph-keyword-ring);
   stroke-width: 1.5;
 }
 .graph-node .core {
-  fill: #2b59c3;
+  fill: var(--graph-keyword);
 }
 .graph-node text {
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 550;
-  fill: #445063;
+  fill: var(--ink-2);
   text-anchor: middle;
   paint-order: stroke;
-  stroke: #ffffff;
+  stroke: var(--graph-label-halo);
   stroke-width: 4px;
 }
 .graph-node.active .halo,
 .graph-node:focus-visible .halo {
-  stroke: #1c2433;
+  stroke: var(--ink);
   stroke-width: 2.5;
 }
 .graph-doc rect {
-  fill: #fbe6cf;
-  stroke: #d9822b;
+  fill: var(--graph-document-soft);
+  stroke: var(--graph-document);
   stroke-width: 1.5;
 }
 .graph-doc.active rect,
@@ -167,34 +169,43 @@
   stroke-width: 2.5;
 }
 .graph-doc text {
-  font-size: 10px;
-  fill: #7d6550;
+  font-size: 0.6875rem;
+  fill: var(--graph-document-ink);
   text-anchor: middle;
   paint-order: stroke;
-  stroke: #ffffff;
+  stroke: var(--graph-label-halo);
   stroke-width: 4px;
 }
+.graph-dot {
+  fill: var(--graph-dot);
+}
+.graph-arrow {
+  fill: var(--graph-link);
+}
+.graph-arrow.lit {
+  fill: var(--ink);
+}
 .graph-link {
-  stroke: #b8c2cf;
+  stroke: var(--graph-link);
   stroke-width: 1.4;
 }
 .graph-link.lit {
-  stroke: #1c2433;
+  stroke: var(--ink);
   stroke-width: 2;
 }
 .graph-link.member {
-  stroke: #eedcc7;
+  stroke: var(--graph-member);
   stroke-width: 1;
 }
 .graph-link.member.lit {
-  stroke: #d9822b;
+  stroke: var(--graph-document);
   stroke-width: 1.4;
 }
 .graph-2d .edge-label {
   text-anchor: middle;
-  font-size: 10px;
+  font-size: 0.6875rem;
   font-weight: 600;
-  fill: #2b59c3;
+  fill: var(--graph-keyword);
 }
 
 .explorer-panel {
@@ -202,13 +213,13 @@
   flex-direction: column;
   min-height: 0;
   border-left: 1px solid var(--rule-soft);
-  background: #fff;
+  background: var(--panel);
 }
 .explorer-detail {
   position: relative;
   padding: 16px 16px 14px;
   border-bottom: 1px solid var(--rule-soft);
-  background: #f6f8fa;
+  background: var(--inset);
   max-height: 58%;
   overflow: auto;
 }
@@ -221,21 +232,21 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 9.5px;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: #6f7b8c;
+  color: var(--muted);
   letter-spacing: 0.3px;
 }
 .explorer-detail h3 {
   margin: 6px 26px 4px 0;
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 650;
-  color: #1c2433;
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 .explorer-detail > p {
-  font-size: 10.5px;
-  color: #6f7b8c;
+  font-size: 0.75rem;
+  color: var(--muted);
   margin-bottom: 11px;
 }
 .explorer-detail > .tags {
@@ -245,14 +256,14 @@
   margin-top: 14px;
 }
 .detail-section h4 {
-  font-size: 9.5px;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: #6f7b8c;
+  color: var(--muted);
   margin-bottom: 5px;
 }
 .detail-section small {
   display: block;
-  font-size: 9.5px;
+  font-size: 0.75rem;
   margin: 4px 0 0 20px;
 }
 .detail-link {
@@ -264,17 +275,17 @@
   background: none;
   padding: 5px 4px;
   border-radius: 5px;
-  font-size: 11px;
-  color: #445063;
+  font-size: 0.75rem;
+  color: var(--ink-2);
   text-align: left;
 }
 .detail-link svg {
   margin-top: 2px;
-  color: #9aa4b2;
+  color: var(--faint);
 }
 .detail-link:hover {
-  background: #f6f8fa;
-  color: #1c2433;
+  background: var(--inset);
+  color: var(--ink);
 }
 .relation-path {
   display: flex;
@@ -292,9 +303,9 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: #2b59c3;
+  color: var(--graph-keyword);
 }
 .panel-tabs {
   display: grid;
@@ -309,18 +320,18 @@
   border: 0;
   background: none;
   padding: 12px 6px 11px;
-  font-size: 11px;
-  color: #6f7b8c;
+  font-size: 0.75rem;
+  color: var(--muted);
   border-bottom: 2px solid transparent;
 }
 .panel-tabs > button.active {
-  color: #1c2433;
+  color: var(--ink);
   font-weight: 600;
-  border-bottom-color: #1c2433;
+  border-bottom-color: var(--ink);
 }
 .panel-tabs > button span {
-  font-size: 9px;
-  background: #e8ecf0;
+  font-size: 0.6875rem;
+  background: var(--inset-2);
   border-radius: 4px;
   padding: 1px 5px;
 }
@@ -330,15 +341,16 @@
   gap: 8px;
   margin: 12px 14px 6px;
   padding: 0 10px;
-  border: 1px solid #d9dfe6;
+  border: 1px solid var(--rule);
   border-radius: 7px;
-  color: #9aa4b2;
+  color: var(--faint);
 }
 .panel-filter input {
+  color: var(--ink);
   border: 0;
   box-shadow: none !important;
   padding: 8px 0;
-  font-size: 11px;
+  font-size: 0.75rem;
   background: none;
 }
 .panel-list {
@@ -356,8 +368,8 @@
   background: none;
   border-radius: 6px;
   padding: 8px 8px;
-  font-size: 11px;
-  color: #445063;
+  font-size: 0.75rem;
+  color: var(--ink-2);
   text-align: left;
 }
 .panel-list > button > span {
@@ -365,28 +377,28 @@
 }
 .panel-list > button small {
   flex-shrink: 0;
-  font-size: 9.5px;
-  color: #9aa4b2;
+  font-size: 0.6875rem;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .panel-list > button:hover {
-  background: #f6f8fa;
+  background: var(--inset);
 }
 .panel-list > button.active {
-  background: #fcf7c9;
-  color: #1c2433;
+  background: var(--highlight);
+  color: var(--ink);
 }
 .relation-row strong {
   font-weight: 600;
-  color: #1c2433;
+  color: var(--ink);
 }
 .panel-empty,
 .panel-note {
   display: block;
   padding: 16px 8px;
-  font-size: 10.5px;
+  font-size: 0.75rem;
   line-height: 1.8;
-  color: #9aa4b2;
+  color: var(--muted);
 }
 @media (max-width: 1250px) {
   .explorer-body {

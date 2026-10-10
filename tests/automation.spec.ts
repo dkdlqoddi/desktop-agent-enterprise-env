@@ -107,7 +107,8 @@ test('automation: scheduled prompts run by themselves and the history widget sho
     await expect(tiles.nth(0)).toContainText('3');
     await expect(tiles.nth(1)).toContainText('67%');
     await expect(tiles.nth(3)).toContainText('1');
-    await expect(history.getByRole('img', { name: /일별 실행 수/ })).toBeVisible();
+    // A group of day columns, each a labelled graphic a keyboard can reach.
+    await expect(history.getByRole('group', { name: /일별 실행 수/ })).toBeVisible();
     await history.getByRole('button', { name: '표로 보기' }).click();
     await expect(history.locator('.chart-table tbody tr').first()).toHaveText(/오늘\s*2\s*1\s*1/);
     await page.screenshot({ path: 'test-results/run-history.png', fullPage: true });

@@ -513,13 +513,14 @@ function JobView({
   const unlisted = 'batches' in job ? job.processed - job.results.length : 0;
   return (
     <li className={`job ${job.status}`}>
-      <div className="job-head" role="status">
+      {/* Only the state is live, so a screen reader hears it change, not every item counted. */}
+      <div className="job-head">
         {running ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
         <strong>
           {TITLES[kind]}
           {job.routine ? ` · 자동 작업 ‘${job.routine}’` : ''}
         </strong>
-        <span>{statusText(kind, job)}</span>
+        <span role="status">{statusText(kind, job)}</span>
         <span className="job-progress">
           {job.processed} / {job.total}
         </span>
