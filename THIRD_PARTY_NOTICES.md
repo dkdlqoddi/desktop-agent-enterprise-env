@@ -186,6 +186,7 @@ Private Agent는 [MIT 라이선스](LICENSE)로 배포하며, 아래 오픈소�
 | eslint-plugin-jsx-a11y    | npm    | 6.10.2       | MIT                                        |
 | eslint-plugin-react-hooks | npm    | 7.1.1        | MIT                                        |
 | globals                   | npm    | 17.12.0      | MIT                                        |
+| jsdom                     | npm    | 29.1.1       | MIT                                        |
 | nanoid                    | npm    | 3.3.19       | MIT                                        |
 | picocolors                | npm    | 1.1.1        | ISC                                        |
 | postcss                   | npm    | 8.5.23       | MIT                                        |

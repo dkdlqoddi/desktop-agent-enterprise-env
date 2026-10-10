@@ -175,9 +175,14 @@ export default defineConfig(
     },
   },
   {
-    // ANSI colour codes in a terminal's output, and the control characters an address or a decrypted text must not
-    // hold, are matched on purpose.
-    files: ['electron/demo-plan.cjs', 'electron/sites.cjs', 'scripts/dev.mjs'],
+    // ANSI colour codes in a terminal's output, the control characters an address or a decrypted text must not hold,
+    // and those browsers ignore in a URL (the sanitizer's test), are matched on purpose.
+    files: [
+      'electron/demo-plan.cjs',
+      'electron/sites.cjs',
+      'scripts/dev.mjs',
+      'tests/sanitize.test.cjs',
+    ],
     rules: { 'no-control-regex': 'off' },
   },
 
