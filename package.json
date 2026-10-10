@@ -31,7 +31,7 @@
     "format:python:check": "node scripts/lint-python.mjs format --check backend",
     "test:python": "node scripts/test-python.mjs",
     "test:python:coverage": "node scripts/test-python.mjs --coverage",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/test-e2e.mjs",
     "test:main": "node --test \"tests/*.test.cjs\"",
     "test:main:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"electron/**\" \"tests/*.test.cjs\"",
     "check": "npm run typecheck && npm run test:python && npm run test:main",

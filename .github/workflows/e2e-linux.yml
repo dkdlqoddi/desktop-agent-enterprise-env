@@ -1,0 +1,48 @@
+name: E2E (Linux)
+# The Playwright E2E suite on Linux, every night and by hand: the development Electron with the built screens and the
+# PyInstaller backend, on a virtual display (scripts/test-e2e.mjs runs Playwright under xvfb-run). The same suite runs
+# against the packaged Windows app in build.yml. Failed tests leave their traces as an artifact.
+on:
+  schedule:
+    # 03:00 KST.
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            backend/constraints.txt
+      - run: npm ci
+      - run: npm run setup:python
+      - run: npm run setup:browser
+      # Chromium's system libraries, which Electron shares, and the virtual display.
+      - run: backend/.venv/bin/python -m playwright install-deps chromium
+      - run: sudo apt-get install -y xvfb
+      - run: npm run setup:electron
+      - run: npm run build
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-traces
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14

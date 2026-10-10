@@ -109,7 +109,7 @@ npm run build:python
 npm run test:e2e
 ```
 
-`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
+`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. `test:e2e`는 Linux에서 xvfb가 설치되어 있으면 가상 디스플레이에서 창을 띄우지 않고 실행되며(`PRIVATE_AGENT_E2E_SHOW=1`이면 실제 화면에 띄웁니다), 같은 E2E가 GitHub Actions의 `e2e-linux.yml`로 매일 밤과 수동 실행 때 돌아갑니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
 
 `lint:python`은 Python 백엔드를 ruff로 검사하고(`npm run lint:python -- --fix`는 고칠 수 있는 것을 고칩니다), `format:python`은 형식을 맞추며, `format:python:check`는 형식이 맞는지만 확인합니다. 규칙은 `backend/pyproject.toml`의 `[tool.ruff]`에 있습니다. 백엔드 전체의 형식을 한 번에 맞춘 커밋은 `.git-blame-ignore-revs`에 있으니, `git config blame.ignoreRevsFile .git-blame-ignore-revs`로 설정하면 `git blame`이 그 커밋을 건너뜁니다.
 
