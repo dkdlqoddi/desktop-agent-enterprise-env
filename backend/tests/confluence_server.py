@@ -6,11 +6,17 @@ SyntaxHighlighter code macro that its script turns into a table, links, a pictur
 dangerous link and a form. The REST API lists page 1's children (2, then 4 on a second page) and page 2's (3, and 1
 again: a cycle). Options: an SSO (sso) or Confluence's own login form (form) for signed-out visitors, HTTP 401
 instead (auth), page 2 refused (forbidden), page 2's children refused (discovery_failure), slow pages (slow), and bodies
-that only scripts draw, as in Confluence Cloud (rendered)."""
+that only scripts draw, as in Confluence Cloud (rendered).
+
+Each page has a version number (version), which changes with what the page holds unless `versions` sets it; the content
+API gives it (/rest/api/content/N), and so does the subpage list asked to (expand=version) and the content search by
+space and title (page N is titled "Page N"). The next `throttled` REST requests and the next `page_throttled` page
+requests are answered 429 Too Many Requests with a Retry-After of `retry_after` seconds."""
 import json
 import re
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
@@ -70,6 +76,7 @@ class ConfluenceServer:
         self.requests, self.logins = [], []
         self.credentials = {"id": "tester", "password": "correct horse"}
         self.sso = self.form = self.auth = self.forbidden = self.discovery_failure = self.slow = self.rendered = False
+        self.versions, self.throttled, self.page_throttled, self.retry_after = {}, 0, 0, "0"
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -112,6 +119,10 @@ class ConfluenceServer:
         except OSError:
             pass  # The browser went away, e.g. a cancelled import closed it.
 
+    def version(self, ident):
+        """The version number of page `ident`: as `versions` sets it, else one that changes with what the page holds."""
+        return self.versions.get(ident) or 1 + zlib.crc32(page(ident, self.rendered).encode()) % 1000
+
     def redirect(self, handler, location, cookie=None):
         self.send(handler, 302, headers={"Location": location, **({"Set-Cookie": cookie} if cookie else {})})
 
@@ -138,6 +149,11 @@ class ConfluenceServer:
             return self.send(handler, 401, "Login required")
         if url.path in ("/confluence/", "/confluence"):
             return self.send(handler, 200, DASHBOARD.format(user=self.credentials["id"] if signed_in else ""))
+        busy = {"Retry-After": self.retry_after} if self.retry_after is not None else {}
+        if "/rest/" in url.path and self.throttled:
+            self.throttled -= 1
+            return self.send(handler, 429, "Too Many Requests", headers=busy)
+        versioned = "version" in query.get("expand", "")
         api = re.search(r"/rest/api/content/(\d+)/child/page", url.path)
         if api:
             if self.discovery_failure and api[1] == "2":
@@ -145,11 +161,27 @@ class ConfluenceServer:
             start = query.get("start", "0")
             ids = (["2"] if start == "0" else ["4"]) if api[1] == "1" else ["3", "1"] if api[1] == "2" else []
             links = {"next": "/rest/api/content/1/child/page?start=1&limit=1"} if api[1] == "1" and start == "0" else {}
-            return self.send(handler, 200, json.dumps({"results": [{"id": ident} for ident in ids], "_links": links}),
+            results = [{"id": ident, **({"version": {"number": self.version(ident)}} if versioned else {})}
+                       for ident in ids]
+            return self.send(handler, 200, json.dumps({"results": results, "_links": links}), "application/json")
+        content = re.fullmatch(r"/confluence/rest/api/content/(\d+)", url.path)
+        if content:
+            if self.forbidden and content[1] == "2":
+                return self.send(handler, 403, "Forbidden")
+            return self.send(handler, 200, json.dumps({"id": content[1], "type": "page",
+                                                       "version": {"number": self.version(content[1])}}),
                              "application/json")
+        if url.path == "/confluence/rest/api/content":  # The content search by space and title.
+            titled = re.fullmatch(r"Page (\d+)", query.get("title", ""))
+            found = [titled[1]] if titled and query.get("spaceKey") == "SPACE" else []
+            return self.send(handler, 200, json.dumps({"results": [
+                {"id": ident, "version": {"number": self.version(ident)}} for ident in found]}), "application/json")
         ident = query.get("pageId") or ("1" if url.path.startswith("/confluence/display/") else None)
         if not ident:
             return self.send(handler, 404, "Not found")
+        if self.page_throttled:
+            self.page_throttled -= 1
+            return self.send(handler, 429, "Too Many Requests", headers=busy)
         if self.forbidden and ident == "2":
             return self.send(handler, 403, "Forbidden")
         if self.slow:

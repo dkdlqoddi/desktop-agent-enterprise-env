@@ -23,7 +23,8 @@ def import_file(service, params):
     try:
         if not file.is_file():
             raise UserError("파일 경로를 입력해 주세요." if file.exists() else "파일을 찾을 수 없습니다. 경로를 확인해 주세요.")
-        if file.stat().st_size > MAX_SOURCE_BYTES:
+        stat = sources.file_stat(file)
+        if stat[0] > MAX_SOURCE_BYTES:
             raise UserError("Markdown 파일이 10MB를 초과해 가져오지 않았습니다.")
         data = file.read_bytes()
     except OSError:
@@ -45,12 +46,17 @@ def import_file(service, params):
         # The file is told apart by its bytes, as the document window checks it; one whose text stayed (only its line
         # breaks or byte order mark changed) keeps its document and analysis and records its new bytes.
         found = sources.plan(db, "markdown_sources", path, {"source_hash": checksum}, target, replace, split,
-                             automatic=bool(params.get("routine")))
+                             automatic=bool(params.get("routine")), stat=stat)
+        known = {"source_size": stat[0], "source_mtime": stat[1]}
         if found.action == "skip":
+            if found.reason == "same":
+                sources.touch(db, "markdown_sources", found.rows, known, path)
             result = sources.skipped(found, "이미 가져온 동일한 Markdown 파일입니다.")
         else:
             ids, removed = sources.save(db, "markdown_sources", found, split, title, timestamp,
-                                        {"source_path": path, "source_hash": checksum})
+                                        {"source_path": path, "source_hash": checksum, **known})
             result = sources.outcome(found, split, ids, removed, "Markdown 문서를 Wiki에 저장했습니다.", "Markdown")
-        result["title"] = db.execute("SELECT title FROM documents WHERE id=?", (result["doc_id"],)).fetchone()[0]
+        # A source whose documents were purged has none left to name.
+        row = db.execute("SELECT title FROM documents WHERE id=?", (result["doc_id"],)).fetchone()
+        result["title"] = row[0] if row else title
     return {**result, "path": path}

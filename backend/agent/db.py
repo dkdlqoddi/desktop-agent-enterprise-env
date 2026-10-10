@@ -172,6 +172,24 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_routine_runs ON routine_runs(routine_id,created_at);
                 CREATE INDEX IF NOT EXISTS idx_routine_runs_finished ON routine_runs(finished_at);
+                -- Sources whose documents were all purged from the trash (sources.purge): the source table and the
+                -- path or link. Automatic imports (routines) leave them out until the user imports them again, which
+                -- forgets them here (sources.plan).
+                CREATE TABLE IF NOT EXISTS ignored_sources (
+                    source_table TEXT NOT NULL, source TEXT NOT NULL, ignored_at TEXT NOT NULL,
+                    PRIMARY KEY(source_table, source)
+                );
+                -- The copies of Office files that write-backs made (writeback.py), by the file they copied: what the
+                -- copy holds (checksum), what made it (kind: a write, or a restore that replaced the file), and how
+                -- the write it was made for went (state, and what a write cut by a crash left: outcome), so that the
+                -- next write tells the user first.
+                CREATE TABLE IF NOT EXISTS writeback_backups (
+                    id TEXT PRIMARY KEY, source_path TEXT NOT NULL, doc_id TEXT NOT NULL, name TEXT NOT NULL,
+                    checksum TEXT NOT NULL, size INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'write',
+                    state TEXT NOT NULL DEFAULT 'writing', outcome TEXT NOT NULL DEFAULT '',
+                    written TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_writeback_backups_path ON writeback_backups(source_path,created_at);
             """)
             for name, (columns, key) in SOURCE_TABLES.items():
                 db.execute(source_table(name, columns, key))
@@ -186,6 +204,22 @@ class Database:
             # import again leaves it '' as it saves the row anew.
             if "written" not in {r[1] for r in db.execute("PRAGMA table_info(office_sources)")}:
                 db.execute("ALTER TABLE office_sources ADD COLUMN written TEXT NOT NULL DEFAULT ''")
+            # A file's size and modification time (ns) as the import read it: a file with both unchanged is taken as
+            # unchanged without reading it again (sources.stored_hash). NULL before they were kept, or when the file
+            # had changed too recently for its time to tell a later change apart (sources.file_stat).
+            # A page's version number (Confluence) and a ticket's updated time (JIRA) as the site gave them with the
+            # text imported, and when the source was last read in full (read_at): a routine's import compares them
+            # before it reads a page again (sources.fresh).
+            added = {name: [("source_size", "INTEGER"), ("source_mtime", "INTEGER")]
+                     for name in SOURCE_TABLES if identity(name) == "source_path"}
+            remote = "TEXT NOT NULL DEFAULT ''"
+            added["confluence_sources"] = [("version", remote), ("read_at", remote)]
+            added["jira_sources"] = [("updated", remote), ("read_at", remote)]
+            for name, columns in added.items():
+                existing = {r[1] for r in db.execute(f"PRAGMA table_info({name})")}
+                for column, definition in columns:
+                    if column not in existing:
+                        db.execute(f"ALTER TABLE {name} ADD COLUMN {column} {definition}")
             # Runs recorded before scheduling carry no outcome or timing; they were successful manual runs.
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
             for column, definition in (("status", "TEXT NOT NULL DEFAULT 'success'"),

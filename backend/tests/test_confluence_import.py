@@ -6,11 +6,13 @@ import json
 import re
 import threading
 import time
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 import pytest
 
-from agent import confluence_import
+from agent import browser_import, confluence_import, sources
 from agent.confluence_import import api_link, children, is_page_url, location_info, page_url
 from agent.db import Database
 from agent.llm import UserError
@@ -481,3 +483,128 @@ def test_real_browser_with_the_llm_a_failed_login_and_a_page_that_does_not_open_
     job = run(importer, server.url, analyze=True)
     assert (job["status"], job["imported"], job["analysis_failed"]) == ("completed", 1, 1), str(job)
     assert "AI 분석에 실패" in job["results"][0]["analysis_error"]
+
+
+# ---------------------------------------------------------------------------
+# Requests within the site's rate, and routines that read changed pages only
+# ---------------------------------------------------------------------------
+
+
+def test_requests_keep_to_a_rate_per_host_and_wait_as_long_as_a_site_asks(monkeypatch):
+    clock = [100.0]
+    throttle = browser_import.Throttle(rate=4, burst=4, clock=lambda: clock[0])
+    assert [throttle.reserve("https://wiki.test/a") for _ in range(4)] == [0, 0, 0, 0]
+    assert throttle.reserve("https://wiki.test/b") == pytest.approx(0.25)
+    assert throttle.reserve("https://other.test/") == 0  # Each host has its own.
+    clock[0] += 1.25
+    assert throttle.reserve("https://WIKI.test/c") == 0
+    # A refusal as one too many holds every request to the host as long as Retry-After asks: seconds or a date.
+    assert throttle.pause("https://wiki.test/x", 1, "3") is True
+    assert throttle.reserve("https://wiki.test/y") == pytest.approx(3)
+    date = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+    assert 25 < browser_import.retry_seconds(date) <= 30
+    assert browser_import.retry_seconds("soon") is None and browser_import.retry_seconds("") is None
+    # More than a job waits for is not waited for; without Retry-After the wait doubles at each try.
+    assert throttle.pause("https://wiki.test/x", 1, str(int(browser_import.MAX_WAIT) + 1)) is False
+    monkeypatch.setattr(browser_import.random, "random", lambda: 0)
+    throttle.pause("https://late.test/", 3)
+    assert throttle.reserve("https://late.test/") == pytest.approx(4)
+
+    fast = browser_import.Throttle(rate=1000, burst=1000)
+
+    def answers(*values):
+        sent = list(values)
+
+        async def send():
+            return sent.pop(0)
+        return send
+
+    # Too many: tried again once the site's wait is over; another refusal (503 without Retry-After) is the answer.
+    assert asyncio.run(browser_import.polite("https://wiki.test/", answers(
+        {"status": 429, "retry": "0"}, {"status": 200, "text": "{}"}), fast)) == {"status": 200, "text": "{}"}
+    assert asyncio.run(browser_import.polite("https://wiki.test/", answers(
+        {"status": 503, "retry": ""}, {"status": 200}), fast)) == {"status": 503, "retry": ""}
+    refused = [{"status": 429, "retry": "0"}] * browser_import.ATTEMPTS + [{"status": 200}]
+    send = answers(*refused)
+    assert asyncio.run(browser_import.polite("https://wiki.test/", send, fast)) == {"status": 429, "retry": "0"}
+
+
+def test_a_subpage_list_refused_as_too_many_is_asked_again_and_gives_the_versions(monkeypatch):
+    monkeypatch.setattr(browser_import, "THROTTLE", browser_import.Throttle(rate=1000, burst=1000))
+
+    class Page:
+        def __init__(self, *answers):
+            self.answers = list(answers)
+
+        async def evaluate(self, script, params):
+            return self.answers.pop(0)
+
+    listed = json.dumps({"results": [{"id": "2", "version": {"number": 7}}, {"id": "3"}]})
+    page = Page({"status": 429, "link": "", "text": "", "retry": "0"}, {"status": 200, "link": "", "text": listed})
+    found = []
+    asyncio.run(children(confluence_import.page_request(page), {"base": "https://wiki.test/confluence", "id": "1"},
+                         found.append))
+    assert [(item["id"], item["version"]) for item in found] == [("2", "7"), ("3", "")]
+    # A site that keeps refusing says so, and the job tells which list it could not read.
+    page = Page(*[{"status": 429, "link": "", "text": "", "retry": "0"}] * browser_import.ATTEMPTS)
+    with pytest.raises(UserError, match="HTTP 429"):
+        asyncio.run(children(confluence_import.page_request(page), {"base": "https://wiki.test/confluence", "id": "1"},
+                             found.append))
+    # A link that names its page by space and title is looked up by them.
+    assert confluence_import.title_of("https://wiki.test/confluence/display/SPACE/Page+1%2B2") == (
+        "https://wiki.test/confluence", "SPACE", "Page 1+2")
+    assert confluence_import.title_of(
+        "https://wiki.test/pages/viewpage.action?spaceKey=S&title=A+B") == ("https://wiki.test", "S", "A B")
+    assert confluence_import.title_of(PAGE) is None and confluence_import.title_of("https://wiki.test/x/Ab") is None
+
+
+def test_real_browser_a_routine_reads_only_the_pages_whose_version_changed(browser):
+    server, service, importer, captures = browser
+    job = run(importer, server.url, recursive=True, track_changes=True)
+    assert (job["status"], job["imported"]) == ("completed", 4), str(job)
+    # Each page's version goes with its import: the subpage list gave the subpages', the content API the first page's.
+    with service.db.connect() as db:
+        versions = {row[0]: row[1] for row in db.execute("SELECT page_id, version FROM confluence_sources")}
+    assert versions == {ident: str(server.version(ident)) for ident in "1234"}
+    # Nothing changed: no page is read again, only the versions are asked for.
+    server.requests.clear()
+    job = run(importer, server.url, recursive=True, track_changes=True)
+    assert (job["skipped"], job["processed"]) == (4, 4), str(job)
+    assert {item["message"] for item in job["results"]} == {sources.UNMODIFIED}
+    assert not [path for path in server.requests if "pageId=" in path], server.requests
+    # A new version of one page, and a page last read in full more than a day ago: those two alone are read.
+    server.versions["3"] = 77
+    with service.db.connect() as db:
+        db.execute("UPDATE confluence_sources SET read_at='2020-01-01T00:00:00+00:00' WHERE page_id='4'")
+    server.requests.clear()
+    job = run(importer, server.url, recursive=True, track_changes=True)
+    assert (job["skipped"], job["processed"]) == (4, 4), str(job)
+    assert sorted(path.rsplit("=", 1)[1] for path in server.requests if "pageId=" in path) == ["3", "4"]
+    with service.db.connect() as db:
+        assert db.execute("SELECT version FROM confluence_sources WHERE page_id='3'").fetchone()[0] == "77"
+    # A link that names the page by space and title is found by them, without opening the page.
+    server.requests.clear()
+    job = run(importer, f"{server.origin}/confluence/display/SPACE/Page+1", track_changes=True)
+    assert (job["skipped"], job["results"][0]["message"]) == (1, sources.UNMODIFIED), str(job)
+    assert not [path for path in server.requests if "pageId=" in path or "/display/" in path], server.requests
+    # The user's own import reads every page, as before.
+    server.requests.clear()
+    job = run(importer, server.url, recursive=True)
+    assert len([path for path in server.requests if "pageId=" in path]) >= 4 and job["skipped"] == 4
+
+
+def test_real_browser_a_site_that_asks_to_slow_down_is_waited_for(browser):
+    server, service, importer, captures = browser
+    # The subpage list refused twice as too many requests: asked again, no page below is lost.
+    server.throttled = 2
+    job = run(importer, server.url, recursive=True)
+    assert (job["processed"], job["imported"], job["discovery_failed"], job["failed"]) == (4, 4, 0, 0), str(job)
+    assert len([path for path in server.requests if "/rest/" in path]) == 5 + 2
+    # A page refused once is opened again.
+    server.page_throttled = 1
+    job = run(importer, server.url)
+    assert (job["status"], job["skipped"], job["failed"]) == ("completed", 1, 0), str(job)
+    # A site that asks for a longer wait than a job takes is not waited for: the list it refused is told.
+    server.throttled, server.retry_after = 1, "3600"
+    job = run(importer, server.url, recursive=True)
+    assert job["discovery_failed"] == 1 and "HTTP 429" in job["results"][0]["discovery_error"], str(job)

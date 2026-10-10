@@ -131,9 +131,11 @@ class Service:
         # An interrupted extraction must remain retryable on the next startup.
         with db.connect() as conn:
             conn.execute("UPDATE documents SET status='pending', error='' WHERE status='indexing'")
-            # The trash is emptied of what has waited TRASH_DAYS: the rest stays for the user to restore.
-            conn.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?",
-                         ((datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).isoformat(),))
+            # The trash is emptied of what has waited TRASH_DAYS: the rest stays for the user to restore. Routines
+            # leave out the sources of what goes, as after the user's own purge (sources.purge).
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).isoformat()
+            sources.purge(conn, [row[0] for row in conn.execute(
+                "SELECT id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?", (cutoff,))])
 
     def shutdown(self, _=None):
         """The app is closing: stop the automatic routines, the imports, a write to an original file before it saves,
@@ -207,6 +209,7 @@ class Service:
             "text.cancel": self.texts.cancel, "text.dismiss": self.texts.dismiss,
             "writeback.start": self.writeback.start, "writeback.status": self.writeback.status,
             "writeback.cancel": self.writeback.cancel, "writeback.dismiss": self.writeback.dismiss,
+            "writeback.backups": self.writeback.backups, "writeback.restore_backup": self.writeback.restore_backup,
             **self.assistant.methods, **self.schedules.methods, **self.routines.methods,
         }
         if method not in methods or not isinstance(params, dict):
@@ -605,18 +608,22 @@ class Service:
         return {"restored": restored}
 
     def wiki_purge(self, p):
-        """Delete the chosen documents of the trash for good, or all of them (`all`): nothing brings them back."""
+        """Delete the chosen documents of the trash for good, or all of them (`all`): nothing brings them back. The
+        sources none of whose documents is left are left out of the routines' imports (sources.purge)."""
         from .search import chunks
         everything = p.get("all", False)
         if not isinstance(everything, bool):
             raise UserError("휴지통을 모두 비울지(all) 확인해 주세요.")
         ids = [] if everything else document_ids(p.get("ids"))
         with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             if everything:
-                purged = db.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL").rowcount
+                found = [row[0] for row in db.execute("SELECT id FROM documents WHERE deleted_at IS NOT NULL")]
             else:
-                purged = sum(db.execute(f"DELETE FROM documents WHERE id IN ({','.join('?' * len(chunk))}) "
-                                        "AND deleted_at IS NOT NULL", chunk).rowcount for chunk in chunks(ids))
+                found = [row[0] for chunk in chunks(ids) for row in db.execute(
+                    f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(chunk))}) AND deleted_at IS NOT NULL",
+                    chunk)]
+            purged = sources.purge(db, found)
         return {"purged": purged}
 
     def wiki_clear_analysis(self, p):
@@ -677,9 +684,10 @@ class Service:
                 raise UserError("가져온 문서가 아닙니다." if found else "문서를 찾을 수 없습니다.")
             if "source_path" not in source:
                 return {"state": "unknown"}
-            checksum = db.execute(f"SELECT source_hash FROM {self.source_table(source)} WHERE doc_id=?",
-                                  (ident,)).fetchone()[0]
-        return sources.file_state(source["source_path"], checksum)
+            row = db.execute(f"SELECT source_hash,source_size,source_mtime FROM {self.source_table(source)} "
+                             "WHERE doc_id=?", (ident,)).fetchone()
+        return sources.file_state(source["source_path"], row["source_hash"],
+                                  stat=(row["source_size"], row["source_mtime"]))
 
     def markdown_import(self, p):
         # Only Electron's files.import_text calls this internal RPC, with the path the user gave.

@@ -136,11 +136,13 @@ const ALLOWED = new Set([
   'wiki.source_markdown',
   'wiki.source_html',
   'wiki.source_status',
-  // Writing a document's changes back into the file it came from.
+  // Writing a document's changes back into the file it came from, and the copies of the file kept before each write.
   'writeback.start',
   'writeback.status',
   'writeback.cancel',
   'writeback.dismiss',
+  'writeback.backups',
+  'writeback.restore_backup',
   'confluence.start',
   'confluence.status',
   'confluence.cancel',
@@ -1382,6 +1384,10 @@ async function handle(method, params, { access } = {}) {
     });
     if (plan && result?.job?.id) watchSiteJob('jira', result.job.id, plan.site_id);
   } else if (method === 'writeback.start') result = await rpc(method, { id: params.id });
+  // A backup is named by its id among those of the document's file, never by a path.
+  else if (method === 'writeback.backups') result = await rpc(method, { doc_id: params.doc_id });
+  else if (method === 'writeback.restore_backup')
+    result = await rpc(method, { doc_id: params.doc_id, backup: params.backup });
   else if (['routines.save', 'routines.toggle', 'routines.run'].includes(method)) {
     await checkRoutineAccess(method, params, access);
     // Whether the caller may have files read is never a value of its request: the screens may, an AI tool by its level.

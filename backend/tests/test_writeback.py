@@ -2,11 +2,13 @@
 found and made in the file's own text through stand-ins of the Office object models (office_write.py), the hidden
 application's session, and the job that backs the file up, writes it and reads it again (writeback.py).
 Windows runs the real Office (PRIVATE_AGENT_OFFICE_TEST=1)."""
+import contextlib
 import os
 import re
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 from random import Random
 from types import SimpleNamespace as NS
@@ -18,11 +20,12 @@ from agent.db import Database
 from agent.html_document import index_markdown, page
 from agent.llm import UserError
 from agent.office_import import OfficeImporter
+from agent import office_write
 from agent.office_write import (CANCELLED, edit_excel, edit_powerpoint, edit_visio, edit_word, word_units,
                                 write_word)
 from agent.service import Service
 from agent.source_edits import Changed, Missing, changes, excel_changes, plain, units
-from agent.writeback import BACKUPS, EDITED_MEANWHILE, count, plan_of
+from agent.writeback import BACKUPS, EDITED_MEANWHILE, checksum, classify, count, plan_of, whole
 from test_rtf_import import FakeLLM, fake_modules
 
 
@@ -1154,32 +1157,227 @@ def test_writes_that_cannot_start_say_why(written, tmp_path):
         service.writeback.start({"id": ident})
 
 
-def test_backups_are_kept_by_when_they_were_made(written, tmp_path, monkeypatch):
-    service, source, _ = written
-    folder = tmp_path / "wiki" / BACKUPS
+def test_backups_are_kept_by_file_the_newest_five_of_each(written, tmp_path, monkeypatch):
+    service, source, ident = written
+    folder, writeback = tmp_path / "wiki" / BACKUPS, service.writeback
     folder.mkdir()
-    for number in range(35):
-        (folder / f"20260101-0000{number:02d} 예전.docx").write_bytes(b"old")
+    # A copy an earlier version made, which no record names, and a file the user put there stay.
+    (folder / "20260101-000000 예전.docx").write_bytes(b"old")
     (folder / "메모.txt").write_text("사용자가 둔 파일")
-    # copy2 keeps the original's time: an old file's copy is still the newest backup.
-    os.utime(source, (946684800, 946684800))
-    stuck = folder / "20260101-000001 예전.docx"
-    unlink, removed = Path.unlink, []
+    other = tmp_path / "다른 파일.docx"
+    other.write_text("다른 내용", encoding="utf-8")
+    theirs = writeback.backup(other, "other")
+    copies = []
+    for number in range(7):
+        source.write_text(f"판 {number}", encoding="utf-8")
+        copies.append(writeback.backup(source, ident))
+        writeback.prune(source)
+    # The two oldest copies of the file went; another file's copy, and what no record names, stay.
+    kept = [copy["name"] for copy in copies[2:]]
+    assert {item.name for item in folder.iterdir()} == {*kept, theirs["name"], "20260101-000000 예전.docx", "메모.txt"}
+    listed = service.dispatch("writeback.backups", {"doc_id": ident})
+    assert [item["id"] for item in listed["backups"]] == [copy["id"] for copy in copies[2:]][::-1]
+    assert ([item["name"] for item in listed["backups"]], listed["keep"]) == (kept[::-1], 5)
+    assert [item["current"] for item in listed["backups"]] == [True, False, False, False, False]
+    # A copy another program holds open stays recorded until it can go; one removed by hand loses its record.
+    stuck, unlink = folder / kept[0], Path.unlink
 
     def held(path, *args, **kwargs):
-        removed.append(path.name)
         if path == stuck:
             raise PermissionError("open in Word")
         return unlink(path, *args, **kwargs)
     monkeypatch.setattr(Path, "unlink", held)
-    copy = service.writeback.backup(source)
-    names = sorted(item.name for item in folder.iterdir())
-    assert copy.exists() and copy.read_bytes() == source.read_bytes()
-    assert "메모.txt" in names and stuck.name in names
-    # The six oldest by name go. Counted as asked, not as listed: Windows does not remove a file at once while another
-    # program has it open, and an antivirus may still be reading the files written a moment ago.
-    assert sorted(removed) == [f"20260101-0000{number:02d} 예전.docx" for number in range(6)], str(removed)
-    assert all(f"20260101-0000{number:02d} 예전.docx" in names for number in range(6, 35)), str(names)
+    (folder / kept[1]).unlink()
+    for number in (7, 8):
+        source.write_text(f"판 {number}", encoding="utf-8")
+        writeback.backup(source, ident)
+        writeback.prune(source)
+    listed = [item["id"] for item in service.dispatch("writeback.backups", {"doc_id": ident})["backups"]]
+    assert stuck.exists() and listed[-1] == copies[2]["id"] and copies[3]["id"] not in listed and len(listed) == 6
+    monkeypatch.undo()
+    writeback.prune(source)
+    assert not stuck.exists() and len(service.dispatch("writeback.backups", {"doc_id": ident})["backups"]) == 5
+
+
+def test_a_backup_of_the_documents_file_is_put_back_in_its_place(written, tmp_path):
+    service, source, ident = written
+    original = source.read_bytes()
+    doc = service.wiki_get({"id": ident})
+    service.wiki_save({"id": ident, "title": doc["title"], "content": doc["content"].replace("홍길동", "김철수")})
+    service.writeback.start({"id": ident})
+    assert wait_for(service)["status"] == "completed"
+    written_bytes = source.read_bytes()
+    listed = service.dispatch("writeback.backups", {"doc_id": ident})
+    assert (listed["file"], listed["interrupted"]) == ("보고서.docx", None)
+    [copy] = listed["backups"]
+    assert (copy["kind"], copy["state"], copy["current"]) == ("write", "written", False)
+    # Only a copy the app made of this document's file is put back: named by its id, never by a path.
+    note = service.wiki_save({"title": "메모", "content": "직접 쓴 글"})
+    for params, message in [({"doc_id": ident, "backup": f"../{BACKUPS}/{copy['name']}"}, "백업한 것이 아닙니다"),
+                            ({"doc_id": ident}, "백업"), ({"doc_id": note["id"], "backup": copy["id"]}, "Office 파일")]:
+        with pytest.raises(UserError, match=message):
+            service.dispatch("writeback.restore_backup", params)
+    service.writeback.job = {"status": "running"}
+    with pytest.raises(UserError, match="원본에 반영하는 중입니다"):
+        service.dispatch("writeback.restore_backup", {"doc_id": ident, "backup": copy["id"]})
+    service.writeback.job = None
+    restored = service.dispatch("writeback.restore_backup", {"doc_id": ident, "backup": copy["id"]})
+    assert restored["restored"] is True and source.read_bytes() == original
+    assert restored["message"] == (f"백업 {copy['name']}을(를) 원본 파일 자리에 복원했습니다. 복원하기 전의 파일은 "
+                                   f"‘{BACKUPS}’에 {restored['backup']}(으)로 남겼습니다. 문서에 반영하려면 문서 창에서 "
+                                   "‘원본에서 업데이트’를 눌러 주세요.")
+    # The file it replaced was copied first, so the restore can be undone too.
+    listed = service.dispatch("writeback.backups", {"doc_id": ident})["backups"]
+    assert [(item["kind"], item["current"]) for item in listed] == [("restore", False), ("write", True)]
+    assert (tmp_path / "wiki" / BACKUPS / restored["backup"]).read_bytes() == written_bytes
+    # Restoring what the file holds already changes nothing; the document reads the file with an update from it.
+    assert service.dispatch("writeback.restore_backup", {"doc_id": ident, "backup": copy["id"]})["restored"] is False
+    assert service.wiki_source_status({"id": ident})["state"] == "changed"
+    # A copy changed after it was made is not put back.
+    (tmp_path / "wiki" / BACKUPS / restored["backup"]).write_text("바뀐 백업", encoding="utf-8")
+    with pytest.raises(UserError, match="바뀌어 복원하지 않았습니다"):
+        service.dispatch("writeback.restore_backup", {"doc_id": ident, "backup": listed[0]["id"]})
+    assert source.read_bytes() == original
+
+
+def office_package(path, text, compression=zipfile.ZIP_DEFLATED):
+    """A file in the ZIP package format of Office since 2007, holding `text` in its one part."""
+    with zipfile.ZipFile(path, "w", compression) as package:
+        package.writestr("[Content_Types].xml", "<Types/>")
+        package.writestr("word/document.xml", f"<w:document>{text}</w:document>")
+
+
+def test_what_a_cut_write_left_of_a_file_is_told_from_the_file_alone(tmp_path):
+    docx = tmp_path / "보고서.docx"
+    office_package(docx, "처음")
+    before = checksum(docx)
+    assert (classify(docx, before), whole(docx)) == ("intact", True)
+    office_package(docx, "반영한 글")  # Another whole file: saved in full, or changed by another program.
+    assert classify(docx, before) == "unknown"
+    data = docx.read_bytes()
+    docx.write_bytes(data[: len(data) // 2])  # Cut short: no central directory.
+    assert (classify(docx, before), whole(docx)) == ("partial", False)
+    office_package(docx, "가" * 200, zipfile.ZIP_STORED)
+    data = bytearray(docx.read_bytes())
+    data[data.index("가".encode()) + 1] ^= 0xFF  # A part that does not read back with its checksum.
+    docx.write_bytes(bytes(data))
+    assert classify(docx, before) == "partial"
+    docx.write_bytes(b"")
+    assert classify(docx, before) == "partial"
+    docx.unlink()
+    assert classify(docx, before) == "partial"
+    # The older formats are compound files, told by their signature.
+    doc = tmp_path / "옛 보고서.doc"
+    doc.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"\0" * 1024)
+    before = checksum(doc)
+    doc.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"\1" * 1024)
+    assert classify(doc, before) == "unknown"
+    doc.write_bytes(b"\1" * 100)
+    assert classify(doc, before) == "partial"
+
+
+def test_a_write_cut_short_by_a_crash_is_told_before_the_next_write(written, tmp_path):
+    service, source, ident = written
+    writeback = service.writeback
+    doc = service.wiki_get({"id": ident})
+    service.wiki_save({"id": ident, "title": doc["title"], "content": doc["content"].replace("홍길동", "김철수")})
+    # A write began and the app was closed by force before its file was saved: its copy's record says "writing".
+    writeback.backup(source, ident)
+    with pytest.raises(UserError, match="저장하기 전에 중단되었습니다.*원본 파일은 반영 전 그대로입니다"):
+        writeback.start({"id": ident})
+    assert writeback.status() is None
+    # Told once: the next write goes on.
+    writeback.start({"id": ident})
+    assert wait_for(service)["status"] == "completed"
+    assert "김철수" in source.read_text(encoding="utf-8")
+
+    # Cut while the file was being replaced: none is left. It is told until the file is whole again.
+    doc = service.wiki_get({"id": ident})
+    service.wiki_save({"id": ident, "title": doc["title"], "content": doc["content"].replace("김철수", "이영희")})
+    cut = writeback.backup(source, ident)
+    source.unlink()
+    for _ in range(2):
+        with pytest.raises(UserError, match="일부만 저장된 것으로 보입니다") as told:
+            writeback.start({"id": ident})
+        assert f"‘{BACKUPS}’에 있는 {cut['name']}을(를) 복원한 뒤" in str(told.value)
+    listed = service.dispatch("writeback.backups", {"doc_id": ident})
+    assert {key: listed["interrupted"][key] for key in ("state", "backup")} == {"state": "partial", "backup": cut["id"]}
+    restored = service.dispatch("writeback.restore_backup", {"doc_id": ident, "backup": cut["id"]})
+    assert restored["restored"] is True and restored["backup"] == ""  # No file was left to copy first.
+    assert service.dispatch("writeback.backups", {"doc_id": ident})["interrupted"] is None
+    writeback.start({"id": ident})
+    assert wait_for(service)["status"] == "completed"
+    assert "이영희" in source.read_text(encoding="utf-8")
+
+
+def test_how_far_a_cut_write_saved_its_file_is_told(written, tmp_path):
+    service, _, _ = written
+    writeback = service.writeback
+    docx = tmp_path / "발표.docx"
+    office_package(docx, "처음")
+    cut = writeback.backup(docx, "doc")
+    office_package(docx, "반영한 글")  # Saved whole...
+    cut["journal"].write_text("saved", encoding="utf-8")  # ...as far as its save noted, then the app was closed.
+    with writeback.lock:
+        message = writeback.interrupted(docx)
+    assert message.startswith("지난번 원본 반영은 파일 저장까지 마쳤지만") and cut["name"] in message
+    assert not cut["journal"].exists() and writeback.interrupted(docx) is None
+    cut = writeback.backup(docx, "doc")
+    office_package(docx, "다른 글")
+    with writeback.lock:
+        assert "끝까지 저장했는지는 알 수 없습니다" in writeback.interrupted(docx)
+
+
+def test_a_failed_write_that_changed_the_file_says_so(written):
+    service, source, ident = written
+    doc = service.wiki_get({"id": ident})
+    service.wiki_save({"id": ident, "title": doc["title"], "content": doc["content"].replace("홍길동", "김철수")})
+    writer = service.writeback.writer
+
+    def breaking(path, payload, stop):
+        path.write_text("반쯤 쓴 내용", encoding="utf-8")
+        raise UserError("Word 파일 저장 실패: 디스크가 가득 찼습니다.")
+    breaking.ready = writer.ready
+    service.writeback.writer = breaking
+    service.writeback.start({"id": ident})
+    job = wait_for(service)
+    copy = Path(job["backup"]).name
+    # The stand-in file is not a package: what is left is no whole file of its format.
+    assert (job["status"], job["error"]) == ("error", (
+        "Word 파일 저장 실패: 디스크가 가득 찼습니다. 확인해 보니 원본 파일이 없거나 일부만 저장된 것으로 보입니다. "
+        f"Wiki 폴더의 ‘{BACKUPS}’에 있는 {copy}을(를) 복원해 주세요."))
+    listed = service.dispatch("writeback.backups", {"doc_id": ident})
+    assert (listed["backups"][0]["state"], listed["interrupted"]) == ("failed", None)
+
+
+def test_the_save_notes_in_its_journal_when_it_begins_and_ends(tmp_path, monkeypatch):
+    journal, phases = tmp_path / "copy.writing", []
+
+    class Office:
+        @contextlib.contextmanager
+        def writing(self):
+            yield
+
+        @contextlib.contextmanager
+        def saving(self):
+            yield
+
+    class Document:
+        def Save(self):
+            phases.append(journal.read_text(encoding="utf-8") if journal.exists() else "")
+
+    class Failing:
+        def Save(self):
+            raise OSError("disk full")
+    monkeypatch.setitem(office_write.EDITORS, "Word", lambda document, plan, stop: (2, 0))
+    assert office_write.edit(Office(), Document(), "Word", {}, None, str(journal)) == {"changes": 2, "base": 0}
+    assert phases == ["saving"] and journal.read_text(encoding="utf-8") == "saved"
+    with pytest.raises(OSError):
+        office_write.edit(Office(), Failing(), "Word", {}, None, str(journal))
+    assert journal.read_text(encoding="utf-8") == "saving"
+    journal.unlink()
+    assert office_write.edit(Office(), Document(), "Word", {}, None) == {"changes": 2, "base": 0}
+    assert not journal.exists()
 
 
 def test_a_document_changed_while_its_file_is_written_keeps_that_change(written):
