@@ -1,0 +1,27 @@
+{
+  // npm run typecheck:electron: TypeScript checks the Electron main process, its preloads and the build scripts, which
+  // are plain JavaScript (CommonJS .cjs, ES modules .mjs), without emitting anything. The screens have tsconfig.json.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    // .cjs files are CommonJS and .mjs files ES modules, as Node.js loads them.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    // JavaScript declares no parameter types; untyped values are `any` rather than errors, and JSDoc types the places
+    // that need more.
+    "noImplicitAny": false,
+    // A catch clause cannot be annotated in JavaScript; what is caught is an Error throughout this code.
+    "useUnknownInCatchVariables": false,
+    "types": ["node"],
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  },
+  // tests/*.test.cjs are left out: their fakes stand in for Electron objects and options only as far as each test needs,
+  // which TypeScript would report by the hundred without finding anything the tests themselves do not. The recorder's
+  // page script (electron/recorder/page.js) runs in a page, not in Node.js; ESLint checks it.
+  "include": ["electron/**/*.cjs", "scripts/**/*.mjs"]
+}

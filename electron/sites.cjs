@@ -187,7 +187,8 @@ function legacySteps(value) {
 }
 
 /** A user-defined method as {steps}, from its steps or the shape of earlier versions. The login is sent by the last
- *  step, the only submit, which is added (Enter) to steps without one; no steps: no method yet. */
+ *  step, the only submit, which is added (Enter) to steps without one; no steps: no method yet.
+ *  @param {any} [value] */
 function customOf(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new SiteError('사용자 지정 로그인 방식의 형식을 확인해 주세요.');
@@ -266,7 +267,12 @@ const learnedMethod = (learned) => customMethod(learned, LEARNED);
 
 class SiteStore {
   constructor({ file, legacyFiles = {}, encrypt, decrypt, canEncrypt, methods }) {
-    Object.assign(this, { file, legacyFiles, encrypt, decrypt, canEncrypt, methods });
+    this.file = file;
+    this.legacyFiles = legacyFiles;
+    this.encrypt = encrypt;
+    this.decrypt = decrypt;
+    this.canEncrypt = canEncrypt;
+    this.methods = methods;
     this.sites = [];
     this.queue = Promise.resolve();
     // Why the accounts could not be loaded; while set, nothing is saved over sites.json.
@@ -659,7 +665,10 @@ class SiteStore {
   /** How an automatic login went: a detected method, or the fields the LLM found (learned), is kept for
    *  the next login of an auto site; a failure keeps its message and the LLM's analysis of it. The hosts the account
    *  was typed into besides the site's own (hosts) are kept once, by the first login that signed in: the account
-   *  goes to no other host from then on. */
+   *  goes to no other host from then on.
+   *  @param {string} id
+   *  @param {{ ok?: boolean, method?: string, detected?: boolean, learned?: any, hosts?: any, error?: string,
+   *    diagnosis?: any }} [login] */
   record(id, { ok, method, detected, learned, hosts, error, diagnosis } = {}) {
     return this.update(async () => {
       const site = this.get(id);

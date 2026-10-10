@@ -336,6 +336,16 @@ const destroys = {
 };
 const llm = (hints) => ({ ...hints, openWorldHint: true });
 
+/**
+ * A tool of the MCP server; `slow` (or a test of the arguments) makes it answer with a job_id when it takes long.
+ * @param {string} name
+ * @param {string} title
+ * @param {string} scope
+ * @param {string} description
+ * @param {Record<string, any>} input
+ * @param {(args: any, context: any) => any} run
+ * @param {{ slow?: boolean | ((args: any) => boolean), annotations?: Record<string, boolean> }} [extra]
+ */
 const tool = (name, title, scope, description, input, run, extra = {}) => ({
   name,
   title,
@@ -1288,7 +1298,9 @@ const PROMPTS = [
 
 class PendingResults {
   constructor({ ttl = RESULT_TTL, max = MAX_JOBS, now = Date.now } = {}) {
-    Object.assign(this, { ttl, max, now });
+    this.ttl = ttl;
+    this.max = max;
+    this.now = now;
     this.jobs = new Map();
   }
 
@@ -1389,7 +1401,10 @@ class McpServer {
     prompts = PROMPTS,
     results = new PendingResults(),
   }) {
-    Object.assign(this, { call, manual, version, results });
+    this.call = call;
+    this.manual = manual;
+    this.version = version;
+    this.results = results;
     this.tools = new Map(tools.map((item) => [item.name, item]));
     this.prompts = new Map(prompts.map((item) => [item.name, item]));
   }

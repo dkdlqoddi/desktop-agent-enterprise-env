@@ -26,6 +26,13 @@ function spawnFailure(error, executable, packaged) {
 // `onEvent(name, params)` hears the events the backend sends of its own accord: lines {event, params} without an id,
 // such as the parts of an answer as the LLM writes it.
 class BackendProcess {
+  /**
+   * @param {{
+   *   exited?: (ended: { code: number | null, signal: NodeJS.Signals | null }) => string | undefined,
+   *   onEvent?: (name: string, params: any) => void,
+   *   [option: string]: any,
+   * }} options
+   */
   constructor({
     executable,
     args = [],
@@ -39,7 +46,13 @@ class BackendProcess {
     spawn = childProcess.spawn,
     echo = process.env.PRIVATE_AGENT_LOG_CONSOLE === '1' ? process.stderr : null,
   }) {
-    Object.assign(this, { executable, diagnostics, packaged, limits, limit, exited, onEvent });
+    this.executable = executable;
+    this.diagnostics = diagnostics;
+    this.packaged = packaged;
+    this.limits = limits;
+    this.limit = limit;
+    this.exited = exited;
+    this.onEvent = onEvent;
     this.pending = new Map();
     // Why the program could not be started, once that is known.
     this.failure = '';
@@ -50,7 +63,10 @@ class BackendProcess {
     this.spawned.catch(() => {}); // Read by started(), if at all.
     this.settleSpawn = spawned;
     try {
-      this.child = spawn(executable, args, options);
+      // Spawned with its three standard streams as pipes: none of them is null.
+      this.child = /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */ (
+        spawn(executable, args, options)
+      );
     } catch (error) {
       // Some failures (an error Node does not name, an invalid path) are thrown before a process exists.
       this.child = null;
@@ -137,6 +153,10 @@ class BackendProcess {
   // One request: the backend's answer, or the error it gave. A request it cannot take fails at once.
   request(method, params = {}) {
     if (!this.running) return Promise.reject(new Error(this.failure || ENDED));
+    // Running: the process exists.
+    const child = /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */ (
+      this.child
+    );
     return new Promise((resolve, reject) => {
       const id = randomUUID();
       const limit = this.limits[method] ?? this.limit;
@@ -148,7 +168,7 @@ class BackendProcess {
         reject(new Error('응답 제한 시간을 초과했습니다.'));
       }, limit);
       this.pending.set(id, { resolve, reject, timer, method, started: Date.now() });
-      this.child.stdin.write(JSON.stringify({ id, method, params }) + '\n', (error) => {
+      child.stdin.write(JSON.stringify({ id, method, params }) + '\n', (error) => {
         if (error && this.pending.has(id)) {
           clearTimeout(timer);
           this.pending.delete(id);
@@ -203,22 +223,23 @@ class BackendProcess {
     this.reject(message);
     const child = this.child;
     if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+    const pid = child.pid;
     await new Promise((resolve) => {
       child.once('exit', resolve);
       if (process.platform === 'win32')
         childProcess
           .spawn(
             path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
-            ['/pid', String(child.pid), '/T', '/F'],
+            ['/pid', String(pid), '/T', '/F'],
             { windowsHide: true, stdio: 'ignore' },
           )
           .on('error', () => {}); // The wait below still ends.
       else {
         // The process group the backend leads (detached).
         try {
-          process.kill(-child.pid, 'SIGTERM');
+          process.kill(-pid, 'SIGTERM');
         } catch {
-          resolve();
+          resolve(undefined);
         }
       }
       setTimeout(resolve, 5000).unref();

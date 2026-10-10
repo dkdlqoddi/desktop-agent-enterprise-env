@@ -44,7 +44,8 @@ const allows = (access, scope) => !!SCOPES[scope]?.levels.includes(access);
 class ApiError extends Error {
   constructor(status, code, message) {
     super(message);
-    Object.assign(this, { status, code });
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -83,6 +84,12 @@ const WINDOW_ACTIONS = [
 const IMPORT_KINDS = ['office', 'rtf', 'image', 'text', 'confluence', 'jira'];
 const SOURCE_KINDS = ['manual', 'rtf', 'office', 'image', 'text', 'markdown', 'confluence', 'jira'];
 
+/**
+ * A method of the catalog: the scope it needs, what it does, and `slow` when it may wait minutes for the LLM or a
+ * browser.
+ * @typedef {{ scope: string, summary: string, slow?: boolean }} CatalogMethod
+ */
+/** @type {(scope: string, summary: string, options?: { slow?: boolean }) => CatalogMethod} */
 const method = (scope, summary, options = {}) => ({ scope, summary, ...options });
 
 // Every method AI tools may call, by the name POST /api/v1/rpc and the MCP tool call_api take. `slow` methods wait
@@ -442,6 +449,17 @@ const SITE_FIELDS = {
   ),
 };
 
+/**
+ * A REST route below API_PREFIX: its verb and path, the method it calls and that method's parameters. A `public` route
+ * needs no token, a `special` one is answered by the server itself ('manual', 'rpc'), a `binary` one may answer with a
+ * picture.
+ * @typedef {{ verb: string, path: string, method: string | null, summary: string, params: Record<string, any>,
+ *   public?: boolean, special?: string, binary?: boolean }} CatalogRoute
+ */
+/**
+ * @type {(verb: string, path: string, name: string | null, summary: string, params?: Record<string, any>,
+ *   extra?: { public?: boolean, special?: string, binary?: boolean }) => CatalogRoute}
+ */
 const route = (verb, path, name, summary, params = {}, extra = {}) => ({
   verb,
   path,

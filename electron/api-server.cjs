@@ -123,7 +123,11 @@ function queryParams(search, specs) {
 // the token).
 class ApiServer {
   constructor({ call, mcp, settings, manual, version }) {
-    Object.assign(this, { call, mcp, settings, manual, version });
+    this.call = call;
+    this.mcp = mcp;
+    this.settings = settings;
+    this.manual = manual;
+    this.version = version;
     this.server = null;
     this.port = null;
     this.error = '';
@@ -156,7 +160,7 @@ class ApiServer {
         server.once('error', reject);
         server.listen(port, '127.0.0.1', () => {
           server.off('error', reject);
-          resolve();
+          resolve(undefined);
         });
       });
     } catch (error) {
@@ -170,7 +174,7 @@ class ApiServer {
     }
     server.on('error', () => {});
     this.server = server;
-    this.port = server.address().port;
+    this.port = /** @type {import('node:net').AddressInfo} */ (server.address()).port;
   }
 
   async stop() {
@@ -183,7 +187,7 @@ class ApiServer {
     this.sessions.clear();
     if (!server) return;
     await new Promise((resolve) => {
-      server.close(() => resolve());
+      server.close(() => resolve(undefined));
       server.closeAllConnections();
     });
   }

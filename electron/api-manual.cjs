@@ -42,6 +42,11 @@ const scopeOf = (item) =>
   item.special === 'rpc' ? 'varies' : item.public ? 'public' : METHODS[item.method].scope;
 
 // The parameters of a route, or of an MCP tool when `verb` is null.
+/**
+ * @param {Record<string, any>} params
+ * @param {string | null} [verb]
+ * @param {string} [path]
+ */
 function paramList(params, verb = null, path = '') {
   return Object.entries(params).map(([name, spec]) => ({
     name,
@@ -624,6 +629,7 @@ function openapi({ baseUrl, version }) {
       ? []
       : names.filter((name) => !inPath.includes(name));
     const required = inBody.filter((name) => item.params[name].required);
+    /** @type {Record<string, any>} */
     const operation = {
       operationId: `${item.verb.toLowerCase()}_${path.replace(/[{}]/g, '').split('/').filter(Boolean).join('_').replace(/-/g, '_')}`,
       tags: [item.group],

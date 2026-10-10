@@ -6,6 +6,7 @@ const DELAYS = [1000, 5000, 15000];
 const WINDOW = 120_000;
 
 class Restarts {
+  /** @param {{ failed?: (error: Error) => void, [option: string]: any }} options */
   constructor({
     start,
     stop,
@@ -17,7 +18,15 @@ class Restarts {
     now = Date.now,
     schedule = setTimeout,
   }) {
-    Object.assign(this, { start, stop, restarted, gaveUp, failed, delays, window, now, schedule });
+    this.start = start;
+    this.stop = stop;
+    this.restarted = restarted;
+    this.gaveUp = gaveUp;
+    this.failed = failed;
+    this.delays = delays;
+    this.window = window;
+    this.now = now;
+    this.schedule = schedule;
     this.recent = [];
     this.active = false;
     this.ended = false;

@@ -18,7 +18,10 @@ const UNREADABLE =
 // the OS secure storage; without it, a token lasts until the app closes.
 class ApiSettings {
   constructor({ file, encrypt, decrypt, canEncrypt }) {
-    Object.assign(this, { file, encrypt, decrypt, canEncrypt });
+    this.file = file;
+    this.encrypt = encrypt;
+    this.decrypt = decrypt;
+    this.canEncrypt = canEncrypt;
     this.values = { enabled: false, port: DEFAULT_PORT, access: DEFAULT_ACCESS };
     this.token = '';
     this.stored = false;
@@ -129,6 +132,7 @@ class ApiSettings {
   }
 
   async write() {
+    /** @type {Record<string, unknown>} */
     const record = { version: VERSION, ...this.values };
     const encrypted = this.canEncrypt() ? this.encrypt(this.token).toString('base64') : '';
     if (encrypted) record.encrypted_token = encrypted;

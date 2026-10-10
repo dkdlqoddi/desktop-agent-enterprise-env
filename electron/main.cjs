@@ -80,6 +80,7 @@ let window,
   stopping = false;
 // A start of the app asked for while this one was closing: it runs once this one has closed.
 let relaunching = false;
+/** @type {Record<string, any>} */
 let savedSettings = {};
 // Why settings.json could not be read; while set, the LLM settings are not saved over it.
 let settingsUnavailable = '';
@@ -248,7 +249,7 @@ async function migrateStorage(source, destination) {
       if (code === 0 && !settled) {
         settled = true;
         clearTimeout(timer);
-        resolve();
+        resolve(undefined);
       } else
         fail(
           '기존 Wiki를 복사하지 못했습니다. 폴더 권한과 디스크 공간을 확인해 주세요. 이전 데이터는 그대로 있습니다.',
@@ -261,7 +262,8 @@ async function migrateStorage(source, destination) {
 
 // Starts the backend on the Wiki in `dataDirectory` and hands it the LLM settings. Requests wait for this (rpc).
 async function startBackend(dataDirectory) {
-  let open;
+  /** @type {(value?: unknown) => void} */
+  let open = () => {};
   const start = new Promise((resolve) => (open = resolve));
   opening = start;
   try {
@@ -1198,6 +1200,11 @@ function checkParams(params) {
 
 // One request of the screens or of an AI tool through the local API, once each has been checked: the screens by
 // their sender and ALLOWED (electron/trusted-sender.cjs), AI tools by their token and access level.
+/**
+ * @param {string} method
+ * @param {any} params
+ * @param {{ access?: string }} [options] The calling tool's access level; none for the screens.
+ */
 async function handle(method, params, { access } = {}) {
   let result;
   if (method === 'storage.get') result = storage.info();

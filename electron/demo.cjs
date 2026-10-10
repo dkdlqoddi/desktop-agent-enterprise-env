@@ -243,6 +243,13 @@ function renderSpec({ project, cues, video, pace = 1 }) {
 }
 
 class DemoRun {
+  /**
+   * @param {{
+   *   log?: (text: string) => void,
+   *   display?: ((win: any) => Electron.Rectangle) | null,
+   *   [option: string]: any,
+   * }} options
+   */
   constructor({
     plan,
     window,
@@ -258,19 +265,17 @@ class DemoRun {
     // recording starts as soon as the screen is ready.
     display = null,
   }) {
-    Object.assign(this, {
-      plan,
-      window,
-      control,
-      rpc,
-      storage,
-      recorder,
-      pace,
-      now,
-      sleep,
-      log,
-      display,
-    });
+    this.plan = plan;
+    this.window = window;
+    this.control = control;
+    this.rpc = rpc;
+    this.storage = storage;
+    this.recorder = recorder;
+    this.pace = pace;
+    this.now = now;
+    this.sleep = sleep;
+    this.log = log;
+    this.display = display;
     this.stopped = false;
     this.quitting = false;
     this.reason = null;
@@ -283,6 +288,7 @@ class DemoRun {
 
   // The panel's stop button, or the app closing: what was recorded so far still becomes a video, unless the app is
   // quitting. `reason`: what ended the demo when no one asked, such as the app's window closing.
+  /** @param {{ quitting?: boolean, reason?: Error | null }} [options] */
   abort({ quitting = false, reason = null } = {}) {
     this.stopped = true;
     if (quitting) this.quitting = true;
@@ -358,6 +364,7 @@ class DemoRun {
   // Does `action` (a click) and returns what the screens' request among `methods` answered, or throws its error.
   async expect(methods, action, timeout) {
     let settled = false;
+    /** @type {any} */
     let value;
     let failure;
     new Promise((resolve, reject) => {
@@ -431,7 +438,8 @@ class DemoRun {
   async drawnFullScreen(win) {
     if (win.isDestroyed() || !win.isFullScreen()) return false;
     const [width, height] = win.getContentSize();
-    const display = this.display(win);
+    // Asked only once the display is known (settleFullScreen).
+    const display = /** @type {(win: any) => Electron.Rectangle} */ (this.display)(win);
     if (!near(width, display.width) || !near(height, display.height)) return false;
     const frame = await within(
       win.webContents.capturePage().then((image) => image.getSize()),
@@ -469,6 +477,7 @@ class DemoRun {
     });
     await this.hold(2600);
     for (const [index, item] of items.entries()) {
+      /** @type {{ item: any, runs: any[] }} */
       const entry = { item, runs: [] };
       this.entries.push(entry);
       const label = `2단계 · 자료 가져오기 ${index + 1}/${items.length}`;
@@ -693,6 +702,7 @@ class DemoRun {
       }
     }
     await fs.rm(part, { force: true });
+    /** @type {{ folder: string, video: string | null, failure: any, stopped: boolean, renderError?: Error }} */
     const outcome = { folder, video: null, failure, stopped: this.stopped && !failure };
     if (!recording) {
       await this.writeReport(folder, { startedAt, endedAt, recording, cues, outcome });
@@ -777,6 +787,10 @@ class DemoRun {
     };
   }
 
+  /**
+   * @param {string} folder
+   * @param {Record<string, any>} report What the run was; `project` only once there is a recording.
+   */
   async writeReport(folder, { startedAt, endedAt, recording, cues, outcome, project }) {
     const lines = [
       'Private Agent 시연 녹화',
@@ -843,6 +857,7 @@ class DemoRun {
 const named = (file, mime) => (mime.includes('mp4') ? file : file.replace(/\.mp4$/, '.webm'));
 
 // Draws the video from the recording and makes its MP4 plain, through a fragmented draft next to it.
+/** @param {{ onProgress?: (value: number) => void, [option: string]: any }} options */
 async function makeVideo({ recorder, source, target, spec, mime, onProgress }) {
   if (!mime.includes('mp4')) {
     await recorder.render({ ...spec, sourceFile: source }, target, { onProgress });

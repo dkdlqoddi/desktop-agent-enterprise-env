@@ -1,6 +1,10 @@
 // The context menu of the app's window, as an Electron menu template: Electron shows none of its own, so without it the
 // mouse could not cut, copy or paste in a field (a link, a password, a token) or copy selected text. Editing only:
 // nothing that opens DevTools. null where there is nothing to edit or copy.
+/**
+ * @param {{ isEditable?: boolean, selectionText?: string, editFlags?: Partial<Electron.EditFlags> }} params
+ * @returns {Electron.MenuItemConstructorOptions[] | null}
+ */
 function editMenu({ isEditable, selectionText = '', editFlags = {} }) {
   if (isEditable)
     return [

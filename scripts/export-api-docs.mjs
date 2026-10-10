@@ -110,8 +110,11 @@ function paramLines(params, indent = '') {
 // Who may call a method of `scope`: the lowest access level that allows it, each level including the ones before it.
 function access(scope) {
   const levels = SCOPES[scope].levels;
-  const lowest = ACCESS_LEVELS.find((level) => levels.includes(level.id));
-  return lowest.id === ACCESS_LEVELS.at(-1).id
+  // Every scope allows at least the last level, the widest.
+  const lowest = /** @type {{ id: string, label: string }} */ (
+    ACCESS_LEVELS.find((level) => levels.includes(level.id))
+  );
+  return lowest.id === ACCESS_LEVELS[ACCESS_LEVELS.length - 1].id
     ? `허용 범위 ‘${lowest.label}’에서만`
     : `허용 범위 ‘${lowest.label}’ 이상`;
 }

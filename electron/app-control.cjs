@@ -24,7 +24,11 @@ function optionalInteger(value, name, min, max) {
 // answers (src/components/app-control.ts) once it has registered for them after each load.
 class AppControl {
   constructor({ window, Notification, timeout = 10_000, minWidth = 1060, minHeight = 720 }) {
-    Object.assign(this, { window, Notification, timeout, minWidth, minHeight });
+    this.window = window;
+    this.Notification = Notification;
+    this.timeout = timeout;
+    this.minWidth = minWidth;
+    this.minHeight = minHeight;
     this.ready = false;
     this.pending = new Map();
     this.notifications = new Set();
@@ -262,6 +266,11 @@ class AppControl {
 
   // One app.* method of the local API. Clicking and typing on the admin page, or into a password, would let a tool
   // change what its access level keeps from it, so the renderer refuses those unless the level is "full".
+  /**
+   * @param {string} method
+   * @param {any} params
+   * @param {{ access?: string }} [options] The calling tool's access level; none for the screens.
+   */
   async perform(method, params, { access } = {}) {
     switch (method) {
       case 'app.window':

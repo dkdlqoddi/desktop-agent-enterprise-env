@@ -1,7 +1,11 @@
 // Main-process polling continues when the renderer is minimized or on another page.
 class ReminderScheduler {
   constructor({ rpc, Notification, ready, onClick, interval = 15_000 }) {
-    Object.assign(this, { rpc, Notification, ready, onClick, interval });
+    this.rpc = rpc;
+    this.Notification = Notification;
+    this.ready = ready;
+    this.onClick = onClick;
+    this.interval = interval;
     this.attempts = new Map();
     this.active = new Set();
     this.busy = false;

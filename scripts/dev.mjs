@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const root = fileURLToPath(new URL('../', import.meta.url));
 // The electron package downloads its binary on first require. Resolve it before starting Next so a
-// failed download stops here once instead of being retried and hidden by the readiness loop below.
-const electron = require('electron');
+// failed download stops here once instead of being retried and hidden by the readiness loop below. Under Node.js the
+// package exports the path of its executable, not the API its types describe.
+const electron = /** @type {string} */ (/** @type {unknown} */ (require('electron')));
 
 // The development window trusts the screens it loads with the app's own requests (main.cjs
 // trustedSender), so they must come from this Next and no other server: Next gets a port that is free
@@ -19,7 +20,7 @@ function freePort(port) {
     const server = createServer();
     server.once('error', () => resolve(port ? freePort(0) : null));
     server.listen(port, '127.0.0.1', () => {
-      const { port: found } = server.address();
+      const { port: found } = /** @type {import('node:net').AddressInfo} */ (server.address());
       server.close(() => resolve(found));
     });
   });

@@ -160,6 +160,10 @@ function createApiMethods({ handle, linkKind, extensions }) {
   const jobOf = (status) =>
     status && typeof status === 'object' && 'job' in status ? status.job : status;
 
+  /**
+   * @param {any} params
+   * @param {{ access?: string }} [options] The calling tool's access level.
+   */
   async function startImport(params, { access } = {}) {
     const source = optionalText(params.source, '가져올 링크나 경로', 32767);
     if (!source) throw new Error('가져올 링크나 파일·폴더의 전체 경로를 입력해 주세요.');

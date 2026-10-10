@@ -32,11 +32,18 @@ class JobProgress {
     retry = 3000,
     retries = 20,
   }) {
-    Object.assign(this, { rpc, send, ready, interval, routineInterval, retry, retries });
+    this.rpc = rpc;
+    this.send = send;
+    this.ready = ready;
+    this.interval = interval;
+    this.routineInterval = routineInterval;
+    this.retry = retry;
+    this.retries = retries;
     this.seq = 0;
     // Per kind, and for 'routines': the number and text of the latest state read.
     this.latest = new Map();
-    this.timer = null;
+    /** @type {NodeJS.Timeout | undefined} */
+    this.timer = undefined;
     this.running = false;
     // follow() was called during a check: check again as soon as it ends.
     this.again = false;
@@ -89,7 +96,7 @@ class JobProgress {
   }
 
   async check() {
-    this.timer = null;
+    this.timer = undefined;
     if (this.stopped) return;
     this.running = true;
     let next = null;
@@ -169,7 +176,7 @@ class JobProgress {
   stop() {
     this.stopped = true;
     clearTimeout(this.timer);
-    this.timer = null;
+    this.timer = undefined;
   }
 }
 

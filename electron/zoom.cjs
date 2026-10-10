@@ -6,7 +6,7 @@ const { readJsonFile, writeFileSafely } = require('./files.cjs');
 // the screen itself needs no change. The factor is kept in the app's settings folder, so the screen opens at it again.
 const FACTORS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const MIN = FACTORS[0];
-const MAX = FACTORS.at(-1);
+const MAX = /** @type {number} */ (FACTORS.at(-1));
 // Two factors this close are the same step: a factor read from the file may be rounded.
 const EPSILON = 0.001;
 
@@ -36,6 +36,7 @@ function zoomKey(input) {
 class ScreenZoom {
   // `file`: where the factor is kept, or null to keep it for this run only (a demo recording opens at 100% and leaves
   // the user's zoom as it is). `failed` hears of a factor that could not be saved.
+  /** @param {{ file?: string | null, failed?: (error: Error) => void }} [options] */
   constructor({ file = null, failed = () => {} } = {}) {
     this.file = file;
     this.failed = failed;

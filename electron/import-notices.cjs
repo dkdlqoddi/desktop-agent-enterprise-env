@@ -5,7 +5,13 @@ const ACTIVE = ['scanning', 'login', 'running', 'cancelling'];
 
 class ImportNotices {
   constructor({ rpc, Notification, focused, send, onClick, interval = 1000, retries = 30 }) {
-    Object.assign(this, { rpc, Notification, focused, send, onClick, interval, retries });
+    this.rpc = rpc;
+    this.Notification = Notification;
+    this.focused = focused;
+    this.send = send;
+    this.onClick = onClick;
+    this.interval = interval;
+    this.retries = retries;
     this.active = new Set();
     this.timers = new Set();
     this.stopped = false;

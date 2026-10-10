@@ -13,6 +13,7 @@ const TAIL_BYTES = 32_000;
 // Secrets as they could appear in what is logged (an error's message quoting a URL, a header or a JSON body): the
 // app's own API tokens (pa_…), OpenAI-style keys, bearer tokens and anything named as a password, key, token or
 // cookie. Written down as [REDACTED]; backend/agent/diagnostics.py does the same for the backend's log.
+/** @type {[RegExp, string][]} */
 const SECRETS = [
   [/\bpa_[A-Za-z0-9_-]{6,}/g, 'pa_[REDACTED]'],
   [/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[REDACTED]'],
@@ -75,7 +76,11 @@ class Diagnostics {
     terminal = process.env.PRIVATE_AGENT_LOG_CONSOLE === '1',
     output = process.stderr,
   }) {
-    Object.assign(this, { directory, now, build, terminal, output });
+    this.directory = directory;
+    this.now = now;
+    this.build = build;
+    this.terminal = terminal;
+    this.output = output;
     this.debugging =
       String(level ?? '')
         .trim()

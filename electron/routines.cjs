@@ -23,21 +23,19 @@ class RoutineRunner {
   }) {
     // `send` tells the window about a routine's run, `schedule` about a prompt schedule's; a click on a notification
     // opens the routine (onClick) or the prompt run (openRun).
-    Object.assign(this, {
-      rpc,
-      logins,
-      record,
-      ready,
-      focused,
-      send,
-      schedule,
-      changed,
-      Notification,
-      onClick,
-      openRun,
-      interval,
-      followInterval: follow,
-    });
+    this.rpc = rpc;
+    this.logins = logins;
+    this.record = record;
+    this.ready = ready;
+    this.focused = focused;
+    this.send = send;
+    this.schedule = schedule;
+    this.changed = changed;
+    this.Notification = Notification;
+    this.onClick = onClick;
+    this.openRun = openRun;
+    this.interval = interval;
+    this.followInterval = follow;
     this.active = new Set();
     this.busy = false;
     this.stopped = false;

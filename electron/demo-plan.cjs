@@ -125,6 +125,10 @@ function decodeText(bytes) {
 // A text file the user wrote, such as the list or captions edited in Notepad, of at most `limit` bytes. Bytes that are
 // no text, as those of a file only Notepad can open, are read by `readProtected` (the backend's hidden Notepad, on
 // Windows) as Notepad shows them.
+/**
+ * @param {string} file
+ * @param {{ readProtected?: (file: string) => Promise<string>, what?: string, limit?: number }} [options]
+ */
 async function readUserText(file, { readProtected, what = '파일', limit = MAX_LIST_BYTES } = {}) {
   let bytes;
   try {

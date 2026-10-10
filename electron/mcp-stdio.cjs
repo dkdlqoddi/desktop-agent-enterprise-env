@@ -37,11 +37,12 @@ function write(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
 }
 
+// Called once the address has been found local (relay).
 function post(body) {
   return new Promise((resolve, reject) => {
     const data = Buffer.from(body, 'utf8');
     const request = http.request(
-      target,
+      /** @type {URL} */ (target),
       {
         method: 'POST',
         agent,

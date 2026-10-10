@@ -24,6 +24,7 @@
     "build:exe": "node scripts/build-exe.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
+    "typecheck:electron": "tsc -p tsconfig.electron.json",
     "format": "prettier --write src electron scripts tests *.json *.ts *.md docs/*.md .github/workflows/*.yml",
     "format:check": "prettier --check src electron scripts tests *.json *.ts *.md docs/*.md .github/workflows/*.yml",
     "lint:python": "node scripts/lint-python.mjs check backend",

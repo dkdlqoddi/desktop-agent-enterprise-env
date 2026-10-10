@@ -168,7 +168,7 @@ class Recorder {
     const id = win.webContents.id;
     const output = fs.createWriteStream(file);
     let failure = null;
-    output.on('error', (error) => {
+    output.on('error', (/** @type {NodeJS.ErrnoException} */ error) => {
       failure = new Error(
         `영상 파일을 쓰지 못했습니다. 디스크 공간과 폴더 권한을 확인해 주세요. (${error.code || error.message})`,
       );
@@ -192,17 +192,18 @@ class Recorder {
     // Settles once the file is closed, so it can be read whole at once.
     const close = () =>
       new Promise((resolve) => {
-        if (output.closed) return resolve();
-        output.once('close', resolve);
+        if (output.closed) return resolve(undefined);
+        output.once('close', () => resolve(undefined));
         output.end();
       });
     // However the job ends (finished, failed, its window closed), the file is closed once it is over.
-    const closed = new Promise((resolve) => output.once('close', resolve));
+    const closed = new Promise((resolve) => output.once('close', () => resolve(undefined)));
     const job = {
       spec,
       target: handlers.target,
       granted: false,
       settled: false,
+      /** @type {any} */
       info: null,
       started: (info) => {
         job.info = info;
@@ -252,6 +253,11 @@ class Recorder {
 
   // Starts recording the page of `target` into `file`, an MP4 written in fragments as it goes, and shows the
   // recording panel near the window's corner. `onAbort` is the panel's stop button.
+  /**
+   * @param {Electron.BrowserWindow} target
+   * @param {string} file
+   * @param {{ onAbort?: () => void }} [options]
+   */
   async record(target, file, { onAbort } = {}) {
     const display = screen.getDisplayMatching(target.getBounds()).workArea;
     const { win, started, done, closed } = await this.open(
@@ -325,6 +331,11 @@ class Recorder {
 
   // Makes the video of `spec` (the recording in `spec.sourceFile`, its captions, cards and sped-up parts) into `file`,
   // showing it as it is drawn. Closing that window stops it.
+  /**
+   * @param {Record<string, any>} spec
+   * @param {string} file
+   * @param {{ onProgress?: (value: number) => void }} [options]
+   */
   async render(spec, file, { onProgress } = {}) {
     const { sourceFile, ...page } = spec;
     this.source = sourceFile;

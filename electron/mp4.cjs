@@ -200,7 +200,7 @@ function fragmentSamples(moof, moofStart, trackId, defaults, runs) {
         first = moof.readUInt32BE(offset);
         offset += 4;
       }
-      const run = { start: cursor, time, samples: [] };
+      const run = { start: cursor, time, samples: /** @type {any[]} */ ([]) };
       for (let index = 0; index < count; index++) {
         const sample = {
           duration,
@@ -240,8 +240,10 @@ function fragmentSamples(moof, moofStart, trackId, defaults, runs) {
 // sample was decoded, in the track's units.
 function timeline(runs) {
   const start = runs[0].time ?? 0;
+  /** @type {any} */
   let previous = null;
   for (const run of runs) {
+    /** @type {any} */
     let time = run.time === null ? null : run.time - start;
     for (const sample of run.samples) {
       if (time !== null && previous) previous.duration = Math.max(1, time - previous.time);
@@ -388,6 +390,7 @@ function videoTrak(moov) {
     const hdlr = mdia && child(moov, mdia, 'hdlr');
     if (hdlr && moov.toString('latin1', hdlr.body + 8, hdlr.body + 12) === 'vide') {
       const tkhd = child(moov, trak, 'tkhd');
+      if (!tkhd) throw invalid();
       const version = moov[tkhd.body];
       const id = moov.readUInt32BE(tkhd.body + (version === 1 ? 20 : 12));
       const width = moov.readUInt32BE(tkhd.end - 8) / 65536;
@@ -519,7 +522,7 @@ async function inspect(file) {
     let samples = 0;
     let duration = 0;
     const entries = stts ? moov.readUInt32BE(stts.body + 4) : 0;
-    for (let index = 0; index < entries; index++) {
+    for (let index = 0; stts && index < entries; index++) {
       const count = moov.readUInt32BE(stts.body + 8 + index * 8);
       samples += count;
       duration += count * moov.readUInt32BE(stts.body + 12 + index * 8);
