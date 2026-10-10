@@ -41,13 +41,18 @@ function ended(app: ElectronApplication, ms: number) {
   return end.then(() => app.close().catch(() => {}));
 }
 
+// The panel opens when the recording starts: once the app's screen is ready and drawn at full-screen size, which a
+// cold start on a busy PC takes longer than an assertion's 5 seconds for.
 async function panel(app: ElectronApplication) {
   await expect
-    .poll(async () => {
-      for (const page of app.windows())
-        if ((await page.title()) === 'Private Agent 녹화') return true;
-      return false;
-    })
+    .poll(
+      async () => {
+        for (const page of app.windows())
+          if ((await page.title()) === 'Private Agent 녹화') return true;
+        return false;
+      },
+      { timeout: 60_000 },
+    )
     .toBe(true);
   for (const page of app.windows())
     if ((await page.title()) === 'Private Agent 녹화') return page as Page;
