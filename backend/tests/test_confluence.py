@@ -53,6 +53,10 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
     assert len(service.wiki_list({})) == 1
     service.wiki_delete({"id": doc["id"]})
     with service.db.connect() as db:
+        # In the trash the document keeps its source, so a restore brings it back as it was imported.
+        assert db.execute("SELECT 1 FROM confluence_sources WHERE doc_id=?", (doc["id"],)).fetchone()
+    assert service.wiki_purge({"ids": [doc["id"]]}) == {"purged": 1}
+    with service.db.connect() as db:
         assert not db.execute("SELECT 1 FROM confluence_sources WHERE doc_id=?", (doc["id"],)).fetchone()
 
 
@@ -93,11 +97,16 @@ def test_a_page_longer_than_a_document_is_saved_as_documents_in_parts(service):
     assert first["parts"] == second["parts"] == [{"id": first["id"], "title": first["title"], "part": 1},
                                                  {"id": second["id"], "title": second["title"], "part": 2}]
     assert service.wiki_source_markdown({"id": second["id"]})["markdown"] == second["content"]
-    # The same page is not saved again while any of its parts is left.
+    # The same page is not saved again while any of its parts is left: a part in the trash comes back when the user
+    # imports the page again (sources.plan), so the two parts are whole once more.
     service.wiki_delete({"id": first["id"]})
     assert import_page(service, capture(service, sections)) == {
-        "status": "skipped", "doc_id": second["id"], "message": "동일한 페이지 내용이 이미 저장되어 있습니다.",
+        "status": "skipped", "doc_id": first["id"], "message": "동일한 페이지 내용이 이미 저장되어 있습니다.",
         "reason": "same"}
+    assert [part["id"] for part in service.wiki_get({"id": second["id"]})["parts"]] == [first["id"], second["id"]]
+    # Purged for good, the page is saved again as new documents.
+    service.wiki_delete({"id": first["id"]})
+    assert service.wiki_purge({"ids": [first["id"]]}) == {"purged": 1}
     assert [part["id"] for part in service.wiki_get({"id": second["id"]})["parts"]] == [second["id"]]
 
 
