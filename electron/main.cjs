@@ -99,6 +99,10 @@ const ALLOWED = new Set([
   'wiki.trash',
   'wiki.restore',
   'wiki.purge',
+  // Backups of the Wiki in its backups folder, and the restore of one at the next start.
+  'wiki.backup',
+  'wiki.backups',
+  'wiki.restore_backup',
   'wiki.analyze',
   'wiki.clear_analysis',
   'wiki.search',
@@ -141,11 +145,13 @@ const ALLOWED = new Set([
   'wiki.source_markdown',
   'wiki.source_html',
   'wiki.source_status',
-  // Writing a document's changes back into the file it came from.
+  // Writing a document's changes back into the file it came from, and the copies of the file kept before each write.
   'writeback.start',
   'writeback.status',
   'writeback.cancel',
   'writeback.dismiss',
+  'writeback.backups',
+  'writeback.restore_backup',
   'confluence.start',
   'confluence.status',
   'confluence.cancel',
@@ -176,6 +182,8 @@ const ALLOWED = new Set([
   'assistant.history',
   'assistant.delete',
   'assistant.ask',
+  // Stops an answer in progress; with stream, assistant.ask sends its parts on 'assistant:delta' (forwardEvent).
+  'assistant.cancel',
   'briefing.get',
   'briefing.generate',
   // The admin page's own settings of the local API for AI tools; never reachable through that API.
@@ -200,6 +208,9 @@ const LLM_FIELDS = [
   'temperature',
   'timeout',
   'ca_bundle',
+  'max_tokens',
+  'context_window',
+  'concurrency',
 ];
 const LLM_SECRETS = ['api_key'];
 // The Python backend's process (a BackendProcess), and the start under way: until the backend that starts has its LLM
@@ -257,8 +268,8 @@ function osUser() {
   }
 }
 
-// Requests making several LLM calls of up to 300 seconds each (the settings' limit), plus a margin:
-// prompt search = analysis + 2 AI search steps, a question = those + the answer, and a long document's
+// Requests making several LLM calls of up to 300 seconds each (the settings' limit, which the retries of a call share),
+// plus a margin: prompt search = analysis + 2 AI search steps, a question = those + the answer, and a long document's
 // PageIndex analysis = up to 5 rounds of section summaries + the metadata.
 const RPC_TIMEOUTS = {
   // Auto detection may wait for several login screens and submissions in a row, and the LLM's help.
@@ -267,9 +278,24 @@ const RPC_TIMEOUTS = {
   'wiki.search': 960_000,
   'assistant.ask': 1_260_000,
   'wiki.analyze': 1_860_000,
+  // A backup, and the copy of one to restore, read and write the whole Wiki: minutes for a large one on a slow drive.
+  'wiki.backup': 900_000,
+  'wiki.restore_backup': 900_000,
 };
 
 const RESTARTING = 'Python 백엔드를 다시 시작하고 있습니다. 잠시 후 다시 시도해 주세요.';
+
+// The events the backend sends of its own accord (lines without an id) that reach the window, by the type each has
+// there on 'assistant:delta': the parts of an answer as the LLM writes it, and its end, for a question asked with
+// stream (assistant.ask). Any other event is dropped.
+const BACKEND_EVENTS = { 'assistant.delta': 'delta', 'assistant.done': 'done' };
+
+function forwardEvent(name, params) {
+  const type = Object.hasOwn(BACKEND_EVENTS, name) ? BACKEND_EVENTS[name] : null;
+  if (!type || !params || typeof params !== 'object' || Array.isArray(params)) return;
+  if (window && !window.isDestroyed())
+    window.webContents.send('assistant:delta', { ...params, type });
+}
 
 // A request to the backend. While it starts (again) a request waits until it has its LLM settings, so that nothing
 // reaches a backend that would answer without them: the screens', an AI tool's, or a check of the schedules, routines
@@ -418,6 +444,10 @@ async function launchBackend(dataDirectory) {
     diagnostics,
     packaged: app.isPackaged,
     limits: RPC_TIMEOUTS,
+    // Only the backend in use speaks to the window.
+    onEvent: (name, params) => {
+      if (backend === child) forwardEvent(name, params);
+    },
     // Not stopped by the app: what the backend last wrote to its error output says why. Once the Wiki is open it is
     // started again; a first start that fails is reported by the storage screen instead.
     exited: ({ code, signal }) => {
@@ -1389,6 +1419,10 @@ async function handle(method, params, { access } = {}) {
     });
     if (plan && result?.job?.id) watchSiteJob('jira', result.job.id, plan.site_id);
   } else if (method === 'writeback.start') result = await rpc(method, { id: params.id });
+  // A backup is named by its id among those of the document's file, never by a path.
+  else if (method === 'writeback.backups') result = await rpc(method, { doc_id: params.doc_id });
+  else if (method === 'writeback.restore_backup')
+    result = await rpc(method, { doc_id: params.doc_id, backup: params.backup });
   else if (['routines.save', 'routines.toggle', 'routines.run'].includes(method)) {
     await checkRoutineAccess(method, params, access);
     // Whether the caller may have files read is never a value of its request: the screens may, an AI tool by its level.

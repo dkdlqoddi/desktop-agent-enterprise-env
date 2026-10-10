@@ -1,13 +1,16 @@
 """Local personal assistant: grounded conversations, tasks, reminders and daily briefings."""
+import contextvars
 import json
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from . import pageindex, search
-from .llm import UserError
+from .llm import (DECODER, TRUNCATED_JSON, TRUNCATED_NOTE, Cancel, Cancelled, UserError, answer as without_thinking,
+                  cancellable, json_object, repaired)
 from .service import now, text
 
 ANSWER = """Answer questions about the user's private work documents in Korean.
@@ -42,6 +45,76 @@ TASK_REQUESTS = 3  # ...in at most this many requests at once, which a Wiki docu
 MAX_TASKS = 20
 BRIEF_CHARS = 20_000
 
+# What an answer request holds at the default context window (LLM.prompt_chars): the evidence (search.EVIDENCE_TOTAL),
+# the last HISTORY_MESSAGES messages of up to HISTORY_CHARS each, and the question. Another window scales the evidence
+# and the history with it, from MIN_SCALE to MAX_SCALE times.
+PROMPT_CHARS = 56_000
+HISTORY_MESSAGES = 12
+HISTORY_CHARS = 2_000
+MIN_SCALE, MAX_SCALE = 0.1, 4.0
+MIN_EVIDENCE = 500  # A document gets at least this much of the evidence, or none.
+DELTA_SECONDS = 0.05  # A streamed answer reaches the screen at most this often (assistant.delta).
+STOPPED = "(답변을 중지했습니다.)"
+REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}")
+# The answer field of the JSON object ANSWER asks for, as the LLM writes it: its start, its text so far, and an escape
+# cut off at its end, which waits for the rest of it.
+ANSWER_FIELD = re.compile(r'"answer"\s*:\s*"')
+STRING_BODY = re.compile(r'(?:[^"\\]|\\.)*', re.S)
+OPEN_ESCAPE = re.compile(r'(?<!\\)((?:\\\\)*)\\u[0-9a-fA-F]{0,3}\Z')
+
+
+def partial_answer(reply):
+    """The answer field of the JSON object an LLM writes for ANSWER, as far as `reply` has it, without a reasoning
+    model's thinking: what the screen shows while the answer streams, and what a stopped or cut-short answer keeps.
+    '' before the field begins."""
+    reply = without_thinking(reply)
+    found = ANSWER_FIELD.search(reply)
+    if not found:
+        return ""
+    body = OPEN_ESCAPE.sub(r"\1", STRING_BODY.match(reply, found.end()).group(0))
+    try:
+        answer = DECODER.decode(repaired(f'"{body}"'))
+    except ValueError:
+        return ""
+    # The first half of a character escaped as a surrogate pair waits for the second; a half alone, which UTF-8 cannot
+    # carry to the screen, becomes U+FFFD.
+    if answer and "\ud800" <= answer[-1] <= "\udbff":
+        answer = answer[:-1]
+    return answer.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
+
+def noted(answer, note):
+    """An answer that did not end by itself, with the note that says why after what came of it."""
+    answer = answer.strip()[:20000]
+    return f"{answer}\n\n{note}" if answer else note
+
+
+class Request:
+    """An answer in progress (assistant.ask): its conversation and request IDs, the Cancel the user stops it with
+    (assistant.cancel) and, for a question asked with stream, what the screen has had of the answer."""
+
+    def __init__(self, conversation_id, request_id, stream, emit):
+        self.conversation_id, self.request_id, self.stream, self.emit = conversation_id, request_id, stream, emit
+        self.cancel = Cancel()
+        self.raw, self.sent, self.flushed, self.truncated = "", "", 0.0, False
+
+    def update(self, raw):
+        """The LLM's reply so far, passed on to the screen at most every DELTA_SECONDS."""
+        self.raw = raw
+        if time.monotonic() - self.flushed >= DELTA_SECONDS:
+            self.flush()
+
+    def flush(self):
+        """Send the screen what it has not had of the answer (assistant.delta): what follows what it had, or all of it
+        again (reset) when the answer no longer goes on from there, as when a failed attempt starts over."""
+        self.flushed = time.monotonic()
+        answer = partial_answer(self.raw)
+        if answer == self.sent:
+            return
+        part = {"text": answer[len(self.sent):]} if answer.startswith(self.sent) else {"text": answer, "reset": True}
+        self.sent = answer
+        self.emit("assistant.delta", {"request_id": self.request_id, "conversation_id": self.conversation_id, **part})
+
 
 def timestamp(value, name):
     if value is None or value == "":
@@ -69,7 +142,9 @@ def local_clock(p):
 class Assistant:
     def __init__(self, service):
         self.service, self.db, self.llm = service, service.db, service.llm
-        self.chat_lock = threading.Lock()
+        # The answers in progress by their conversation: different conversations answer at once, one question each.
+        self.lock = threading.Lock()
+        self.running = {}
         self.methods = {
             "tasks.list": self.tasks_list, "tasks.save": self.tasks_save,
             "tasks.save_many": self.tasks_save_many, "tasks.delete": self.tasks_delete,
@@ -77,6 +152,7 @@ class Assistant:
             "reminders.due": self.reminders_due, "reminders.ack": self.reminders_ack,
             "assistant.conversations": self.conversations, "assistant.history": self.history,
             "assistant.delete": self.delete_conversation, "assistant.ask": self.ask,
+            "assistant.cancel": self.cancel,
             "briefing.get": self.briefing, "briefing.generate": self.generate_briefing,
         }
 
@@ -193,7 +269,9 @@ class Assistant:
             results = [ask(0)]
         else:
             with ThreadPoolExecutor(max_workers=len(parts)) as pool:
-                results = list(pool.map(ask, range(len(parts))))
+                # Each part's request carries the caller's context, and with it the user's priority (llm.PRIORITY).
+                futures = [pool.submit(contextvars.copy_context().run, ask, number) for number in range(len(parts))]
+                results = [future.result() for future in futures]
         failed = [result for result in results if isinstance(result, UserError)]
         if len(failed) == len(results):
             raise failed[0]
@@ -279,9 +357,36 @@ class Assistant:
                        (next_at, notified_at, now(), ident))
         return {"ok": True, "acknowledged": True}
 
-    def conversations(self, _):
+    def conversations(self, p):
+        """The latest 50 conversations, or with `limit` or `cursor` a page of them after the cursor's (updated_at, id)
+        (paging): {conversations, next_cursor}. updated_from and updated_to keep those updated within the range."""
+        from . import paging
+        since, until = paging.period(p)
+        clauses, args = [], []
+        if since:
+            clauses.append("updated_at>=?")
+            args.append(since)
+        if until:
+            clauses.append("updated_at<?")
+            args.append(until)
+        if not paging.wanted(p):
+            with self.db.connect() as db:
+                return [dict(r) for r in db.execute(f"""SELECT * FROM conversations
+                    {'WHERE ' + ' AND '.join(clauses) if clauses else ''} ORDER BY updated_at DESC LIMIT 50""", args)]
+        limit = paging.size(p, "대화 목록은", 200)
+        after = paging.decode(p, "conversations", (str, str))
+        if after:
+            clauses.append("updated_at<=? AND (updated_at<? OR id<?)")
+            args += [after[0], after[0], after[1]]
         with self.db.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM conversations ORDER BY updated_at DESC LIMIT 50")]
+            found = [dict(r) for r in db.execute(f"""SELECT * FROM conversations
+                {'WHERE ' + ' AND '.join(clauses) if clauses else ''} ORDER BY updated_at DESC, id DESC LIMIT ?""",
+                                                 [*args, limit + 1])]
+        if len(found) <= limit:
+            return {"conversations": found, "next_cursor": None}
+        last = found[limit - 1]
+        return {"conversations": found[:limit],
+                "next_cursor": paging.encode("conversations", last["updated_at"], last["id"])}
 
     def history(self, p):
         ident = text(p.get("id"), "대화 ID", 80)
@@ -292,77 +397,143 @@ class Assistant:
                      "trace": json.loads(r["trace"]) if r["trace"] else None} for r in rows]
 
     def delete_conversation(self, p):
-        if not self.chat_lock.acquire(blocking=False):
-            raise UserError("대화 응답이 완료된 뒤 삭제해 주세요.")
-        try:
+        ident = text(p.get("id"), "대화 ID", 80)
+        with self.lock:
+            # Held while it deletes, so no answer of the conversation starts meanwhile.
+            if ident in self.running:
+                raise UserError("대화 응답이 완료된 뒤 삭제해 주세요.")
             with self.db.connect() as db:
-                db.execute("DELETE FROM conversations WHERE id=?", (text(p.get("id"), "대화 ID", 80),))
-        finally:
-            self.chat_lock.release()
+                db.execute("DELETE FROM conversations WHERE id=?", (ident,))
         return {"ok": True}
 
     def ask(self, p):
-        if not self.chat_lock.acquire(blocking=False):
-            raise UserError("이전 대화 응답을 기다려 주세요.")
-        try:
-            return self._ask(p)
-        finally:
-            self.chat_lock.release()
+        """Answer a question from the Wiki's documents and save both in their conversation. Different conversations
+        answer at once; a conversation answers one question at a time, and refuses another meanwhile.
 
-    def _ask(self, p):
-        question = text(p.get("question"), "질문", 2000)
+        With `stream`, the answer reaches the screen as the LLM writes it: assistant.delta events carry its text for
+        `request_id` (the screen's, or a new one the result names) and conversation_id, and one assistant.done event
+        ends them with the status (completed, cancelled or error). The result is the same with or without it, so the
+        REST API and MCP tools get the whole answer. assistant.cancel stops the answer: what had come of it is saved,
+        marked as stopped."""
         ident = text(p.get("conversation_id") or str(uuid.uuid4()), "대화 ID", 80)
+        request_id = p.get("request_id") or str(uuid.uuid4())
+        if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+            raise UserError("요청 ID는 영문·숫자와 . _ : - 로 80자까지 입력해 주세요.")
+        request = Request(ident, request_id, p.get("stream") is True, self.service.emit)
+        with self.lock:
+            if ident in self.running:
+                raise UserError("이 대화의 이전 질문에 답하는 중입니다. 답변이 끝난 뒤 다시 질문해 주세요.")
+            self.running[ident] = request
+        status, error = "error", "답변을 만들지 못했습니다. 다시 시도해 주세요."
+        try:
+            with cancellable(request.cancel):
+                result = self._ask(p, request)
+            status, error = "cancelled" if result.get("cancelled") else "completed", ""
+            return result
+        except UserError as failure:
+            error = str(failure)
+            raise
+        finally:
+            with self.lock:
+                self.running.pop(ident, None)
+            if request.stream:
+                request.flush()
+                self.service.emit("assistant.done", {"request_id": request_id, "conversation_id": ident,
+                                                     "status": status, "truncated": request.truncated,
+                                                     **({"error": error} if error else {})})
+
+    def cancel(self, p):
+        """Stop the answer in progress of conversation `conversation_id`, or of request `request_id` (a new
+        conversation's, before the screen has heard its ID). The answer ends as soon as it can (a streamed one at once,
+        another before its next LLM request), and what had come of it is saved. `cancelled` says whether there was
+        one to stop."""
+        ident, request_id = p.get("conversation_id"), p.get("request_id")
+        if not ident and not request_id:
+            raise UserError("중지할 대화 ID(conversation_id)나 요청 ID(request_id)를 입력해 주세요.")
+        ident = text(ident, "대화 ID", 80) if ident else None
+        request_id = text(request_id, "요청 ID", 80) if request_id else None
+        with self.lock:
+            found = [request for request in self.running.values()
+                     if (ident is None or request.conversation_id == ident)
+                     and (request_id is None or request.request_id == request_id)]
+        for request in found:
+            request.cancel.set()
+        return {"ok": True, "cancelled": bool(found)}
+
+    def cancel_all(self):
+        """Stop every answer in progress: the backend is closing."""
+        with self.lock:
+            found = list(self.running.values())
+        for request in found:
+            request.cancel.set()
+
+    def scale(self):
+        """How much of the default evidence and history (PROMPT_CHARS) an answer request carries within the model's
+        context window."""
+        return min(MAX_SCALE, max(MIN_SCALE, self.llm.prompt_chars() / PROMPT_CHARS))
+
+    def _ask(self, p, request):
+        question = text(p.get("question"), "질문", 2000)
+        ident = request.conversation_id
         if p.get("conversation_id"):
             with self.db.connect() as db:
                 if not db.execute("SELECT 1 FROM conversations WHERE id=?", (ident,)).fetchone():
                     raise UserError("대화가 삭제되었습니다. 새 대화를 시작해 주세요.")
-        history = self.history({"id": ident})[-12:]
+        scale = self.scale()
+        history = self.history({"id": ident})[-HISTORY_MESSAGES:]
         ids = p.get("document_ids", [])
         if not isinstance(ids, list) or len(ids) > 6 or not all(isinstance(i, str) for i in ids):
             raise UserError("참고 문서는 최대 6개까지 선택할 수 있습니다.")
         previous = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
-        if ids:
-            found = self.service.search.picked(question, ids, previous)
-        else:
-            # Prompt search: analysis, keyword search and the AI search agent. The last answer's sources,
-            # in their current revision, stay available to follow-up questions.
-            prior = [c["id"] for m in history[-2:] for c in m["citations"]]
-            found = self.service.search.gather(question, previous, prior)
-        sources, remaining = [], search.EVIDENCE_TOTAL
+        try:
+            if ids:
+                found = self.service.search.picked(question, ids, previous)
+            else:
+                # Prompt search: analysis, keyword search and the AI search agent. The last answer's sources,
+                # in their current revision, stay available to follow-up questions.
+                prior = [c["id"] for m in history[-2:] for c in m["citations"]]
+                found = self.service.search.gather(question, previous, prior)
+        except Cancelled:
+            # Stopped while the question was analyzed: nothing was found, and no answer is asked for.
+            found = {"documents": [], "pattern": None, "terms": [], "steps": [], "results": None}
+        # The evidence and the history fill what the model's context window leaves the request (scale): the default
+        # window gives each document and all of them what they always had.
+        sources, remaining = [], int(search.EVIDENCE_TOTAL * scale)
         for doc, sections in found["documents"]:
-            budget = min(search.SECTION_CHARS if doc["_tree"] else search.EVIDENCE_CHARS, remaining)
-            if budget < 500:
+            share = max(MIN_EVIDENCE, int((search.SECTION_CHARS if doc["_tree"] else search.EVIDENCE_CHARS) * scale))
+            budget = min(share, remaining)
+            if budget < MIN_EVIDENCE:
                 break
             excerpt, labels, partial = search.evidence(doc, sections, found["pattern"], budget)
             remaining -= len(excerpt)
             sources.append({"id": doc["id"], "title": doc["title"], "updated_at": doc["updated_at"],
                 "revision": doc["revision"], "source": doc["source"], "sections": labels,
                 "excerpt": excerpt, "partial": partial, "number": len(sources) + 1})
-        citations = []
-        if not sources:
+        citations, outcome, listed = [], None, set()
+        if request.cancel.is_set():
+            # Stopped while the documents were searched: no answer is asked for.
+            answer, outcome = STOPPED, "cancelled"
+        elif not sources:
             answer = "관련 자료를 찾지 못했습니다. Wiki에 자료를 추가하거나 참고 문서를 직접 선택해 주세요."
         else:
             # The LLM learns where a document came from by a short label: the citations keep the source's path or
             # link for the screen, which this PC's folders never leave by.
             documents = [{**s, "source": search.source_label(s["source"]) if s["source"] else None} for s in sources]
-            result = self.llm.structured(ANSWER, json.dumps({"question": question,
-                "history": [{"role": m["role"], "content": m["content"][:2000]} for m in history],
-                "documents": documents}, ensure_ascii=False))
-            answer = result.get("answer")
-            if not isinstance(answer, str) or not answer.strip():
-                raise UserError("LLM이 답변을 돌려주지 않았습니다. 다시 질문해 주세요.")
-            answer = answer.strip()[:20000]
+            limit = max(200, int(HISTORY_CHARS * scale))
+            answer, listed, outcome = self._answer(json.dumps({"question": question,
+                "history": [{"role": m["role"], "content": m["content"][:limit]} for m in history],
+                "documents": documents}, ensure_ascii=False), request)
             # The sources are the documents the answer marks ([1], [1, 2] or [1][2]) and those the LLM listed; a
             # number no document has, such as a year in brackets, is no source.
             marked = {int(n) for group in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", answer) for n in re.split(r"\s*,\s*", group)}
-            listed = result.get("citations")
-            listed = {n for n in listed if type(n) is int} if isinstance(listed, list) else set()
             numbers = sorted(n for n in marked | listed if 1 <= n <= len(sources))
             # Citations keep the search words so the screen can highlight them in the excerpt.
             citations = [{**s, "terms": found["terms"]} for s in sources if s["number"] in numbers]
         stamp = now()
         trace = {"terms": found["terms"], "steps": found["steps"],
                  "sources": [{"title": s["title"], "sections": s["sections"]} for s in sources]}
+        if outcome:
+            trace["outcome"] = outcome  # The answer did not end by itself: the user stopped it, or the output limit.
         with self.db.connect() as db:
             db.execute("""INSERT INTO conversations VALUES (?,?,?,?) ON CONFLICT(id)
                 DO UPDATE SET updated_at=excluded.updated_at""", (ident, question[:100], stamp, stamp))
@@ -372,7 +543,33 @@ class Assistant:
                 VALUES (?,'assistant',?,?,?,?)""",
                        (ident, answer, json.dumps(citations, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), stamp))
         # An automatic search also lists every document it found, for the search box's result list.
-        return {"conversation_id": ident, "messages": self.history({"id": ident}), "search": found.get("results")}
+        return {"conversation_id": ident, "messages": self.history({"id": ident}), "search": found.get("results"),
+                "request_id": request.request_id, "cancelled": outcome == "cancelled",
+                "truncated": outcome == "truncated"}
+
+    def _answer(self, payload, request):
+        """The LLM's answer to the question in `payload`, as (answer, the citation numbers it listed, outcome). The
+        outcome is None for an answer that ended by itself; 'cancelled' (the user stopped it) and 'truncated' (the LLM
+        stopped at its output limit) keep what had come of the answer, with a note that says so."""
+        messages = [{"role": "system", "content": ANSWER}, {"role": "user", "content": payload}]
+        try:
+            reply = self.llm.complete(messages, temperature=0.1, stream=request.update if request.stream else None)
+        except Cancelled as stopped:
+            return noted(partial_answer(stopped.partial), STOPPED), set(), "cancelled"
+        if getattr(reply, "truncated", False):
+            # A JSON answer cut short does not read as JSON: what the answer field holds so far is the answer.
+            answer = partial_answer(reply)
+            if not answer.strip():
+                raise UserError(TRUNCATED_JSON)
+            request.truncated = True
+            return noted(answer, TRUNCATED_NOTE), set(), "truncated"
+        result = json_object(reply)
+        answer = result.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            raise UserError("LLM이 답변을 돌려주지 않았습니다. 다시 질문해 주세요.")
+        listed = result.get("citations")
+        listed = {n for n in listed if type(n) is int} if isinstance(listed, list) else set()
+        return answer.strip()[:20000], listed, None
 
     def briefing(self, p):
         local = local_clock(p)
@@ -407,8 +604,14 @@ class Assistant:
             {"role": "user", "content": json.dumps(context, ensure_ascii=False)}])
         if not isinstance(output, str) or not output.strip():
             raise UserError("LLM이 브리핑을 돌려주지 않았습니다. 다시 생성해 주세요.")
-        # A briefing longer than the widget keeps is cut, not refused after the LLM has written it.
+        # A briefing longer than the widget keeps is cut, not refused after the LLM has written it; one the LLM
+        # stopped at its output limit says so in the room it keeps for that.
+        truncated = getattr(output, "truncated", False)
+        room = BRIEF_CHARS - (len(TRUNCATED_NOTE) + 2 if truncated else 0)
         content = output.strip()
-        if len(content) > BRIEF_CHARS:
-            content = content[:BRIEF_CHARS - 1].rstrip() + "…"
-        return {"content": content, "generated_at": snapshot["generated_at"], "omitted_tasks": context["omitted_tasks"]}
+        if len(content) > room:
+            content = content[:room - 1].rstrip() + "…"
+        if truncated:
+            content = f"{content}\n\n{TRUNCATED_NOTE}"
+        return {"content": content, "generated_at": snapshot["generated_at"], "omitted_tasks": context["omitted_tasks"],
+                "truncated": truncated}

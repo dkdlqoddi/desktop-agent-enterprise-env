@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from agent import browser_import, diagnostics, jira_import
+import jira_server
+from agent import browser_import, diagnostics, jira_import, sources
 from agent.db import Database
 from agent.jira import build_html, comment_item, import_issue, parse_issue_url, search_jql
 from agent.jira_import import JiraApi
@@ -463,3 +464,57 @@ def test_real_browser_that_cannot_start_says_why(browser, tmp_path, monkeypatch)
     assert job["status"] == "error" and job["error"].startswith("JIRA 브라우저를 시작하지 못했습니다: "), str(job)
     assert "Executable doesn't exist" in job["error"], str(job)
     assert server.logins == []
+
+
+def test_a_request_jira_refuses_as_too_many_is_asked_again(monkeypatch):
+    monkeypatch.setattr(browser_import, "THROTTLE", browser_import.Throttle(rate=1000, burst=1000))
+
+    class Page:
+        url = "https://jira.test/jira/browse/TEAM-1"
+
+        def __init__(self, *answers):
+            self.answers, self.asked = list(answers), []
+
+        async def evaluate(self, script, params):
+            self.asked.append(params["url"])
+            return self.answers.pop(0)
+
+    page = Page({"status": 429, "text": "", "retry": "0"}, {"status": 200, "text": '{"key": "TEAM-1"}', "retry": ""})
+    assert asyncio.run(JiraApi(page, "/jira").get("issue/TEAM-1", {"fields": "updated"})) == {"key": "TEAM-1"}
+    assert page.asked == ["/jira/rest/api/2/issue/TEAM-1?fields=updated"] * 2
+    page = Page(*[{"status": 429, "text": "", "retry": "0"}] * browser_import.ATTEMPTS)
+    with pytest.raises(UserError, match=r"HTTP 429\). 요청이 너무 많다며 JIRA가 거절했습니다"):
+        asyncio.run(JiraApi(page, "/jira").get("issue/TEAM-1"))
+
+
+def test_real_browser_a_routine_reads_only_the_tickets_updated_since(browser, monkeypatch):
+    server, service, importer = browser
+
+    def watch():
+        return run(server, importer, scope="list", keys=["TEAM-1", "TEAM-2", "TEAM-3"], track_changes=True)
+
+    job = watch()
+    assert (job["status"], job["imported"]) == ("completed", 3), str(job)
+    with service.db.connect() as db:
+        assert {row[0] for row in db.execute("SELECT updated FROM jira_sources")} == {jira_server.UPDATED}
+    # Nothing updated: the first ticket, which the job opens with, is read; the others are asked for their updated
+    # time alone, and none is saved again.
+    server.requests.clear()
+    job = watch()
+    assert (job["skipped"], {item["message"] for item in job["results"]}) == (3, {sources.UNMODIFIED}), str(job)
+    full = [path for path in server.requests if "expand=renderedFields" in path]
+    assert [path.split("?")[0].rsplit("/", 1)[1] for path in full] == ["TEAM-1"]
+    assert sorted(path.split("?")[0].rsplit("/", 1)[1] for path in server.requests if "fields=updated" in path) == [
+        "TEAM-2", "TEAM-3"]
+    assert not [path for path in server.requests if "/comment" in path]
+    # One ticket updated: that one is read in full and saved.
+    monkeypatch.setitem(jira_server.ISSUES, "TEAM-3", {**jira_server.ISSUES["TEAM-3"], "text": "세션이 60분 뒤 만료됩니다",
+                                                       "updated": "2026-10-06T11:00:00.000+0900"})
+    server.requests.clear()
+    job = watch()
+    assert [item["status"] for item in job["results"]] == ["skipped", "skipped", "updated"], str(job)
+    assert sum("TEAM-3?expand=renderedFields" in path for path in server.requests) == 1
+    # JIRA asks the job to slow down: the requests it refused are asked again.
+    server.throttled = 2
+    job = run(server, importer)
+    assert (job["status"], job["skipped"], job["failed"]) == ("completed", 1, 0), str(job)

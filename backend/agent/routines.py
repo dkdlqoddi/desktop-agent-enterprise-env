@@ -944,10 +944,11 @@ class SourceRefresh(Recipe):
         def record(result, title, path_or_url, counted=True):
             status = result["status"]
             if status == "skipped":
-                status = "edited" if result.get("reason") == "edited" else "same"
+                # A file whose documents the user purged from the trash stays out (sources.IGNORED), unlisted.
+                status = {"edited": "edited", "ignored": "ignored"}.get(result.get("reason"), "same")
             if counted:
                 counts[status] += 1
-            if status != "same":
+            if status not in ("same", "ignored"):
                 doc = result.get("doc_id") or (result.get("doc_ids") or [None])[0]
                 items.append({"title": title, "status": {"imported": "new", "updated": "changed"}.get(status, status),
                               "doc_id": doc, "url": path_or_url, "message": result.get("message", "")})
@@ -980,6 +981,7 @@ class SourceRefresh(Recipe):
         summary = " · ".join(filter(None, (
             f"업데이트 {counts['updated']}" if counts["updated"] else "", f"새 문서 {counts['imported']}" if counts["imported"] else "",
             f"그대로 {counts['same']}", f"고친 문서라 건너뜀 {counts['edited']}" if counts["edited"] else "",
+            f"영구 삭제한 문서라 건너뜀 {counts['ignored']}" if counts["ignored"] else "",
             f"원본 없음 {len(missing)}" if missing else "", f"실패 {counts['failed']}" if counts["failed"] else "")))
         return outcome(summary, bool(counts["updated"] or counts["imported"]), items, notes=notes,
                        metrics=[{"label": "업데이트", "value": counts["updated"]},
@@ -994,7 +996,8 @@ class SourceRefresh(Recipe):
         if kind == "markdown":
             from .markdown_file import import_file
             try:
-                result = import_file(run.service, {"path": str(path)})
+                # As the routine's own import: it leaves what the user put in the trash or purged where it is.
+                result = import_file(run.service, {"path": str(path), "routine": run.name})
                 if analyze and result["status"] in ("imported", "updated"):
                     for ident in result["doc_ids"]:
                         try:
@@ -1022,8 +1025,9 @@ class SourceRefresh(Recipe):
         # file is counted by the job's own counts.
         for result in job["results"]:
             record(result, Path(result["path"]).name, result["path"], counted=False)
+        ignored = job.get("ignored", 0)
         counts.update(imported=job["imported"], updated=job["updated"], failed=job["failed"], edited=job["edited"],
-                      same=job["skipped"] - job["edited"])
+                      ignored=ignored, same=job["skipped"] - job["edited"] - ignored)
 
     @staticmethod
     def missing(run, roots):
@@ -1386,6 +1390,9 @@ class Routines:
         return self.get({"id": row["id"]})
 
     def due(self, _=None):
+        # Electron asks this every 30 seconds while the app runs: the Wiki's daily backup and retention policy are
+        # started from here (Service.upkeep), in the background, rather than by a scheduler of their own.
+        self.service.upkeep()
         with self.db.connect() as db:
             rows = db.execute("""SELECT * FROM routines WHERE enabled=1 AND next_run_at<=?
                 ORDER BY next_run_at LIMIT 10""", (now(),)).fetchall()

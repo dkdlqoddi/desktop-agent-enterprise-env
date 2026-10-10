@@ -6,9 +6,9 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from . import diagnostics, pageindex, sources
+from . import diagnostics, pageindex, paging, sources, storage
 from .db import index_text
-from .llm import UserError
+from .llm import UserError, shown
 
 
 _clock = threading.Lock()
@@ -84,10 +84,31 @@ SOURCES = (("rtf_sources", "rtf", "source_path,imported_at,part,parts"),
 
 # The most documents one request on the document list's selection may name.
 MAX_SELECTED = 10000
-# How long a deleted document waits in the trash before it is purged at a start of the backend.
+# How long a deleted document waits in the trash before the retention policy purges it.
 TRASH_DAYS = 30
 # Documents that are not in the trash, as every list, search and analysis reads them.
 LIVE = "deleted_at IS NULL"
+# The retention policy of what the Wiki logs, applied at each start of the backend and once a day while the app runs
+# (Service.retain): the history of prompt runs keeps its newest RUNS_KEPT runs of the last RUNS_DAYS days; each
+# conversation keeps its newest MESSAGES_KEPT messages (the screen shows the last 100) and the newest CONVERSATIONS_KEPT
+# conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS. The logs are trimmed
+# only while a backup of the Wiki exists. The automatic routines keep their last 30 runs each by themselves
+# (routines.MAX_RUNS).
+RUNS_KEPT = 2000
+RUNS_DAYS = 90
+MESSAGES_KEPT = 200
+CONVERSATIONS_KEPT = 1000
+# The Wiki's daily upkeep (Service.upkeep), looked at whenever Electron asks the routines what is due (every 30 seconds
+# while the app runs): at most every UPKEEP_EVERY seconds, the first time UPKEEP_DELAY seconds after the start so that
+# the screens load first. It makes the daily backup once the newest is a day old and applies the retention policy daily.
+UPKEEP_DELAY = 60
+UPKEEP_EVERY = 3600
+RETAIN_EVERY = 24 * 3600
+# What the user is told while another backup, or the copy of a restore, is being made.
+BACKUP_BUSY = "다른 백업이나 복원 준비가 진행 중입니다. 끝난 뒤 다시 시도해 주세요."
+# What the document list shows of each document: a short excerpt, never the full text.
+LISTED = """d.id,d.title,substr(d.content,1,200) AS excerpt,d.summary,d.status,d.error,d.revision,d.index_mode,d.format,
+    d.created_at,d.updated_at"""
 
 # What a schedule's run that cannot fill in its template's inputs asks the user to do.
 SCHEDULE_INPUTS = "예약을 열어 입력 내용을 확인하고 저장해 주세요."
@@ -103,6 +124,9 @@ def document_ids(value, limit=MAX_SELECTED):
 class Service:
     def __init__(self, db, llm):
         self.db, self.llm = db, llm
+        # Events the backend sends of its own accord, as emit(name, params): main.py writes each as a line without an
+        # id, which Electron passes to the window (an answer as the LLM writes it). Nothing listens without it.
+        self.emit = lambda event, params: None
         from .image_import import ImageImporter
         from .office_import import OfficeImporter
         from .rtf_import import RtfImporter
@@ -128,12 +152,20 @@ class Service:
         from .routines import Routines
         self.routines = Routines(self)
         self.active, self.active_lock = {}, threading.Lock()
+        # One backup, or copy of a backup to restore, at a time: the daily one and those asked for.
+        self.backup_lock = threading.Lock()
+        self.upkeep_lock, self.upkeep_thread = threading.Lock(), None
+        self.upkeep_at = time.monotonic() + UPKEEP_DELAY
         # An interrupted extraction must remain retryable on the next startup.
         with db.connect() as conn:
             conn.execute("UPDATE documents SET status='pending', error='' WHERE status='indexing'")
-            # The trash is emptied of what has waited TRASH_DAYS: the rest stays for the user to restore.
-            conn.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?",
-                         ((datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).isoformat(),))
+        try:
+            trimmed = "runs" in self.retain()
+        except Exception as error:  # Housekeeping never keeps the Wiki from opening; the upkeep tries again.
+            trimmed = False
+            diagnostics.report(error, "", "보존 정책")
+        # When the logs were last trimmed: never yet sends the upkeep's first look to do it, after its backup.
+        self.retained_at = time.time() if trimmed else 0.0
 
     def shutdown(self, _=None):
         """The app is closing: stop the automatic routines, the imports, a write to an original file before it saves,
@@ -167,7 +199,8 @@ class Service:
             "settings.load": lambda p: self.llm.load(p),
             # The main process alone (never a screen or an AI tool: electron/main.cjs ALLOWED leaves it out).
             "settings.secrets": lambda p: self.llm.secrets(),
-            "settings.test": lambda p: {"message": self.llm.complete([{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}])},
+            # Answers shown as text say so when the LLM stopped them at its output limit (shown).
+            "settings.test": lambda p: {"message": shown(self.llm.complete([{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}]))},
             "stats": self.stats, "prompts.list": self.prompts_list, "prompts.save": self.prompts_save,
             "prompts.delete": self.prompts_delete, "prompts.run": self.prompts_run,
             "runs.list": self.runs_list, "runs.get": self.runs_get, "runs.delete": self.runs_delete,
@@ -177,6 +210,8 @@ class Service:
             "wiki.delete": self.wiki_delete, "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
             "wiki.delete_many": self.wiki_delete_many, "wiki.clear_analysis": self.wiki_clear_analysis,
             "wiki.trash": self.wiki_trash, "wiki.restore": self.wiki_restore, "wiki.purge": self.wiki_purge,
+            "wiki.backup": self.wiki_backup, "wiki.backups": self.wiki_backups,
+            "wiki.restore_backup": self.wiki_restore_backup,
             "wiki.search": self.wiki_search, "wiki.graph": self.wiki_graph,
             "wiki.source_markdown": self.wiki_source_markdown, "wiki.source_html": self.wiki_source_html,
             "wiki.source_status": self.wiki_source_status,
@@ -208,6 +243,7 @@ class Service:
             "text.cancel": self.texts.cancel, "text.dismiss": self.texts.dismiss,
             "writeback.start": self.writeback.start, "writeback.status": self.writeback.status,
             "writeback.cancel": self.writeback.cancel, "writeback.dismiss": self.writeback.dismiss,
+            "writeback.backups": self.writeback.backups, "writeback.restore_backup": self.writeback.restore_backup,
             **self.assistant.methods, **self.schedules.methods, **self.routines.methods,
         }
         if method not in methods or not isinstance(params, dict):
@@ -351,7 +387,7 @@ class Service:
         try:
             messages = self.prompt_messages(row, variables)
             run["input"] = messages[-1]["content"]
-            run["output"] = self.llm.complete(messages)
+            run["output"] = shown(self.llm.complete(messages))
         except Exception as exc:
             error = diagnostics.report(exc, "프롬프트를 실행하지 못했습니다. 설정과 입력을 확인해 주세요.", "프롬프트 실행")
             if schedule_id and not run["input"] and isinstance(exc, UserError):
@@ -483,12 +519,51 @@ class Service:
             doc["source"], doc["keywords"] = sources.get(doc["id"]), keywords[doc["id"]]
         return docs
 
-    def wiki_list(self, _):
+    def wiki_list(self, p):
+        """The live documents, the last updated first; `source`, `analysis` and `updated_from`/`updated_to` keep those
+        they name (paging.Filters). With `limit` or `cursor` one page of them (paging): {documents, next_cursor}."""
+        filters = paging.Filters.of(p)
+        test, args = filters.sql("d") if filters else ("1", [])
+        if paging.wanted(p):
+            return self.wiki_page(p, filters, test, args)
         with self.db.connect() as db:
             # List entries carry a short excerpt, never the full text of every document.
-            return self.attach(db, [dict(row) for row in db.execute(f"""SELECT id,title,substr(content,1,200) AS excerpt,
-                summary,status,error,revision,index_mode,format,created_at,updated_at FROM documents WHERE {LIVE}
-                ORDER BY updated_at DESC""")])
+            return self.attach(db, [dict(row) for row in db.execute(f"""SELECT {LISTED} FROM documents d
+                WHERE d.{LIVE} AND {test} ORDER BY d.updated_at DESC""", args)])
+
+    def wiki_page(self, p, filters, test, args):
+        """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. An import
+        saved in parts is one entry, its document updated last of those the filters keep, with the import's
+        documents in `parts` ([] for a document not saved in parts)."""
+        limit = paging.size(p, "문서 목록은", 500)
+        after = paging.decode(p, "list", (str, str))
+        entries = []
+        with self.db.connect() as db:
+            while len(entries) <= limit:
+                # Before the cursor's entry: written so the index is searched from it rather than read from the top.
+                keyset, keys = ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]]) \
+                    if after else ("1", [])
+                # The + keeps the planner from finding the live documents by idx_documents_deleted and sorting them all.
+                rows = [dict(row) for row in db.execute(f"""SELECT {LISTED} FROM documents d
+                    WHERE +d.{LIVE} AND {test} AND {keyset} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?""",
+                                                         [*args, *keys, limit + 1])]
+                if not rows:
+                    break
+                docs = self.attach(db, rows)
+                groups = paging.imports(db, [doc["id"] for doc in docs if doc["source"] and doc["source"]["parts"] > 1])
+                for doc in docs:
+                    after = (doc["updated_at"], doc["id"])
+                    found = paging.members(db, *groups[doc["id"]], filters) if doc["id"] in groups else []
+                    if any(row["passes"] and (row["updated_at"], row["id"]) > after for row in found):
+                        continue  # A document of the same import comes first.
+                    doc["parts"] = paging.parts(found)
+                    entries.append(doc)
+                    if len(entries) > limit:
+                        break
+        if len(entries) <= limit:
+            return {"documents": entries, "next_cursor": None}
+        last = entries[limit - 1]
+        return {"documents": entries[:limit], "next_cursor": paging.encode("list", last["updated_at"], last["id"])}
 
     def wiki_get(self, p):
         return self.document(p.get("id"), html=True)
@@ -563,7 +638,7 @@ class Service:
                     revision=revision+1,updated_at=?,format='markdown' WHERE id=?""", (title, content, now(), ident))
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id=?", (ident,))
-            if row is None or row["content"].strip() != content:
+            if row is None or row["content"].strip() != content or row["title"] != title:
                 index_text(db, [ident])
         return self.wiki_get({"id": ident})
 
@@ -626,19 +701,134 @@ class Service:
         return {"restored": restored}
 
     def wiki_purge(self, p):
-        """Delete the chosen documents of the trash for good, or all of them (`all`): nothing brings them back."""
+        """Delete the chosen documents of the trash for good, or all of them (`all`): nothing brings them back. The
+        sources none of whose documents is left are left out of the routines' imports (sources.purge)."""
         from .search import chunks
         everything = p.get("all", False)
         if not isinstance(everything, bool):
             raise UserError("휴지통을 모두 비울지(all) 확인해 주세요.")
         ids = [] if everything else document_ids(p.get("ids"))
         with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             if everything:
-                purged = db.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL").rowcount
+                found = [row[0] for row in db.execute("SELECT id FROM documents WHERE deleted_at IS NOT NULL")]
             else:
-                purged = sum(db.execute(f"DELETE FROM documents WHERE id IN ({','.join('?' * len(chunk))}) "
-                                        "AND deleted_at IS NOT NULL", chunk).rowcount for chunk in chunks(ids))
+                found = [row[0] for chunk in chunks(ids) for row in db.execute(
+                    f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(chunk))}) AND deleted_at IS NOT NULL",
+                    chunk)]
+            purged = sources.purge(db, found)
         return {"purged": purged}
+
+    def retain(self):
+        """Apply the retention policy (RUNS_KEPT and the others): what it removed, counted by table. The logs (runs,
+        conversations, messages) are trimmed only while a backup of the Wiki exists, which still holds what goes for
+        good: the first start of this version leaves them to the upkeep, which trims them after its first backup. The
+        trash is emptied either way, as it always was."""
+        def cutoff(days):
+            return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        try:
+            logs = any(item["kind"] != "before_restore" for item in storage.backups(self.db.path))
+        except OSError:  # The backups folder cannot be read: no backup to count on.
+            logs = False
+        removed = {}
+        with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if logs:
+                removed["runs"] = db.execute("""DELETE FROM runs WHERE created_at<? OR id NOT IN
+                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)""", (cutoff(RUNS_DAYS), RUNS_KEPT)).rowcount
+                # A conversation goes with its messages (ON DELETE CASCADE).
+                removed["conversations"] = db.execute("""DELETE FROM conversations WHERE id NOT IN
+                    (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?)""", (CONVERSATIONS_KEPT,)).rowcount
+                removed["messages"] = db.execute("""DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq,
+                    row_number() OVER (PARTITION BY conversation_id ORDER BY seq DESC) AS position FROM messages)
+                    WHERE position>?)""", (MESSAGES_KEPT,)).rowcount
+            # The rest of the trash stays for the user to restore. Routines leave out the sources of what goes, as after
+            # the user's own purge (sources.purge).
+            removed["documents"] = sources.purge(db, [row[0] for row in db.execute(
+                "SELECT id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?", (cutoff(TRASH_DAYS),))])
+        if any(removed.values()):
+            diagnostics.LOG.info("retention policy removed %s",
+                                 ", ".join(f"{count} {table}" for table, count in removed.items() if count))
+        return removed
+
+    def upkeep(self):
+        """Start the Wiki's daily upkeep in the background when it is due (UPKEEP_EVERY); quick otherwise. Electron's
+        routine runner calls it with every look at what is due (routines.due), so it needs no scheduler of its own."""
+        with self.upkeep_lock:
+            if time.monotonic() < self.upkeep_at or (self.upkeep_thread and self.upkeep_thread.is_alive()):
+                return
+            self.upkeep_at = time.monotonic() + UPKEEP_EVERY
+            self.upkeep_thread = threading.Thread(target=self.daily, name="upkeep", daemon=True)
+            self.upkeep_thread.start()
+
+    def daily(self):
+        """The upkeep's work: the daily backup once the newest is a day old (storage.backup_due), and the retention
+        policy once a day. What fails is logged and tried again at the next look."""
+        try:
+            if storage.backup_due(self.db.path):
+                self.backup("auto")
+        except UserError as error:  # Another backup under way, or a failure backup() has logged with its ID.
+            diagnostics.LOG.warning("daily backup not made: %s", error)
+        except Exception as error:
+            diagnostics.report(error, "", "자동 백업")
+        if time.time() - self.retained_at >= RETAIN_EVERY:
+            try:
+                if "runs" in self.retain():  # Without a backup yet the logs wait, and the next look tries again.
+                    self.retained_at = time.time()
+            except Exception as error:
+                diagnostics.report(error, "", "보존 정책")
+
+    def backup(self, kind):
+        """A backup of the Wiki of `kind` (auto or manual) in its backups folder (storage.snapshot): (it, the older
+        ones of its kind removed)."""
+        if not self.backup_lock.acquire(blocking=False):
+            raise UserError(BACKUP_BUSY)
+        try:
+            with self.db.connect() as db:
+                return storage.snapshot(db, self.db.path, kind)
+        except Exception as error:
+            raise UserError(diagnostics.report(
+                error, "백업을 만들지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "백업")) from None
+        finally:
+            self.backup_lock.release()
+
+    def wiki_backups(self, _):
+        """The Wiki's backups, the newest first, with the restore the next start carries out and how the last went."""
+        path = self.db.path
+        return {"folder": str(storage.backup_folder(path)), "keep": storage.KEEP, "backups": storage.backups(path),
+                "pending_restore": storage.pending_restore(path), "last_restore": storage.last_restore(path)}
+
+    def wiki_backup(self, _):
+        """Back up the Wiki now. Backups asked for keep their own newest storage.KEEP, beside the daily ones."""
+        made, removed = self.backup("manual")
+        return {**made, "removed": removed}
+
+    def wiki_restore_backup(self, p):
+        """Have the next start of the backend put the backup `file` in the Wiki's place, or take that back (`cancel`).
+        The Wiki cannot be replaced under the connections and jobs of the backend that runs (storage.py says why), so
+        the answer tells the screen that the app must be started again."""
+        cancel = p.get("cancel", False)
+        if not isinstance(cancel, bool):
+            raise UserError("복원 취소(cancel) 값을 확인해 주세요.")
+        if not self.backup_lock.acquire(blocking=False):
+            raise UserError(BACKUP_BUSY)
+        try:
+            if cancel:
+                cancelled = storage.cancel_restore(self.db.path)
+                return {"restart_required": False, "cancelled": cancelled,
+                        "message": "예약한 복원을 취소했습니다." if cancelled else "예약한 복원이 없습니다."}
+            request = storage.stage_restore(self.db.path, p.get("file"))
+        except UserError:
+            raise
+        except Exception as error:
+            raise UserError(diagnostics.report(
+                error, "복원을 준비하지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "복원 준비")) from None
+        finally:
+            self.backup_lock.release()
+        return {"restart_required": True, **request,
+                "message": f"앱을 다시 실행하면 Wiki를 백업 {request['file']}의 내용으로 되돌립니다. 지금의 Wiki는 백업 "
+                           "폴더에 wiki-before-restore-….db로 남깁니다. 되돌리지 않으려면 다시 실행하기 전에 복원을 "
+                           "취소해 주세요."}
 
     def wiki_clear_analysis(self, p):
         """Take back the AI analysis of the chosen documents (summary, keywords, relations, table of contents and a
@@ -663,6 +853,7 @@ class Service:
                            chunk)
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id IN ({marks})", chunk)
+            index_text(db, cleared)
         return {"cleared": len(cleared), "busy": busy}
 
     def wiki_source_markdown(self, p):
@@ -698,9 +889,10 @@ class Service:
                 raise UserError("가져온 문서가 아닙니다." if found else "문서를 찾을 수 없습니다.")
             if "source_path" not in source:
                 return {"state": "unknown"}
-            checksum = db.execute(f"SELECT source_hash FROM {self.source_table(source)} WHERE doc_id=?",
-                                  (ident,)).fetchone()[0]
-        return sources.file_state(source["source_path"], checksum)
+            row = db.execute(f"SELECT source_hash,source_size,source_mtime FROM {self.source_table(source)} "
+                             "WHERE doc_id=?", (ident,)).fetchone()
+        return sources.file_state(source["source_path"], row["source_hash"],
+                                  stat=(row["source_size"], row["source_mtime"]))
 
     def markdown_import(self, p):
         # Only Electron's files.import_text calls this internal RPC, with the path the user gave.
@@ -716,13 +908,14 @@ class Service:
             if not updated.rowcount:
                 raise UserError("이미 분석 중이거나 문서가 변경되었습니다. 잠시 후 다시 시도해 주세요.")
         try:
-            nodes = None
+            nodes, note = None, ""
             body = doc["content"]
             if len(body) > pageindex.MIN_CHARS:
                 # PageIndex: summarize the section tree in bounded batches, then extract the metadata
-                # from the outline, so no request carries the whole document.
+                # from the outline, so no request carries the whole document. Sections whose summary requests
+                # failed keep the beginning of their text, and the document's error says which (a note).
                 nodes = pageindex.build(body)
-                pageindex.summarize(self.llm, doc["title"], body, nodes)
+                note = pageindex.failure_note(pageindex.summarize(self.llm, doc["title"], body, nodes))
                 body = f"[긴 문서 · 본문 {len(body):,}자 · 목차와 섹션 요약]\n{pageindex.outline(nodes)}"
             result = self.llm.structured(EXTRACT, f"제목: {doc['title']}\n\n{body}")
             summary = result.get("summary")
@@ -743,8 +936,8 @@ class Service:
                 if source in keys and target in keys and source != target:
                     relations.add((doc["id"], source, target, " ".join(r["label"].split())[:100]))
             with self.db.connect() as db:
-                changed = db.execute("UPDATE documents SET summary=?,status='ready',error='',index_mode=? WHERE id=? AND revision=?",
-                                     (summary, "pageindex" if nodes else "wiki", doc["id"], doc["revision"]))
+                changed = db.execute("UPDATE documents SET summary=?,status='ready',error=?,index_mode=? WHERE id=? AND revision=?",
+                                     (summary, note, "pageindex" if nodes else "wiki", doc["id"], doc["revision"]))
                 if not changed.rowcount:
                     raise UserError("분석 중 문서가 수정 또는 삭제되었습니다. 최신 문서를 다시 분석해 주세요.")
                 for table in ("keywords", "relations", "doc_nodes"):
@@ -753,6 +946,7 @@ class Service:
                 db.executemany("INSERT INTO relations VALUES (?,?,?,?)", sorted(relations))
                 if nodes:
                     pageindex.save(db, doc["id"], doc["revision"], nodes)
+                index_text(db, [doc["id"]])  # The search text takes the new summary.
         except Exception as exc:
             error = diagnostics.report(exc, "문서 분석에 실패했습니다. 다시 시도해 주세요.", "AI 분석")
             with self.db.connect() as db:

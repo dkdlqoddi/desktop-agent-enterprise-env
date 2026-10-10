@@ -39,3 +39,5 @@ sites.json
 api.json
 *.spec
 !tests/*.spec.*
+# Agent worktrees of this checkout.
+.claude/worktrees/

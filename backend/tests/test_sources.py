@@ -3,14 +3,18 @@ place instead of saving new ones, an unchanged source changes nothing, and what 
 is asked to replace it."""
 import os
 import sqlite3
+import time
 from html import escape
 
 import pytest
 
+from agent import sources
 from agent.confluence import import_page
 from agent.db import Database
 from agent.html_document import page
+from agent.jira import import_issue
 from agent.llm import UserError
+from agent.markdown_file import import_file
 from agent.rtf_import import RtfImporter
 from agent.service import Service
 from test_rtf_import import FakeLLM, wait
@@ -317,3 +321,161 @@ def test_sources_of_an_earlier_version_get_a_title_and_an_index(tmp_path):
         assert "title" in {row[1] for row in db.execute("PRAGMA table_info(text_sources)")}
         indexes = {row[1] for row in db.execute("PRAGMA index_list(text_sources)")}
         assert "idx_text_sources_identity" in indexes
+
+
+# --- Sources left out, moved files, unchanged files and versions ---------------------------------------------------
+
+
+def test_a_purged_source_stays_out_of_routines_until_the_user_imports_it_again(importer, tmp_path):
+    service = importer.service
+    rtf = tmp_path / "보고.rtf"
+    rtf.write_text("첫 번째", encoding="utf-8")
+    ident = run(importer, rtf)["doc_id"]
+    service.wiki_delete({"id": ident})
+    assert service.wiki_purge({"ids": [ident]}) == {"purged": 1}
+    # A routine's import leaves the purged file out, without reading it, and says why.
+    importer.start({"path": str(rtf), "mode": "file", "routine": "원본 갱신"})
+    job = wait(importer)
+    assert (job["skipped"], job["ignored"], job["imported"]) == (1, 1, 0)
+    assert {key: job["results"][0][key] for key in ("status", "reason", "doc_id", "message")} == {
+        "status": "skipped", "reason": "ignored", "doc_id": None, "message": sources.IGNORED}
+    assert service.wiki_list({}) == []
+    # The user's own import takes it again, and routines keep it up to date from then on.
+    again = run(importer, rtf)
+    assert again["status"] == "imported"
+    assert run(importer, rtf, routine="원본 갱신")["reason"] == "same"
+    with service.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM ignored_sources").fetchone()[0] == 0
+    # What waited 30 days in the trash goes at the next start, and its source is left out as well.
+    service.wiki_delete({"id": again["doc_id"]})
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET deleted_at='2020-01-01T00:00:00+00:00' WHERE id=?", (again["doc_id"],))
+    restarted = Service(Database(service.db.path), FakeLLM())
+    with restarted.db.connect() as db:
+        assert [tuple(row) for row in db.execute("SELECT source_table, source FROM ignored_sources")] == [
+            ("rtf_sources", str(rtf.resolve()))]
+    # A Markdown file a routine imports is left out the same way.
+    note = tmp_path / "노트.md"
+    note.write_text("# 회의", encoding="utf-8")
+    noted = service.dispatch("markdown.import", {"path": str(note)})["doc_id"]
+    service.wiki_delete({"id": noted})
+    service.wiki_purge({"all": True})
+    left_out = import_file(service, {"path": str(note), "routine": "원본 갱신"})
+    assert (left_out["status"], left_out["reason"], left_out["doc_id"], left_out["title"]) == (
+        "skipped", "ignored", None, "노트")
+
+
+def test_a_source_is_left_out_only_once_none_of_its_documents_is_left(tmp_path):
+    service = Service(Database(tmp_path / "wiki.db"), None)
+    sections = "".join(f"<h2>절 {i}</h2><p>{'가' * 1000}</p>" for i in range(100))
+    first, second = import_page(service, capture(sections))["doc_ids"]
+    tracked = {**capture(sections), "track_changes": True}
+    service.wiki_delete({"id": first})
+    service.wiki_purge({"ids": [first]})
+    # A part is left: a routine still keeps the page up to date.
+    assert import_page(service, tracked)["reason"] == "same"
+    service.wiki_delete({"id": second})
+    service.wiki_purge({"all": True})
+    left_out = import_page(service, tracked)
+    assert (left_out["status"], left_out["reason"], left_out["doc_id"]) == ("skipped", "ignored", None)
+    assert service.wiki_list({}) == []
+    # The user's import takes it again.
+    assert import_page(service, capture(sections))["status"] == "imported"
+    assert import_page(service, tracked)["reason"] == "same"
+
+
+def test_a_moved_or_renamed_file_takes_its_documents_along(importer, tmp_path):
+    service = importer.service
+    old = tmp_path / "설계.rtf"
+    old.write_text("설계 초안", encoding="utf-8")
+    ident = run(importer, old)["doc_id"]
+    with service.db.connect() as db:  # A copy a write-back made of the file.
+        db.execute("""INSERT INTO writeback_backups(id,source_path,doc_id,name,checksum,size,created_at)
+            VALUES ('copy-1',?,?,'20260101-000000 설계.rtf','hash',1,'2026-01-01')""", (str(old.resolve()), ident))
+    (tmp_path / "보관").mkdir()
+    moved = tmp_path / "보관" / "설계 v2.rtf"
+    old.rename(moved)
+    result = run(importer, moved)
+    assert (result["status"], result["reason"], result["doc_id"], result["message"]) == (
+        "skipped", "moved", ident, sources.MOVED)
+    assert service.wiki_get({"id": ident})["source"]["source_path"] == str(moved.resolve())
+    with service.db.connect() as db:
+        assert db.execute("SELECT source_path FROM writeback_backups").fetchone()[0] == str(moved.resolve())
+    # Its next change updates the same document instead of making another.
+    moved.write_text("설계 확정", encoding="utf-8")
+    assert run(importer, moved)["doc_ids"] == [ident]
+    assert [doc["id"] for doc in service.wiki_list({})] == [ident]
+    # A copy elsewhere while the file is still in its place is the same content: the document stays with the file.
+    copy = tmp_path / "사본.rtf"
+    copy.write_bytes(moved.read_bytes())
+    assert run(importer, copy)["reason"] == "same"
+    assert service.wiki_get({"id": ident})["source"]["source_path"] == str(moved.resolve())
+
+
+def test_a_file_with_the_size_and_time_its_import_recorded_is_not_read_again(importer, tmp_path, monkeypatch):
+    service = importer.service
+    rtf = tmp_path / "큰 문서.rtf"
+    rtf.write_text("내용", encoding="utf-8")
+    past = time.time_ns() - 60 * 10 ** 9
+    os.utime(rtf, ns=(past, past))
+    ident = run(importer, rtf)["doc_id"]
+    with service.db.connect() as db:
+        assert tuple(db.execute("SELECT source_size, source_mtime FROM rtf_sources WHERE doc_id=?",
+                                (ident,)).fetchone()) == (rtf.stat().st_size, past)
+    reads, checksum = [], importer._checksum
+    monkeypatch.setattr(importer, "_checksum", lambda file: reads.append(file) or checksum(file))
+    assert run(importer, rtf)["reason"] == "same" and reads == []
+    # The document window's check of the file does not read it either: a wrong hash would show if it did.
+    assert sources.file_state(rtf, "not its hash", stat=(rtf.stat().st_size, past))["state"] == "same"
+    assert service.dispatch("wiki.source_status", {"id": ident})["state"] == "same"
+    # Another size or time: the file is read, and its document updated when its text changed.
+    rtf.write_text("바뀐 내용입니다", encoding="utf-8")
+    assert run(importer, rtf)["status"] == "updated" and reads
+    # A file changed a moment ago keeps no time, so a change within the same tick of a coarse clock is still found.
+    with service.db.connect() as db:
+        assert db.execute("SELECT source_mtime FROM rtf_sources WHERE doc_id=?", (ident,)).fetchone()[0] is None
+    assert sources.file_stat(rtf)[1] is None
+    # A file the same bytes were found in again records its size and time once they are settled.
+    os.utime(rtf, ns=(past, past))
+    assert run(importer, rtf)["reason"] == "same"
+    with service.db.connect() as db:
+        assert db.execute("SELECT source_mtime FROM rtf_sources WHERE doc_id=?", (ident,)).fetchone()[0] == past
+
+
+def test_a_page_or_ticket_keeps_the_version_it_was_read_at(tmp_path):
+    service = Service(Database(tmp_path / "wiki.db"), None)
+    params = {**capture("<p>첫 판</p>"), "version": "3"}
+    ident = import_page(service, params)["doc_id"]
+    with service.db.connect() as db:
+        assert sources.recorded(db, "confluence_sources", URL, "version") == "3"
+        assert [row["doc_id"] for row in sources.fresh(db, "confluence_sources", URL, "version", "3")] == [ident]
+        assert sources.fresh(db, "confluence_sources", URL, "version", "4") == []
+        assert sources.fresh(db, "confluence_sources", URL, "version", "") == []
+    # Read again at a new version with the same text: the new version is recorded with it.
+    assert import_page(service, {**params, "version": "4"})["reason"] == "same"
+    with service.db.connect() as db:
+        assert sources.recorded(db, "confluence_sources", URL, "version") == "4"
+        # Read in full more than a day ago: read again whatever the version, as an included page or a list of tickets
+        # changes what a page shows without a new version.
+        db.execute("UPDATE confluence_sources SET read_at='2020-01-01T00:00:00+00:00'")
+        assert sources.recorded(db, "confluence_sources", URL, "version") == ""
+        assert sources.fresh(db, "confluence_sources", URL, "version", "4") == []
+    assert import_page(service, {**params, "version": "4"})["reason"] == "same"
+    # A document whose text the user changed keeps the version its imported text is of: a routine reads it again.
+    service.wiki_save({"id": ident, "title": "메모", "content": "내 메모"})
+    edited = import_page(service, {**capture("<p>둘째 판</p>"), "version": "5", "track_changes": True})
+    assert edited["reason"] == "edited" and edited["change"]["added"] == 1
+    with service.db.connect() as db:
+        assert sources.recorded(db, "confluence_sources", URL, "version") == "4"
+        found = sources.fresh(db, "confluence_sources", URL, "version", "4")
+    assert sources.unmodified(found) == {"status": "skipped", "doc_id": ident, "message": sources.UNMODIFIED,
+                                         "reason": "same"}
+    service.wiki_delete({"id": ident})
+    with service.db.connect() as db:
+        assert sources.unmodified(sources.fresh(db, "confluence_sources", URL, "version", "4"))["reason"] == "trashed"
+    # A ticket keeps its updated time the same way.
+    ticket = {"source_url": "https://jira.test/browse/TEAM-1", "issue_key": "TEAM-1", "updated": "2026-09-02T09:00",
+              "html": "<html><head><title>[TEAM-1] 티켓</title></head><body><p>설명</p></body></html>"}
+    import_issue(service, ticket)
+    with service.db.connect() as db:
+        assert sources.recorded(db, "jira_sources", ticket["source_url"], "updated") == "2026-09-02T09:00"

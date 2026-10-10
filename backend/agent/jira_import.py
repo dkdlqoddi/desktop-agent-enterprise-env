@@ -7,6 +7,8 @@ ticket goes to jira.import_issue as an in-memory HTML document; nothing but the 
 The automatic routines (routines.py) also use it: a list of watched tickets is imported again with what each changed
 (scope "list"), and a query job reads the issues of JQL searches with their status, people and dates, for a project's
 progress report or a saved search (query), and may import the tickets the routine picks from them in the same session.
+A routine's import asks for a ticket's updated time first, or takes it from the search that found the ticket: one not
+updated since the Wiki took it, read in full within sources.RECHECK, is not read again.
 """
 import asyncio
 import contextlib
@@ -16,7 +18,7 @@ import uuid
 from urllib.parse import quote, urlencode
 
 from . import diagnostics, sources
-from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page
+from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page, polite
 from .jira import (FORMAT_ERROR, KEY, PROJECT, brief, build_html, comment_item, import_issue, jql_string,
                    parse_issue_url, project_of, safe_prefix, search_jql, site_of, ticket_page)
 from .llm import BusyError, UserError
@@ -51,7 +53,8 @@ FETCH_JSON = """async ({url, limit}) => {
         headers: {Accept: 'application/json'}, signal: AbortSignal.timeout(30000),
     });
     const text = await response.text();
-    return {status: response.status, text: text.length > limit ? null : text};
+    return {status: response.status, text: text.length > limit ? null : text,
+            retry: response.headers.get('retry-after') || ''};
 }"""
 
 
@@ -62,7 +65,8 @@ FETCH_JSON = """async ({url, limit}) => {
 
 class ApiError(UserError):
     def __init__(self, status, detail=""):
-        hint = {401: "로그인이 필요합니다.", 403: "접근 권한이 없습니다.", 404: "티켓이 없거나 볼 권한이 없습니다."}.get(
+        hint = {401: "로그인이 필요합니다.", 403: "접근 권한이 없습니다.", 404: "티켓이 없거나 볼 권한이 없습니다.",
+                429: "요청이 너무 많다며 JIRA가 거절했습니다. 잠시 후 다시 시도해 주세요."}.get(
             status, "로그인·접근 권한·REST API 사용 가능 여부를 확인해 주세요.")
         super().__init__(f"JIRA 데이터를 읽지 못했습니다 (HTTP {status}). {detail or hint}")
         self.status = status
@@ -75,8 +79,11 @@ class JiraApi:
         self.page, self.base = page, base_path
 
     async def get(self, resource, params=None):
+        """A REST answer of JIRA, within the site's rate; one JIRA refuses as too many is waited out and asked again
+        (browser_import.polite). The address is the site's own path, so the rate is counted by the page's host."""
         url = f"{self.base}/rest/api/2/{resource}" + (f"?{urlencode(params, quote_via=quote)}" if params else "")
-        result = await self.page.evaluate(FETCH_JSON, {"url": url, "limit": MAX_RESPONSE_CHARS})
+        result = await polite(self.page.url, lambda: self.page.evaluate(
+            FETCH_JSON, {"url": url, "limit": MAX_RESPONSE_CHARS}))
         status, body = result.get("status"), result.get("text")
         if body is None:
             raise UserError("JIRA 응답이 20MB를 초과합니다.")
@@ -382,14 +389,22 @@ class JiraImporter(BrowserImporter):
                 job["status"] = "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
                 job["current_url"] = ""
 
-    async def _import(self, api, base_url, issue, analyze, job):
+    async def _import(self, api, base_url, issue, analyze, job, updated=None):
+        """Import the ticket `issue` (its key, or the ticket read already): a routine's import skips one it need not
+        read again (_unchanged), with its `updated` time when a search gave it."""
         try:
+            if job.get("track_changes"):
+                skipped = await self._unchanged(api, base_url, issue, updated)
+                if skipped:
+                    return skipped
             if isinstance(issue, str):
                 issue = await api.issue(issue)
             comments, total = await api.comments(issue)
             source_url, document = build_html(issue, base_url, comments, total)
+            stamp = issue["fields"].get("updated")
             result = import_issue(self.service, {"source_url": source_url, "issue_key": issue["key"], "html": document,
                                                  "doc_id": job.get("doc_id"), "replace": job.get("replace", False),
+                                                 "updated": stamp if isinstance(stamp, str) else "",
                                                  "track_changes": job.get("track_changes", False)})
         except Exception as error:
             return {"status": "failed", "message": diagnostics.report(
@@ -404,6 +419,33 @@ class JiraImporter(BrowserImporter):
                 with self.lock:
                     job["analysis_failed"] += 1
         return result
+
+    async def _unchanged(self, api, base_url, issue, updated=None):
+        """For a routine's import: the result of the ticket `issue` (key, or the ticket read) when it need not be read
+        again, or None to read it. One whose documents were all purged is left out (sources.ignored); one JIRA says was
+        not updated since the Wiki took it, read in full within sources.RECHECK, is skipped (sources.fresh). Its updated
+        time is asked for alone unless known: given (a search found it) or in the ticket read."""
+        key = issue if isinstance(issue, str) else issue["key"]
+        link = f"{base_url}/browse/{key}"
+        with self.service.db.connect() as db:
+            if sources.ignored(db, "jira_sources", link):
+                return sources.skipped(sources.Plan("skip", [], "ignored"), "")
+            # Nothing recorded to compare with (a ticket new to the Wiki): it is read without asking first.
+            if not sources.recorded(db, "jira_sources", link, "updated"):
+                return None
+        if updated is None:
+            if isinstance(issue, str):
+                light = await api.get(f"issue/{key}", {"fields": "updated"})
+                if light.get("key") != key:  # Moved to another key: read in full as it is now.
+                    return None
+                issue = light
+            fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+            updated = fields.get("updated")
+        if not isinstance(updated, str) or not updated:
+            return None
+        with self.service.db.connect() as db:
+            found = sources.fresh(db, "jira_sources", link, "updated", updated)
+        return sources.unmodified(found) if found else None
 
     # -- Query jobs of the automatic routines ------------------------------------------------------------------------
 
@@ -493,12 +535,15 @@ class JiraImporter(BrowserImporter):
                 with self.lock:
                     job["report"] = report
                 keys = list(dict.fromkeys(key for key in (pick(report) if pick else []) if KEY.fullmatch(key)))
+                # The search gave each ticket's updated time: a ticket picked is not asked for it again.
+                stamps = {issue["key"]: issue["updated"] for name in ("issues", "open", "resolved")
+                          for issue in report.get(name) or []}
                 self._update(job, status="running", total=len(keys[:MAX_PICKED]), processed=0)
                 for key in keys[:MAX_PICKED]:
                     if page.is_closed():
                         raise UserError("JIRA 브라우저가 닫혀 가져오기를 중단했습니다.")
                     self._update(job, current_url=f"{base_url}/browse/{key}")
-                    result = await self._import(api, base_url, key, options["analyze"], job)
+                    result = await self._import(api, base_url, key, options["analyze"], job, stamps.get(key))
                     with self.lock:
                         job["results"].append({"key": key, "url": f"{base_url}/browse/{key}", **result})
                         job[result["status"]] += 1

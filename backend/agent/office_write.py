@@ -541,18 +541,30 @@ DISCARD = {"Word": close_document, "Excel": lambda book: book.Close(SaveChanges=
            "PowerPoint": discard_presentation, "Visio": close_drawing}
 
 
-def edit(office, document, name, plan, stop):
+def note(journal, phase):
+    """Write how far the save got ("saving", then "saved") into the `journal` file the backend named, if any: after a
+    crash or a kill, the next write tells from it whether the save began or ended (writeback.Writeback.interrupted).
+    A journal that cannot be written changes nothing in the write."""
+    if journal:
+        with contextlib.suppress(OSError):
+            Path(journal).write_text(phase, encoding="utf-8")
+
+
+def edit(office, document, name, plan, stop, journal=None):
     """Make the changes and save, in an open session; the document closes when the session ends. {"changes": how many
-    were made, "base": the number of the plan's choice taken, the text the file was found to hold}."""
+    were made, "base": the number of the plan's choice taken, the text the file was found to hold}. The `journal` file
+    notes when the save begins and ends."""
     with office.writing():
         count, base = EDITORS[name](document, plan, stop)
     check(stop)
+    note(journal, "saving")
     with office.saving():
         document.Save()
+    note(journal, "saved")
     return {"changes": count, "base": base}
 
 
-def write_word(path, plan, stop, dispatch=None):
+def write_word(path, plan, stop, dispatch=None, journal=None):
     with OfficeSession("Word", PROGIDS["Word"], quit_args={"SaveChanges": 0}, dispatch=dispatch) as office:
         word = office.application
         office.hide()
@@ -565,10 +577,10 @@ def write_word(path, plan, stop, dispatch=None):
                 PasswordDocument="", WritePasswordDocument="", OpenAndRepair=False, NoEncodingDialog=True,
             ), close_document)
         writable(document, "Word")
-        return edit(office, document, "Word", plan, stop)
+        return edit(office, document, "Word", plan, stop, journal)
 
 
-def write_excel(path, plan, stop, dispatch=None):
+def write_excel(path, plan, stop, dispatch=None, journal=None):
     with OfficeSession("Excel", PROGIDS["Excel"], dispatch=dispatch) as office:
         excel = office.application
         office.hide()
@@ -580,10 +592,10 @@ def write_excel(path, plan, stop, dispatch=None):
                 IgnoreReadOnlyRecommended=True, Notify=False, AddToMru=False,
             ), DISCARD["Excel"])
         writable(workbook, "Excel")
-        return edit(office, workbook, "Excel", plan, stop)
+        return edit(office, workbook, "Excel", plan, stop, journal)
 
 
-def write_powerpoint(path, plan, stop, dispatch=None):
+def write_powerpoint(path, plan, stop, dispatch=None, journal=None):
     in_use = "PowerPoint에 이 파일이 열려 있습니다. PowerPoint에서 파일을 닫은 뒤 다시 반영해 주세요."
     with OfficeSession("PowerPoint", PROGIDS["PowerPoint"], dispatch=dispatch) as office:
         powerpoint = office.application
@@ -602,10 +614,10 @@ def write_powerpoint(path, plan, stop, dispatch=None):
                 raise UserError(in_use)
             office.track(presentation, discard_presentation)
         writable(presentation, "PowerPoint")
-        return edit(office, presentation, "PowerPoint", plan, stop)
+        return edit(office, presentation, "PowerPoint", plan, stop, journal)
 
 
-def write_visio(path, plan, stop, dispatch=None):
+def write_visio(path, plan, stop, dispatch=None, journal=None):
     with OfficeSession("Visio", PROGIDS["Visio"], dispatch=dispatch) as office:
         visio = office.application
         office.quiet(AlertResponse=7, ScreenUpdating=False)
@@ -613,16 +625,17 @@ def write_visio(path, plan, stop, dispatch=None):
         with office.opening():
             drawing = office.track(visio.Documents.OpenEx(str(path), VISIO_WRITE), close_drawing)
         writable(drawing, "Visio")
-        return edit(office, drawing, "Visio", plan, stop)
+        return edit(office, drawing, "Visio", plan, stop, journal)
 
 
 WRITERS = {"Word": write_word, "Excel": write_excel, "PowerPoint": write_powerpoint, "Visio": write_visio}
 
 
 def write_file(source, payload, stop):
-    """Runs only in the disposable worker: the changes `payload` holds, written into `source`."""
+    """Runs only in the disposable worker: the changes `payload` holds, written into `source`, and how far the save got
+    noted in the journal file it names."""
     path = Path(source)
-    return WRITERS[payload["application"]](path.resolve(), payload["plan"], stop)
+    return WRITERS[payload["application"]](path.resolve(), payload["plan"], stop, journal=payload.get("journal"))
 
 
 def _worker(source, sender, stop, payload):

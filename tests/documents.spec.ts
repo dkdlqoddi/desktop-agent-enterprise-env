@@ -217,8 +217,9 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     );
     await expect(drawer(page).getByRole('button', { name: 'AI 분석하기' })).toBeVisible();
     await page.keyboard.press('Escape');
-    // One extraction for the first document, then one for each chosen document.
-    expect(llm.requests.filter((r) => r.system.includes('extract metadata'))).toHaveLength(4);
+    // One extraction for the first document, then one for each chosen document: the failing one's request, refused
+    // with HTTP 503, is sent 4 times in all.
+    expect(llm.requests.filter((r) => r.system.includes('extract metadata'))).toHaveLength(7);
     await goHome(page);
     await expect(documents.getByRole('checkbox')).toHaveCount(0);
     await documents.screenshot({ path: 'test-results/documents-home.png' });

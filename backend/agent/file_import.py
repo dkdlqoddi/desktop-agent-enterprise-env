@@ -81,10 +81,12 @@ class FileImporter:
             if self.uses_office and self.service.writeback.busy():
                 raise BusyError("원본에 반영하는 중입니다. 끝난 뒤 다시 가져와 주세요.")
             self.cancel_event = threading.Event()
-            # `edited` counts the files skipped because their documents' text was changed in the Wiki (also in
+            # `edited` counts the files skipped because their documents' text was changed in the Wiki, `ignored`
+            # those a routine leaves out because their documents were purged from the trash (both also in
             # `skipped`); `batch` is the batch of files being imported, of `batches`.
             self.job = {"id": str(uuid.uuid4()), "status": "scanning", "total": 0, "processed": 0,
-                        "imported": 0, "updated": 0, "skipped": 0, "edited": 0, "failed": 0, "analysis_failed": 0,
+                        "imported": 0, "updated": 0, "skipped": 0, "edited": 0, "ignored": 0, "failed": 0,
+                        "analysis_failed": 0,
                         "batch": 0, "batches": 0, "current_file": "", "notice": "", "waiting": "", "results": [],
                         "error": "", "routine": routine_name(params)}
             self.thread = threading.Thread(target=self._run, args=(
@@ -154,12 +156,13 @@ class FileImporter:
             raise UserError(f"빈 {self.label} 파일입니다.")
         return digest.hexdigest()
 
-    def _plan(self, db, path, checksum, target, replace, split=None):
+    def _plan(self, db, path, checksum, target, replace, split=None, stat=None):
         """What importing the file at `path` with the bytes `checksum` does (sources.plan): a file the same bytes were
         imported from is skipped, another one updates the earlier import of the same path unless its converted `split`
-        has the text that import saved."""
+        has the text that import saved. A file moved from where its bytes were imported takes their documents along,
+        with its `stat` (sources.file_stat)."""
         found = sources.plan(db, self.source_table, path, {"source_hash": checksum}, target, replace, split,
-                             automatic=bool(self.job and self.job.get("routine")))
+                             automatic=self._automatic(), stat=stat)
         if found.action == "skip" and found.reason == "same" and not db.execute(
                 "SELECT 1 FROM document_html WHERE doc_id=?", (found.rows[0]["doc_id"],)).fetchone():
             # Saved as Markdown by an earlier version: the same documents become the HTML page, unless the user changed
@@ -168,14 +171,30 @@ class FileImporter:
                 else sources.Plan("update", found.rows, "page")
         return found
 
+    def _automatic(self):
+        """Whether the job runs for an automatic routine, which leaves out what the user put in the trash or purged."""
+        return bool(self.job and self.job.get("routine"))
+
     def _one(self, file, analyze, target=None, replace=False):
         from .service import now
-        checksum = self._checksum(file)
-        if checksum is None:
-            return None
         path = str(file.resolve())
+        stat = sources.file_stat(file)
         with self.service.db.connect() as db:
-            found = self._plan(db, path, checksum, target, replace)
+            if self._automatic() and sources.ignored(db, self.source_table, path):
+                return sources.skipped(sources.Plan("skip", [], "ignored"), "")
+            # A file whose size and modification time are the ones its import recorded is not read again to tell it
+            # is the same: a routine over a folder of large files would read every one of them at every run.
+            checksum = sources.stored_hash(db, self.source_table, path, stat)
+        if checksum is None:
+            checksum = self._checksum(file)
+            if checksum is None:
+                return None
+        with self.service.db.connect() as db:
+            found = self._plan(db, path, checksum, target, replace, stat=stat)
+            if found.action == "skip" and found.reason == "same":
+                # The same bytes: their size and time are recorded, so that the next import need not read them.
+                sources.touch(db, self.source_table, found.rows, {"source_size": stat[0], "source_mtime": stat[1]},
+                              path)
         if found.action == "skip":
             return sources.skipped(found, f"이미 가져온 동일한 {self.label}입니다.")
         if self.cancel_event.is_set():
@@ -195,13 +214,14 @@ class FileImporter:
         timestamp = now()
         with self.service.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            found = self._plan(db, path, checksum, target, replace, split)
+            found = self._plan(db, path, checksum, target, replace, split, stat)
             if found.action == "skip":
                 return sources.skipped(found, f"이미 가져온 동일한 {self.label}입니다.")
             if self.cancel_event.is_set():
                 return None
             ids, removed = sources.save(db, self.source_table, found, split, file.stem, timestamp,
-                                        {"source_path": path, "source_hash": checksum, **self.details(file)})
+                                        {"source_path": path, "source_hash": checksum, "source_size": stat[0],
+                                         "source_mtime": stat[1], **self.details(file)})
         result = sources.outcome(found, split, ids, removed, "HTML 문서로 Wiki에 저장했습니다.", "HTML")
         if analyze:
             for ident in ids:
@@ -231,8 +251,8 @@ class FileImporter:
             job["results"].append({"path": str(file), **result})
             job[result["status"]] += 1
             job["processed"] += 1
-            if result.get("reason") == "edited":
-                job["edited"] += 1
+            if result.get("reason") in ("edited", "ignored"):
+                job[result["reason"]] += 1
             if result.get("analysis_error"):
                 job["analysis_failed"] += 1
             if len(job["results"]) > MAX_RESULTS:

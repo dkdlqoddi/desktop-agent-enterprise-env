@@ -223,7 +223,8 @@ export type WikiDocument = {
   outline?: OutlineNode[];
   keywords: string[];
   relations?: Relation[];
-  // Full documents only: the documents an import too long for one was saved as, in order (this one included).
+  // Full documents, and the entries of a page of the list or a search (DocumentPage): the documents an import too long
+  // for one was saved as, in order (this one included). A page lists only the live ones and [] for other documents.
   parts?: { id: string; title: string; part: number }[];
   // Where an imported document came from, and when it last took its text from there (imported_at). An import too
   // long for one document is saved as `parts` documents; this one is number `part`. Full documents also say whether
@@ -278,8 +279,16 @@ export type Settings = {
   has_api_key: boolean;
   key_stored: boolean;
   temperature: number;
+  // Seconds an answer may take, retries of failures that may pass (HTTP 429 and 5xx, a dropped connection) included.
   timeout: number;
   ca_bundle: string;
+  // The cap of an answer in tokens: 0 leaves it automatic (the server's own; 16,000 for the Anthropic format).
+  // Optional only for screens written before them: settings.get always sends these three.
+  max_tokens?: number;
+  // The tokens the model reads and writes in one request; a question's evidence and history scale with it.
+  context_window?: number;
+  // LLM requests at once (1~8); questions go before batch work such as analyses.
+  concurrency?: number;
   // Whether the LLM in use has what a request needs, and its model.
   configured: boolean;
   active_model: string;
@@ -306,6 +315,37 @@ export type EditConflict = {
   document: WikiDocument;
   changed: boolean;
   diffs: { theirs: TextDiff; ours: TextDiff; overwrite: TextDiff };
+};
+// The Wiki's backups in its backups folder (wiki.backups), the newest first: made once a day while the app runs (auto)
+// or when asked (manual), each kind keeping its newest `keep`, and the Wiki as it was before a restore
+// (before_restore). created_at is UTC.
+export type BackupKind = 'auto' | 'manual' | 'before_restore';
+export type Backup = { file: string; kind: BackupKind; created_at: string; size: number };
+export type Backups = {
+  folder: string;
+  keep: number;
+  backups: Backup[];
+  // The restore the next start of the app carries out (wiki.restore_backup).
+  pending_restore: { file: string; requested_at: string } | null;
+  // How the last restore went; `before` is the backup the Wiki it replaced became.
+  last_restore: {
+    file: string;
+    status: 'restored' | 'failed';
+    before: string | null;
+    error: string;
+    at: string;
+  } | null;
+};
+// What wiki.backup answers: the backup made, and the older ones it pushed out (the oldest beyond `keep`).
+export type BackupMade = Backup & { removed: string[] };
+// What wiki.restore_backup answers: the restore happens when the app starts again (restart_required), or it was taken
+// back (cancel).
+export type RestoreScheduled = {
+  restart_required: boolean;
+  message: string;
+  file?: string;
+  requested_at?: string;
+  cancelled?: boolean;
 };
 export type Graph = {
   nodes: { id: string; label: string; count: number; docs: string[] }[];
@@ -341,7 +381,23 @@ export type SearchResult = {
   steps: SearchStep[];
   total: number;
   ai?: boolean;
+  // Set when the search was asked for a page (DocumentQuery limit or cursor).
+  next_cursor?: string | null;
 };
+// What a document list (wiki.list) or a search other than prompt (wiki.search) is asked for besides its query: with
+// limit or cursor one page of it, whose next_cursor the next request sends back as cursor; and only the documents of
+// one source (manual: written here), one state of AI analysis, or updated from updated_from up to updated_to (ISO 8601
+// with a time zone; the end left out). Without limit and cursor the whole list comes as before.
+export type DocumentQuery = {
+  limit?: number;
+  cursor?: string;
+  source?: 'manual' | NonNullable<WikiDocument['source']>['kind'];
+  analysis?: 'analyzed' | 'not_analyzed' | 'failed' | 'running';
+  updated_from?: string;
+  updated_to?: string;
+};
+// A page of the document list (wiki.list with limit or cursor): null next_cursor after the last page.
+export type DocumentPage = { documents: WikiDocument[]; next_cursor: string | null };
 
 export type StorageInfo = {
   initialized: boolean;
@@ -352,10 +408,12 @@ export type StorageInfo = {
   error: string;
 };
 // What an import did with one file, page or ticket: saved new documents, updated the documents of the same path or
-// link in place, skipped it or failed. A skipped one says why: the same content is saved (same), or the user changed
-// the text of its documents since they were imported (edited).
+// link in place, skipped it or failed. A skipped one says why: the same content is saved (same, also a page or ticket
+// a routine did not read again as the site said it had not changed), the user changed the text of its documents since
+// they were imported (edited), a routine left its documents in the trash (trashed) or left out a source whose
+// documents the user purged (ignored), or a moved or renamed file took its documents along (moved).
 export type ImportOutcome = 'imported' | 'updated' | 'skipped' | 'failed';
-export type SkipReason = 'same' | 'edited';
+export type SkipReason = 'same' | 'edited' | 'trashed' | 'ignored' | 'moved';
 export type LocalImportJob = {
   id: string;
   status: 'scanning' | 'running' | 'cancelling' | 'completed' | 'cancelled' | 'error';
@@ -364,6 +422,10 @@ export type LocalImportJob = {
   imported: number;
   updated: number;
   skipped: number;
+  // Of the skipped: files whose documents' text the user changed (edited), and files a routine left out because the
+  // user purged their documents from the trash (ignored).
+  edited?: number;
+  ignored?: number;
   failed: number;
   analysis_failed: number;
   // A folder of more files than a batch (5,000) is imported batch after batch: the batch being imported, of `batches`.
@@ -533,6 +595,34 @@ export type WritebackJob = {
   // Its end was shown to the user (writeback.dismiss), so a document window does not tell it again.
   dismissed?: boolean;
 };
+// A copy of the file a document came from, kept before a write-back or a restore changed the file (writeback.backups):
+// the newest five of each file stay. state: how the write it was made for went (writing while it runs, interrupted
+// when the app was closed by force during it); current: the file holds these bytes now.
+export type WritebackBackup = {
+  id: string;
+  name: string;
+  created_at: string;
+  size: number;
+  kind: 'write' | 'restore';
+  state: 'writing' | 'written' | 'failed' | 'interrupted' | 'done';
+  current: boolean;
+};
+// What a write-back cut short by a forced close left of the file, as the next write-back tells it before writing:
+// as it was (intact), missing or partly written (partial), or another whole file (unknown).
+export type WritebackInterruption = {
+  state: 'intact' | 'partial' | 'unknown';
+  backup: string;
+  name: string;
+  message: string;
+};
+export type WritebackBackups = {
+  file: string;
+  keep: number;
+  backups: WritebackBackup[];
+  interrupted: WritebackInterruption | null;
+};
+// writeback.restore_backup: whether the file was replaced, and the copy of the file it replaced ('' when none).
+export type WritebackRestore = { restored: boolean; backup: string; message: string };
 
 // The kinds of site accounts (electron/sites.cjs).
 export type SiteKind = 'jira' | 'confluence';
@@ -734,6 +824,8 @@ declare global {
   interface Window {
     privateAgent?: {
       onAssistantOpen?: (callback: () => void) => () => void;
+      // An answer as the LLM writes it, for a question asked with stream (assistant.ask).
+      onAssistantDelta?: (callback: (event: AssistantStreamEvent) => void) => () => void;
       onScheduleEvent?: (callback: (event: ScheduleEvent) => void) => () => void;
       onRoutineEvent?: (callback: (event: RoutineEvent) => void) => () => void;
       onImportNotice?: (callback: (text: string) => void) => () => void;
@@ -860,22 +952,52 @@ export type Citation = {
   terms?: string[];
 };
 export type Conversation = { id: string; title: string; updated_at: string };
-// An answer from the search box; an automatic search also lists every document it found.
+// A page of the conversations (assistant.conversations with limit or cursor); see DocumentPage.
+export type ConversationPage = { conversations: Conversation[]; next_cursor: string | null };
+// An answer from the search box; an automatic search also lists every document it found. Asked with
+// { stream: true, request_id }, the same answer also reaches onAssistantDelta while the LLM writes it. An answer the
+// user stopped (assistant.cancel) or the LLM's output limit cut short keeps what came, with a note at its end.
 export type Answer = {
   conversation_id: string;
   messages: ChatMessage[];
   search: SearchResult | null;
+  request_id?: string;
+  cancelled?: boolean;
+  truncated?: boolean;
 };
+// What assistant.ask sends while the LLM writes an answer asked with stream, for its request_id: parts of the
+// answer's text (delta; with reset, the text replaces what came before, as when a failed attempt starts over), then
+// one end (done). A new conversation's ID comes with its first event, for assistant.cancel.
+export type AssistantStreamEvent =
+  | {
+      type: 'delta';
+      request_id: string;
+      conversation_id: string;
+      text: string;
+      reset?: boolean;
+    }
+  | {
+      type: 'done';
+      request_id: string;
+      conversation_id: string;
+      status: 'completed' | 'cancelled' | 'error';
+      // The LLM stopped at its output limit (max_tokens): the answer ends with a note saying so.
+      truncated: boolean;
+      error?: string;
+    };
+// assistant.cancel {conversation_id} or {request_id}: whether there was an answer to stop.
+export type AssistantCancel = { ok: boolean; cancelled: boolean };
 export type ChatMessage = {
   seq: number;
   role: 'user' | 'assistant';
   content: string;
   citations: Citation[];
-  // How the evidence was found, for assistant answers.
+  // How the evidence was found, for assistant answers; outcome when the answer did not end by itself.
   trace?: {
     terms: string[];
     steps: SearchStep[];
     sources: { title: string; sections: string[] }[];
+    outcome?: 'cancelled' | 'truncated';
   } | null;
   created_at: string;
 };

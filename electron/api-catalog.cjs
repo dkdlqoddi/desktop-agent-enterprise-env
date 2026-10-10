@@ -16,13 +16,13 @@ const ACCESS_LEVELS = [
     id: 'write',
     label: '조회·변경·앱 제어',
     description:
-      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문과 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 등록하지 않은 사이트의 링크, 휴지통 비우기, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
+      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
   },
   {
     id: 'full',
     label: '전체',
     description:
-      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다.',
+      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다.',
   },
 ];
 const DEFAULT_ACCESS = 'read';
@@ -34,8 +34,8 @@ const SCOPES = {
   // Importing this PC's files: the app reads them with the user's own rights.
   files: { label: '파일 가져오기', levels: ['full'] },
   admin: { label: '설정', levels: ['full'] },
-  // Emptying the trash: nothing brings a purged document back.
-  destructive: { label: '영구 삭제', levels: ['full'] },
+  // Emptying the trash, where nothing brings a purged document back, and putting a backup in the Wiki's place.
+  destructive: { label: '영구 삭제·백업 복원', levels: ['full'] },
 };
 
 const allows = (access, scope) => !!SCOPES[scope]?.levels.includes(access);
@@ -93,13 +93,20 @@ const METHODS = {
   stats: method('read', '문서·키워드·관계·프롬프트 수'),
   'storage.get': method('read', 'Wiki 저장 위치'),
 
-  'wiki.search': method('read', '문서 검색 (mode=prompt는 LLM이 고름)', { slow: true }),
+  'wiki.search': method(
+    'read',
+    '문서 검색 (mode=prompt는 LLM이 고름). prompt가 아니면 limit·cursor로 나누어 받고 출처·AI 분석·수정 시각으로 거르기',
+    { slow: true },
+  ),
   'documents.query': method(
     'read',
     '문서 목록: 검색어·출처·AI 분석 여부·키워드로 거르고 나누어 받기',
   ),
   'documents.get': method('read', '문서 하나: 본문(Markdown)·출처·키워드·관계·목차'),
-  'wiki.list': method('read', '전체 문서 목록 (본문 앞 200자)'),
+  'wiki.list': method(
+    'read',
+    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로) source·analysis·updated_from·updated_to로 거르기',
+  ),
   'wiki.get': method('read', '문서 하나 (HTML 문서는 HTML 페이지 포함)'),
   'wiki.source_markdown': method('read', '가져온 문서의 Markdown 원문'),
   'wiki.source_html': method('read', '가져온 파일의 HTML 원문'),
@@ -114,6 +121,14 @@ const METHODS = {
   'writeback.status': method('read', '원본 반영 진행 상황과 결과'),
   'writeback.cancel': method('write', '원본 반영 중지 (파일을 저장하기 전까지)'),
   'writeback.dismiss': method('write', '끝난 원본 반영 작업 지우기'),
+  'writeback.backups': method(
+    'files',
+    '원본 파일의 백업 목록 (반영·복원하기 전의 파일, 파일마다 최근 5개)과 강제 종료로 끊긴 반영이 남긴 상태',
+  ),
+  'writeback.restore_backup': method(
+    'files',
+    '그 문서의 원본 백업 하나를 원본 파일 자리에 복원 (지금 파일은 먼저 백업)',
+  ),
   'wiki.save': method('write', '문서 만들기·고치기 (본문이 바뀌면 AI 분석 결과를 지움)'),
   'wiki.compare': method(
     'read',
@@ -124,6 +139,20 @@ const METHODS = {
   'wiki.trash': method('read', '휴지통의 문서 목록'),
   'wiki.restore': method('write', '휴지통의 문서 복원'),
   'wiki.purge': method('destructive', '휴지통의 문서 영구 삭제 (ids, 또는 all: true로 비우기)'),
+  'wiki.backups': method(
+    'write',
+    'Wiki 백업 목록: 하루 한 번 자동·직접 만든 백업과 복원 전 Wiki, 예약된 복원과 지난 복원 결과',
+  ),
+  'wiki.backup': method(
+    'write',
+    'Wiki 백업 지금 만들기 (Wiki 폴더의 backups, 직접 만든 백업은 최근 7개 보관)',
+    { slow: true },
+  ),
+  'wiki.restore_backup': method(
+    'destructive',
+    '백업으로 Wiki 되돌리기 예약: 앱을 다시 실행할 때 복원하고 지금 Wiki는 복원 전 백업으로 남김 (cancel: true로 취소)',
+    { slow: true },
+  ),
   'wiki.analyze': method('write', '문서 하나를 LLM으로 분석 (요약·키워드·관계·목차)', {
     slow: true,
   }),
@@ -135,7 +164,8 @@ const METHODS = {
   'analysis.dismiss': method('write', '끝난 AI 분석 작업 지우기'),
 
   'assistant.ask': method('write', '문서를 근거로 LLM이 답변 (대화로 저장)', { slow: true }),
-  'assistant.conversations': method('read', '최근 대화 50개'),
+  'assistant.cancel': method('write', '진행 중인 답변 중지 (받은 데까지 대화에 저장)'),
+  'assistant.conversations': method('read', '최근 대화 50개, 또는 limit·cursor로 나누어 받기'),
   'assistant.history': method('read', '대화의 메시지와 근거'),
   'assistant.delete': method('write', '대화 삭제'),
   'briefing.get': method('read', '오늘의 브리핑 자료 (할 일·알림·최근 문서)'),
@@ -315,6 +345,25 @@ const DOCUMENT_BODY = {
   title: string('제목 (최대 200자)', { required: true }),
   content: string('본문 Markdown (최대 80,000자)', { required: true }),
 };
+// A list in pages (wiki.list, wiki.search, assistant.conversations): with limit or cursor the answer is one page and
+// next_cursor, which the next request sends back as cursor (null after the last page). Without either the answer is
+// the whole list, as before, so neither has a default.
+const PAGE = (max) => ({
+  limit: integer(
+    `한 번에 받을 개수 1~${max}. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)`,
+    { minimum: 1, maximum: max },
+  ),
+  cursor: string('앞 응답의 next_cursor. 그 뒤부터 이어 받습니다'),
+});
+const UPDATED = {
+  updated_from: string('이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601'),
+  updated_to: string('이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601'),
+};
+const DOCUMENT_FILTERS = {
+  source: string('출처 (manual = 직접 쓴 문서)', { enum: SOURCE_KINDS }),
+  analysis: string('AI 분석 여부', { enum: ['analyzed', 'not_analyzed', 'failed', 'running'] }),
+  ...UPDATED,
+};
 const TASK_FIELDS = {
   title: string('할 일 (최대 200자)'),
   notes: string('메모 (최대 8,000자)'),
@@ -445,21 +494,31 @@ const GROUPS = [
     description:
       '검색창과 같은 검색입니다. auto는 PC 안의 단어 검색, prompt는 LLM이 질문을 분석해 문서와 섹션을 고르는 AI 검색(최대 4번 LLM 요청)입니다.',
     routes: [
-      route('GET', '/search', 'wiki.search', '문서 검색', {
-        query: string('검색어 또는 질문 (최대 2,000자). "따옴표"는 그대로 찾을 문구', {
-          required: true,
-        }),
-        mode: string(
-          'auto: 검색창과 같은 단어 검색 · word: 모든 단어 포함 · keyword: 추출 키워드(쉼표로 구분) · prompt: AI 검색(느림)',
-          { enum: ['auto', 'word', 'keyword', 'prompt'], default: 'auto' },
-        ),
-      }),
+      route(
+        'GET',
+        '/search',
+        'wiki.search',
+        '문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만 (나누어 받으면 여러 부분으로 저장한 가져오기는 parts가 있는 하나로)',
+        {
+          query: string('검색어 또는 질문 (최대 2,000자). "따옴표"는 그대로 찾을 문구', {
+            required: true,
+          }),
+          mode: string(
+            'auto: 검색창과 같은 단어 검색 · word: 모든 단어 포함 · keyword: 추출 키워드(쉼표로 구분) · prompt: AI 검색(느림)',
+            { enum: ['auto', 'word', 'keyword', 'prompt'], default: 'auto' },
+          ),
+          ...PAGE(100),
+          ...DOCUMENT_FILTERS,
+        },
+      ),
       route('POST', '/search', 'wiki.search', '문서 검색 (긴 질문은 본문으로)', {
         query: string('검색어 또는 질문 (최대 2,000자)', { required: true }),
         mode: string('검색 방식', {
           enum: ['auto', 'word', 'keyword', 'prompt'],
           default: 'auto',
         }),
+        ...PAGE(100),
+        ...DOCUMENT_FILTERS,
       }),
     ],
   },
@@ -569,6 +628,23 @@ const GROUPS = [
         '원본 반영 중지 (파일을 저장하기 전까지)',
       ),
       route(
+        'GET',
+        '/documents/{doc_id}/backups',
+        'writeback.backups',
+        '원본 파일의 백업 목록: 원본에 반영하거나 복원하기 전의 파일을 파일마다 최근 5개 (최근 것부터). interrupted는 앱이 강제로 종료되어 끊긴 반영이 남긴 파일 상태(intact·partial·unknown)',
+        { doc_id: ID },
+      ),
+      route(
+        'POST',
+        '/documents/{doc_id}/backups/restore',
+        'writeback.restore_backup',
+        '원본 백업 하나를 원본 파일 자리에 복원 (그 문서의 파일을 백업한 것만, 지금 파일은 먼저 백업). 문서는 그대로이니 다시 읽으려면 원본에서 업데이트하세요',
+        {
+          doc_id: ID,
+          backup: string('복원할 백업의 id (GET /documents/{doc_id}/backups)', { required: true }),
+        },
+      ),
+      route(
         'POST',
         '/analysis',
         'analysis.start',
@@ -589,6 +665,36 @@ const GROUPS = [
     ],
   },
   {
+    id: 'backups',
+    title: '백업·복원',
+    description:
+      'Wiki(wiki.db)를 Wiki 폴더의 backups 폴더에 파일 하나로 백업합니다. 앱이 켜져 있으면 하루에 한 번 자동으로 백업하고(최근 7개 보관), 직접 만든 백업도 따로 최근 7개를 보관합니다. 복원은 앱을 다시 실행할 때 이루어지며, 그때까지의 Wiki는 복원 전 백업으로 남습니다.',
+    routes: [
+      route(
+        'GET',
+        '/backups',
+        'wiki.backups',
+        '백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore)과 지난 복원 결과(last_restore)',
+      ),
+      route(
+        'POST',
+        '/backups',
+        'wiki.backup',
+        'Wiki 백업 지금 만들기. 만든 백업과 보관 개수를 넘어 지운 직접 백업(removed)을 돌려줌',
+      ),
+      route(
+        'POST',
+        '/backups/restore',
+        'wiki.restore_backup',
+        '백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다',
+        {
+          file: string('복원할 백업 파일 이름 (GET /backups의 file). cancel이 true면 생략'),
+          cancel: boolean('예약한 복원 취소', { default: false }),
+        },
+      ),
+    ],
+  },
+  {
     id: 'assistant',
     title: '질문·대화·브리핑',
     description:
@@ -599,7 +705,23 @@ const GROUPS = [
         conversation_id: string('이어서 물을 대화 ID'),
         document_ids: array('이 문서들만 근거로 쓰기 (최대 6개)'),
       }),
-      route('GET', '/conversations', 'assistant.conversations', '최근 대화 50개'),
+      route(
+        'POST',
+        '/ask/cancel',
+        'assistant.cancel',
+        '진행 중인 답변 중지: 받은 데까지 "답변을 중지했습니다" 표시와 함께 대화에 저장. cancelled는 중지할 답변이 있었는지',
+        {
+          conversation_id: string('답변 중인 대화 ID'),
+          request_id: string('질문의 요청 ID (대화 ID를 아직 모르는 새 대화)'),
+        },
+      ),
+      route(
+        'GET',
+        '/conversations',
+        'assistant.conversations',
+        '최근 대화 50개, 또는 limit·cursor로 나누어 받기',
+        { ...PAGE(200), ...UPDATED },
+      ),
       route('GET', '/conversations/{id}', 'assistant.history', '대화의 메시지·근거·검색 과정', {
         id: ID,
       }),
@@ -873,8 +995,17 @@ const GROUPS = [
           },
         ),
         temperature: number('Temperature 0~2 (Anthropic 형식에는 보내지 않음)'),
-        timeout: integer('응답 제한 시간(초) 5~300, 기본 300'),
+        timeout: integer(
+          '응답 제한 시간(초) 5~300, 기본 300. 일시적인 오류(HTTP 429·5xx, 연결 끊김)의 재시도도 이 안에서 함',
+        ),
         ca_bundle: string('CA 인증서(PEM) 경로: 사설·자체 서명 인증서를 쓰는 서버일 때'),
+        max_tokens: integer(
+          '답변의 최대 출력 토큰: 0(자동, 기본: 서버 기본값, Anthropic 형식은 16,000) 또는 256~1,000,000',
+        ),
+        context_window: integer(
+          '모델의 컨텍스트 크기(토큰) 4,096~10,000,000, 기본 64,000. 질문에 넣는 근거와 대화 기록의 양이 이에 맞춰짐',
+        ),
+        concurrency: integer('LLM에 동시에 보내는 요청 수 1~8, 기본 3 (질문이 일괄 분석보다 먼저)'),
       }),
       route('POST', '/settings/test', 'settings.test', '사용 중인 LLM 연결 테스트'),
       route('GET', '/preferences', 'preferences.get', '검색·대시보드 설정'),

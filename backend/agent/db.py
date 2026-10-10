@@ -1,9 +1,14 @@
+import contextlib
+import logging
 import re
 import sqlite3
+import threading
 import time
 import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
+
+from . import migrations, storage
 
 # A backslash before an ASCII punctuation mark is a Markdown escape (CommonMark), which the screen does not show. The
 # text of an imported page has many: markdownify writes R\&D, API\_SPEC and C\+\+.
@@ -22,15 +27,66 @@ def search_text(value):
 
 
 def index_text(db, ids):
-    """Keep the search text of the documents `ids` (search_text of their content) with their revision. Every write of a
-    document's content calls it in the same transaction; a search reads a document whose row is missing or of an older
-    revision from its content instead, so a write that does not call it is slower to search, never wrong."""
+    """Keep the search text of the documents `ids` (search_text of their title, summary and content, and the length of
+    that content) with their revision. Every write of a document's content, title or summary calls it in the same
+    transaction; a search reads a document whose row is missing, of an older revision or written by an earlier version
+    (no title) from the document itself instead, so a write that does not call it is slower to search, never wrong.
+    The upsert keeps the row's id, by which the trigram index (document_fts) knows it, and the triggers of
+    document_search change the index with it: INSERT OR REPLACE would delete the row without them."""
     ids = list(ids)
     for start in range(0, len(ids), 500):
         chunk = ids[start:start + 500]
-        db.execute(f"""INSERT OR REPLACE INTO document_search(doc_id,revision,content)
-            SELECT id,revision,search_text(content) FROM documents WHERE id IN ({','.join('?' * len(chunk))})""",
-                   chunk)
+        rows = []
+        for ident, revision, title, summary, content in db.execute(
+                f"SELECT id,revision,title,summary,content FROM documents WHERE id IN ({','.join('?' * len(chunk))})",
+                chunk):
+            body = search_text(content)
+            rows.append((ident, revision, search_text(title), search_text(summary), len(body), body))
+        db.executemany("""INSERT INTO document_search(doc_id,revision,title,summary,length,content) VALUES (?,?,?,?,?,?)
+            ON CONFLICT(doc_id) DO UPDATE SET revision=excluded.revision,title=excluded.title,
+            summary=excluded.summary,length=excluded.length,content=excluded.content""", rows)
+
+
+def fts_supported():
+    """Whether this SQLite can keep the trigram index of the search text: FTS5 built in and SQLite 3.34 or later, whose
+    trigram tokenizer finds any run of three or more characters. Without it every search reads the search text."""
+    if sqlite3.sqlite_version_info < (3, 34, 0):
+        return False
+    try:
+        with contextlib.closing(sqlite3.connect(":memory:")) as db:
+            if "ENABLE_FTS5" not in {row[0] for row in db.execute("PRAGMA compile_options")}:
+                return False
+            db.execute("CREATE VIRTUAL TABLE probe USING fts5(text, tokenize='trigram case_sensitive 1', detail=none)")
+    except sqlite3.Error:
+        return False
+    return True
+
+
+# The trigram index of the search text (document_fts) covers the rows of document_search up to this id, kept in the
+# metadata row search_fts: the backfill (Database._index) raises it a chunk at a time, and the triggers change the index
+# only for the rows it covers, so a row is never put in twice. FTS_DONE covers every row, those to come included; -1
+# marks an index that a start without FTS5 left behind, which is emptied before it is filled again.
+FTS_DONE = 9223372036854775807
+FTS_COVERED = "(SELECT CAST(value AS INTEGER) FROM metadata WHERE key='search_fts')"
+FTS_TRIGGERS = {
+    "document_fts_insert": f"""AFTER INSERT ON document_search WHEN new.id <= {FTS_COVERED} BEGIN
+        INSERT INTO document_fts(rowid,title,summary,content) VALUES (new.id,new.title,new.summary,new.content);
+        END""",
+    "document_fts_delete": f"""AFTER DELETE ON document_search WHEN old.id <= {FTS_COVERED} BEGIN
+        INSERT INTO document_fts(document_fts,rowid,title,summary,content)
+            VALUES ('delete',old.id,old.title,old.summary,old.content);
+        END""",
+    "document_fts_update": f"""AFTER UPDATE OF title,summary,content ON document_search
+        WHEN old.id <= {FTS_COVERED} BEGIN
+        INSERT INTO document_fts(document_fts,rowid,title,summary,content)
+            VALUES ('delete',old.id,old.title,old.summary,old.content);
+        INSERT INTO document_fts(rowid,title,summary,content) VALUES (new.id,new.title,new.summary,new.content);
+        END""",
+}
+# Seconds a start spends on the search text and the trigram index before the backend answers; a thread of its own goes
+# on with what is left, a chunk at a time beside the requests.
+INDEX_BUDGET = 2.0
+LOG = logging.getLogger("private_agent")
 
 # Where each imported document came from (the file path or the link), and the text and title the last import of it
 # saved: (columns, the key that tells a repeated import apart). An import of the same path or link again updates its
@@ -66,8 +122,20 @@ class Database:
     def __init__(self, path):
         self.path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        # Before anything writes to the Wiki: a restore asked for in the last run takes its place, and one that is
+        # damaged or newer than this code is refused as it is (storage.prepare). A new one, without tables yet, is
+        # numbered before the block makes them, so a first start stopped midway never leaves them to be taken for an
+        # earlier version's (migrations.py).
+        if storage.prepare(path):
+            with self.connect() as db:
+                migrations.stamp(db)
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
+            # The search text of an earlier version keeps no title, summary or length, and numbers its rows implicitly,
+            # which a VACUUM may change under the trigram index: it is made anew from the documents (_index).
+            search_columns = {r[1] for r in db.execute("PRAGMA table_info(document_search)")}
+            if search_columns and "length" not in search_columns:
+                db.execute("DROP TABLE document_search")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS prompts (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -98,6 +166,8 @@ class Database:
                     error TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
+                -- The order of the document list, which its pages continue from (a cursor of updated_at and id).
+                CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at, id);
                 CREATE TABLE IF NOT EXISTS keywords (
                     doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     keyword TEXT NOT NULL, PRIMARY KEY(doc_id, keyword)
@@ -145,12 +215,23 @@ class Database:
                     doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
                     html TEXT NOT NULL
                 );
-                -- The text search compares (search_text) of each document's content, as of its revision. Kept apart
-                -- like the pages, so lists never load it; a row of another revision is not used.
+                -- The text search compares (search_text) of each document's title, summary and content, as of its
+                -- revision. Kept apart like the pages, so lists never load it; a row of another revision, or without a
+                -- title (written by an earlier version), is not used. id is the rowid of the trigram index
+                -- (document_fts), explicit so a VACUUM keeps it; the content comes last, so reading the other columns
+                -- never goes through the pages it overflows to.
                 CREATE TABLE IF NOT EXISTS document_search (
-                    doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
-                    revision INTEGER NOT NULL, content TEXT NOT NULL
+                    id INTEGER PRIMARY KEY,
+                    doc_id TEXT NOT NULL UNIQUE REFERENCES documents(id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL, title TEXT, summary TEXT, length INTEGER,
+                    content TEXT NOT NULL
                 );
+                -- A title or summary changed without index_text marks the search text out of date, so search reads the
+                -- document itself rather than the old words. Every program that writes the Wiki runs it.
+                CREATE TRIGGER IF NOT EXISTS documents_search_stale AFTER UPDATE OF title, summary ON documents
+                    WHEN old.title IS NOT new.title OR old.summary IS NOT new.summary BEGIN
+                    UPDATE document_search SET revision=-1 WHERE doc_id=new.id;
+                END;
                 -- Automatic routines (routines.py): a ready-made job of the catalog (kind) as the user set it up (config),
                 -- its schedule, what it keeps from one run for the next (state) and how its last run went; and its runs.
                 CREATE TABLE IF NOT EXISTS routines (
@@ -172,6 +253,24 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_routine_runs ON routine_runs(routine_id,created_at);
                 CREATE INDEX IF NOT EXISTS idx_routine_runs_finished ON routine_runs(finished_at);
+                -- Sources whose documents were all purged from the trash (sources.purge): the source table and the
+                -- path or link. Automatic imports (routines) leave them out until the user imports them again, which
+                -- forgets them here (sources.plan).
+                CREATE TABLE IF NOT EXISTS ignored_sources (
+                    source_table TEXT NOT NULL, source TEXT NOT NULL, ignored_at TEXT NOT NULL,
+                    PRIMARY KEY(source_table, source)
+                );
+                -- The copies of Office files that write-backs made (writeback.py), by the file they copied: what the
+                -- copy holds (checksum), what made it (kind: a write, or a restore that replaced the file), and how
+                -- the write it was made for went (state, and what a write cut by a crash left: outcome), so that the
+                -- next write tells the user first.
+                CREATE TABLE IF NOT EXISTS writeback_backups (
+                    id TEXT PRIMARY KEY, source_path TEXT NOT NULL, doc_id TEXT NOT NULL, name TEXT NOT NULL,
+                    checksum TEXT NOT NULL, size INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'write',
+                    state TEXT NOT NULL DEFAULT 'writing', outcome TEXT NOT NULL DEFAULT '',
+                    written TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_writeback_backups_path ON writeback_backups(source_path,created_at);
             """)
             for name, (columns, key) in SOURCE_TABLES.items():
                 db.execute(source_table(name, columns, key))
@@ -186,6 +285,22 @@ class Database:
             # import again leaves it '' as it saves the row anew.
             if "written" not in {r[1] for r in db.execute("PRAGMA table_info(office_sources)")}:
                 db.execute("ALTER TABLE office_sources ADD COLUMN written TEXT NOT NULL DEFAULT ''")
+            # A file's size and modification time (ns) as the import read it: a file with both unchanged is taken as
+            # unchanged without reading it again (sources.stored_hash). NULL before they were kept, or when the file
+            # had changed too recently for its time to tell a later change apart (sources.file_stat).
+            # A page's version number (Confluence) and a ticket's updated time (JIRA) as the site gave them with the
+            # text imported, and when the source was last read in full (read_at): a routine's import compares them
+            # before it reads a page again (sources.fresh).
+            added = {name: [("source_size", "INTEGER"), ("source_mtime", "INTEGER")]
+                     for name in SOURCE_TABLES if identity(name) == "source_path"}
+            remote = "TEXT NOT NULL DEFAULT ''"
+            added["confluence_sources"] = [("version", remote), ("read_at", remote)]
+            added["jira_sources"] = [("updated", remote), ("read_at", remote)]
+            for name, columns in added.items():
+                existing = {r[1] for r in db.execute(f"PRAGMA table_info({name})")}
+                for column, definition in columns:
+                    if column not in existing:
+                        db.execute(f"ALTER TABLE {name} ADD COLUMN {column} {definition}")
             # Runs recorded before scheduling carry no outcome or timing; they were successful manual runs.
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
             for column, definition in (("status", "TEXT NOT NULL DEFAULT 'success'"),
@@ -218,29 +333,112 @@ class Database:
             if "deleted_at" not in {r[1] for r in db.execute("PRAGMA table_info(documents)")}:
                 db.execute("ALTER TABLE documents ADD COLUMN deleted_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_documents_deleted ON documents(deleted_at)")
+            self.fts = self._full_text(db)
             if not db.execute("SELECT 1 FROM metadata WHERE key='seeded'").fetchone():
                 from .service import now
                 for index, prompt in enumerate(SEEDS):
                     db.execute("INSERT INTO prompts VALUES (?,?,?,?,?,?,?,?)", (f"starter-{index}", *prompt, now(), now()))
                 db.execute("INSERT INTO metadata VALUES ('seeded', '1')")
-        self._index()
+        # What the block above cannot do, numbered by the schema version the Wiki keeps (migrations.py).
+        with self.connect() as db:
+            migrations.upgrade(db)
+        if not self._index(INDEX_BUDGET):
+            threading.Thread(target=self._index_later, name="search-index", daemon=True).start()
 
-    def _index(self, budget=10.0):
-        """Make the search text of the documents an earlier version saved, or changed without it, for up to `budget`
-        seconds at a start: a large Wiki's first start after the upgrade must still answer in time. Searches read what
-        is left from the content meanwhile, and the next start goes on; so does a Wiki another program holds locked."""
-        deadline = time.monotonic() + budget
+    @staticmethod
+    def _full_text(db):
+        """Keep the trigram index of the search text (document_fts) where this SQLite has one, and say whether it does.
+        Without one the triggers go, as every write of the search text would fail on them, and an index made before is
+        marked to be emptied: a later start with FTS5 fills it from the start, as it does a new one."""
+        made = db.execute("SELECT 1 FROM sqlite_master WHERE name='document_fts'").fetchone()
+        if not fts_supported():
+            for name in FTS_TRIGGERS:
+                db.execute(f"DROP TRIGGER IF EXISTS {name}")
+            if made:
+                db.execute("INSERT INTO metadata VALUES ('search_fts','-1') ON CONFLICT(key) DO UPDATE SET value='-1'")
+            return False
+        # Without positions (detail=none) a term is looked up as all of its trigrams, which finds every document that
+        # has it and some that only have its trigrams apart; search counts the terms in what it finds. The index is a
+        # fifth of what one with positions takes, and fills twice as fast. Text is case folded before it is indexed.
+        db.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS document_fts USING fts5(title, summary, content,
+            content='document_search', content_rowid='id', tokenize='trigram case_sensitive 1', detail=none,
+            columnsize=0)""")
+        mark = db.execute("SELECT value FROM metadata WHERE key='search_fts'").fetchone()
+        triggers = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+        if not made or mark is None or mark[0] == "-1" or not set(FTS_TRIGGERS) <= triggers:
+            db.execute("INSERT INTO document_fts(document_fts) VALUES('delete-all')")
+            db.execute("INSERT INTO metadata VALUES ('search_fts','0') ON CONFLICT(key) DO UPDATE SET value='0'")
+        for name, body in FTS_TRIGGERS.items():
+            db.execute(f"CREATE TRIGGER IF NOT EXISTS {name} {body}")
+        return True
+
+    def _index(self, budget=None, chunk=200):
+        """Bring the search text up to date, `chunk` rows per transaction for as long as `budget` seconds last (None:
+        until done): the rows of the documents an earlier version saved, or that changed without it, then the trigram
+        index of the rows it does not cover yet. A large Wiki's first start after the upgrade must still answer in time,
+        and searches read what is left from the documents meanwhile. Returns whether everything is done; what a Wiki
+        another program holds locked keeps is left for later."""
+        deadline = None if budget is None else time.monotonic() + budget
+
+        def more():
+            return deadline is None or time.monotonic() < deadline
+
         try:
             with self.connect() as db:
-                while time.monotonic() < deadline:
-                    ids = [row[0] for row in db.execute("""SELECT d.id FROM documents d LEFT JOIN document_search s
-                        ON s.doc_id=d.id WHERE s.revision IS NOT d.revision LIMIT 200""")]
-                    if not ids:
-                        break
-                    index_text(db, ids)
+                # The search text of documents that a program not keeping the foreign keys deleted.
+                db.execute("DELETE FROM document_search WHERE doc_id NOT IN (SELECT id FROM documents)")
+                db.commit()
+                last = 0
+                while True:
+                    db.execute("BEGIN IMMEDIATE")
+                    rows = db.execute("""SELECT d.rowid, d.id FROM documents d LEFT JOIN document_search s
+                        ON s.doc_id=d.id WHERE d.rowid>? AND (s.revision IS NOT d.revision OR s.title IS NULL)
+                        ORDER BY d.rowid LIMIT ?""", (last, chunk)).fetchall()
+                    if rows:
+                        index_text(db, [row[1] for row in rows])
+                        last = rows[-1][0]
                     db.commit()
+                    if len(rows) < chunk:
+                        break
+                    if not more():
+                        return False
+                while self.fts:
+                    db.execute("BEGIN IMMEDIATE")
+                    covered = db.execute(f"SELECT {FTS_COVERED}").fetchone()[0]
+                    if covered is None or covered >= FTS_DONE:
+                        db.commit()
+                        break
+                    rows = db.execute("SELECT id FROM document_search WHERE id>? ORDER BY id LIMIT ?",
+                                      (covered, chunk)).fetchall()
+                    # A short chunk is the last: within this transaction no row comes after it, so the index covers
+                    # every row from here on, those to come included.
+                    upto = rows[-1][0] if len(rows) == chunk else FTS_DONE
+                    db.execute("""INSERT INTO document_fts(rowid,title,summary,content)
+                        SELECT id,title,summary,content FROM document_search WHERE id>? AND id<=?""", (covered, upto))
+                    db.execute("UPDATE metadata SET value=? WHERE key='search_fts'", (str(upto),))
+                    db.commit()
+                    if upto >= FTS_DONE:
+                        break
+                    if not more():
+                        return False
         except sqlite3.OperationalError:
-            pass
+            return False
+        except sqlite3.DatabaseError:
+            # A damaged trigram index stays as it is rather than stop the start: a search that cannot read it compares
+            # the search text instead (Search.texts).
+            LOG.exception("search index could not be brought up to date")
+        return True
+
+    def _index_later(self):
+        """Go on with what a start left of _index, half a second at a time beside the requests, until it is done."""
+        while True:
+            time.sleep(0.5)
+            try:
+                if self._index(budget=0.5):
+                    return
+            except Exception:
+                LOG.exception("search index stopped")
+                return
 
     @staticmethod
     def _migrate_markdown(db):
