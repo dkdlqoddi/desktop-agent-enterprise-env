@@ -88,9 +88,9 @@ def test_secrets_an_exception_carries_are_redacted_in_the_log(log):
         assert secret not in logged, secret
     assert "[REDACTED]" in logged and "llm.example" in logged
     # The patterns as such: the name of the secret stays, its value goes; ordinary words with those letters stay.
-    assert (
-        diagnostics.redact("x-api-key: abc123, cookie=sid=1; next") == "x-api-key: [REDACTED], cookie=[REDACTED]; next"
-    )
+    assert diagnostics.redact("x-api-key: abc123, cookie=sid=1; next") == "x-api-key: [REDACTED], cookie=[REDACTED]"
+    # A bearer token after its header name goes whole, not the word "Bearer" alone.
+    assert diagnostics.redact("Authorization: Bearer abcdef.ghijkl\nnext") == "Authorization: [REDACTED]\nnext"
     assert diagnostics.redact("the token count is 12") == "the token count is 12"
 
 

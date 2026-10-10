@@ -16,6 +16,21 @@
 - 로컬 REST API·MCP를 통한 도구 연동, 작업 기록과 진단 로그
 - 가져온 Office 문서의 변경 사항을 원본 파일에 반영하고 백업 보관
 
+## 문서
+
+| 문서                                                     | 내용                                                                        |
+| -------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                       | 세 프로세스와 경계, 요청 경로, 데이터 위치, 모듈 지도, 기능 추가 순서, 빌드 |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                       | 개발 환경, 테스트 실행, 환경변수, 생성 파일, 커밋 메시지, CI                |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                 | 로그와 진단 정보, 메시지별 원인과 해결                                      |
+| [PRIVACY.md](PRIVACY.md)                                 | 기능별로 PC 밖으로 나가는 것과 남는 것, 비밀 값과 로그                      |
+| [SECURITY.md](SECURITY.md)                               | 보안 설계, 위협 모델, 취약점 신고                                           |
+| [docs/api.md](docs/api.md), [OpenAPI](docs/openapi.json) | 로컬 REST API와 MCP의 메서드, 허용 범위, 매개변수                           |
+| [CHANGELOG.md](CHANGELOG.md)                             | 변경 기록과 버전 정책                                                       |
+| [AGENTS.md](AGENTS.md)                                   | AI 코딩 에이전트를 위한 규약                                                |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)         | 함께 배포하는 오픈소스 구성 요소의 라이선스 고지                            |
+| [LICENSE](LICENSE)                                       | MIT 라이선스                                                                |
+
 ## 개발 환경
 
 Node.js 22.12 이상(`.nvmrc`)과 Python 3.10 이상을 사용합니다. 배포 파일은 Python 3.13(`.python-version`)으로 빌드합니다. 데스크톱 실행에는 그래픽 환경이 필요합니다. Windows Office·RTF 가져오기와 원본 반영에는 해당 Office 데스크톱 앱이 설치되어 있어야 합니다. Windows 텍스트 가져오기는 메모장을 사용합니다.
@@ -67,7 +82,7 @@ Windows에서는 `run-dev.cmd`를 사용할 수 있습니다. 처음 실행할 �
 - 로그인·접속 실패 시 AI 분석은 기본으로 꺼져 있습니다. 켜면 로그인 화면의 글과 주소가 설정한 LLM 서버로 전송됩니다.
 - `https://`를 생략하면 HTTPS 주소로 저장하며, HTTP로 내려가지 않습니다. HTTP만 쓰는 사이트는 `http://`를 붙여 입력합니다(비밀번호가 암호화되지 않은 연결로 전송되므로 신뢰할 수 있는 내부망에서만 쓰세요).
 
-API Key, 사용자 지정 헤더 값과 사이트 비밀번호는 운영체제 보안 저장소로 암호화합니다. 보안 저장소를 사용할 수 없으면 새 API Key와 비밀번호는 앱 실행 중 메모리에만 보관하고, 헤더 값은 설정 파일에 그대로 둡니다. 로그와 진단 복사본에서는 키·토큰·비밀번호를 가립니다. 보안 설계와 신고 방법은 `SECURITY.md`를 보세요.
+API Key, 사용자 지정 헤더 값과 사이트 비밀번호는 운영체제 보안 저장소로 암호화합니다. 보안 저장소를 사용할 수 없으면 새 API Key와 비밀번호는 앱 실행 중 메모리에만 보관하고, 헤더 값은 설정 파일에 그대로 둡니다. 로그와 진단 복사본에서는 키·토큰·비밀번호를 가립니다. 보안 설계와 신고 방법은 [SECURITY.md](SECURITY.md)를, 기능별로 PC 밖으로 나가는 내용은 [PRIVACY.md](PRIVACY.md)를 보세요.
 
 ## 자료 가져오기
 
@@ -87,7 +102,7 @@ API Key, 사용자 지정 헤더 값과 사이트 비밀번호는 운영체제 �
 
 ## API와 MCP
 
-**관리 → AI 도구 연동**에서 서버를 활성화하고 연결 정보를 복사합니다. 기능별 매개변수와 접근 권한은 **API 매뉴얼**에서 확인합니다.
+**관리 → AI 도구 연동**에서 서버를 활성화하고 연결 정보를 복사합니다. 기능별 매개변수와 접근 권한은 **API 매뉴얼**이나 [docs/api.md](docs/api.md)에서 확인합니다.
 
 읽기, 쓰기, 전체 접근 권한을 구분합니다. 로컬 파일 가져오기와 원본 반영, 등록하지 않은 사이트의 링크 가져오기, 휴지통 비우기, 백업 복원, 앱 화면의 삭제 확인 버튼에는 전체 접근 권한이 필요합니다. 쓰기 권한의 문서 삭제는 휴지통으로 가며 복원할 수 있습니다. Python 백엔드는 별도 공개 HTTP 포트 없이 표준 입출력 JSON RPC로 Electron과 통신합니다.
 
@@ -113,7 +128,7 @@ npm run test:e2e
 
 `lint:python`은 Python 백엔드를 ruff로 검사하고(`npm run lint:python -- --fix`는 고칠 수 있는 것을 고칩니다), `format:python`은 형식을 맞추며, `format:python:check`는 형식이 맞는지만 확인합니다. 규칙은 `backend/pyproject.toml`의 `[tool.ruff]`에 있습니다. 백엔드 전체의 형식을 한 번에 맞춘 커밋은 `.git-blame-ignore-revs`에 있으니, `git config blame.ignoreRevsFile .git-blame-ignore-revs`로 설정하면 `git blame`이 그 커밋을 건너뜁니다.
 
-`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다). 화면이 부를 수 있는 메서드 타입(`src/lib/api/methods.generated.ts`)은 `electron/api-catalog.cjs`의 `METHODS`와 `electron/main.cjs`의 `ALLOWED`에서 만들어지므로, 둘 중 하나를 바꾸면 `npm run generate:methods`를 실행해 함께 커밋합니다. 메인 프로세스 테스트가 이 파일이 최신인지, 화면이 부르는 메서드가 모두 `ALLOWED`에 있고 메인 프로세스나 백엔드가 처리하는지 확인합니다.
+`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다). 화면이 부를 수 있는 메서드 타입(`src/lib/api/methods.generated.ts`)은 `electron/api-catalog.cjs`의 `METHODS`와 `electron/main.cjs`의 `ALLOWED`에서 만들어지므로, 둘 중 하나를 바꾸면 `npm run generate:methods`를 실행해 함께 커밋합니다. 메인 프로세스 테스트가 이 파일이 최신인지, 화면이 부르는 메서드가 모두 `ALLOWED`에 있고 메인 프로세스나 백엔드가 처리하는지 확인합니다. 로컬 API의 문서(`docs/api.md`, `docs/openapi.json`)도 카탈로그에서 만들어지므로, API를 바꾸면 `npm run docs:api`를 실행해 함께 커밋합니다(`tests/api-docs.test.cjs`가 최신인지 확인합니다).
 
 Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
 

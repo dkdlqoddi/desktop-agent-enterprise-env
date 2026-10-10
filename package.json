@@ -24,8 +24,8 @@
     "build:exe": "node scripts/build-exe.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write src electron scripts tests *.json *.ts *.md .github/workflows/*.yml",
-    "format:check": "prettier --check src electron scripts tests *.json *.ts *.md .github/workflows/*.yml",
+    "format": "prettier --write src electron scripts tests *.json *.ts *.md docs/*.md .github/workflows/*.yml",
+    "format:check": "prettier --check src electron scripts tests *.json *.ts *.md docs/*.md .github/workflows/*.yml",
     "lint:python": "node scripts/lint-python.mjs check backend",
     "format:python": "node scripts/lint-python.mjs format backend",
     "format:python:check": "node scripts/lint-python.mjs format --check backend",
@@ -38,6 +38,7 @@
     "notices": "node scripts/third-party-notices.mjs",
     "notices:check": "node scripts/third-party-notices.mjs --check",
     "generate:methods": "node scripts/generate-methods.mjs",
+    "docs:api": "node scripts/export-api-docs.mjs",
     "package": "node scripts/package.mjs",
     "package:dir": "node scripts/package.mjs dir",
     "package:win": "node scripts/package.mjs win"

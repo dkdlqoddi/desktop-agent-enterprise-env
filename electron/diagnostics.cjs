@@ -16,8 +16,14 @@ const TAIL_BYTES = 32_000;
 const SECRETS = [
   [/\bpa_[A-Za-z0-9_-]{6,}/g, 'pa_[REDACTED]'],
   [/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[REDACTED]'],
+  // A header whose whole value is secret, to the end of its line: "Authorization: Bearer <token>" keeps nothing of
+  // the token, and a cookie header hides every cookie, not the first alone.
   [
-    /\b(password|passwd|pwd|api[_-]?key|x-api-key|authorization|token|secret|cookie)\b("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&}\]]+)/gi,
+    /\b(authorization|proxy-authorization|cookie|set-cookie)\b("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\r\n]+)/gi,
+    '$1$2[REDACTED]',
+  ],
+  [
+    /\b(password|passwd|pwd|api[_-]?key|x-api-key|token|secret)\b("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&}\]]+)/gi,
     '$1$2[REDACTED]',
   ],
   [/\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}/gi, '$1 [REDACTED]'],
