@@ -27,7 +27,7 @@ Python 백엔드(backend/main.py → agent/service.py) ──▶ wiki.db, LLM �
 1. 화면이 `api(method, params)`를 부릅니다(`src/lib/api/transport.ts`). `method`는 `src/lib/api/methods.generated.ts`의 `Method` 타입이어야 합니다.
 2. preload(`electron/preload.cjs`)가 `ipcRenderer.invoke('agent:request', method, params)`로 보냅니다.
 3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `trustedSender`(메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버)와 `ALLOWED.has(method)`를 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다.
-4. `api.*`는 로컬 API 설정(`apiRequest`), 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
+4. `api.*`는 로컬 API 설정(`apiRequest`), `app.relaunch`(예약한 백업 복원을 적용하는 ‘지금 다시 시작’)는 앱을 닫고 같은 프로그램으로 다시 실행하며, 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
 5. `rpc()`는 백엔드가 (다시) 시작하는 동안 기다렸다가 `{"id", "method", "params"}` 한 줄을 표준 입력에 씁니다. 응답 제한 시간은 `RPC_TIMEOUTS`(`electron/main.cjs`)에 있으면 그 값, 없으면 330초입니다. 시간이 지나면 메인 프로세스 쪽만 실패로 끝나고 백엔드의 작업은 계속됩니다.
 6. 백엔드(`backend/main.py`)는 줄마다 처리 줄을 고릅니다. `SLOW`의 메서드와 `mode`가 `prompt`인 `wiki.search`는 느린 줄(4개), 나머지는 빠른 줄(24개)입니다. 줄이 차 있으면 기다리지 않고 바로 "진행 중인 요청이 많습니다"로 답합니다. `INTERACTIVE_METHODS`의 LLM 요청은 일괄 작업보다 먼저 갑니다(`agent/llm.py`의 `Slots`).
 7. `Service.dispatch`(`agent/service.py`)가 처리 함수를 부르고, 백엔드는 `{"id", "result"}`나 `{"id", "error"}`로 답합니다. `UserError`는 그 메시지를, 예기치 않은 예외는 로그에 남긴 뒤 오류 ID가 붙은 일반 메시지를 돌려줍니다. 스택이나 비밀 값은 화면으로 가지 않습니다.
@@ -38,6 +38,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 ## 이벤트
 
 - 백엔드가 스스로 보내는 이벤트는 `id` 없는 줄 `{"event", "params"}`입니다. 메인 프로세스는 `BACKEND_EVENTS`에 있는 `assistant.delta`(LLM이 쓰는 답변의 조각)와 `assistant.done`(끝)만 창의 `assistant:delta` 채널로 넘기고, 나머지는 버립니다.
+- 화면은 `stream`과 자기 `request_id`를 붙여 물은 답변의 이벤트만 상태 조각 하나(`src/components/answers.ts`)에 모읍니다. 검색창은 그 글을 쓰는 대로(150ms마다) 그리고, 최근 대화 목록은 답변 중인 대화와 아직 저장되지 않은 새 대화를 보여 줍니다. ‘답변 중지’는 `assistant.cancel {request_id}`를 보냅니다.
 - 메인 프로세스가 보내는 이벤트: `job:progress`(가져오기·AI 분석·자동 작업의 진행, `electron/job-progress.cjs`가 따라가며 번호를 붙임), `schedule:event`, `routine:event`, `import:notice`, `assistant:open`, `api:changed`, `control:command`(로컬 API의 화면 명령, 화면은 `control:result`로 답함)
 - 화면은 백엔드의 응답을 메서드와 매개변수별로 캐시합니다(`src/lib/query.ts`). 변경, 끝난 작업, 메인 프로세스의 알림이 태그(`documents`, `prompts`, `runs`, `routines`, `tasks`, `conversations`)를 무효로 하면 그 태그를 가진 응답만 다시 읽습니다.
 
