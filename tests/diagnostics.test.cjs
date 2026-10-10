@@ -9,14 +9,26 @@ const {
   STDERR_BYTES,
   TAIL_BYTES,
   anonymize,
+  buildInfo,
   redact,
 } = require('../electron/diagnostics.cjs');
 
-async function logs(t) {
+async function logs(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-diagnostics-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const directory = path.join(root, 'logs');
-  return { directory, diagnostics: new Diagnostics({ directory, now: () => new Date(0) }) };
+  return {
+    root,
+    directory,
+    diagnostics: new Diagnostics({
+      directory,
+      now: () => new Date(0),
+      build: null,
+      level: '',
+      terminal: false,
+      ...options,
+    }),
+  };
 }
 
 test('records what failed in the app log, and starts a new file past its size', async (t) => {
@@ -109,4 +121,47 @@ test('a log that cannot be written never stops the app', async (t) => {
   const diagnostics = new Diagnostics({ directory });
   await diagnostics.record('기록');
   assert.match(await diagnostics.report([]), /\(기록 없음\)/);
+});
+
+// scripts/package.mjs writes electron/build-info.json into the package; a run from source has none.
+test('a packaged build names its commit and date at the top of the report', async (t) => {
+  const { root, diagnostics } = await logs(t, {
+    build: { commit: '0123456789abcdef0123456789abcdef01234567', date: '2026-10-10T01:02:03Z' },
+  });
+  assert.match(
+    await diagnostics.report(['앱 0.1.0']),
+    /^Private Agent 진단 정보 · .*\n빌드 0123456789ab · 2026-10-10T01:02:03Z\n앱 0\.1\.0\n/,
+  );
+  const file = path.join(root, 'build-info.json');
+  await fs.writeFile(file, JSON.stringify({ commit: 'abcdef1234567-dirty', date: '2026-10-10' }));
+  assert.deepEqual(buildInfo(file), { commit: 'abcdef1234567-dirty', date: '2026-10-10' });
+  const dirty = new Diagnostics({ directory: root, build: buildInfo(file), terminal: false });
+  assert.match(await dirty.report([]), /\n빌드 abcdef123456-dirty · 2026-10-10\n/);
+  // A file that is missing, damaged or names no commit gives no line.
+  assert.equal(buildInfo(path.join(root, 'missing.json')), null);
+  await fs.writeFile(file, '{"commit": "<script>"}');
+  assert.equal(buildInfo(file), null);
+  await fs.writeFile(file, 'not json');
+  assert.equal(buildInfo(file), null);
+  const { diagnostics: source } = await logs(t);
+  assert.doesNotMatch(await source.report([]), /빌드/);
+});
+
+test('debug entries are kept only at PRIVATE_AGENT_LOG_LEVEL=debug, and the terminal can get a copy of each', async (t) => {
+  const quiet = await logs(t);
+  await quiet.diagnostics.debug('요청 wiki.search 12ms');
+  await assert.rejects(fs.access(path.join(quiet.directory, 'app.log')));
+  const written = [];
+  const loud = await logs(t, {
+    level: ' DEBUG ',
+    terminal: true,
+    output: { write: (text) => written.push(text) },
+  });
+  await loud.diagnostics.debug('요청 wiki.search 12ms');
+  await loud.diagnostics.record('백엔드 실패: token=abc123');
+  assert.equal(
+    await fs.readFile(path.join(loud.directory, 'app.log'), 'utf8'),
+    '1970-01-01T00:00:00.000Z 요청 wiki.search 12ms\n1970-01-01T00:00:00.000Z 백엔드 실패: token=[REDACTED]\n',
+  );
+  assert.equal(written.join(''), await fs.readFile(path.join(loud.directory, 'app.log'), 'utf8'));
 });

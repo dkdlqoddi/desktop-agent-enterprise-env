@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Dependency updates as pull requests, once a month, for releases at least two weeks old. Runs only once the repository owner has installed the Renovate GitHub app.",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "schedule:monthly"],
+  "minimumReleaseAge": "14 days",
+  "pip_requirements": {
+    "description": "backend/constraints.txt pins every Python package (pip install -c).",
+    "managerFilePatterns": ["/(^|/)constraints\\.txt$/"]
+  },
+  "nvm": {
+    "description": "Node.js (.nvmrc) moves by hand, with package.json's engines, scripts/workflow.mjs and the CI matrix.",
+    "enabled": false
+  },
+  "pyenv": {
+    "description": "Python (.python-version) moves by hand, with the CI matrix and backend/pyproject.toml's requires-python.",
+    "enabled": false
+  },
+  "packageRules": [
+    {
+      "description": "THIRD_PARTY_NOTICES.md lists the npm and Python packages with their versions, so CI's notices check fails until it is regenerated on the branch.",
+      "matchManagers": ["npm", "pip_requirements", "pep621"],
+      "prBodyNotes": [
+        "의존성이 바뀌면 CI의 `npm run notices:check`가 실패합니다. 이 브랜치에서 `npm ci`, `npm run setup:python` 뒤 `npm run notices`를 실행해 THIRD_PARTY_NOTICES.md를 갱신하고 커밋하세요."
+      ]
+    },
+    {
+      "description": "Python pins (backend/constraints.txt) and ranges (backend/pyproject.toml) in one pull request: pip refuses a pin outside its range.",
+      "matchManagers": ["pip_requirements", "pep621"],
+      "groupName": "Python dependencies"
+    },
+    {
+      "description": "Playwright of the E2E tests (npm) and of the backend (pinned in backend/pyproject.toml and backend/constraints.txt) in one pull request: the backend needs the Chromium build of its own release.",
+      "matchPackageNames": ["@playwright/test", "playwright"],
+      "groupName": "Playwright"
+    },
+    {
+      "description": "Electron and electron-builder change the packaged exe: build it on Windows and check what tests/package.test.cjs names before merging.",
+      "matchPackageNames": ["electron", "electron-builder"],
+      "groupName": "Electron"
+    },
+    {
+      "description": "Next.js and React with their types.",
+      "matchPackageNames": ["next", "react", "react-dom", "@types/react", "@types/react-dom"],
+      "groupName": "Next.js and React"
+    },
+    {
+      "description": "Node.js types follow the oldest Node.js the project supports (engines, .nvmrc).",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "<23"
+    },
+    {
+      "description": "The actions of .github/workflows, pinned to commits.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    }
+  ]
+}

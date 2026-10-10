@@ -1,4 +1,3 @@
-import os
 import sys
 import threading
 import time
@@ -325,8 +324,7 @@ def test_a_presentation_with_a_password_fails_once_its_prompt_is_cancelled(tmp_p
     assert [watch.ended for watch in made] == [0, 1]
 
 
-@pytest.mark.skipif(sys.platform != "win32" or os.getenv("PRIVATE_AGENT_OFFICE_TEST") != "1",
-                    reason="Requires Windows Word; opt in with PRIVATE_AGENT_OFFICE_TEST=1")
+@pytest.mark.office
 def test_real_hidden_word_left_by_a_killed_client_is_ended():
     import subprocess
     watch = Watch(["Word"])

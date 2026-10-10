@@ -5,9 +5,11 @@ and no document text, only exceptions, whose messages may name files."""
 import errno
 import logging
 import logging.handlers
+import os
 import re
 import secrets
 import sqlite3
+import sys
 import traceback
 from pathlib import Path
 
@@ -16,6 +18,10 @@ from .llm import UserError
 LOG = logging.getLogger("private_agent")
 LOG.setLevel(logging.INFO)
 LOG.propagate = False
+# PRIVATE_AGENT_LOG_LEVEL's names: debug adds what helps while developing, warning and error leave out the notes of
+# what the backend did (its start, the scratch folders it removed). Failures are errors and are logged at every level.
+LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
+FORMAT = "%(asctime)s %(levelname)s %(message)s"
 # Two files of 1 MB: the failures of many days, and still small enough to send.
 MAX_BYTES = 1_000_000
 BACKUPS = 1
@@ -50,9 +56,25 @@ class Redacting(logging.Formatter):
         return redact(super().format(record))
 
 
+def level(name=None):
+    """The level PRIVATE_AGENT_LOG_LEVEL (or `name`) names; info when it names none of LEVELS."""
+    if name is None:
+        name = os.environ.get("PRIVATE_AGENT_LOG_LEVEL", "")
+    return LEVELS.get(name.strip().lower(), logging.INFO)
+
+
 def start(directory):
-    """Log to <directory>/backend.log. Without a directory (tests, a backend started by hand) nothing is written, and
-    a log that cannot be opened never stops the backend."""
+    """Log to <directory>/backend.log at the level PRIVATE_AGENT_LOG_LEVEL names, and to the error output as well with
+    PRIVATE_AGENT_LOG_CONSOLE=1, which npm run dev sets so that the terminal shows the log as it is written. Without a
+    directory (tests, a backend started by hand) no file is written, and a log that cannot be opened never stops the
+    backend."""
+    LOG.setLevel(level())
+    # A FileHandler is a StreamHandler too: only a plain one is the error output.
+    if os.environ.get("PRIVATE_AGENT_LOG_CONSOLE") == "1" and not any(
+            type(handler) is logging.StreamHandler for handler in LOG.handlers):
+        console = logging.StreamHandler(sys.stderr)
+        console.setFormatter(Redacting(FORMAT))
+        LOG.addHandler(console)
     if not directory or any(isinstance(handler, logging.FileHandler) for handler in LOG.handlers):
         return
     try:
@@ -61,7 +83,7 @@ def start(directory):
                                                        backupCount=BACKUPS, encoding="utf-8", delay=True)
     except OSError:
         return
-    handler.setFormatter(Redacting("%(asctime)s %(levelname)s %(message)s"))
+    handler.setFormatter(Redacting(FORMAT))
     LOG.addHandler(handler)
 
 

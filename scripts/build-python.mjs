@@ -31,6 +31,22 @@ const pyinstaller = [
   'build',
   '--paths',
   path.join(projectRoot, 'backend'),
+  // setuptools builds the backend's package and is no part of the backend: PyInstaller would bundle it (and packaging
+  // with it) only because it resolves urllib3's optional `from backports import zstd` to setuptools' vendored copy.
+  // urllib3 goes on without zstd, as wherever backports.zstd is not installed.
+  '--exclude-module',
+  'setuptools',
+  '--exclude-module',
+  '_distutils_hack',
+  '--exclude-module',
+  'pkg_resources',
+  // The debugger PRIVATE_AGENT_DEBUGPY starts in a backend run from source (main.py), never in the packaged one.
+  '--exclude-module',
+  'debugpy',
+  // Pillow's license file, with the licenses of the image libraries its wheel links in, which THIRD_PARTY_NOTICES.md
+  // points to (_internal/pillow-*.dist-info/licenses/LICENSE).
+  '--copy-metadata',
+  'pillow',
   ...(process.platform === 'win32'
     ? [
         '--hidden-import',

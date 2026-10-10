@@ -30,15 +30,20 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 });
 `;
 
-async function setup(t, { env = {}, executable, spawn, packaged = true, limits } = {}) {
+async function setup(
+  t,
+  { env = {}, executable, spawn, packaged = true, limits, echo = null } = {},
+) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-backend-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const script = path.join(root, 'backend.cjs');
   await fs.writeFile(script, FAKE);
   const records = [];
+  const debugs = [];
   const diagnostics = {
     stderr: '',
     record: async (text) => void records.push(text),
+    debug: async (text) => void debugs.push(text),
     capture(chunk) {
       this.stderr += chunk;
     },
@@ -61,9 +66,10 @@ async function setup(t, { env = {}, executable, spawn, packaged = true, limits }
       return '다시 시작하는 중입니다.';
     },
     ...(spawn ? { spawn } : {}),
+    echo,
   });
   t.after(() => backend.stop());
-  return { backend, records, diagnostics, exits };
+  return { backend, records, debugs, diagnostics, exits };
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -79,6 +85,24 @@ test('a backend that answers starts, answers its requests, and leaves no time-ou
   // The start's time limit has passed since: it ended with the start.
   await pause(400);
   assert.deepEqual(records, []);
+});
+
+// npm run dev sets PRIVATE_AGENT_LOG_CONSOLE=1, which makes `echo` this process's error output.
+test('the error output can also go to the terminal, and debug entries time each request without its parameters', async (t) => {
+  const terminal = [];
+  const { backend, debugs, diagnostics } = await setup(t, {
+    echo: { write: (chunk) => terminal.push(chunk) },
+  });
+  await backend.started({ limit: 5000 });
+  await backend.request('echo', { password: 'p@ss word' });
+  await assert.rejects(backend.request('fail'));
+  assert.deepEqual(
+    debugs.map((text) => text.replace(/\d+ms/, 'Nms')),
+    ['요청 health Nms', '요청 echo Nms', '요청 fail Nms (오류)'],
+  );
+  await assert.rejects(backend.request('crash'));
+  assert.match(terminal.join(''), /DLL load failed/);
+  assert.equal(terminal.join(''), diagnostics.stderr);
 });
 
 test('a backend whose program is missing says so, logs the error, and fails its requests at once', async (t) => {

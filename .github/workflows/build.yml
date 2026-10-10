@@ -1,4 +1,6 @@
 name: Build Windows desktop
+# The exe users run, built and tested on Windows (npm run build:exe: the checks, the package, then E2E against the
+# packaged app), on a v* tag or by hand. It is kept as an artifact with its SHA256SUMS; nothing is published.
 on:
   workflow_dispatch:
   push:
@@ -6,36 +8,103 @@ on:
 # The job reads the repository and keeps the exe as an artifact: its token can do nothing else.
 permissions:
   contents: read
-# The actions run at their major-version tags. To pin each to a commit, replace `@v4` with the full SHA of the release
-# it points to (`gh api repos/actions/checkout/commits/v4 --jq .sha`, likewise for the others) and keep the tag in a
-# comment after it, e.g. `actions/checkout@<40-character SHA> # v4`.
+# Every action is pinned to the commit of a release, named in the comment after it; Renovate updates both
+# (renovate.json).
 jobs:
   package:
     runs-on: windows-latest
+    # Usually under an hour; the Python tests and E2E take most of it.
+    timeout-minutes: 120
+    env:
+      # 'true' when the repository has a code-signing certificate. Secrets cannot be read in `if:`, so the build steps
+      # test this instead; the certificate and its password reach only the step that signs.
+      SIGNING: ${{ secrets.WIN_CSC_LINK != '' }}
+      NEXT_TELEMETRY_DISABLED: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # No git credentials left in the workspace for the build's scripts and dependencies to find.
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           cache: npm
-      - uses: actions/setup-python@v5
+      # A release is built from the version it is named after: v1.2.3 needs "version": "1.2.3" in package.json, which
+      # names the exe and the folder the launcher unpacks the app into.
+      - name: Check the tag against package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::태그 $GITHUB_REF_NAME이(가) package.json의 버전 $version과 맞지 않습니다. package.json의 version을 고치거나 v$version 태그로 빌드하세요."
+            exit 1
+          fi
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.13'
+          python-version-file: .python-version
           cache: pip
           cache-dependency-path: |
             backend/pyproject.toml
             backend/constraints.txt
-      - run: npm run build:exe
+      # Electron's own download (npm run setup:electron) and electron-builder's (Electron for the package, NSIS). Both
+      # check what they take from the cache against their checksums.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+      # electron-builder signs the exe with the certificate in WIN_CSC_LINK (a base64-encoded .pfx) and its password in
+      # WIN_CSC_KEY_PASSWORD, when the repository has those secrets.
+      - name: Build, test and package (signed)
+        if: env.SIGNING == 'true'
+        run: npm run build:exe
         env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Build, test and package (unsigned)
+        if: env.SIGNING != 'true'
+        run: npm run build:exe
+        env:
+          # No certificate is looked for anywhere.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          NEXT_TELEMETRY_DISABLED: '1'
-      - uses: actions/upload-artifact@v4
+      - name: Checksums
+        shell: bash
+        working-directory: release
+        run: sha256sum -b -- *.exe record-demo.cmd > SHA256SUMS
+      # The commit is in the app as well: the diagnostics users copy name it (electron/build-info.json).
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### Private Agent $GITHUB_REF_NAME"
+            echo
+            echo "커밋 \`$GITHUB_SHA\` · 코드 서명 $([ "$SIGNING" = true ] && echo 있음 || echo 없음)"
+            echo
+            echo '```text'
+            cat release/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: private-agent-windows
           path: |
             release/*.exe
             release/record-demo.cmd
+            release/SHA256SUMS
           if-no-files-found: error
+      # What a failed build leaves for finding out why: the traces of failed E2E tests, PyInstaller's warnings about
+      # what it could not find, and electron-builder's own report.
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-logs
+          path: |
+            test-results/
+            build/python/private-agent-backend/warn-private-agent-backend.txt
+            release/builder-debug.yml
+            release/builder-effective-config.yaml
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,7 +1,8 @@
 name: Check
-# Every push to main and every pull request, in a few minutes on Linux: formatting, types (the screens and the E2E
-# specs) and the Electron main process's tests, which need neither Python nor a browser. The Windows build with the
-# Python tests and E2E is build.yml, on a v* tag or by hand.
+# Every push to main and every pull request, as jobs that run side by side: formatting, types, the Electron main
+# process's tests and the static export of the screens on Node.js 22 and 24; the Python tests, with the browser tests
+# on Playwright's Chromium, on Linux with the oldest and the newest Python the backend supports and on Windows, and
+# whether THIRD_PARTY_NOTICES.md is up to date. The Windows exe with its E2E tests is build.yml, on a v* tag or by hand.
 on:
   push:
     branches: [main]
@@ -12,20 +13,97 @@ permissions:
 concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
-# Pinning the actions to commits: see build.yml.
+# Every action is pinned to the commit of a release, named in the comment after it; Renovate updates both
+# (renovate.json).
 jobs:
-  check:
+  node:
+    name: Node.js ${{ matrix.node }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # No git credentials left in the workspace for the scripts and dependencies to find.
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run test:main
+      - run: npm run build:web
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+  python:
+    name: Python ${{ matrix.python }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows runners are slower, and the browser tests take most of the time on every runner.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.10'
+          - os: ubuntu-latest
+            python: '3.13'
+            # The notices are checked once, from this job's virtual environment; they read the same on every platform.
+            notices: true
+          - os: windows-latest
+            python: '3.13'
+    env:
+      # A browser test that cannot start Chromium fails here instead of being skipped (backend/tests/conftest.py).
+      PRIVATE_AGENT_REQUIRE_BROWSER: '1'
+      # Where Playwright keeps the browsers npm run setup:browser installs.
+      BROWSERS: ${{ matrix.os == 'windows-latest' && '~\AppData\Local\ms-playwright' || '~/.cache/ms-playwright' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The npm scripts that set up and run Python need Node.js, and the notices check needs node_modules as well.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: ${{ matrix.notices && 'npm' || '' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            backend/constraints.txt
+      - run: npm run setup:python
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+      # The Chromium build of the pinned Playwright, kept between runs under the Playwright version, and saved as soon as
+      # it is installed, so that a failed test does not lose it.
+      - id: playwright
+        shell: bash
+        run: echo "version=$(sed -n 's/^playwright==//p' backend/constraints.txt)" >> "$GITHUB_OUTPUT"
+      - id: browser
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSERS }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - run: npm run setup:browser
+      - if: steps.browser.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSERS }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # The system libraries Chromium needs on Linux (apt-get, with the runner's passwordless sudo).
+      - if: runner.os == 'Linux'
+        run: backend/.venv/bin/python -m playwright install-deps chromium
+      - run: npm run test:python
+      - if: ${{ matrix.notices && !cancelled() }}
+        run: |
+          npm ci
+          npm run notices:check

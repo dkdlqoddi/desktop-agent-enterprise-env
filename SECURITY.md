@@ -29,10 +29,12 @@ AI 도구(Claude Code 등)   --127.0.0.1 REST·MCP, Bearer 토큰, 접근 등급
 - **로컬 API·MCP**: 기본 꺼짐, `127.0.0.1` 전용, Host·Origin 검사(DNS rebinding 차단), 본문 1MiB 상한. 접근 등급(조회만 / 조회·변경·앱 제어 / 전체)으로 메서드를 제한하며, 이 PC의 파일 가져오기, 등록하지 않은 사이트의 링크, 휴지통 비우기, 설정 변경(CA 인증서 경로의 다른 컴퓨터 경로 포함)은 ‘전체’ 등급에서만 가능합니다.
 - **백엔드**: 공개 포트 없이 Electron과 표준 입출력으로만 통신합니다. Office 파일은 매크로를 차단한 일회용 COM 워커에서 읽고, 원본 반영은 백업 후 파일 내용이 가져올 당시와 같을 때만 씁니다.
 - **로그·진단**: 로그와 진단 복사본에서 API 키·토큰·비밀번호·Bearer 값은 `[REDACTED]`로, 사용자 이름이 든 경로는 `<user>`로 바꿉니다. 화면 캡처 시 비밀 입력란은 가립니다.
+- **설치 파일**: Electron fuses로 `ELECTRON_RUN_AS_NODE`와 `NODE_OPTIONS`를 무시하고, 앱 코드는 무결성을 검사한 `resources/app.asar`에서만 불러오며, `file://` 페이지에 추가 권한을 주지 않습니다. 진단 복사본에는 빌드한 커밋이 함께 적힙니다.
 
 ## 알려진 한계
 
-- 설치 파일은 아직 코드 서명과 Electron fuses 설정이 없습니다(로드맵 2단계).
+- 설치 파일의 코드 서명은 저장소에 `WIN_CSC_LINK`(base64로 인코딩한 .pfx)와 `WIN_CSC_KEY_PASSWORD` 시크릿이 있을 때만 켜집니다. 없으면 서명하지 않은 exe를 만듭니다.
+- 패키징한 exe로 E2E 테스트를 실행하기 위해 Electron의 `--inspect` 인수는 막지 않습니다(fuse `EnableNodeCliInspectArguments`).
 - 로컬 API 토큰은 하나이며 만료·개별 폐기가 없고, 호출 기록은 메모리에 최근 30건만 남습니다.
 - `wiki.db`는 저장 시 암호화하지 않습니다. 디스크 암호화(BitLocker 등)를 권장합니다.
 - 내장 Chromium과 Electron은 앱 릴리스로만 갱신됩니다.

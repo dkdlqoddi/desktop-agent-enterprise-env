@@ -1,10 +1,12 @@
-node_modules/
+# Without a trailing slash, so that a symbolic link to a shared node_modules or virtual environment (a second
+# worktree) is ignored too.
+node_modules
 .next/
 out/
 dist/
 release/
 build/
-.venv/
+.venv
 __pycache__/
 .pytest_cache/
 *.egg-info/
@@ -17,6 +19,12 @@ __pycache__/
 test-results/
 playwright-report/
 *.tsbuildinfo
+# Coverage data of npm run test:python:coverage.
+.coverage
+.coverage.*
+htmlcov/
+# Written into the package by scripts/package.mjs (the commit it was built from), never committed.
+electron/build-info.json
 .local-data/
 # Local credentials, sessions and diagnostics must stay out of public source archives.
 *.pem

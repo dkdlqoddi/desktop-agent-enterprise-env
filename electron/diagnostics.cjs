@@ -1,3 +1,4 @@
+const { readFileSync } = require('node:fs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
@@ -24,6 +25,26 @@ const SECRETS = [
 // The user's name in the paths of their profile folder, which the copied report leaves out.
 const USERS = [/([A-Za-z]:\\Users\\)[^\\\s"']+/g, /(\/home\/)[^/\s"']+/g, /(\/Users\/)[^/\s"']+/g];
 
+// The commit of a packaged build and its date, which scripts/package.mjs writes into the package as
+// electron/build-info.json: { commit: <SHA, with -dirty when the tree had uncommitted changes>, date: <ISO date> }.
+// A run from source has none.
+function buildInfo(file = path.join(__dirname, 'build-info.json')) {
+  try {
+    const { commit, date } = JSON.parse(readFileSync(file, 'utf8'));
+    if (typeof commit !== 'string' || !/^[0-9a-f]{7,40}(-dirty)?$/.test(commit)) return null;
+    return { commit, date: typeof date === 'string' ? date : '' };
+  } catch {
+    return null;
+  }
+}
+
+// The line the copied report gives the build: the commit's first 12 characters, as `git log --abbrev=12` shows it.
+function buildLine(build) {
+  if (!build) return null;
+  const [sha, dirty] = build.commit.split('-');
+  return `빌드 ${sha.slice(0, 12)}${dirty ? '-dirty' : ''}${build.date ? ` · ${build.date}` : ''}`;
+}
+
 function redact(text) {
   let out = String(text);
   for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement);
@@ -36,9 +57,23 @@ function anonymize(text) {
   return out;
 }
 
+// PRIVATE_AGENT_LOG_LEVEL=debug adds the debug entries (debug()); the failures record() writes are kept at every level,
+// as the copied report depends on them. PRIVATE_AGENT_LOG_CONSOLE=1, which npm run dev sets, writes each entry to the
+// error output too, where the terminal shows it.
 class Diagnostics {
-  constructor({ directory, now = () => new Date() }) {
-    Object.assign(this, { directory, now });
+  constructor({
+    directory,
+    now = () => new Date(),
+    build = buildInfo(),
+    level = process.env.PRIVATE_AGENT_LOG_LEVEL,
+    terminal = process.env.PRIVATE_AGENT_LOG_CONSOLE === '1',
+    output = process.stderr,
+  }) {
+    Object.assign(this, { directory, now, build, terminal, output });
+    this.debugging =
+      String(level ?? '')
+        .trim()
+        .toLowerCase() === 'debug';
     this.file = path.join(directory, 'app.log');
     this.queue = Promise.resolve();
     this.stderr = '';
@@ -47,6 +82,7 @@ class Diagnostics {
   // Appends one entry, with the secrets it may quote redacted. A log that cannot be written never stops the app.
   record(text) {
     const entry = `${this.now().toISOString()} ${redact(text).trimEnd()}\n`;
+    if (this.terminal) this.output.write(entry);
     this.queue = this.queue
       .then(async () => {
         await fs.mkdir(this.directory, { recursive: true });
@@ -60,6 +96,11 @@ class Diagnostics {
       })
       .catch(() => {});
     return this.queue;
+  }
+
+  // An entry only PRIVATE_AGENT_LOG_LEVEL=debug keeps: what helps while developing, never request parameters.
+  debug(text) {
+    return this.debugging ? this.record(text) : this.queue;
   }
 
   // What the backend writes to its error output: tracebacks Python prints, and messages of a failed start.
@@ -98,8 +139,10 @@ class Diagnostics {
   async report(facts) {
     await this.queue;
     const [own, backend] = await Promise.all([this.tail('app.log'), this.tail('backend.log')]);
+    const build = buildLine(this.build);
     const text = [
       `Private Agent 진단 정보 · ${this.now().toISOString()}`,
+      ...(build ? [build] : []),
       ...facts,
       `로그 폴더: ${this.directory}`,
       '',
@@ -114,4 +157,13 @@ class Diagnostics {
   }
 }
 
-module.exports = { Diagnostics, MAX_BYTES, STDERR_BYTES, TAIL_BYTES, redact, anonymize };
+module.exports = {
+  Diagnostics,
+  MAX_BYTES,
+  STDERR_BYTES,
+  TAIL_BYTES,
+  redact,
+  anonymize,
+  buildInfo,
+  buildLine,
+};
