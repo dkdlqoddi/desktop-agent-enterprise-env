@@ -109,7 +109,7 @@ npm run test:e2e
 
 `check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
 
-`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다).
+`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다). 화면이 부를 수 있는 메서드 타입(`src/lib/api/methods.generated.ts`)은 `electron/api-catalog.cjs`의 `METHODS`와 `electron/main.cjs`의 `ALLOWED`에서 만들어지므로, 둘 중 하나를 바꾸면 `npm run generate:methods`를 실행해 함께 커밋합니다. 메인 프로세스 테스트가 이 파일이 최신인지, 화면이 부르는 메서드가 모두 `ALLOWED`에 있고 메인 프로세스나 백엔드가 처리하는지 확인합니다.
 
 Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
 
