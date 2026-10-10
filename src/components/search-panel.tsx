@@ -1,13 +1,25 @@
-import { forwardRef, useCallback, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ArrowUp,
+  CircleAlert,
+  CircleStop,
   CornerDownRight,
   FileText,
   ListTree,
   LoaderCircle,
   MessageSquareText,
+  RotateCcw,
   Search,
   Sparkles,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import {
@@ -18,7 +30,15 @@ import {
   type Conversation,
   type SearchResult,
 } from '@/lib/api';
-import { useActions, useConfigured, usePreferences, useSearch } from './state';
+import { newRequestId, pending, type LiveAnswer } from './answers';
+import {
+  useActions,
+  useConfigured,
+  useLiveAnswer,
+  usePreferences,
+  useSearch,
+  useStores,
+} from './state';
 import Highlight from './highlight';
 import Markdown from './markdown';
 import { ResultCard, SearchSteps } from './search-results';
@@ -34,8 +54,14 @@ type Session = {
   messages: ChatMessage[];
   // What the AI search found for the latest answer: its picks first, then the other matches.
   ai: SearchResult | null;
+  // The question this session waits for the answer to ('' while none) and its request. The answer's text comes into
+  // the answers slice as the LLM writes it (useLiveAnswer); it goes on while the session shows another conversation,
+  // and shows again when the session comes back to its conversation.
   asking: string;
+  requestId: string | null;
   askError: string;
+  // The question that failed, or that the backend refused while its conversation still answered another, to send again.
+  failed: string;
   // Follow-up questions continue the conversation until the chip in the search box is removed.
   followUp: boolean;
   // A question about one document answers from it alone, without searching.
@@ -43,8 +69,39 @@ type Session = {
 };
 type Scope = { id: string; title: string };
 
+// The session showing a conversation: its saved messages and the answer the answers slice holds for it, still being
+// written (shown as it comes) or saved since the messages were read (then its newer messages).
+function conversationSession(
+  conversationId: string | null,
+  title: string,
+  messages: ChatMessage[],
+  live: LiveAnswer | null,
+): Session {
+  const saved = live?.result && live.result.messages.length >= messages.length ? live.result : null;
+  const waiting = live && pending(live) ? live : null;
+  return {
+    query: title,
+    local: null,
+    searching: false,
+    localError: '',
+    conversationId: saved?.conversation_id ?? conversationId,
+    messages: saved?.messages ?? messages,
+    ai: saved?.search ?? null,
+    asking: waiting?.question ?? '',
+    requestId: waiting?.requestId ?? null,
+    askError: '',
+    failed: '',
+    followUp: true,
+    scope: null,
+  };
+}
+
+// A question in a message, cut to a line.
+const clip = (text: string) => (text.length > 40 ? `${text.slice(0, 40)}…` : text);
+
 // One search box for everything: a local search answers at once, and with the LLM connected the
 // assistant searches with AI, answers from the documents it picked, and keeps the conversation.
+// The answer streams: its text shows as the LLM writes it, and 중지 stops it, keeping what came.
 export function useSearchSession({
   configured,
   aiAnswer,
@@ -52,24 +109,89 @@ export function useSearchSession({
   configured: boolean;
   aiAnswer: boolean;
 }) {
+  const { answers, actions } = useStores();
+  const { notify, undoable } = actions;
   const [state, setState] = useState<Session | null>(null);
   // Every conversation saved or deleted; lists of recent conversations reload on changes.
   const [saved, setSaved] = useState(0);
   const [scope, setScope] = useState<Scope | null>(null);
+  // Counts the searches and conversations shown, so that a local search or a history that comes late is dropped.
   const generation = useRef(0);
-  const current = useRef(state);
-  current.current = state;
+  // The session as last set, ahead of React drawing it: an answer that comes decides by it whether it is shown.
+  const latest = useRef<Session | null>(null);
+  const update = useCallback(
+    (next: Session | null | ((current: Session | null) => Session | null)) => {
+      const value = typeof next === 'function' ? next(latest.current) : next;
+      latest.current = value;
+      setState(value);
+    },
+    [],
+  );
+  // The parts and ends of every answer this screen asks for.
+  useEffect(() => answers.listen(), [answers]);
+  const open = useCallback(
+    async (conversation: Conversation) => {
+      const id = ++generation.current;
+      const messages = await api<ChatMessage[]>('assistant.history', { id: conversation.id });
+      if (id !== generation.current) return;
+      update(
+        conversationSession(
+          conversation.id,
+          conversation.title,
+          messages,
+          answers.latest(conversation.id),
+        ),
+      );
+    },
+    [answers, update],
+  );
+  // A conversation the lists show from the answers slice before it is saved (a new one): its answer as it comes, or as
+  // it was saved a moment ago.
+  const follow = useCallback(
+    async (requestId: string) => {
+      const live = answers.get(requestId);
+      if (!live) return;
+      const id = ++generation.current;
+      const messages = live.conversationId
+        ? await api<ChatMessage[]>('assistant.history', { id: live.conversationId })
+        : [];
+      if (id !== generation.current) return;
+      update(
+        conversationSession(live.conversationId, live.question, messages, answers.get(requestId)),
+      );
+    },
+    [answers, update],
+  );
   const ask = useCallback(
-    async (question: string, conversationId: string | null, id: number, about: Scope | null) => {
-      setState((s) => s && { ...s, asking: question, askError: '' });
+    async (question: string, conversationId: string | null, about: Scope | null) => {
+      const requestId = newRequestId();
+      answers.start(requestId, question, conversationId);
+      update((s) => s && { ...s, asking: question, requestId, askError: '', failed: '' });
+      let answer: Answer;
       try {
-        const answer = await api<Answer>('assistant.ask', {
+        answer = await api<Answer>('assistant.ask', {
           question,
           conversation_id: conversationId,
           document_ids: about ? [about.id] : [],
+          stream: true,
+          request_id: requestId,
         });
-        if (id !== generation.current) return;
-        setState(
+      } catch (error) {
+        // Refused (the conversation still answers another question) or failed: nothing of it was saved.
+        answers.fail(requestId);
+        const message = (error as Error).message;
+        if (latest.current?.requestId === requestId)
+          update(
+            (s) => s && { ...s, asking: '', requestId: null, askError: message, failed: question },
+          );
+        else notify(`‘${clip(question)}’ 질문에 답하지 못했습니다. ${message}`, true);
+        return;
+      }
+      answers.finish(requestId, answer);
+      setSaved((value) => value + 1);
+      // The saved answer takes the place of the one being written in the same drawing, so it never shows twice.
+      if (latest.current?.requestId === requestId)
+        update(
           (s) =>
             s && {
               ...s,
@@ -77,27 +199,36 @@ export function useSearchSession({
               messages: answer.messages,
               ai: answer.search,
               asking: '',
+              requestId: null,
               followUp: true,
             },
         );
-        setSaved((value) => value + 1);
-      } catch (error) {
-        if (id === generation.current)
-          setState((s) => s && { ...s, asking: '', askError: (error as Error).message });
+      else {
+        // The session went to another conversation, or was closed, while the answer was written.
+        const title =
+          answer.messages.find((message) => message.role === 'user')?.content.slice(0, 100) ??
+          question;
+        undoable(`AI 답변을 마쳤습니다 · ${clip(question)}`, {
+          label: '보기',
+          run: () =>
+            open({ id: answer.conversation_id, title, updated_at: '' }).catch((e) =>
+              notify((e as Error).message, true),
+            ),
+        });
       }
     },
-    [],
+    [answers, update, open, notify, undoable],
   );
   // `everywhere`: a keyword searches all documents, whatever the next question is scoped to.
   const submit = useCallback(
     (raw: string, followUp: boolean, everywhere = false) => {
       const query = raw.trim();
-      const previous = current.current;
+      const previous = latest.current;
       if (!query || previous?.asking) return;
       const id = ++generation.current;
       const conversationId = followUp && previous?.followUp ? previous.conversationId : null;
       const about = everywhere ? null : scope;
-      setState({
+      update({
         query,
         local: null,
         searching: !about,
@@ -106,65 +237,94 @@ export function useSearchSession({
         messages: conversationId ? previous!.messages : [],
         ai: null,
         asking: '',
+        requestId: null,
         askError: '',
+        failed: '',
         followUp: !!conversationId,
         scope: about,
       });
       if (about) {
-        if (configured) void ask(query, conversationId, id, about);
+        if (configured) void ask(query, conversationId, about);
         return;
       }
       api<SearchResult>('wiki.search', { query, mode: 'auto' })
         .then((local) => {
-          if (id === generation.current) setState((s) => s && { ...s, local, searching: false });
+          if (id === generation.current) update((s) => s && { ...s, local, searching: false });
         })
         .catch((error) => {
           if (id === generation.current)
-            setState((s) => s && { ...s, searching: false, localError: error.message });
+            update((s) => s && { ...s, searching: false, localError: error.message });
         });
       // A conversation always continues with the AI; a new search asks when answers are automatic.
-      if (configured && (aiAnswer || conversationId)) void ask(query, conversationId, id, null);
+      if (configured && (aiAnswer || conversationId)) void ask(query, conversationId, null);
     },
-    [ask, configured, aiAnswer, scope],
+    [ask, configured, aiAnswer, scope, update],
   );
   const askNow = useCallback(() => {
-    const s = current.current;
-    if (s && !s.asking)
-      void ask(s.query, s.followUp ? s.conversationId : null, generation.current, s.scope);
+    const s = latest.current;
+    if (s && !s.asking) void ask(s.query, s.followUp ? s.conversationId : null, s.scope);
   }, [ask]);
-  const open = useCallback(async (conversation: Conversation) => {
-    const id = ++generation.current;
-    const messages = await api<ChatMessage[]>('assistant.history', { id: conversation.id });
-    if (id !== generation.current) return;
-    setState({
-      query: conversation.title,
-      local: null,
-      searching: false,
-      localError: '',
-      conversationId: conversation.id,
-      messages,
-      ai: null,
-      asking: '',
-      askError: '',
-      followUp: true,
-      scope: null,
-    });
-  }, []);
+  // The question that failed or was refused, once more, in the conversation the search box continues.
+  const resend = useCallback(() => {
+    const s = latest.current;
+    if (s && !s.asking && s.failed)
+      void ask(s.failed, s.followUp ? s.conversationId : null, s.scope);
+  }, [ask]);
+  // 중지: the answer ends as soon as the backend can end it, and what came of it is saved, marked as stopped.
+  const stop = useCallback(() => {
+    const requestId = latest.current?.requestId;
+    if (requestId)
+      void answers.stop(requestId).catch((error) => notify((error as Error).message, true));
+  }, [answers, notify]);
   const reset = useCallback(() => {
     generation.current++;
-    setState(null);
-  }, []);
-  const endConversation = useCallback(() => setState((s) => s && { ...s, followUp: false }), []);
-  const forget = useCallback((conversationId: string) => {
-    setSaved((value) => value + 1);
-    if (current.current?.conversationId === conversationId) {
-      generation.current++;
-      setState(null);
-    }
-  }, []);
+    update(null);
+  }, [update]);
+  const endConversation = useCallback(
+    () => update((s) => s && { ...s, followUp: false }),
+    [update],
+  );
+  const forget = useCallback(
+    (conversationId: string) => {
+      answers.forget(conversationId);
+      setSaved((value) => value + 1);
+      if (latest.current?.conversationId === conversationId) {
+        generation.current++;
+        update(null);
+      }
+    },
+    [answers, update],
+  );
   return useMemo(
-    () => ({ state, saved, scope, setScope, submit, askNow, open, reset, endConversation, forget }),
-    [state, saved, scope, submit, askNow, open, reset, endConversation, forget],
+    () => ({
+      state,
+      saved,
+      scope,
+      setScope,
+      submit,
+      askNow,
+      resend,
+      stop,
+      open,
+      follow,
+      reset,
+      endConversation,
+      forget,
+    }),
+    [
+      state,
+      saved,
+      scope,
+      submit,
+      askNow,
+      resend,
+      stop,
+      open,
+      follow,
+      reset,
+      endConversation,
+      forget,
+    ],
   );
 }
 export type SearchSession = ReturnType<typeof useSearchSession>;
@@ -285,6 +445,12 @@ export default function SearchPanel() {
     />
   );
   const found = picked.length + others.length;
+  // The question being answered, or the one that failed, as a question of its own, unless the heading shows it already
+  // (the first question of a conversation).
+  const asked = (question: string) =>
+    (state.messages.length > 0 || question !== state.query) && (
+      <p className="question">{question}</p>
+    );
   return (
     <section className="search-panel" aria-label="검색 결과">
       <header className="search-panel-head">
@@ -303,7 +469,13 @@ export default function SearchPanel() {
         </button>
       </header>
       <div className="search-columns">
-        <div className="answer-column" aria-label="AI 답변" aria-live="polite">
+        {/* Busy while an answer is written: a screen reader reads the answer once it is whole, not every part. */}
+        <div
+          className="answer-column"
+          aria-label="AI 답변"
+          aria-live="polite"
+          aria-busy={state.asking ? true : undefined}
+        >
           {state.messages.map((message, index) =>
             // The heading already shows the first question.
             index === 0 && message.role === 'user' && message.content === state.query ? null : (
@@ -312,17 +484,24 @@ export default function SearchPanel() {
           )}
           {state.asking && (
             <>
-              {state.conversationId && <p className="question">{state.asking}</p>}
-              <div className="thinking">
-                <LoaderCircle className="spin" size={16} />
-                문서를 찾고 답변을 쓰고 있어요. LLM 응답에 시간이 걸릴 수 있습니다.
-              </div>
+              {asked(state.asking)}
+              <LiveAnswerView requestId={state.requestId} onStop={search.stop} />
             </>
           )}
           {state.askError && (
-            <p className="inline-error" role="alert">
-              {state.askError}
-            </p>
+            <>
+              {state.failed && asked(state.failed)}
+              <div className="inline-error ask-error" role="alert">
+                <CircleAlert size={14} aria-hidden="true" />
+                <span>{state.askError}</span>
+                {state.failed && (
+                  <button type="button" className="text-button" onClick={search.resend}>
+                    <RotateCcw size={13} aria-hidden="true" />
+                    다시 보내기
+                  </button>
+                )}
+              </div>
+            </>
           )}
           {!state.messages.length && !state.asking && !state.askError && (
             <div className="answer-empty">
@@ -406,13 +585,145 @@ export default function SearchPanel() {
   );
 }
 
-// A question or an answer with its search steps and the evidence it cites.
+// What an answer that did not end by itself says about it, as the backend words it: the user stopped it, or the LLM's
+// output limit cut it short (backend/agent/assistant.py STOPPED, backend/agent/llm.py TRUNCATED_NOTE). The saved answer
+// carries the backend's own words; these show while the answer is being saved.
+const STOPPED_NOTE = '답변을 중지했습니다.';
+const TRUNCATED_NOTE =
+  '답변이 LLM의 최대 출력 길이에서 잘렸습니다. 관리 → LLM 연결에서 최대 출력 토큰을 늘리거나 요청을 줄여 다시 시도해 주세요.';
+type Outcome = 'cancelled' | 'truncated';
+
+// A saved answer that did not end by itself ends with the backend's note on why, a paragraph of its own in parentheses
+// (assistant.py noted()): it is shown apart from the answer, with what the user can do about it.
+function splitNote(content: string, outcome: Outcome | undefined): [string, string] {
+  if (!outcome || !content.endsWith(')')) return [content, ''];
+  const at = content.lastIndexOf('\n\n(');
+  if (at >= 0) return [content.slice(0, at).trimEnd(), content.slice(at + 3, -1)];
+  return content.startsWith('(') ? ['', content.slice(1, -1)] : [content, ''];
+}
+
+function AnswerNote({ outcome, text }: { outcome: Outcome; text: string }) {
+  const { openAdmin } = useActions();
+  return (
+    <p className={`answer-note ${outcome}`}>
+      {outcome === 'truncated' ? (
+        <TriangleAlert size={14} aria-hidden="true" />
+      ) : (
+        <CircleStop size={14} aria-hidden="true" />
+      )}
+      <span>{text}</span>
+      {outcome === 'truncated' && (
+        <button type="button" className="text-button" onClick={() => openAdmin('llm')}>
+          LLM 설정 열기
+        </button>
+      )}
+    </p>
+  );
+}
+
+// How often an answer being written is drawn again: its parts come every 50ms, and Markdown drawn at each of them would
+// jump (a list or a table taking shape) and cost the time of parsing it all again.
+const DRAW_MS = 150;
+
+// A code block whose closing fence has not come yet is closed for the drawing, so the rest of the answer does not turn
+// into code and back as the fence arrives.
+function closeFences(text: string) {
+  const fences = text.match(/^ {0,3}(?:```|~~~)/gm)?.length ?? 0;
+  return fences % 2 ? `${text}\n\`\`\`` : text;
+}
+
+// The text of an answer being written, drawn at most every DRAW_MS while it runs and at once when it ends. The answer
+// column follows the end of the text, unless the user scrolled up to read.
+function StreamedMarkdown({ text, running }: { text: string; running: boolean }) {
+  const [shown, setShown] = useState(text);
+  const drawn = useRef(0);
+  const box = useRef<HTMLDivElement>(null);
+  const following = useRef(false);
+  useEffect(() => {
+    if (text === shown) return;
+    const draw = () => {
+      const column = box.current?.closest('.answer-column');
+      following.current =
+        !!column && column.scrollHeight - column.scrollTop - column.clientHeight < 48;
+      drawn.current = performance.now();
+      setShown(text);
+    };
+    const wait = running ? DRAW_MS - (performance.now() - drawn.current) : 0;
+    if (wait <= 0) return draw();
+    const timer = setTimeout(draw, wait);
+    return () => clearTimeout(timer);
+  }, [text, running, shown]);
+  useLayoutEffect(() => {
+    if (!following.current) return;
+    const column = box.current?.closest('.answer-column');
+    column?.scrollTo({ top: column.scrollHeight });
+  }, [shown]);
+  return (
+    <div ref={box} className="answer-text">
+      <Markdown>{closeFences(shown)}</Markdown>
+    </div>
+  );
+}
+
+// The answer while the LLM writes it: its text as it comes, 답변 중지 until it ends, and how it ended (stopped, or cut at
+// the output limit) until the saved answer takes its place. Only this part draws again with every part of the answer.
+function LiveAnswerView({ requestId, onStop }: { requestId: string | null; onStop: () => void }) {
+  const answer = useLiveAnswer(requestId);
+  const running = !answer || (pending(answer) && answer.status === 'streaming');
+  const stop = (
+    <button
+      type="button"
+      className="button secondary small stop-answer"
+      disabled={!answer || answer.stopping}
+      onClick={onStop}
+    >
+      <CircleStop size={14} aria-hidden="true" />
+      {answer?.stopping ? '중지하는 중…' : '답변 중지'}
+    </button>
+  );
+  // Before its first words the question is analyzed and the documents searched, which 중지 also ends.
+  if (!answer || (running && !answer.text))
+    return (
+      <div className="thinking">
+        <LoaderCircle className="spin" size={16} aria-hidden="true" />
+        <span>문서를 찾고 답변을 쓰고 있어요. LLM 응답에 시간이 걸릴 수 있습니다.</span>
+        {stop}
+      </div>
+    );
+  return (
+    <article className={`answer live${answer.status === 'cancelled' ? ' stopped' : ''}`}>
+      <StreamedMarkdown text={answer.text} running={running} />
+      {running ? (
+        <div className="answer-progress">
+          <LoaderCircle className="spin" size={14} aria-hidden="true" />
+          <span>답변을 쓰고 있어요</span>
+          {stop}
+        </div>
+      ) : answer.status === 'cancelled' ? (
+        <AnswerNote outcome="cancelled" text={STOPPED_NOTE} />
+      ) : answer.truncated ? (
+        <AnswerNote outcome="truncated" text={TRUNCATED_NOTE} />
+      ) : null}
+    </article>
+  );
+}
+
+// A question or an answer with its search steps and the evidence it cites. An answer the user stopped, or one the
+// LLM's output limit cut short, says so under what came of it.
 function MessageView({ message }: { message: ChatMessage }) {
   const { notify, openDocument } = useActions();
   if (message.role === 'user') return <p className="question">{message.content}</p>;
+  const outcome = message.trace?.outcome;
+  const [body, note] = splitNote(message.content, outcome);
   return (
-    <article className="answer">
-      <Markdown>{message.content}</Markdown>
+    <article className={`answer${outcome === 'cancelled' ? ' stopped' : ''}`}>
+      {body && <Markdown>{body}</Markdown>}
+      {outcome && (
+        <AnswerNote
+          outcome={outcome}
+          text={note || (outcome === 'cancelled' ? STOPPED_NOTE : TRUNCATED_NOTE)}
+        />
+      )}
       {message.citations.length > 0 && (
         <div className="citations">
           {message.citations.map((c) => (

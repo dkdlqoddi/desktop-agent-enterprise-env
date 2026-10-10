@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { relaunchOptions } = require('../electron/relaunch.cjs');
+const { ownStart, relaunchOptions } = require('../electron/relaunch.cjs');
 
 const own =
   'C:\\Users\\me\\AppData\\Local\\Private Agent\\app-0.1.0-20261001000000\\Private Agent.exe';
@@ -49,4 +49,23 @@ test('a source run starts again with its own arguments, the app folder among the
     ),
     { execPath: electron, args: [] },
   );
+});
+
+test('지금 다시 시작 starts this app again: with its own arguments from source, without them packaged', () => {
+  const electron = '/repo/node_modules/electron/dist/electron';
+  assert.deepEqual(
+    relaunchOptions(ownStart({ execPath: electron, argv: [electron, '.'] }), {
+      execPath: electron,
+      packaged: false,
+    }),
+    { execPath: electron, args: ['.'] },
+  );
+  assert.deepEqual(
+    relaunchOptions(ownStart({ execPath: own, argv: [own, '--flag'] }), {
+      execPath: own,
+      packaged: true,
+    }),
+    { execPath: own, args: [] },
+  );
+  assert.deepEqual(ownStart({ execPath: own }), { execPath: own, args: [] });
 });

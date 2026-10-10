@@ -228,3 +228,63 @@ mark.search-hit.current {
   padding: 2px 6px 4px 24px;
   font-size: 0.6875rem;
 }
+
+/* An answer while the LLM writes it, and how an answer that did not end by itself says so ---------- */
+.answer-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.thinking .stop-answer,
+.answer-progress .stop-answer {
+  margin-left: auto;
+}
+.answer-note {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+}
+.answer-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.answer-note > span {
+  flex: 1;
+  min-width: 12em;
+}
+.answer-note.truncated {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+/* A way on from a note or an error, in the color of its text so the pair keeps its contrast. */
+.answer-note .text-button,
+.ask-error .text-button {
+  flex-shrink: 0;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ask-error {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.ask-error > span {
+  flex: 1;
+  min-width: 12em;
+}
+/* A conversation still answering says so in place of its time. */
+.conversation-state {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+}

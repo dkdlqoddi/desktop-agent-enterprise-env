@@ -21,4 +21,10 @@ function relaunchOptions(started, { execPath, packaged }) {
   return { execPath: program, args };
 }
 
-module.exports = { relaunchOptions };
+// This app's own start, named as a start that came while it was closing names its own (second-instance), for 지금 다시
+// 시작: the screens ask for it once a restore of a Wiki backup waits for the next start (wiki.restore_backup).
+function ownStart({ execPath, argv }) {
+  return { execPath, args: Array.isArray(argv) ? argv.slice(1) : [] };
+}
+
+module.exports = { relaunchOptions, ownStart };

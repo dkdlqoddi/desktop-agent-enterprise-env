@@ -22,7 +22,7 @@ const path = require('node:path');
 const { readJsonFile, writeFileSafely } = require('./files.cjs');
 const { BackendProcess, ENDED, spawnFailure } = require('./backend-process.cjs');
 const { editMenu } = require('./context-menu.cjs');
-const { relaunchOptions } = require('./relaunch.cjs');
+const { ownStart, relaunchOptions } = require('./relaunch.cjs');
 const { StorageManager } = require('./storage.cjs');
 const { SiteStore, addressOf } = require('./sites.cjs');
 const LOGIN_METHODS = require('./login-methods.json').methods;
@@ -199,6 +199,8 @@ const ALLOWED = new Set([
   // What to send when reporting a problem; also from the first-run screen, when the backend fails to start.
   'diagnostics.copy',
   'diagnostics.open_folder',
+  // 지금 다시 시작 once a restore of a Wiki backup waits for the next start; the screens' own, never an AI tool's.
+  'app.relaunch',
 ]);
 // The LLM settings settings.json keeps as they are (the custom headers by their names alone), and the secrets it keeps
 // encrypted beside them: the API Key, and the headers' values (encrypted_headers).
@@ -1612,12 +1614,26 @@ function createWindow() {
 }
 
 // A start of the app asked for while this one closes, which would otherwise end unseen: it runs once this one has
-// closed (relaunchOptions), once however often it was asked.
-function relaunchAfterQuit(started) {
+// closed (relaunchOptions), once however often it was asked. `note` is what the app's log says of it.
+function relaunchAfterQuit(
+  started,
+  note = '앱이 닫히는 동안 다시 실행되어, 닫힌 뒤 다시 시작합니다.',
+) {
   if (relaunching) return;
   relaunching = true;
   app.relaunch(relaunchOptions(started, { execPath: process.execPath, packaged: app.isPackaged }));
-  void diagnostics?.record('앱이 닫히는 동안 다시 실행되어, 닫힌 뒤 다시 시작합니다.');
+  void diagnostics?.record(note);
+}
+
+// 지금 다시 시작, from the screens' backups once a restore waits for the next start, which the backend carries out as it
+// starts: the app closes as it always does, its backend stopped first (before-quit), and starts again as this same
+// program once it has closed. The answer reaches the screen before the app begins to close; a demo being recorded is
+// never cut short.
+function relaunchNow() {
+  if (demo) throw new Error('시연을 녹화하는 동안에는 앱을 다시 시작할 수 없습니다.');
+  relaunchAfterQuit(ownStart(process), '화면에서 앱을 다시 시작했습니다.');
+  setImmediate(() => app.quit());
+  return { ok: true };
 }
 
 // Making a recording's video again needs neither the Wiki nor the backend, and may run beside the open app: it keeps
@@ -1765,9 +1781,13 @@ else {
             throw new Error('허용되지 않은 요청입니다.');
           checkParams(params);
           await started;
+          // The screens' own requests of the main process (the local API's settings, 지금 다시 시작) never pass
+          // handle(), which AI tools reach through the local API too.
           const result = method.startsWith('api.')
             ? await apiRequest(method, params)
-            : await handle(method, params);
+            : method === 'app.relaunch'
+              ? relaunchNow()
+              : await handle(method, params);
           demo?.observe(method, result, null);
           return { ok: true, result };
         } catch (error) {

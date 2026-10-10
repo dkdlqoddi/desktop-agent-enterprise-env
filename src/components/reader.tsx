@@ -49,6 +49,7 @@ import { activeJob, type ImportKind } from './import-jobs';
 import Markdown from './markdown';
 import Modal, { type ModalHandle } from './modal';
 import { rove } from './roving';
+import WritebackBackupsList from './writeback-backups';
 
 // A document opened from search results shows where the search words and chosen sections are.
 export type Focus = { terms: string[]; sections: string[] };
@@ -1047,6 +1048,8 @@ function DocumentSource({ doc, jobs }: { doc: WikiDocument; jobs: SourceJobs }) 
   const source = doc.source!;
   const path = sourcePath(doc);
   const [status, setStatus] = useState<SourceStatus | null>(null);
+  // Grows when a backup of the file was put in its place: the file is then looked at again.
+  const [restored, setRestored] = useState(0);
   const { updating, writing, writable, error, update, write, stop } = jobs;
   useEffect(() => {
     setStatus(null);
@@ -1058,7 +1061,7 @@ function DocumentSource({ doc, jobs }: { doc: WikiDocument; jobs: SourceJobs }) 
     return () => {
       live = false;
     };
-  }, [doc.id, doc.revision, path]);
+  }, [doc.id, doc.revision, path, restored]);
   const missing = status?.state === 'missing';
   const imported = source.imported_at > doc.created_at;
   return (
@@ -1153,6 +1156,14 @@ function DocumentSource({ doc, jobs }: { doc: WikiDocument; jobs: SourceJobs }) 
         <p className="inline-error" role="alert">
           {error}
         </p>
+      )}
+      {/* The copies of the file kept before each write-back, and 원본 백업에서 복원. */}
+      {writable && (
+        <WritebackBackupsList
+          doc={doc}
+          disabled={jobs.running}
+          onRestored={() => setRestored((count) => count + 1)}
+        />
       )}
       {source.parts > 1 && <PartLinks doc={doc} />}
     </div>
