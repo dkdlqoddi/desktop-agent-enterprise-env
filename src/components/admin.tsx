@@ -4,13 +4,15 @@ import {
   BookOpenText,
   ClipboardCopy,
   Database,
+  DatabaseBackup,
   FolderOpen,
   KeyRound,
   LayoutGrid,
+  LoaderCircle,
   MessageSquareText,
   Unplug,
 } from 'lucide-react';
-import { api, type SiteKind } from '@/lib/api';
+import { api, type BackupMade, type SiteKind } from '@/lib/api';
 import { useApp } from './app';
 import ApiSection from './admin/api';
 import ApiManualSection from './admin/api-manual';
@@ -188,12 +190,25 @@ function Preferences() {
 
 function About() {
   const { storageDirectory, stats, notify } = useApp();
+  const [backingUp, setBackingUp] = useState(false);
   async function run(method: 'diagnostics.copy' | 'diagnostics.open_folder') {
     try {
       await api(method);
       if (method === 'diagnostics.copy') notify('진단 정보를 클립보드에 복사했습니다.');
     } catch (e) {
       notify((e as Error).message, true);
+    }
+  }
+  // A backup now, beside the daily one the app makes by itself; the list and restoring one come with their own screen.
+  async function backUp() {
+    setBackingUp(true);
+    try {
+      const made = await api<BackupMade>('wiki.backup');
+      notify(`Wiki를 백업했습니다: backups 폴더의 ${made.file}`);
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      setBackingUp(false);
     }
   }
   return (
@@ -212,10 +227,17 @@ function About() {
         </div>
       </dl>
       <p>
-        문서·대화·할 일·실행 기록은 이 폴더의 <code>wiki.db</code>에 저장됩니다. 백업하려면 앱을
-        끄고 폴더 전체를 복사하세요. 연결 설정과 사이트 계정은 앱 설정 폴더에 따로 보관하며, API
-        Key와 비밀번호는 운영체제 보안 저장소로 암호화합니다.
+        문서·대화·할 일·실행 기록은 이 폴더의 <code>wiki.db</code>에 저장됩니다. 앱이 켜져 있으면
+        하루에 한 번 이 폴더의 <code>backups</code> 폴더에 자동으로 백업하고 최근 7개를 남깁니다.
+        연결 설정과 사이트 계정은 앱 설정 폴더에 따로 보관하며, API Key와 비밀번호는 운영체제 보안
+        저장소로 암호화합니다.
       </p>
+      <div className="form-actions">
+        <button className="button secondary" disabled={backingUp} onClick={() => void backUp()}>
+          {backingUp ? <LoaderCircle className="spin" size={15} /> : <DatabaseBackup size={15} />}
+          지금 백업
+        </button>
+      </div>
       <h3>쓰는 방법</h3>
       <ul className="guide">
         <li>

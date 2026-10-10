@@ -97,6 +97,10 @@ const ALLOWED = new Set([
   'wiki.trash',
   'wiki.restore',
   'wiki.purge',
+  // Backups of the Wiki in its backups folder, and the restore of one at the next start.
+  'wiki.backup',
+  'wiki.backups',
+  'wiki.restore_backup',
   'wiki.analyze',
   'wiki.clear_analysis',
   'wiki.search',
@@ -267,6 +271,9 @@ const RPC_TIMEOUTS = {
   'wiki.search': 960_000,
   'assistant.ask': 1_260_000,
   'wiki.analyze': 1_860_000,
+  // A backup, and the copy of one to restore, read and write the whole Wiki: minutes for a large one on a slow drive.
+  'wiki.backup': 900_000,
+  'wiki.restore_backup': 900_000,
 };
 
 const RESTARTING = 'Python 백엔드를 다시 시작하고 있습니다. 잠시 후 다시 시도해 주세요.';

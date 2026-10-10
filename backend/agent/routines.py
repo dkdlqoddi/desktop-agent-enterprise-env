@@ -1390,6 +1390,9 @@ class Routines:
         return self.get({"id": row["id"]})
 
     def due(self, _=None):
+        # Electron asks this every 30 seconds while the app runs: the Wiki's daily backup and retention policy are
+        # started from here (Service.upkeep), in the background, rather than by a scheduler of their own.
+        self.service.upkeep()
         with self.db.connect() as db:
             rows = db.execute("""SELECT * FROM routines WHERE enabled=1 AND next_run_at<=?
                 ORDER BY next_run_at LIMIT 10""", (now(),)).fetchall()

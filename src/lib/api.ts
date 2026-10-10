@@ -307,6 +307,37 @@ export type EditConflict = {
   changed: boolean;
   diffs: { theirs: TextDiff; ours: TextDiff; overwrite: TextDiff };
 };
+// The Wiki's backups in its backups folder (wiki.backups), the newest first: made once a day while the app runs (auto)
+// or when asked (manual), each kind keeping its newest `keep`, and the Wiki as it was before a restore
+// (before_restore). created_at is UTC.
+export type BackupKind = 'auto' | 'manual' | 'before_restore';
+export type Backup = { file: string; kind: BackupKind; created_at: string; size: number };
+export type Backups = {
+  folder: string;
+  keep: number;
+  backups: Backup[];
+  // The restore the next start of the app carries out (wiki.restore_backup).
+  pending_restore: { file: string; requested_at: string } | null;
+  // How the last restore went; `before` is the backup the Wiki it replaced became.
+  last_restore: {
+    file: string;
+    status: 'restored' | 'failed';
+    before: string | null;
+    error: string;
+    at: string;
+  } | null;
+};
+// What wiki.backup answers: the backup made, and the older ones it pushed out (the oldest beyond `keep`).
+export type BackupMade = Backup & { removed: string[] };
+// What wiki.restore_backup answers: the restore happens when the app starts again (restart_required), or it was taken
+// back (cancel).
+export type RestoreScheduled = {
+  restart_required: boolean;
+  message: string;
+  file?: string;
+  requested_at?: string;
+  cancelled?: boolean;
+};
 export type Graph = {
   nodes: { id: string; label: string; count: number; docs: string[] }[];
   edges: (Relation & { count: number; docs: string[] })[];
