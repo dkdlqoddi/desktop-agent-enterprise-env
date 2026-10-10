@@ -378,7 +378,12 @@ class Service:
 
     def execute_prompt(self, row, variables, kind="manual", schedule_id=None):
         """Run a prompt and record the attempt, failures included, so the history shows every run."""
-        run = {"id": str(uuid.uuid4()), "prompt_id": row["id"], "title": row["title"], "input": "",
+        return self.record_run(self.attempt_prompt(row, variables, kind, schedule_id))
+
+    def attempt_prompt(self, row, variables, kind="manual", schedule_id=None, ident=None):
+        """A run of a prompt, failures included, for record_run to keep; listed as running (runs.active) while it waits
+        for the LLM. `ident` names the run, as the routines' runner names a scheduled run when it queues it."""
+        run = {"id": ident or str(uuid.uuid4()), "prompt_id": row["id"], "title": row["title"], "input": "",
                "output": "", "status": "success", "error": "", "kind": kind,
                "schedule_id": schedule_id, "started_at": now()}
         with self.active_lock:
@@ -397,8 +402,16 @@ class Service:
         finally:
             with self.active_lock:
                 self.active.pop(run["id"], None)
-        run.update(duration_ms=round((time.monotonic() - started) * 1000), created_at=now())
+        run["duration_ms"] = round((time.monotonic() - started) * 1000)
+        return run
+
+    def record_run(self, run):
+        """Keep a prompt's run in the history, dated (created_at) within the write that keeps it: runs kept at once by
+        several threads are then dated in the order they are kept, as the routines' events read the scheduled ones
+        (routines.events), and none is dated before one already read."""
         with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run["created_at"] = now()
             db.execute("""INSERT INTO runs (id,prompt_id,title,input,output,created_at,status,error,kind,
                 schedule_id,started_at,duration_ms) VALUES (:id,:prompt_id,:title,:input,:output,:created_at,
                 :status,:error,:kind,:schedule_id,:started_at,:duration_ms)""", run)

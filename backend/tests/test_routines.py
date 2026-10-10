@@ -322,7 +322,8 @@ def test_the_same_unexpected_failure_again_is_told_once_though_each_has_a_log_id
 def test_cancel_a_queued_or_running_run_and_shutdown(service):
     service.llm.gate = threading.Event()
     first = save(service, "work_report")
-    second = save(service, "analyze_new")
+    # A run of the same recipe waits for the first one's end (Routines.lanes).
+    second = save(service, "work_report", name="두 번째 보고")
     service.wiki_save({"title": "문서", "content": "내용"})
     service.dispatch("routines.run", {"id": first["id"], "logins": []})
     service.dispatch("routines.run", {"id": second["id"], "logins": []})
@@ -369,6 +370,111 @@ class FakeImporter:
         if self.job["id"] == params["id"]:
             self.job["dismissed"] = True
             self.dismissed.append(params["id"])
+
+
+class SlowImporter(FakeImporter):
+    """A file importer whose job goes on until it is stopped; with `hang`, it does not stop then either."""
+
+    def __init__(self, hang=False):
+        super().__init__(None)
+        self.hang, self.cancels = hang, 0
+
+    def start(self):
+        self.job = {"id": "slow-job", "status": "running", "results": [], "routine": "r"}
+        return dict(self.job)
+
+    def cancel(self):
+        self.cancels += 1
+        if not self.hang:
+            self.job["status"] = "cancelled"
+
+
+@pytest.mark.parametrize("hang", [False, True])
+def test_a_run_past_its_time_limit_stops_its_importers_job_and_fails_naming_the_limit(service, monkeypatch, hang):
+    """The importer's job is stopped (importer.cancel) at the recipe's time limit, and the run fails with a message that
+    names the limit. An importer that hangs and never stops is left to end by itself: the run ends all the same, and the
+    routine's next run starts."""
+    monkeypatch.setattr(routines, "POLL", 0.05)
+    monkeypatch.setattr(routines, "GRACE", 0.5)
+    importer = SlowImporter(hang)
+    monkeypatch.setattr(RECIPES["analyze_new"], "run", lambda run: run.job(importer, importer.start, "가짜"))
+    monkeypatch.setattr(RECIPES["analyze_new"], "timeout", 0.3)
+    routine = save(service, "analyze_new")
+    run = finish(service, routine["id"])
+    assert (run["status"], run["summary"]) == ("error", "실패했습니다"), run
+    assert run["error"] == routines.TIMED_OUT.format(limit="0.3초")
+    assert importer.cancels >= 1 and importer.job["status"] == ("running" if hang else "cancelled")
+    assert service.dispatch("routines.get", {"id": routine["id"]})["last_error"] == run["error"]
+    monkeypatch.setattr(RECIPES["analyze_new"], "run", lambda run: routines.outcome("다시 끝"))
+    assert finish(service, routine["id"])["summary"] == "다시 끝"
+
+
+def test_a_run_that_hangs_is_left_behind_at_its_time_limit_and_its_worker_goes_on(service, monkeypatch):
+    """A run that ignores its stop (stuck in a call of its own) is recorded as stopped at its limit once GRACE has passed,
+    and its routine and worker take the next run while it still hangs."""
+    monkeypatch.setattr(routines, "GRACE", 0.3)
+    hung = threading.Event()
+    monkeypatch.setattr(RECIPES["analyze_new"], "run", lambda run: hung.wait(30) and routines.outcome("늦게 끝"))
+    monkeypatch.setattr(RECIPES["analyze_new"], "timeout", 0.3)
+    routine = save(service, "analyze_new", notify=True)
+    started = time.monotonic()
+    run = finish(service, routine["id"])
+    assert (run["status"], run["error"]) == ("error", routines.TIMED_OUT.format(limit="0.3초"))
+    assert time.monotonic() - started < 10
+    monkeypatch.setattr(RECIPES["analyze_new"], "run", lambda run: routines.outcome("다시 끝"))
+    assert finish(service, routine["id"])["summary"] == "다시 끝"
+    hung.set()
+
+
+def test_runs_go_side_by_side_and_those_that_share_a_lane_take_turns(service, monkeypatch):
+    """Runs go on WORKERS workers, so a long run (a big Confluence tree) does not hold up a short one; the runs that use
+    one importer (every JIRA routine: one site's or another's) or of one recipe take turns, in the order they came."""
+    release, spans, lock = threading.Event(), {}, threading.Lock()
+
+    def fake(run):
+        with lock:
+            spans[run.name] = [time.monotonic(), None]
+        if run.name.startswith("긴"):
+            release.wait(20)
+        with lock:
+            spans[run.name][1] = time.monotonic()
+        return routines.outcome("끝")
+
+    for kind in ("confluence_watch", "jira_watch", "jira_filter", "analyze_new"):
+        monkeypatch.setattr(RECIPES[kind], "run", fake)
+    tree = save(service, "confluence_watch", name="긴 페이지 트리", config={"url": "https://wiki.test/display/SPACE/Page"})
+    watch = save(service, "jira_watch", name="긴 티켓 감시", config={"urls": "https://jira.test/browse/TEAM-1"})
+    search = save(service, "jira_filter", name="검색", config={"url": "https://jira.example.com", "jql": "project = TEAM"})
+    analysis, again = save(service, "analyze_new", name="분석"), save(service, "analyze_new", name="분석 또 하나")
+    for routine in (tree, watch, search, analysis, again):
+        service.dispatch("routines.run", {"id": routine["id"], "logins": []})
+    wait(lambda: not service.routines.pending(analysis["id"]) and not service.routines.pending(again["id"]))
+    assert spans["분석 또 하나"][0] >= spans["분석"][1]  # One recipe: one run after the other.
+    # Both long runs still go; the search waits for the importer that the ticket watch holds.
+    assert all(service.dispatch("routines.get", {"id": routine["id"]})["running"] for routine in (tree, watch))
+    assert service.dispatch("routines.get", {"id": search["id"]})["queued"] and "검색" not in spans
+    release.set()
+    for routine in (tree, watch, search):
+        wait(lambda: not service.routines.pending(routine["id"]))
+    assert spans["검색"][0] >= spans["긴 티켓 감시"][1]
+    assert all(service.dispatch("routines.runs", {"id": routine["id"]})[0]["summary"] == "끝"
+               for routine in (tree, watch, search, analysis, again))
+
+
+def test_a_report_the_llm_cut_short_says_so_as_a_prompt_runs_answer_does(service, monkeypatch):
+    """A text an LLM answer stopped at its output limit (truncated) makes ends with the note that prompt runs add
+    (llm.shown), in the run's text and its document alike, and no cut of the text takes the note away (clip)."""
+    from agent.llm import TRUNCATED_NOTE, reply
+    service.wiki_save({"title": "문서", "content": "내용"})
+    monkeypatch.setattr(service.llm, "complete", lambda messages, **_: reply("## 한 일\n\n- 문서 정리", truncated=True))
+    report = save(service, "work_report")
+    run = finish(service, report["id"])
+    assert run["status"] == "success", run
+    assert run["text"] == f"## 한 일\n\n- 문서 정리\n\n{TRUNCATED_NOTE}"
+    assert service.wiki_get({"id": run["documents"][0]["id"]})["content"].endswith(TRUNCATED_NOTE)
+    long = "가" * 100 + f"\n\n{TRUNCATED_NOTE}"
+    assert routines.clip(long, len(TRUNCATED_NOTE) + 12) == f"{'가' * 10}\n\n{TRUNCATED_NOTE}"
+    assert routines.clip("가" * 100, 10) == "가" * 10
 
 
 def test_a_routine_job_gives_back_the_users_import_and_stops_with_it(service, monkeypatch):

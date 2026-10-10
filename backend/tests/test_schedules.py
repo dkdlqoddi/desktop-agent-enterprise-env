@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from agent import routines
 from agent.db import Database
-from agent.llm import UserError
+from agent.llm import CANCEL, Cancelled, UserError
 from agent.schedules import MAX_ACTIVE, next_run
 from agent.service import SCHEDULE_INPUTS, Service
 
@@ -15,13 +16,21 @@ KST = timezone(timedelta(hours=9))
 
 
 class FakeLLM:
+    """Answers at once, or once `gate` opens. Like the real LLM, a request waiting there stops when the Cancel of its
+    context is set (llm.CANCEL), unless `deaf`, as a request already sent goes on until the server answers."""
+
     def __init__(self):
-        self.calls, self.error, self.gate = [], None, None
+        self.calls, self.error, self.gate, self.deaf = [], None, None, False
+
+    def public(self):
+        return {"configured": True}
 
     def complete(self, messages):
         self.calls.append(messages)
-        if self.gate:
-            self.gate.wait(5)
+        cancel, deadline = CANCEL.get(), time.monotonic() + 10
+        while self.gate and not self.gate.wait(0.02) and time.monotonic() < deadline:
+            if cancel is not None and cancel.is_set() and not self.deaf:
+                raise Cancelled()
         if self.error:
             raise self.error
         return "예약 실행 결과"
@@ -29,7 +38,16 @@ class FakeLLM:
 
 @pytest.fixture
 def service(tmp_path):
-    return Service(Database(tmp_path / "test.db"), FakeLLM())
+    found = Service(Database(tmp_path / "test.db"), FakeLLM())
+    yield found
+    found.routines.shutdown()
+
+
+def wait(condition, seconds=30):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.02)
 
 
 def prompt(service, template="오늘 할 일: {{ 할 일 }}"):
@@ -49,8 +67,18 @@ def make_due(service, ident):
     return past
 
 
+def claim(service, ident, due):
+    """Take a due occurrence as Electron's routine runner does: routines.execute, marked as a schedule's."""
+    return service.dispatch("routines.execute", {"id": ident, "next_run_at": due, "schedule": True})
+
+
 def execute(service, ident, due):
-    return service.dispatch("schedules.execute", {"id": ident, "next_run_at": due})
+    """Take the due occurrence and wait for its run to end: the run as the history keeps it, None when not taken."""
+    result = claim(service, ident, due)
+    if not result["queued"]:
+        return None
+    wait(lambda: not service.routines.holding(f"schedule:{ident}"))
+    return service.runs_get({"id": result["run_id"]})
 
 
 @pytest.mark.parametrize("frequency,extra,after,expected", [
@@ -103,30 +131,116 @@ def test_active_schedules_are_capped(service):
 
 def test_due_occurrence_runs_once_and_missed_ones_collapse(service):
     saved = schedule(service)
-    assert service.dispatch("schedules.due", {}) == []
+    assert service.dispatch("routines.due", {}) == []
     due = make_due(service, saved["id"])
-    assert service.dispatch("schedules.due", {}) == [
-        {"id": saved["id"], "name": "아침 정리", "next_run_at": due, "notify": True}]
+    assert service.dispatch("routines.due", {}) == [
+        {"id": saved["id"], "next_run_at": due, "needs": [], "schedule": True}]
     with ThreadPoolExecutor(2) as pool:
-        results = list(pool.map(lambda _: execute(service, saved["id"], due), range(2)))
-    assert sorted(result["ran"] for result in results) == [False, True]
-    result = next(result for result in results if result["ran"])
-    assert result["run"]["status"] == "success" and result["schedule"]["notify"] is True
+        results = list(pool.map(lambda _: claim(service, saved["id"], due), range(2)))
+    assert sorted(result["queued"] for result in results) == [False, True]
+    ident = next(result["run_id"] for result in results if result["queued"])
+    wait(lambda: not service.routines.holding(f"schedule:{saved['id']}"))
     assert len(service.llm.calls) == 1
     current = service.dispatch("schedules.list", {})[0]
     assert current["last_status"] == "success"
     assert datetime.fromisoformat(current["next_run_at"]) > datetime.now(timezone.utc)
-    run = service.runs_get({"id": result["run"]["id"]})
+    run = service.runs_get({"id": ident})
     assert (run["kind"], run["schedule_id"], run["schedule_name"]) == ("scheduled", saved["id"], "아침 정리")
     assert run["input"] == "오늘 할 일: 보고서" and run["output"] == "예약 실행 결과"
     assert run["duration_ms"] >= 0 and run["started_at"] <= run["created_at"]
+    assert current["last_run_at"] == run["created_at"]
+    # The scheduler that the schedules had of their own is gone: the routines' runner runs them.
+    for method in ("schedules.due", "schedules.execute"):
+        with pytest.raises(UserError, match="지원하지 않는 요청"):
+            service.dispatch(method, {})
+
+
+def test_one_scheduler_lists_routines_and_schedules_and_tells_how_their_runs_ended(service):
+    saved = schedule(service)
+    routine = service.dispatch("routines.save", {"kind": "analyze_new", "frequency": "daily", "run_time": "09:00"})
+    cursor = service.dispatch("routines.events", {})["cursor"]
+    due = make_due(service, saved["id"])
+    earlier = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+    with service.db.connect() as db:
+        db.execute("UPDATE routines SET next_run_at=? WHERE id=?", (earlier, routine["id"]))
+    # One list, the earliest first.
+    assert service.dispatch("routines.due", {}) == [{"id": routine["id"], "next_run_at": earlier, "needs": []},
+                                                    {"id": saved["id"], "next_run_at": due, "needs": [], "schedule": True}]
+    run = execute(service, saved["id"], due)
+    events = service.dispatch("routines.events", {"after": cursor})
+    assert events["runs"] == [{"id": run["id"], "schedule_id": saved["id"], "name": "아침 정리", "notify": True,
+                               "status": "success", "error": "", "finished_at": run["created_at"]}]
+    assert events["active"] == 0
+    # The routine's run comes after it, in the order they ended; a manual run of the schedule is not told.
+    service.dispatch("routines.execute", {"id": routine["id"], "next_run_at": earlier, "logins": []})
+    wait(lambda: not service.routines.pending(routine["id"]))
+    service.dispatch("schedules.run", {"id": saved["id"]})
+    later = service.dispatch("routines.events", {"after": events["cursor"]})
+    assert [(item.get("routine_id"), item["status"]) for item in later["runs"]] == [(routine["id"], "success")]
+    # Started afresh, Electron begins after the last run that ended, whichever kind it was.
+    assert service.dispatch("routines.events", {})["cursor"] == later["cursor"]
+
+
+def test_scheduled_runs_take_turns_beside_the_routines(service):
+    first, second = schedule(service, name="첫째"), schedule(service, name="둘째")
+    service.llm.gate = threading.Event()
+    for item in (first, second):
+        assert claim(service, item["id"], make_due(service, item["id"]))["queued"]
+    wait(lambda: service.runs_active({}))
+    # One at a time, as each is a whole LLM request: the second waits, shown as running.
+    assert [run["schedule_id"] for run in service.runs_active({})] == [first["id"]]
+    assert [item["last_status"] for item in service.dispatch("schedules.list", {})] == ["running", "running"]
+    # A routine does not wait for them.
+    routine = service.dispatch("routines.save", {"kind": "analyze_new"})
+    service.dispatch("routines.run", {"id": routine["id"], "logins": []})
+    wait(lambda: not service.routines.pending(routine["id"]))
+    assert service.dispatch("routines.runs", {"id": routine["id"]})[0]["status"] == "success"
+    assert [run["schedule_id"] for run in service.runs_active({})] == [first["id"]]
+    service.llm.gate.set()
+    wait(lambda: not service.routines.holding(routines.PROMPTS))
+    runs = {run["schedule_id"]: service.runs_get({"id": run["id"]}) for run in service.runs_list({})}
+    assert runs[second["id"]]["started_at"] >= runs[first["id"]]["created_at"]
+    assert {item["last_status"] for item in service.dispatch("schedules.list", {})} == {"success"}
+
+
+def test_a_paused_or_deleted_schedule_does_not_start_its_waiting_run(service):
+    first, second, third = (schedule(service, name=name) for name in ("첫째", "둘째", "셋째"))
+    service.llm.gate = threading.Event()
+    for item in (first, second, third):
+        assert claim(service, item["id"], make_due(service, item["id"]))["queued"]
+    wait(lambda: service.runs_active({}))
+    # As before it came due: it never ran.
+    assert service.dispatch("schedules.toggle", {"id": second["id"], "enabled": False})["last_status"] is None
+    service.dispatch("schedules.delete", {"id": third["id"]})
+    service.llm.gate.set()
+    wait(lambda: not service.routines.holding(routines.PROMPTS))
+    assert [run["schedule_id"] for run in service.runs_list({})] == [first["id"]]
+
+
+@pytest.mark.parametrize("deaf", [False, True])
+def test_a_scheduled_run_past_its_time_limit_fails_naming_the_limit(service, monkeypatch, deaf):
+    """At its time limit a scheduled run's LLM request is stopped; one that does not stop (a request already sent goes
+    on until the server answers) is left to end by itself, unrecorded. Either way the run fails with the limit."""
+    monkeypatch.setattr(routines, "PROMPT_TIMEOUT", 0.3)
+    monkeypatch.setattr(routines, "GRACE", 0.3)
+    saved = schedule(service)
+    service.llm.gate, service.llm.deaf = threading.Event(), deaf
+    run = execute(service, saved["id"], make_due(service, saved["id"]))
+    assert (run["status"], run["error"]) == ("error", routines.PROMPT_TIMED_OUT.format(limit="0.3초"))
+    assert run["input"] == "오늘 할 일: 보고서" and service.runs_active({}) == []
+    listed = service.dispatch("schedules.list", {})[0]
+    assert (listed["last_status"], listed["last_error"]) == ("error", run["error"])
+    service.llm.gate.set()
+    # The next occurrence runs: the limit ended this one.
+    assert execute(service, saved["id"], make_due(service, saved["id"]))["status"] == "success"
+    assert len(service.runs_list({})) == 2
 
 
 def test_one_time_schedule_finishes_and_frees_its_slot(service):
     saved = schedule(service, frequency="once", run_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
     assert saved["next_run_at"] == saved["run_at"]
     due = make_due(service, saved["id"])
-    assert execute(service, saved["id"], due)["ran"]
+    assert execute(service, saved["id"], due)["status"] == "success"
     done = service.dispatch("schedules.list", {})[0]
     assert (done["enabled"], done["next_run_at"], done["last_status"]) == (False, None, "success")
     with service.db.connect() as db:
@@ -138,9 +252,9 @@ def test_one_time_schedule_finishes_and_frees_its_slot(service):
 def test_failed_runs_are_recorded_for_the_history(service):
     saved = schedule(service)
     service.llm.error = UserError("LLM API에 연결할 수 없습니다.")
-    result = execute(service, saved["id"], make_due(service, saved["id"]))
-    assert result["run"]["status"] == "error" and "연결할 수 없습니다" in result["run"]["error"]
-    assert SCHEDULE_INPUTS not in result["run"]["error"]  # Its inputs were fine.
+    run = execute(service, saved["id"], make_due(service, saved["id"]))
+    assert run["status"] == "error" and "연결할 수 없습니다" in run["error"]
+    assert SCHEDULE_INPUTS not in run["error"]  # Its inputs were fine.
     listed = service.dispatch("schedules.list", {})[0]
     assert listed["last_status"] == "error" and "연결할 수 없습니다" in listed["last_error"]
     # A failed manual run is recorded too, and the renderer still receives the error.
@@ -158,7 +272,7 @@ def test_prompt_changes_and_deletion_reach_schedules(service):
     # The schedule keeps its inputs; the one the template gained is asked for in the schedule's form.
     with pytest.raises(UserError, match="‘마감’ 입력란이 비어 있습니다. 예약을 열어"):
         service.dispatch("schedules.run", {"id": saved["id"]})
-    run = execute(service, saved["id"], make_due(service, saved["id"]))["run"]
+    run = execute(service, saved["id"], make_due(service, saved["id"]))
     assert (run["status"], run["error"]) == ("error", f"‘마감’ 입력란이 비어 있습니다. {SCHEDULE_INPUTS}")
     assert not service.llm.calls
     with pytest.raises(UserError, match="‘마감’ 입력란이 비어 있습니다.$"):  # The form itself says only what is missing.
