@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { RoutineRunner, readsFiles } = require('../electron/routines.cjs');
+const { RoutineRunner, WAKE_DELAY, onWake, readsFiles } = require('../electron/routines.cjs');
 
 const due = [
   {
@@ -140,4 +140,33 @@ test('a run the user started is followed, and stopping ends everything', async (
   state.runner.poke();
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(state.calls.length, calls);
+});
+
+test('back from sleep or with the screen unlocked, it looks at what is due once, without waiting for the interval', async () => {
+  const state = setup();
+  const power = new EventEmitter();
+  const lookups = () => state.calls.filter((call) => call.method === 'routines.due').length;
+  const stopWatching = onWake(power, () => state.runner.wake(), 10);
+  power.emit('resume');
+  // The unlock that often follows a resume makes no second look.
+  power.emit('unlock-screen');
+  assert.equal(lookups(), 0); // A moment later, for the network to come back.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(lookups(), 1);
+  assert.deepEqual(
+    state.calls.filter((call) => call.method === 'routines.execute').map((call) => call.params.id),
+    ['watch', 'digest'],
+  );
+  power.emit('unlock-screen');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(lookups(), 2);
+  // Stopped, it no longer listens; a stopped runner does not look either.
+  stopWatching();
+  assert.equal(power.listenerCount('resume') + power.listenerCount('unlock-screen'), 0);
+  power.emit('resume');
+  state.runner.stop();
+  state.runner.wake();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(lookups(), 2);
+  assert.ok(WAKE_DELAY >= 1_000 && WAKE_DELAY <= 10_000);
 });

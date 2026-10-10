@@ -1,4 +1,10 @@
-"""Prompt schedules: recurring runs that Electron's scheduler executes while the app is open."""
+"""Prompt schedules: a prompt template run again and again with the inputs saved with it, while the app is open.
+
+The routines' runner (routines.py) runs them, so that the app has one scheduler: `routines.due`, which Electron's main
+process asks every 30 seconds, lists the schedules whose time has come together with the routines, and
+`routines.execute` takes the occurrence (claim) and queues its run with theirs. The runs of the schedules go one at a
+time, as each is a whole LLM request, and each is kept in the run history (the `runs` that the history widget lists) and
+as its schedule's last run. ‘지금 실행’ (schedules.run) runs one at once instead, for the user who waits for it."""
 import json
 import re
 import uuid
@@ -42,9 +48,9 @@ class Schedules:
         self.methods = {
             "schedules.list": self.list, "schedules.save": self.save, "schedules.toggle": self.toggle,
             "schedules.delete": self.delete, "schedules.run": self.run_now,
-            "schedules.due": self.due, "schedules.execute": self.execute,
         }
-        # A run cut off by shutdown never finished; show it as failed rather than running forever.
+        # A run cut off by shutdown never finished, nor one still waiting for its turn (claim); show it as failed rather
+        # than running forever.
         with self.db.connect() as db:
             db.execute("""UPDATE schedules SET last_status='error',
                 last_error='앱이 종료되어 실행이 중단되었습니다.' WHERE last_status='running'""")
@@ -121,6 +127,9 @@ class Schedules:
                 weekday=excluded.weekday,month_day=excluded.month_day,run_at=excluded.run_at,
                 enabled=excluded.enabled,notify=excluded.notify,next_run_at=excluded.next_run_at,
                 updated_at=excluded.updated_at""", values)
+        if not enabled:  # Paused: a run still waiting for its turn does not start; one running goes on.
+            self.service.routines.withdraw_schedule(ident)
+        with self.db.connect() as db:
             return self.public(self.get(db, ident))
 
     def toggle(self, p):
@@ -134,11 +143,16 @@ class Schedules:
                 self.check_limit(db, ident)
             db.execute("UPDATE schedules SET enabled=?,next_run_at=?,updated_at=? WHERE id=?",
                        (int(enabled), self.upcoming(row) if enabled else None, now(), ident))
+        if not enabled:  # A run still waiting for its turn does not start; one running goes on.
+            self.service.routines.withdraw_schedule(ident)
+        with self.db.connect() as db:
             return self.public(self.get(db, ident))
 
     def delete(self, p):
+        ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            db.execute("DELETE FROM schedules WHERE id=?", (text(p.get("id"), "ID", 80),))
+            db.execute("DELETE FROM schedules WHERE id=?", (ident,))
+        self.service.routines.withdraw_schedule(ident)
         return {"ok": True}
 
     def finish(self, ident, run):
@@ -158,26 +172,22 @@ class Schedules:
             raise UserError(f"{error} {SCHEDULE_INPUTS}") from None
         return self.finish(row["id"], self.service.execute_prompt(prompt, variables, "manual", row["id"]))
 
-    def due(self, _):
-        with self.db.connect() as db:
-            return [{**dict(r), "notify": bool(r["notify"])} for r in db.execute("""SELECT id,name,next_run_at,notify
-                FROM schedules WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 10""", (now(),))]
-
-    def execute(self, p):
-        """Internal: run one due occurrence, claimed before the slow LLM call so it runs only once."""
-        ident, expected = text(p.get("id"), "ID", 80), text(p.get("next_run_at"), "실행 시각", 64)
+    def claim(self, ident, expected, start=True):
+        """Take the due occurrence `expected` of the schedule `ident` for the routines' runner (routines.execute), which
+        queues its run: the next occurrence is set first, so that one runs once however often it is asked for. The
+        occurrences missed while the app was closed collapse into this one, and a one-time schedule is finished, so it
+        no longer counts toward the active limit. With `start` False the occurrence is passed over, as one that comes
+        while the schedule's last run still waits or runs. The schedule as it was, or None when it is not due at
+        `expected` (edited, paused or taken since the lookup)."""
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""SELECT * FROM schedules WHERE id=? AND enabled=1 AND next_run_at=?
                 AND next_run_at<=?""", (ident, expected, now())).fetchone()
             if not row:
-                return {"ran": False}
-            # Occurrences missed while the app was closed collapse into this run. A one-time
-            # schedule is finished afterwards and no longer counts toward the active limit.
+                return None
             once = row["frequency"] == "once"
-            db.execute("""UPDATE schedules SET next_run_at=?,enabled=?,last_status='running',updated_at=?
-                WHERE id=?""", (None if once else next_run(row), 0 if once else 1, now(), ident))
-        prompt = self.service.prompt_row(row["prompt_id"])
-        run = self.finish(ident, self.service.execute_prompt(prompt, json.loads(row["variables"]), "scheduled", ident))
-        return {"ran": True, "schedule": {"id": ident, "name": row["name"], "notify": bool(row["notify"])},
-                "run": {k: run[k] for k in ("id", "title", "status", "error", "duration_ms", "created_at")}}
+            # Shown as running from now on, while the run waits for its turn too.
+            db.execute(f"""UPDATE schedules SET next_run_at=?,enabled=?,updated_at=?
+                {",last_status='running'" if start else ""} WHERE id=?""",
+                       (None if once else next_run(row), 0 if once else 1, now(), ident))
+        return row

@@ -9,6 +9,7 @@ const {
   clipboard,
   Menu,
   Notification,
+  powerMonitor,
   shell,
 } = require('electron');
 const { spawn } = require('node:child_process');
@@ -24,8 +25,7 @@ const { StorageManager } = require('./storage.cjs');
 const { SiteStore, addressOf } = require('./sites.cjs');
 const LOGIN_METHODS = require('./login-methods.json').methods;
 const { ReminderScheduler } = require('./reminders.cjs');
-const { PromptScheduler } = require('./schedules.cjs');
-const { RoutineRunner, readsFiles } = require('./routines.cjs');
+const { RoutineRunner, onWake, readsFiles } = require('./routines.cjs');
 const { ImportNotices } = require('./import-notices.cjs');
 const { ApiError, ACCESS_LEVELS, allows, authorize, forbidden } = require('./api-catalog.cjs');
 const { ApiSettings } = require('./api-settings.cjs');
@@ -227,7 +227,6 @@ let settingsQueue = Promise.resolve();
 let storage;
 let sites;
 let reminders;
-let schedules;
 let routines;
 let notices;
 let apiSettings;
@@ -1786,18 +1785,7 @@ else {
         onClick: () => reveal('assistant:open'),
       });
       if (!plan) reminders.start();
-      schedules = new PromptScheduler({
-        rpc,
-        Notification,
-        ready,
-        focused: () => !!window?.isFocused(),
-        send: (event) => {
-          if (window && !window.isDestroyed()) window.webContents.send('schedule:event', event);
-        },
-        onClick: (runId) => reveal('schedule:event', { type: 'open', run_id: runId }),
-        interval: SCHEDULE_INTERVAL,
-      });
-      if (!plan) schedules.start();
+      // The one scheduler of the routines and the prompt schedules alike.
       routines = new RoutineRunner({
         rpc,
         logins: routineLogins,
@@ -1807,12 +1795,23 @@ else {
         send: (event) => {
           if (window && !window.isDestroyed()) window.webContents.send('routine:event', event);
         },
+        schedule: (event) => {
+          if (window && !window.isDestroyed()) window.webContents.send('schedule:event', event);
+        },
         changed,
         Notification,
         onClick: (routineId) => reveal('routine:event', { type: 'open', routine_id: routineId }),
+        openRun: (runId) => reveal('schedule:event', { type: 'open', run_id: runId }),
         interval: SCHEDULE_INTERVAL,
       });
-      if (!plan) routines.start();
+      if (!plan) {
+        routines.start();
+        // Back from sleep, or the screen unlocked: what came due meanwhile starts now, not at the next check.
+        onWake(powerMonitor, () => {
+          void reminders.tick();
+          routines.wake();
+        });
+      }
       notices = new ImportNotices({
         rpc,
         Notification,
@@ -1858,7 +1857,6 @@ app.on('before-quit', (event) => {
   stopping = true;
   restarts?.end();
   reminders?.stop();
-  schedules?.stop();
   routines?.stop();
   notices?.stop();
   control?.stop();

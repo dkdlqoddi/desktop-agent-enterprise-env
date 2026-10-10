@@ -1,9 +1,10 @@
-// Starts the automatic routines (backend/agent/routines.py) when they are due, and tells how their runs ended. It runs
-// in the main process, which alone has the site accounts' passwords: each due routine is handed to the backend with the
-// login plans of the sites it signs in to. The backend queues the runs and does one at a time; each check asks which
-// runs ended since the last one, to show a notification, keep how each site signed in with its account and have the
-// screens reload. While a run is queued or running, it looks again every few seconds. Like the other schedules it works
-// only while the app is open: a run missed while it was closed starts once it is open again.
+// The app's one scheduler: it starts the automatic routines and the prompt schedules (backend/agent/routines.py and
+// schedules.py) when they are due, and tells how their runs ended. It runs in the main process, which alone has the site
+// accounts' passwords: each due routine is handed to the backend with the login plans of the sites it signs in to. The
+// backend queues the runs and runs a few at a time; each check asks which runs ended since the last one, to show a
+// notification, keep how each site signed in with its account and have the screens reload. While a run is queued or
+// running, it looks again every few seconds. It works only while the app is open: a run missed while it was closed starts
+// once it is open again, and one that came due while the computer slept as soon as it wakes (onWake).
 class RoutineRunner {
   constructor({
     rpc,
@@ -12,12 +13,16 @@ class RoutineRunner {
     ready,
     focused,
     send,
+    schedule,
     changed,
     Notification,
     onClick,
+    openRun,
     interval = 30_000,
     follow = 3_000,
   }) {
+    // `send` tells the window about a routine's run, `schedule` about a prompt schedule's; a click on a notification
+    // opens the routine (onClick) or the prompt run (openRun).
     Object.assign(this, {
       rpc,
       logins,
@@ -25,9 +30,11 @@ class RoutineRunner {
       ready,
       focused,
       send,
+      schedule,
       changed,
       Notification,
       onClick,
+      openRun,
       interval,
       followInterval: follow,
     });
@@ -52,20 +59,28 @@ class RoutineRunner {
       if (this.cursor === null) this.cursor = (await this.rpc('routines.events')).cursor;
       for (const due of await this.rpc('routines.due')) {
         if (this.stopped) break;
+        // A prompt schedule's run (`schedule`) signs in nowhere: its needs are empty.
         const result = await this.rpc('routines.execute', {
           id: due.id,
           next_run_at: due.next_run_at,
           logins: this.logins(due.needs),
+          schedule: due.schedule === true,
         });
         // Taken by an earlier check, edited or turned off since the lookup, or still running.
         if (result.queued) this.changed();
       }
       await this.collect();
     } catch {
-      // Asked again on the next check; each routine's last outcome is shown on the AI 작업 page.
+      // Asked again on the next check; each routine's and schedule's last outcome is shown on its screen.
     } finally {
       this.busy = false;
     }
+  }
+
+  // The computer woke from sleep or its screen was unlocked (onWake): look at what is due now rather than at the next
+  // check, which may be most of an interval away.
+  wake() {
+    if (!this.stopped) void this.tick();
   }
 
   // A run the user started: follow it from now on.
@@ -97,6 +112,10 @@ class RoutineRunner {
     this.cursor = events.cursor;
     for (const run of events.runs) {
       try {
+        if (run.schedule_id) {
+          this.scheduled(run);
+          continue;
+        }
         // How each site signed in, as an import of the user's keeps it with the site's account.
         for (const login of run.logins ?? [])
           await Promise.resolve(this.record(login.site_id, login)).catch(() => {});
@@ -123,13 +142,39 @@ class RoutineRunner {
     if (events.active) this.later(this.followInterval);
   }
 
-  notify(run) {
-    if (!this.Notification.isSupported()) return;
-    const failed = run.status === 'error';
-    const notification = new this.Notification({
-      title: `Private Agent · 자동 작업${failed ? ' 실패' : ''}`,
-      body: `${run.name}: ${failed ? run.error : run.summary}`,
+  // A prompt schedule's run ended: the window shows it in its run history, and says how it went whenever its schedule
+  // asks to be told, with a notice of its own while it has focus and a notification otherwise.
+  scheduled(run) {
+    this.schedule({
+      type: 'finished',
+      schedule_id: run.schedule_id,
+      name: run.name,
+      notify: run.notify,
+      run_id: run.id,
+      status: run.status,
+      error: run.error,
     });
+    if (!run.notify || this.focused()) return;
+    const success = run.status === 'success';
+    this.show(
+      `Private Agent · 예약 실행 ${success ? '완료' : '실패'}`,
+      success ? run.name : `${run.name}: ${run.error}`,
+      () => this.openRun(run.id),
+    );
+  }
+
+  notify(run) {
+    const failed = run.status === 'error';
+    this.show(
+      `Private Agent · 자동 작업${failed ? ' 실패' : ''}`,
+      `${run.name}: ${failed ? run.error : run.summary}`,
+      () => this.onClick(run.routine_id),
+    );
+  }
+
+  show(title, body, onClick) {
+    if (!this.Notification.isSupported()) return;
+    const notification = new this.Notification({ title, body });
     this.active.add(notification);
     const cleanup = () => {
       clearTimeout(timeout);
@@ -138,7 +183,7 @@ class RoutineRunner {
     const timeout = setTimeout(cleanup, 300_000);
     timeout.unref?.();
     notification.once('click', () => {
-      this.onClick(run.routine_id);
+      onClick();
       cleanup();
     });
     notification.once('failed', cleanup);
@@ -165,4 +210,32 @@ function readsFiles(method, params, saved) {
   return kind === 'source_refresh';
 }
 
-module.exports = { RoutineRunner, readsFiles };
+// How long after the computer resumes from sleep, or its screen is unlocked, it looks at what is due: Windows tells of
+// the resume before Wi-Fi and a VPN are back, and the runs it starts reach sites and the LLM.
+const WAKE_DELAY = 5_000;
+
+// Calls `check` once WAKE_DELAY after the computer resumes from sleep or its screen is unlocked (Electron's
+// powerMonitor), which often come together: what came due while it slept then starts at once instead of at the next
+// interval. Returns a function that stops it.
+function onWake(powerMonitor, check, delay = WAKE_DELAY) {
+  const events = ['resume', 'unlock-screen'];
+  let timer;
+  const soon = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      try {
+        check();
+      } catch {
+        // The regular checks go on; one of them looks again.
+      }
+    }, delay);
+    timer.unref?.();
+  };
+  for (const event of events) powerMonitor.on(event, soon);
+  return () => {
+    clearTimeout(timer);
+    for (const event of events) powerMonitor.removeListener(event, soon);
+  };
+}
+
+module.exports = { RoutineRunner, readsFiles, onWake, WAKE_DELAY };
