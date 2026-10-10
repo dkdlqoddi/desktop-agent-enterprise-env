@@ -70,16 +70,16 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agent`, `npm run dev`에서는 `.local-data/dev-user-data`이며 `PRIVATE_AGENT_USER_DATA`로 바꿀 수 있습니다.
 
-| 경로                                     | 내용                                                                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `storage.json`                           | 고른 Wiki 폴더                                                                                               |
-| `settings.json`                          | LLM 연결 설정. API Key(`encrypted_api_key`)와 헤더 값(`encrypted_headers`)은 암호화하고 헤더는 이름만 둡니다 |
-| `sites.json`                             | 사이트 계정, 로그인 방식, 고정한 로그인 주소. 비밀번호는 `encrypted_password`                                |
-| `api.json`                               | 로컬 API의 켜짐, 포트(기본 47615), 허용 범위(기본 `read`), 암호화한 토큰                                     |
-| `window.json`                            | 화면 배율                                                                                                    |
-| `logs/app.log`, `logs/backend.log`       | 메인 프로세스와 백엔드의 로그. 각각 1MB를 넘으면 `.1`로 하나 남깁니다                                        |
-| `confluence-profiles/`, `jira-profiles/` | 사이트 주소(origin)마다 하나인 Chromium 프로필. 그 사이트의 마지막 계정을 지우면 함께 지웁니다               |
-| `mcp/private-agent-mcp.cjs`              | stdio로만 연결하는 AI 도구가 실행하는 MCP 연결 프로그램. 로컬 API를 켤 때 씁니다                             |
+| 경로                                     | 내용                                                                                                                                                                                                             |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage.json`                           | 고른 Wiki 폴더                                                                                                                                                                                                   |
+| `settings.json`                          | LLM 연결 설정. API Key(`encrypted_api_key`)와 헤더 값(`encrypted_headers`)은 암호화하고 헤더는 이름만 둡니다. 보안 저장소를 쓸 수 없으면 새 API Key는 실행 중 메모리에만 두고 헤더 값은 파일에 그대로 저장합니다 |
+| `sites.json`                             | 사이트 계정, 로그인 방식, 고정한 로그인 주소. 비밀번호는 `encrypted_password`                                                                                                                                    |
+| `api.json`                               | 로컬 API의 켜짐, 포트(기본 47615), 허용 범위(기본 `read`), 암호화한 토큰                                                                                                                                         |
+| `window.json`                            | 화면 배율                                                                                                                                                                                                        |
+| `logs/app.log`, `logs/backend.log`       | 메인 프로세스와 백엔드의 로그. 각각 1MB를 넘으면 `.1`로 하나 남깁니다                                                                                                                                            |
+| `confluence-profiles/`, `jira-profiles/` | 사이트 주소(origin)마다 하나인 Chromium 프로필. 그 사이트의 마지막 계정을 지우면 함께 지웁니다                                                                                                                   |
+| `mcp/private-agent-mcp.cjs`              | stdio로만 연결하는 AI 도구가 실행하는 MCP 연결 프로그램. 로컬 API를 켤 때 씁니다                                                                                                                                 |
 
 화면 테마는 창의 localStorage(`private-agent:theme`)에 있습니다. 배포용 exe는 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀어 실행합니다.
 
