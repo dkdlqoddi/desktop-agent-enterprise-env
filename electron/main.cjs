@@ -10,6 +10,8 @@ const {
   Menu,
   Notification,
   shell,
+  // Named apart from "the screen", which is the app's page throughout this file.
+  screen: displays,
 } = require('electron');
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
@@ -1798,6 +1800,7 @@ else {
           recorder: new Recorder(),
           pace: demoPace(),
           log: (text) => void diagnostics.record(text),
+          display: (win) => displays.getDisplayMatching(win.getBounds()).bounds,
         });
         demoRunning = demo
           .run()

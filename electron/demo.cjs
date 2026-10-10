@@ -42,6 +42,11 @@ const KIND_TEXT = {
 };
 // How long a run waits for an import before stopping it.
 const IMPORT_LIMIT = 60 * 60_000;
+// How long the window may take to be drawn at full-screen size before the recording starts all the same, how often it
+// is looked at meanwhile, and how long one look at a frame of the screen may take.
+const FULL_SCREEN_LIMIT = 15_000;
+const FULL_SCREEN_EVERY = 150;
+const FRAME_LIMIT = 5000;
 const INTRO_MS = 3500;
 const OUTRO_MS = 4500;
 const MAX_SHOWN = 3;
@@ -107,6 +112,20 @@ const pageName = (value) => {
   }
 };
 const even = (value) => Math.max(2, Math.round(value / 2) * 2);
+// Two sizes in DIPs that are the same but for rounding, as at a display scale of 125%.
+const near = (a, b) => Math.abs(a - b) <= 2;
+
+// What `promise` settles with, or `fallback` once `ms` have passed.
+function within(promise, ms, fallback) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, ms, fallback);
+      timer.unref?.();
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 function describe(item, kind) {
   if (item.type === 'folder')
@@ -235,8 +254,23 @@ class DemoRun {
     now = Date.now,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log = () => {},
+    // The bounds of the display a window is on (Electron's screen), which a full-screen window covers. Without it the
+    // recording starts as soon as the screen is ready.
+    display = null,
   }) {
-    Object.assign(this, { plan, window, control, rpc, storage, recorder, pace, now, sleep, log });
+    Object.assign(this, {
+      plan,
+      window,
+      control,
+      rpc,
+      storage,
+      recorder,
+      pace,
+      now,
+      sleep,
+      log,
+      display,
+    });
     this.stopped = false;
     this.quitting = false;
     this.reason = null;
@@ -369,8 +403,42 @@ class DemoRun {
       async () => !!(await this.findControl((item) => item.name === 'Wiki 저장 폴더')),
       { timeout: 90_000, message: 'Wiki 저장 위치 화면이 열리지 않았습니다.' },
     );
-    // Full screen settles.
-    await this.sleep(900 * this.pace);
+    await this.settleFullScreen(win);
+  }
+
+  // The recording starts once the screen is drawn at full-screen size, since a recording whose frames change size
+  // partway cannot be made into a video: its player stops at the change with a decoding error, and the demo ends without
+  // one. The window calls itself full screen as soon as it is asked, while an X11 window manager resizes it later, and a
+  // busy PC draws the first frames at the new size seconds after that (WSL, 2026-10-10). So the size is read off a frame
+  // of the screen itself, twice in a row. A screen that does not get there in time is recorded as it is.
+  async settleFullScreen(win) {
+    if (!this.display) return;
+    const end = this.now() + FULL_SCREEN_LIMIT;
+    let drawn = 0;
+    while (this.now() < end) {
+      this.check();
+      // A window closed meanwhile is the recording's to report.
+      if (win.isDestroyed()) return;
+      drawn = (await this.drawnFullScreen(win)) ? drawn + 1 : 0;
+      if (drawn === 2) return;
+      await this.sleep(FULL_SCREEN_EVERY);
+    }
+    this.log(
+      `시연 창이 ${FULL_SCREEN_LIMIT / 1000}초 안에 전체 화면 크기로 그려지지 않아 그대로 녹화를 시작했습니다.`,
+    );
+  }
+
+  async drawnFullScreen(win) {
+    if (win.isDestroyed() || !win.isFullScreen()) return false;
+    const [width, height] = win.getContentSize();
+    const display = this.display(win);
+    if (!near(width, display.width) || !near(height, display.height)) return false;
+    const frame = await within(
+      win.webContents.capturePage().then((image) => image.getSize()),
+      FRAME_LIMIT,
+      null,
+    ).catch(() => null);
+    return !!frame && near(frame.width, width) && near(frame.height, height);
   }
 
   async initializeStorage() {
