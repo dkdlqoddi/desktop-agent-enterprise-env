@@ -45,7 +45,7 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
-O = "{urn:schemas-microsoft-com:office:office}"
+O = "{urn:schemas-microsoft-com:office:office}"  # noqa: E741 - named by its prefix (o:), as the others are
 V = "{urn:schemas-microsoft-com:vml}"
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
@@ -169,6 +169,7 @@ SYMBOLS = {
         for latin, greek in zip(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
             "αβχδεφγηιϕκλμνοπθρστυϖωξψζΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ",
+            strict=True,
         )
     },
     **{
@@ -577,7 +578,10 @@ class Theme:
             fonts = None if scheme is None else scheme.find(f"{A}{kind}Font")
             if fonts is None:
                 continue
-            face = lambda tag: fonts.find(A + tag).get("typeface", "") if fonts.find(A + tag) is not None else ""
+
+            def face(tag, fonts=fonts):
+                return fonts.find(A + tag).get("typeface", "") if fonts.find(A + tag) is not None else ""
+
             # Korean documents name their East Asian font by script (Hang) rather than as ea.
             hangul = next(
                 (font.get("typeface", "") for font in fonts.findall(A + "font") if font.get("script") == "Hang"), ""
@@ -2177,7 +2181,7 @@ class Reader:
                 item = found.get(ident)
                 if item is None:
                     continue
-                content = self.in_part(name, lambda: self.blocks(item))
+                content = self.in_part(name, lambda item=item: self.blocks(item))
                 if kind == "comment":
                     author = " · ".join(
                         part for part in (item.get(W + "author", ""), (item.get(W + "date") or "")[:10]) if part
@@ -2189,7 +2193,8 @@ class Reader:
             if entries:
                 kind_attribute = ' type="i"' if kind == "endnote" else ""
                 html.append(
-                    f'<div class="notes"><p class="caption">{title}</p><ol{kind_attribute}>{"".join(entries)}</ol></div>'
+                    f'<div class="notes"><p class="caption">{title}</p><ol{kind_attribute}>{"".join(entries)}</ol>'
+                    "</div>"
                 )
         return "".join(html)
 
@@ -2210,7 +2215,7 @@ class Reader:
                 if root is None:
                     continue
                 seen.add(target)
-                content = self.in_part(target, lambda: self.blocks(root))
+                content = self.in_part(target, lambda root=root: self.blocks(root))
                 if visible(content):
                     found[kind].append(content)
         return (

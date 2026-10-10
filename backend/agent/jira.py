@@ -202,7 +202,10 @@ def brief(issue):
     fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
     status = fields.get("status") if isinstance(fields.get("status"), dict) else {}
     category = status.get("statusCategory") if isinstance(status.get("statusCategory"), dict) else {}
-    stamp = lambda name: fields.get(name) if isinstance(fields.get(name), str) else ""
+
+    def stamp(name):
+        return fields.get(name) if isinstance(fields.get(name), str) else ""
+
     return {
         "key": issue["key"],
         "summary": " ".join(str(fields.get("summary") or "").split())[:300],

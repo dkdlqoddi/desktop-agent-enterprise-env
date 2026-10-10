@@ -295,7 +295,7 @@ class Database:
                     written TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_writeback_backups_path ON writeback_backups(source_path,created_at);
-            """)
+            """)  # noqa: E501
             for name, (columns, key) in SOURCE_TABLES.items():
                 db.execute(source_table(name, columns, key))
             self._migrate_markdown(db)
@@ -513,7 +513,8 @@ class Database:
                         values["source_hash"] = checksum
                         hashes.add(key)
                 db.execute(
-                    f"INSERT INTO {table}_markdown ({','.join(new_columns)}) VALUES ({','.join('?' for _ in new_columns)})",
+                    f"INSERT INTO {table}_markdown ({','.join(new_columns)}) "
+                    f"VALUES ({','.join('?' for _ in new_columns)})",
                     [values[c] for c in new_columns],
                 )
                 if markdown:

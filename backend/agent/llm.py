@@ -960,7 +960,8 @@ class LLM:
                     )
             except requests.exceptions.SSLError:
                 raise LLMRequestError(
-                    "LLM 서버의 인증서를 확인할 수 없습니다. 사설·자체 서명 인증서를 쓰는 서버라면 고급 설정에서 CA 인증서 PEM 경로를 지정해 주세요."
+                    "LLM 서버의 인증서를 확인할 수 없습니다. "
+                    "사설·자체 서명 인증서를 쓰는 서버라면 고급 설정에서 CA 인증서 PEM 경로를 지정해 주세요."
                 ) from None
             except requests.exceptions.Timeout:
                 raise LLMRequestError(
@@ -983,7 +984,8 @@ class LLM:
                 raise LLMRequestError(UNREACHABLE, transient=True) from None
             except (ValueError, KeyError, IndexError, TypeError, AttributeError):
                 raise UserError(
-                    f"LLM 응답 형식이 올바르지 않습니다. API 형식 설정과 응답의 {ANSWER[target['format']]}를 확인해 주세요."
+                    f"LLM 응답 형식이 올바르지 않습니다. API 형식 설정과 응답의 {ANSWER[target['format']]}를 "
+                    "확인해 주세요."
                 ) from None
         if stream is not None and not outcome.streamed:
             stream(outcome.text)

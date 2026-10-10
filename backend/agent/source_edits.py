@@ -23,6 +23,7 @@ the writer takes the one the file is found to hold."""
 
 import difflib
 import re
+from itertools import pairwise
 from typing import NamedTuple
 
 from bs4 import BeautifulSoup
@@ -396,7 +397,7 @@ def pairing(old, new):
     def close():
         deleted = [i for i, j in gap if j is None]
         added = [j for i, j in gap if i is None]
-        pairs.extend(zip(deleted, added))
+        pairs.extend(zip(deleted, added, strict=False))
         pairs.extend((i, None) for i in deleted[len(added) :])
         pairs.extend((None, j) for j in added[len(deleted) :])
         gap.clear()
@@ -641,8 +642,9 @@ def excel_value(cell):
 
 def excel_changes(parts):
     """The cells the user changed on an Excel page: [{"sheet": [names], "address", "old", "new", "formula": [old, new]
-    or None}]. `parts` are (Markdown imported, Markdown now, HTML page) of the document's parts. Only values and formulas
-    of cells go back; a change of a sheet's rows or columns or of anything outside the cells raises UserError."""
+    or None}]. `parts` are (Markdown imported, Markdown now, HTML page) of the document's parts. Only values and
+    formulas of cells go back; a change of a sheet's rows or columns or of anything outside the cells raises
+    UserError."""
     found = []
     for heading, row, address, (old_shown, old_formula), (new_shown, new_formula) in excel_cells(parts):
         if address is None:
@@ -709,14 +711,14 @@ def excel_cells(parts):
                 "가져온 HTML 문서와 글의 시트가 맞지 않아 셀 위치를 알 수 없습니다. ‘원본에서 업데이트’로 다시 "
                 "가져온 뒤 고쳐 주세요."
             )
-        for (heading, old_rows), (_, new_rows), (_, addresses) in zip(old_tables, new_tables, layout):
-            for old_row, new_row, row_addresses in zip(old_rows, new_rows, addresses):
+        for (heading, old_rows), (_, new_rows), (_, addresses) in zip(old_tables, new_tables, layout, strict=True):
+            for old_row, new_row, row_addresses in zip(old_rows, new_rows, addresses, strict=True):
                 if plain(old_row[0]) != plain(new_row[0]) or len(old_row) != len(new_row):
                     raise UserError(
                         f"‘{heading}’ 시트의 행 번호나 열을 바꾼 것은 원본에 반영할 수 없습니다. 셀의 값만 "
                         "고칠 수 있습니다."
                     )
-                for position, (old_cell, new_cell) in enumerate(zip(old_row[1:], new_row[1:])):
+                for position, (old_cell, new_cell) in enumerate(zip(old_row[1:], new_row[1:], strict=True)):
                     before, after = excel_value(old_cell), excel_value(new_cell)
                     if before != after:
                         address = row_addresses[position] if position < len(row_addresses) else None
@@ -838,7 +840,7 @@ def align(old, doc):
     )
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
-            for i, j in zip(olds[i1:i2], docs[j1:j2]):
+            for i, j in zip(olds[i1:i2], docs[j1:j2], strict=True):
                 (text, start), (_, doc_start) = old_keys[i], doc_keys[j]
                 if start and old[i][:start] == doc[j][:doc_start]:
                     found[i].append((0, j, 0, start))
@@ -1098,8 +1100,11 @@ def empty_place(old, doc, blocks, i, marked_rows):
     before = next((k for k in range(i - 1, -1, -1) if old[k].scope == scope and primary(blocks[k]) is not None), None)
     after = next((k for k in range(i + 1, len(old)) if old[k].scope == scope and primary(blocks[k]) is not None), None)
     marks = (lambda start, end: row_ends(old, start, end)) if marked_rows else (lambda start, end: 0)
+
     # Lines the reader wrote (a heading of its own) are not in the file's text.
-    absent = lambda start, end: sum(1 for k in range(start + 1, end) if not old[k].editable)
+    def absent(start, end):
+        return sum(1 for k in range(start + 1, end) if not old[k].editable)
+
     target = None
     if before is not None and after is not None:
         first, last = primary(blocks[before]), primary(blocks[after])
@@ -1148,7 +1153,7 @@ def replacements(plan, doc, separators, marked_rows=False, searched=False):
         olds = [i for i, unit in enumerate(old) if unit.scope == scope]
         docs = [j for j, unit in enumerate(doc) if unit.scope == scope]
         if docs:
-            for i, items in zip(olds, align([old[i].text for i in olds], [doc[j].text for j in docs])):
+            for i, items in zip(olds, align([old[i].text for i in olds], [doc[j].text for j in docs]), strict=True):
                 blocks[i] = [(start, docs[unit], doc_start, size) for start, unit, doc_start, size in items]
     homes = [holder(old, doc, blocks, i) for i in range(len(old))]
     proven(plan, old, doc, blocks, homes, marked_rows)
@@ -1199,7 +1204,7 @@ def replacements(plan, doc, separators, marked_rows=False, searched=False):
     found.extend(removals(doc, whole))
     found = joined_insertions(found, searched)
     found.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    for later, earlier in zip(found, found[1:]):
+    for later, earlier in pairwise(found):
         if later[0] == earlier[0] and earlier[2] > later[1]:
             raise UserError("고친 곳이 원본에서 서로 겹쳐 반영하지 못했습니다. 나누어 고쳐 반영해 주세요.")
     return found
@@ -1319,13 +1324,14 @@ def insertion(edit, old, doc, blocks, homes, separators):
         target = doc[unit]
         if side == "after":
             text = "".join(
-                (line_break if joined else paragraph) + value for value, (_, _, joined) in zip(values, lines)
+                (line_break if joined else paragraph) + value
+                for value, (_, _, joined) in zip(values, lines, strict=True)
             )
             return target.container, target.end, target.end, text, None, AFTER
         breaks = [line_break if joined else paragraph for _, _, joined in lines[1:]]
         previous = doc[unit - 1] if unit > 0 and doc[unit - 1].container == target.container else None
         tail = line_break if previous is not None and previous.separator == line_break else paragraph
-        text = "".join(value + separator for value, separator in zip(values, breaks + [tail]))
+        text = "".join(value + separator for value, separator in zip(values, breaks + [tail], strict=True))
         return target.container, target.start, target.start, text, None, BEFORE
     if differs is not None:
         raise changed(

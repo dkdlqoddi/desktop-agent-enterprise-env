@@ -557,7 +557,7 @@ def test_failed_followup_preserves_successful_history_and_deletion_cascades(serv
 
 
 def test_long_document_keeps_relevant_tail_and_marks_partial(service):
-    doc = document(service, "서론입니다. " * 1500 + "꼬리키워드: 최종 담당자는 개발팀입니다.")
+    document(service, "서론입니다. " * 1500 + "꼬리키워드: 최종 담당자는 개발팀입니다.")
     service.llm.responses = [
         search_result(["꼬리키워드"]),
         pick("D1"),

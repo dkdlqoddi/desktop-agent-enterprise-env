@@ -1,8 +1,9 @@
 name: Check
 # Every push to main and every pull request, as jobs that run side by side: formatting, types, the Electron main
 # process's tests and the static export of the screens on Node.js 22 and 24; the Python tests, with the browser tests
-# on Playwright's Chromium, on Linux with the oldest and the newest Python the backend supports and on Windows, and
-# whether THIRD_PARTY_NOTICES.md is up to date. The Windows exe with its E2E tests is build.yml, on a v* tag or by hand.
+# on Playwright's Chromium, on Linux with the oldest and the newest Python the backend supports and on Windows, the
+# backend's lint and formatting (ruff), and whether THIRD_PARTY_NOTICES.md is up to date. The Windows exe with its E2E
+# tests is build.yml, on a v* tag or by hand.
 on:
   push:
     branches: [main]
@@ -54,7 +55,8 @@ jobs:
             python: '3.10'
           - os: ubuntu-latest
             python: '3.13'
-            # The notices are checked once, from this job's virtual environment; they read the same on every platform.
+            # The notices and ruff's lint and formatting are checked once, from this job's virtual environment; they
+            # come out the same on every platform.
             notices: true
           - os: windows-latest
             python: '3.13'
@@ -103,6 +105,11 @@ jobs:
       - if: runner.os == 'Linux'
         run: backend/.venv/bin/python -m playwright install-deps chromium
       - run: npm run test:python
+      # After the tests, whatever became of them, so that a lint or formatting error never keeps them from running.
+      - if: ${{ matrix.notices && !cancelled() }}
+        run: npm run lint:python
+      - if: ${{ matrix.notices && !cancelled() }}
+        run: npm run format:python:check
       - if: ${{ matrix.notices && !cancelled() }}
         run: |
           npm ci

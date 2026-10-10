@@ -51,7 +51,7 @@ STYLE = """
 .doc .shape>table td{padding:2pt 5pt;border:1px solid #c6c6c6}
 .doc.image figure{margin:0;text-align:center}
 .doc.text pre{margin:0;white-space:pre-wrap}
-"""
+"""  # noqa: E501
 
 
 def page(title, body, kind, style=""):
@@ -146,7 +146,10 @@ def chart_table(title, kinds, labels, series):
         + "</tr>"
         for index in indices
     )
-    return f'<figure class="chart"><figcaption>{escape(heading)}</figcaption><table class="grid">{head}{rows}</table></figure>'
+    return (
+        f'<figure class="chart"><figcaption>{escape(heading)}</figcaption><table class="grid">{head}{rows}</table>'
+        "</figure>"
+    )
 
 
 # --- Inline CSS shared by the readers ------------------------------------------------------------

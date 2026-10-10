@@ -321,7 +321,7 @@ class Assistant:
         if failed:
             notes.append(f"문서의 {len(results)}부분 중 {len(failed)}부분은 LLM이 답하지 않아 나머지에서만 찾았습니다.")
         tasks, seen, dropped = [], set(), 0
-        for part, candidates in zip(parts, results):
+        for part, candidates in zip(parts, results, strict=True):
             if isinstance(candidates, UserError):
                 continue
             folded = search.fold(part)

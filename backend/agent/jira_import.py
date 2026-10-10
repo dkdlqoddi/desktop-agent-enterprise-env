@@ -240,7 +240,8 @@ class JiraApi:
             total = body.get("total")
             if isinstance(total, int) and total > MAX_ISSUES:
                 raise UserError(
-                    f"검색된 티켓이 {total:,}개로 최대 {MAX_ISSUES:,}개를 초과합니다. 키워드나 사용자를 더 구체적으로 입력해 주세요."
+                    f"검색된 티켓이 {total:,}개로 최대 {MAX_ISSUES:,}개를 초과합니다. "
+                    "키워드나 사용자를 더 구체적으로 입력해 주세요."
                 )
             count = len(found)
             for issue in issues:

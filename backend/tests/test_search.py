@@ -707,7 +707,7 @@ def test_the_document_list_comes_in_pages_and_by_filters(service, tmp_path):
     entries = [d for page in pages(service.wiki_list, {}, 1) for d in page["documents"]]
     assert len(entries) == 8 and len({d["id"] for d in entries}) == 8
     entry = next(d for d in entries if d["id"] in imported)
-    assert [(p["id"], p["part"]) for p in entry["parts"]] == list(zip(imported, (1, 2, 3)))
+    assert [(p["id"], p["part"]) for p in entry["parts"]] == list(zip(imported, (1, 2, 3), strict=True))
     assert entry["parts"][1]["title"] == "설계서 (2/3)"
     service.wiki_save({"id": imported[1], "title": "설계서 (2/3)", "content": "아키텍처 둘째 부분을 고쳤습니다"})
     first = service.wiki_list({"limit": 2})["documents"]

@@ -101,15 +101,24 @@ def known(error):
     text = str(error).lower()
     if isinstance(error, sqlite3.OperationalError):
         if "locked" in text or "busy" in text:
-            return "Wiki 데이터베이스를 다른 작업이나 프로그램이 쓰고 있어 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."
+            return (
+                "Wiki 데이터베이스를 다른 작업이나 프로그램이 쓰고 있어 처리하지 못했습니다. "
+                "잠시 후 다시 시도해 주세요."
+            )
         if "full" in text:
             return DISK_FULL
         if "disk i/o" in text or "unable to open" in text or "readonly" in text:
-            return "Wiki 데이터베이스 파일을 읽거나 쓰지 못했습니다. Wiki 폴더가 있는 드라이브의 연결과 권한을 확인해 주세요."
+            return (
+                "Wiki 데이터베이스 파일을 읽거나 쓰지 못했습니다. "
+                "Wiki 폴더가 있는 드라이브의 연결과 권한을 확인해 주세요."
+            )
     if isinstance(error, OSError) and error.errno == errno.ENOSPC:
         return DISK_FULL
     if isinstance(error, PermissionError):
-        return "파일이나 폴더에 접근할 권한이 없어 처리하지 못했습니다. 권한과, 다른 프로그램이 그 파일을 쓰고 있는지 확인해 주세요."
+        return (
+            "파일이나 폴더에 접근할 권한이 없어 처리하지 못했습니다. "
+            "권한과, 다른 프로그램이 그 파일을 쓰고 있는지 확인해 주세요."
+        )
     if isinstance(error, MemoryError):
         return "메모리가 부족해 처리하지 못했습니다. 다른 프로그램을 닫거나 작은 파일로 나누어 다시 시도해 주세요."
     return ""

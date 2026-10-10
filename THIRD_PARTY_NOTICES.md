@@ -201,6 +201,7 @@ Private Agent는 [MIT 라이선스](LICENSE)로 배포하며, 아래 오픈소�
 | pyinstaller-hooks-contrib | Python | 2026.7       | GPL-2.0-or-later AND Apache-2.0            |
 | pytest                    | Python | 9.1.1        | MIT                                        |
 | pywin32-ctypes            | Python | 0.2.3        | BSD-3-Clause                               |
+| ruff                      | Python | 0.17.0       | MIT                                        |
 | setuptools                | Python | 84.0.0       | MIT                                        |
 | tomli                     | Python | 2.4.1        | MIT                                        |
 

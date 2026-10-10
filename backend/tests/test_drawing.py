@@ -21,7 +21,8 @@ SHAPE_URI = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 # The style Word 2013 and later give a new shape: blue fill, dark blue outline, white text.
 STYLE = (
     '<wps:style><a:lnRef idx="2"><a:schemeClr val="accent1"><a:shade val="50000"/></a:schemeClr></a:lnRef>'
-    '<a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef>'
+    '<a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent1"/>'
+    "</a:effectRef>"
     '<a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></wps:style>'
 )
 BODY = (
@@ -45,12 +46,14 @@ def pictures(html):
 def anchor(ident, x, y, cx, cy, graphic, *, uri=SHAPE_URI, frames=("column", "paragraph"), behind=False, descr=""):
     alt = f' descr="{descr}"' if descr else ""
     return (
-        f'<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor simplePos="0" relativeHeight="{251659264 + ident}" '
+        '<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>'
+        f'<wp:anchor simplePos="0" relativeHeight="{251659264 + ident}" '
         f'behindDoc="{1 if behind else 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
         f'<wp:positionH relativeFrom="{frames[0]}"><wp:posOffset>{x}</wp:posOffset></wp:positionH>'
         f'<wp:positionV relativeFrom="{frames[1]}"><wp:posOffset>{y}</wp:posOffset></wp:positionV>'
         f'<wp:extent cx="{cx}" cy="{cy}"/><wp:wrapNone/><wp:docPr id="{ident}" name="도형 {ident}"{alt}/>'
-        f'<a:graphic><a:graphicData uri="{uri}">{graphic}</a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>'
+        f'<a:graphic><a:graphicData uri="{uri}">{graphic}</a:graphicData></a:graphic></wp:anchor></w:drawing>'
+        "</mc:Choice>"
         f'<mc:Fallback><w:pict><v:rect style="position:absolute;width:10pt;height:10pt"><v:textbox><w:txbxContent>'
         f"<w:p><w:r><w:t>대체 VML</w:t></w:r></w:p></w:txbxContent></v:textbox></v:rect></w:pict></mc:Fallback>"
         f"</mc:AlternateContent></w:r>"
@@ -134,8 +137,10 @@ def test_preset_geometry_follows_the_definitions_of_the_standard():
 def test_custom_geometry_colors_and_theme_styles_resolve_as_office_does():
     outlines, _ = drawing.geometry(
         ET.fromstring(
-            '<p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:custGeom><a:pathLst><a:path w="2" h="2">'
-            '<a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="2" y="1"/></a:lnTo><a:cubicBezTo><a:pt x="2" y="2"/>'
+            '<p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:custGeom><a:pathLst>'
+            '<a:path w="2" h="2">'
+            '<a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="2" y="1"/></a:lnTo><a:cubicBezTo>'
+            '<a:pt x="2" y="2"/>'
             '<a:pt x="1" y="2"/><a:pt x="0" y="2"/></a:cubicBezTo></a:path></a:pathLst></a:custGeom></p>'
         ),
         100,
@@ -146,16 +151,21 @@ def test_custom_geometry_colors_and_theme_styles_resolve_as_office_does():
     assert outline.start == ((0.0, 0.0), (-100.0, -25.0)) and outline.end == ((0.0, 50.0), (-50.0, 0.0))
     palette = drawing.Palette(
         ET.fromstring(
-            '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:clrScheme name="t">'
-            '<a:dk1><a:sysClr val="windowText" lastClr="111111"/></a:dk1><a:accent1><a:srgbClr val="4472C4"/></a:accent1>'
+            '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements>'
+            '<a:clrScheme name="t">'
+            '<a:dk1><a:sysClr val="windowText" lastClr="111111"/></a:dk1><a:accent1><a:srgbClr val="4472C4"/>'
+            "</a:accent1>"
             "</a:clrScheme></a:themeElements></a:theme>"
         )
     )
-    color = lambda xml: palette.color(
-        ET.fromstring(
-            f'<a:solidFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">{xml}</a:solidFill>'
+
+    def color(xml):
+        return palette.color(
+            ET.fromstring(
+                f'<a:solidFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">{xml}</a:solidFill>'
+            )
         )
-    )
+
     assert color('<a:schemeClr val="tx1"/>').hex() == "#111111"
     assert color('<a:schemeClr val="accent1"><a:lumMod val="75000"/></a:schemeClr>').hex() == "#2F5597"
     assert (
@@ -236,22 +246,28 @@ def test_groups_canvases_and_pictures_inside_drawings():
             words="사용자",
         )
         + '<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="서버" descr="서버 사진"/><pic:cNvPicPr/></pic:nvPicPr>'
-        '<pic:blipFill><a:blip r:embed="rId1"/><a:srcRect l="25000"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
-        '<pic:spPr><a:xfrm><a:off x="1905000" y="0"/><a:ext cx="1905000" cy="1905000"/></a:xfrm><a:prstGeom prst="ellipse"/>'
+        '<pic:blipFill><a:blip r:embed="rId1"/><a:srcRect l="25000"/><a:stretch><a:fillRect/></a:stretch>'
+        "</pic:blipFill>"
+        '<pic:spPr><a:xfrm><a:off x="1905000" y="0"/><a:ext cx="1905000" cy="1905000"/></a:xfrm>'
+        '<a:prstGeom prst="ellipse"/>'
         '<a:ln w="28575"><a:solidFill><a:srgbClr val="7030A0"/></a:solidFill></a:ln></pic:spPr></pic:pic></wpg:wgp>'
     )
     canvas = (
-        '<wpc:wpc><wpc:bg><a:solidFill><a:srgbClr val="F2F2F2"/></a:solidFill></wpc:bg><wpc:whole><a:ln><a:noFill/></a:ln></wpc:whole>'
+        '<wpc:wpc><wpc:bg><a:solidFill><a:srgbClr val="F2F2F2"/></a:solidFill></wpc:bg><wpc:whole><a:ln><a:noFill/>'
+        "</a:ln></wpc:whole>"
         + shape(952500, 476250, "rect", words="캔버스 안").replace(
             '<a:off x="0" y="0"/>', '<a:off x="476250" y="238125"/>'
         )
         + "</wpc:wpc>"
     )
-    inline = lambda ident, graphic, uri: (
-        f'<w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="952500"/>'
-        f'<wp:docPr id="{ident}" name="그림 {ident}"/><a:graphic><a:graphicData uri="{uri}">'
-        f"{graphic}</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
-    )
+
+    def inline(ident, graphic, uri):
+        return (
+            f'<w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="952500"/>'
+            f'<wp:docPr id="{ident}" name="그림 {ident}"/><a:graphic><a:graphicData uri="{uri}">'
+            f"{graphic}</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+        )
+
     html = convert(
         "<w:p>"
         + inline(1, group, "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup")
@@ -281,9 +297,11 @@ def test_groups_canvases_and_pictures_inside_drawings():
 
 def test_a_picture_alone_in_its_paragraph_joins_the_boxes_and_arrows_marking_it():
     screenshot = (
-        '<w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="952500"/><wp:docPr id="9" name="그림 9" descr="설정 화면"/>'
+        '<w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="952500"/>'
+        '<wp:docPr id="9" name="그림 9" descr="설정 화면"/>'
         '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>'
-        '<pic:nvPicPr><pic:cNvPr id="0" name="화면"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/>'
+        '<pic:nvPicPr><pic:cNvPr id="0" name="화면"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>'
+        '<a:blip r:embed="rId1"/>'
         '<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/>'
         '<a:ext cx="1905000" cy="952500"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic></a:graphicData>'
         "</a:graphic></wp:inline></w:drawing></w:r>"
@@ -329,11 +347,14 @@ def test_a_picture_alone_in_its_paragraph_joins_the_boxes_and_arrows_marking_it(
 
 def test_text_boxes_the_page_draws_keep_their_text_and_others_are_painted():
     plain = (
-        '<wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2857500" cy="571500"/></a:xfrm>'
+        '<wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2857500" cy="571500"/>'
+        "</a:xfrm>"
         '<a:prstGeom prst="rect"/><a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill><a:ln w="12700"><a:solidFill>'
-        '<a:srgbClr val="BF9000"/></a:solidFill><a:prstDash val="dash"/></a:ln></wps:spPr><wps:txbx><w:txbxContent><w:p>'
+        '<a:srgbClr val="BF9000"/></a:solidFill><a:prstDash val="dash"/></a:ln></wps:spPr><wps:txbx><w:txbxContent>'
+        "<w:p>"
         '<w:r><w:rPr><w:b/></w:rPr><w:t>참고:</w:t></w:r><w:r><w:t xml:space="preserve"> 검색되는 글</w:t></w:r></w:p>'
-        '</w:txbxContent></wps:txbx><wps:bodyPr lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"/></wps:wsp>'
+        '</w:txbxContent></wps:txbx><wps:bodyPr lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"/>'
+        "</wps:wsp>"
     )
     rotated = shape(952500, 476250, "rect", words="기울인 상자", xfrm=' rot="1800000"')
     html = convert(
@@ -347,7 +368,8 @@ def test_text_boxes_the_page_draws_keep_their_text_and_others_are_painted():
     assert (
         '<div class="textbox" style="width:300px;max-width:100%;min-height:60px;box-sizing:border-box;display:flex;'
         "flex-direction:column;justify-content:flex-start;padding:4.8px 9.6px 4.8px 9.6px;background-color:#FFF2CC;"
-        'border:1.33px dashed #BF9000"><p style="margin-bottom:8pt"><span style="font-weight:bold">참고:</span> 검색되는 글</p>'
+        'border:1.33px dashed #BF9000"><p style="margin-bottom:8pt">'
+        '<span style="font-weight:bold">참고:</span> 검색되는 글</p>'
         "</div>"
     ) in body
     [(alt, svg)] = pictures(html)
@@ -369,15 +391,19 @@ def test_vml_shapes_of_older_documents_are_painted():
         "<w:p><w:r><w:t>VML</w:t></w:r><w:r><w:pict>"
         '<v:shapetype id="_x0000_t13" coordsize="21600,21600" o:spt="13" adj="16200,5400" '
         'path="m@0,l@0@1,0@1,0@2@0@2@0,21600,21600,10800xe"><v:formulas><v:f eqn="val #0"/><v:f eqn="val #1"/>'
-        '<v:f eqn="sum height 0 #1"/><v:f eqn="sum 10800 0 #1"/><v:f eqn="sum width 0 #0"/><v:f eqn="prod @4 @3 10800"/>'
+        '<v:f eqn="sum height 0 #1"/><v:f eqn="sum 10800 0 #1"/><v:f eqn="sum width 0 #0"/>'
+        '<v:f eqn="prod @4 @3 10800"/>'
         '<v:f eqn="sum width 0 @5"/></v:formulas><v:path textboxrect="0,@1,@6,@2"/></v:shapetype>'
-        '<v:rect style="position:absolute;margin-left:0;margin-top:15pt;width:75pt;height:37.5pt;z-index:2" fillcolor="#c0504d" '
+        '<v:rect style="position:absolute;margin-left:0;margin-top:15pt;width:75pt;height:37.5pt;z-index:2" '
+        'fillcolor="#c0504d" '
         'strokecolor="#632423" strokeweight="1.5pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>VML 상자</w:t></w:r></w:p>'
         "</w:txbxContent></v:textbox></v:rect>"
-        '<v:shape type="#_x0000_t13" style="position:absolute;margin-left:90pt;margin-top:15pt;width:75pt;height:37.5pt;z-index:3" '
+        '<v:shape type="#_x0000_t13" style="position:absolute;margin-left:90pt;margin-top:15pt;width:75pt;'
+        'height:37.5pt;z-index:3" '
         'fillcolor="#4f81bd" strokecolor="#243f60"/>'
         '<v:oval style="position:absolute;margin-left:180pt;margin-top:0;width:60pt;height:60pt;z-index:1" filled="f"/>'
-        '<v:line style="position:absolute;z-index:4" from="0,75pt" to="240pt,75pt"><v:stroke endarrow="block" dashstyle="dash"/></v:line>'
+        '<v:line style="position:absolute;z-index:4" from="0,75pt" to="240pt,75pt">'
+        '<v:stroke endarrow="block" dashstyle="dash"/></v:line>'
         "</w:pict></w:r></w:p>"
     )
     html = convert(shapes)
@@ -433,25 +459,35 @@ def test_vml_paths_formulas_and_colors():
 
 def test_smartart_is_painted_from_the_layout_office_saved():
     data = (
-        '<dgm:dataModel><dgm:ptLst><dgm:pt modelId="{1}" type="doc"/><dgm:pt modelId="{2}"><dgm:t><a:p><a:r><a:t>기획</a:t></a:r></a:p>'
-        '</dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst><dgm:cxn modelId="{3}" srcId="{1}" destId="{2}" srcOrd="0"/></dgm:cxnLst>'
-        '<dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt relId="rId14"/></a:ext>'
+        '<dgm:dataModel><dgm:ptLst><dgm:pt modelId="{1}" type="doc"/><dgm:pt modelId="{2}"><dgm:t><a:p><a:r>'
+        "<a:t>기획</a:t></a:r></a:p>"
+        '</dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst><dgm:cxn modelId="{3}" srcId="{1}" destId="{2}" srcOrd="0"/>'
+        "</dgm:cxnLst>"
+        '<dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram">'
+        '<dsp:dataModelExt relId="rId14"/></a:ext>'
         "</dgm:extLst></dgm:dataModel>"
     )
     layout = (
-        '<dsp:drawing><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>'
+        '<dsp:drawing><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr>'
+        "<dsp:grpSpPr/>"
         '<dsp:sp modelId="{9}"><dsp:nvSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvSpPr/></dsp:nvSpPr><dsp:spPr><a:xfrm>'
         '<a:off x="95250" y="95250"/><a:ext cx="1714500" cy="952500"/></a:xfrm><a:prstGeom prst="chevron"/>'
-        '<a:solidFill><a:schemeClr val="accent2"/></a:solidFill></dsp:spPr><dsp:style><a:lnRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:lnRef>'
-        '<a:fillRef idx="1"><a:scrgbClr r="0" g="0" b="0"/></a:fillRef><a:effectRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:effectRef>'
+        '<a:solidFill><a:schemeClr val="accent2"/></a:solidFill></dsp:spPr><dsp:style><a:lnRef idx="0">'
+        '<a:scrgbClr r="0" g="0" b="0"/></a:lnRef>'
+        '<a:fillRef idx="1"><a:scrgbClr r="0" g="0" b="0"/></a:fillRef><a:effectRef idx="0">'
+        '<a:scrgbClr r="0" g="0" b="0"/></a:effectRef>'
         '<a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style><dsp:txBody><a:bodyPr anchor="ctr">'
-        '<a:normAutofit fontScale="50000"/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ko-KR" sz="2400" b="1"/>'
-        '<a:t>기획</a:t></a:r></a:p></dsp:txBody><dsp:txXfrm><a:off x="571500" y="95250"/><a:ext cx="762000" cy="952500"/></dsp:txXfrm>'
+        '<a:normAutofit fontScale="50000"/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r>'
+        '<a:rPr lang="ko-KR" sz="2400" b="1"/>'
+        '<a:t>기획</a:t></a:r></a:p></dsp:txBody><dsp:txXfrm><a:off x="571500" y="95250"/>'
+        '<a:ext cx="762000" cy="952500"/></dsp:txXfrm>'
         "</dsp:sp></dsp:spTree></dsp:drawing>"
     )
     smartart = (
-        '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="1143000"/><wp:docPr id="1" name="다이어그램 1"/><a:graphic>'
-        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds r:dm="rId10" r:lo="rId11" '
+        '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="1143000"/>'
+        '<wp:docPr id="1" name="다이어그램 1"/><a:graphic>'
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">'
+        '<dgm:relIds r:dm="rId10" r:lo="rId11" '
         'r:qs="rId12" r:cs="rId13"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>'
     )
     rels = [

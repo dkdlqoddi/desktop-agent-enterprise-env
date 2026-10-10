@@ -1,6 +1,8 @@
 import base64
 import io
 import re
+import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +22,10 @@ def picture(kind, size=(6, 4), **options):
     return buffer.getvalue()
 
 
-SVG = b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 20"><rect width="30" height="20"/></svg>'
+SVG = (
+    b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 20">'
+    b'<rect width="30" height="20"/></svg>'
+)
 
 
 @pytest.fixture
@@ -84,10 +89,13 @@ def test_tiff_pages_become_png_and_metafiles_need_windows(tmp_path):
     ]
     assert Image.open(io.BytesIO(base64.b64decode(pages[0][0]))).getpixel((0, 0)) == (255, 0, 0)
     assert "스캔.tif · TIFF · 8×5px" in html and "PNG로 변환 · 2쪽" in html
-    metafile = b"\x01\x00\x00\x00" + b"\x00" * 36 + b" EMF" + b"\x00" * 60
+    # An EMF header Pillow reads (100 pixels in a frame of an inch), which only Windows has the handler to draw.
+    bounds_and_frame = struct.pack("<8i", 0, 0, 100, 100, 0, 0, 2540, 2540)
+    metafile = b"\x01\x00\x00\x00" + b"\x00" * 4 + bounds_and_frame + b" EMF" + b"\x00" * 60
     assert sniff(metafile) == "image/x-emf"
-    with pytest.raises(Exception):
-        for_web(metafile)
+    if sys.platform != "win32":
+        with pytest.raises(OSError):
+            for_web(metafile)
 
 
 def test_tiff_pages_past_the_limits_are_left_out_and_the_page_says_so(tmp_path, monkeypatch):

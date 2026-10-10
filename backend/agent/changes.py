@@ -123,9 +123,9 @@ def diff(before, after, context=CONTEXT, limit=MAX_DIFF_LINES):
     """Two texts compared line by line as a unified diff, for the document window's edit conflict: {"added",
     "removed", "hunks": [{"old_start", "new_start", "lines": [{"op": " ", "+" or "-", "text"}]}], "more"}. A hunk holds
     changes with up to `context` unchanged lines around them and starts at those line numbers of each text (from 1);
-    `more` counts the changed lines left out past `limit` lines. Unlike compare(), blank lines count and every line keeps
-    its whole text, as the user chooses between the texts by them; lines that differ only in trailing spaces are the
-    same line."""
+    `more` counts the changed lines left out past `limit` lines. Unlike compare(), blank lines count and every line
+    keeps its whole text, as the user chooses between the texts by them; lines that differ only in trailing spaces are
+    the same line."""
     old, new = lines_of(before), lines_of(after)
     # Each line once, in the order a reader goes through both texts: (op, text, line of the old text, line of the new
     # one). A line one text lacks carries the number of that text's next line, where a hunk starting with it starts.

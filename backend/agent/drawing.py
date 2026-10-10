@@ -821,6 +821,19 @@ def geometry(properties, w, h):
     return [outline for outline in outlines if outline.data], box
 
 
+def ellipse_angle(rx, ry, angle):
+    """The parametric angle, in radians, of the point of an ellipse with radii rx and ry that lies `angle` degrees round
+    from its centre, as DrawingML's arcTo gives its angles."""
+    radians = math.radians(angle)
+    return math.atan2(rx * math.sin(radians), ry * math.cos(radians))
+
+
+def arc_tangent(rx, ry, angle, sign):
+    """The direction an arc of an ellipse with radii rx and ry goes at the parametric `angle` (radians), for a positive
+    sweep (`sign` 1.0, clockwise on the page) or a negative one (-1.0)."""
+    return (-rx * math.sin(angle) * sign, ry * math.cos(angle) * sign)
+
+
 def trace(commands, values, sx, sy, mode, stroked):
     """The Outline of one path's commands, scaled from the path's coordinate space by (sx, sy)."""
 
@@ -855,23 +868,17 @@ def trace(commands, values, sx, sy, mode, stroked):
             first, sweep = at(command[3]) / 60000, at(command[4]) / 60000
             if not rx or not ry or not sweep:
                 continue
-
-            def parametric(angle):
-                radians = math.radians(angle)
-                return math.atan2(rx * math.sin(radians), ry * math.cos(radians))
-
-            theta = parametric(first)
+            theta = ellipse_angle(rx, ry, first)
             cx, cy = x - rx * math.cos(theta), y - ry * math.sin(theta)
             sign = 1.0 if sweep > 0 else -1.0
-            tangent = lambda angle: (-rx * math.sin(angle) * sign, ry * math.cos(angle) * sign)
             # An arc of a whole turn or more is drawn as two halves: SVG cannot draw it in one.
             pieces = 2 if abs(sweep) >= 359.99 else 1
             for piece in range(1, pieces + 1):
-                angle = parametric(first + sweep * piece / pieces)
+                angle = ellipse_angle(rx, ry, first + sweep * piece / pieces)
                 target = (cx + rx * math.cos(angle), cy + ry * math.sin(angle))
                 large = 1 if abs(sweep / pieces) > 180 else 0
                 data.append(f"A{num(rx)} {num(ry)} 0 {large} {1 if sweep > 0 else 0} {num(target[0])} {num(target[1])}")
-                segment(tangent(theta), tangent(angle), target)
+                segment(arc_tangent(rx, ry, theta, sign), arc_tangent(rx, ry, angle, sign), target)
         elif kind in ("C", "Q"):
             points_ = [(at(command[index]) * sx, at(command[index + 1]) * sy) for index in range(1, len(command), 2)]
             if not points_:
@@ -913,7 +920,10 @@ def arrowhead(end, line, point, direction):
             f'{line.color.fill("stroke")} stroke-width="{num(max(line.width, 0.5))}" stroke-linejoin="miter"/>'
         )
     if kind == "stealth":
-        return f'<polygon points="{at(0, 0)} {at(-size, width / 2)} {at(-size * 0.6, 0)} {at(-size, -width / 2)}" {color}/>'
+        return (
+            f'<polygon points="{at(0, 0)} {at(-size, width / 2)} {at(-size * 0.6, 0)} {at(-size, -width / 2)}" '
+            f"{color}/>"
+        )
     if kind == "diamond":
         return (
             f'<polygon points="{at(size / 2, 0)} {at(0, width / 2)} {at(-size / 2, 0)} {at(0, -width / 2)}" {color}/>'

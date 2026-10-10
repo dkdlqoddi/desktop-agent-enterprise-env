@@ -133,9 +133,9 @@ def has_scheme(value):
 
 
 def with_scheme(value, scheme="https"):
-    """An address as a URL: one given without a scheme (portal.example.com, also //portal.example.com) gets `scheme`, by default
-    https, the only scheme a site address without one is opened over. Anything else comes back as it is: a URL, or a
-    value that is no address."""
+    """An address as a URL: one given without a scheme (portal.example.com, also //portal.example.com) gets `scheme`, by
+    default https, the only scheme a site address without one is opened over. Anything else comes back as it is: a URL,
+    or a value that is no address."""
     if not isinstance(value, str) or has_scheme(value) or not BARE.fullmatch(value.strip()):
         return value
     return f"{scheme}://{value.strip().removeprefix('//')}"
@@ -185,10 +185,11 @@ class Hosts:
     """The hosts one sign-in may type the account into, as it follows the page: the host of the address it opens (the
     site's own), every host the browser goes on to without a click the LLM chose (the site's redirects, form posts and
     scripts, and the clicks of the login methods, e.g. JIRA → AD SSO → ADFS), the hosts a click the LLM chose leads to
-    through the site's own redirects. A host the LLM's click took the browser to by itself is none of them: the page may have misled the LLM, e.g. with a link to another site that
-    says "로그인". The account goes only to https pages, unless the site's own address is http (the user's choice).
-    With `pinned` hosts (the site's login_hosts, learned from the first logins) the account goes only to the site's
-    own host and those, however the browser got to another: `used` are the hosts it was typed into this time."""
+    through the site's own redirects. A host the LLM's click took the browser to by itself is none of them: the page may
+    have misled the LLM, e.g. with a link to another site that says "로그인". The account goes only to https pages,
+    unless the site's own address is http (the user's choice). With `pinned` hosts (the site's login_hosts, learned from
+    the first logins) the account goes only to the site's own host and those, however the browser got to another: `used`
+    are the hosts it was typed into this time."""
 
     def __init__(self, page, url, pinned=()):
         scheme, self.home = place_of(url)

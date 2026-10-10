@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 import pytest
 
 from agent import pageindex
@@ -48,7 +50,7 @@ def test_long_text_is_split_into_pages_at_paragraphs():
     nodes = pageindex.build(content)
     assert len(nodes) > 3 and all(n["kind"] == "page" for n in nodes)
     assert nodes[0]["start"] == 0 and nodes[-1]["end"] == len(content)
-    assert all(a["end"] == b["start"] for a, b in zip(nodes, nodes[1:]))
+    assert all(a["end"] == b["start"] for a, b in pairwise(nodes))
     assert all(n["end"] - n["start"] <= pageindex.PAGE_CHARS for n in nodes)
     assert all(content[n["start"] : n["end"]].startswith("보고 문단") for n in nodes)
     assert nodes[0]["title"].startswith(f"1/{len(nodes)}쪽 · 보고 문단 0")

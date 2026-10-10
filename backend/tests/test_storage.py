@@ -1,7 +1,7 @@
 """The Wiki's database file (agent/storage.py). An earlier version's Wiki copied into the folder chosen on the first-run
 screen (main.py --migrate-storage): written under a name of its own and renamed to wiki.db only when whole, so a copy
-stopped midway or failed never leaves the folder refused as "wiki.db가 이미 있습니다". The check before every start opens
-the Wiki, its backups in the backups folder, and the restore of one at the next start."""
+stopped midway or failed never leaves the folder refused as "wiki.db가 이미 있습니다". The check before every start
+opens the Wiki, its backups in the backups folder, and the restore of one at the next start."""
 
 import contextlib
 import json
@@ -417,7 +417,7 @@ def test_a_restore_the_next_start_cannot_carry_out_leaves_the_wiki_as_it_is(tmp_
 
 
 def test_the_log_of_a_wiki_that_is_gone_is_not_applied_to_the_restored_one(tmp_path):
-    path, folder = tmp_path / "wiki.db", tmp_path / "backups"
+    path = tmp_path / "wiki.db"
     service = filled(path, documents=1)
     kept = service.dispatch("wiki.backup", {})["file"]
     service.dispatch("wiki.restore_backup", {"file": kept})

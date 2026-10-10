@@ -94,12 +94,14 @@ def interruption(state, name, phase=""):
     copy = f"Wiki 폴더의 ‘{BACKUPS}’에 있는 {name}"
     if state == "intact":
         return (
-            "지난번 원본 반영이 파일을 저장하기 전에 중단되었습니다(앱이 강제로 종료됨). 원본 파일은 반영 전 그대로입니다. "
+            "지난번 원본 반영이 파일을 저장하기 전에 중단되었습니다(앱이 강제로 종료됨). "
+            "원본 파일은 반영 전 그대로입니다. "
             "다시 ‘원본에 반영’을 누르면 반영합니다."
         )
     if state == "partial":
         return (
-            "지난번 원본 반영이 파일을 저장하는 도중에 중단되어(앱이 강제로 종료됨) 원본 파일이 없거나 일부만 저장된 것으로 "
+            "지난번 원본 반영이 파일을 저장하는 도중에 중단되어(앱이 강제로 종료됨) "
+            "원본 파일이 없거나 일부만 저장된 것으로 "
             f"보입니다. 반영 전 파일인 {copy}을(를) 복원한 뒤 다시 반영해 주세요."
         )
     done = (
@@ -120,7 +122,8 @@ def remains(state, name):
     copy = f"Wiki 폴더의 ‘{BACKUPS}’에 있는 {name}"
     return {
         "partial": f" 확인해 보니 원본 파일이 없거나 일부만 저장된 것으로 보입니다. {copy}을(를) 복원해 주세요.",
-        "unknown": f" 확인해 보니 원본 파일이 반영 전과 달라졌습니다. 파일을 열어 확인하고, 되돌리려면 {copy}을(를) 복원해 "
+        "unknown": " 확인해 보니 원본 파일이 반영 전과 달라졌습니다. "
+        f"파일을 열어 확인하고, 되돌리려면 {copy}을(를) 복원해 "
         "주세요.",
     }.get(state, "")
 
@@ -163,7 +166,7 @@ def plan_of(application, parts, written=()):
 def against(application, base, now, pages):
     """The changes that make the parts' texts `base` the texts `now`, as plan_of has them."""
     if application == "Excel":
-        return {"cells": excel_changes(list(zip(base, now, pages)))}
+        return {"cells": excel_changes(list(zip(base, now, pages, strict=True)))}
     # The parts are read as one text: a part that goes on with a slide or a page is still in its section.
     old = units("\n\n".join(base), application)
     new = units("\n\n".join(now), application)
@@ -173,7 +176,7 @@ def against(application, base, now, pages):
 def told(application, base, others, pages):
     """What tells a file holding the parts' texts `base` from one holding any of `others` (source_edits.witness)."""
     if application == "Excel":
-        return [cell for other in others for cell in excel_witness(list(zip(base, other, pages)))]
+        return [cell for other in others for cell in excel_witness(list(zip(base, other, pages, strict=True)))]
     mine = units("\n\n".join(base), application)
     found, gaps = set(), set()
     for other in others:
@@ -448,7 +451,8 @@ class Writeback:
             where = " AND ".join(f"s.{column}=?" for column in columns)
             parts = db.execute(
                 f"""SELECT s.doc_id, s.markdown, s.imported_at, s.written, d.content, d.revision
-                FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL WHERE {where} ORDER BY s.part""",
+                FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL
+                WHERE {where} ORDER BY s.part""",
                 [row[column] for column in columns],
             ).fetchall()
         return table, kind, dict(row), [dict(part) for part in parts]
@@ -649,7 +653,8 @@ class Writeback:
     def remember(self, record, summary):
         """Keep what a write put into the file with the import's documents (`written`), for the next write to be worked
         out against it too: every part's text the write made, then the text the write was made against when an earlier
-        write had put it there (summary["base"], the number among record["bases"]), which records the last successful write. An import of the file again forgets them. One not kept is logged."""
+        write had put it there (summary["base"], the number among record["bases"]), which records the last successful
+        write. An import of the file again forgets them. One not kept is logged."""
         try:
             base = record["bases"][summary.get("base", 0)]
             imported = [part["markdown"] for part in record["parts"]]

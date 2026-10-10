@@ -355,7 +355,8 @@ def test_an_answer_that_is_all_thinking_is_a_format_error_not_an_object_inside_i
     [
         # A raw line break inside the outer object's string: the outer object, not the relation inside it.
         (
-            '{"summary": "첫 줄\n둘째 줄", "keywords": ["a"], "relations": [{"source": "a", "target": "b", "label": "x"}]}',
+            '{"summary": "첫 줄\n둘째 줄", "keywords": ["a"], "relations": [{"source": "a", "target": '
+            '"b", "label": "x"}]}',
             "첫 줄\n둘째 줄",
         ),
         # A Markdown escape copied from a document is no JSON escape; it stays as written.

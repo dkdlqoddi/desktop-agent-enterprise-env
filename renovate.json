@@ -29,6 +29,14 @@
       "groupName": "Python dependencies"
     },
     {
+      "description": "Ruff on its own: another release may lint or format the backend otherwise, and CI's lint:python and format:python:check fail until the branch is fixed.",
+      "matchPackageNames": ["ruff"],
+      "groupName": "Ruff",
+      "prBodyNotes": [
+        "ruff가 바뀌면 CI의 `npm run lint:python`이나 `npm run format:python:check`가 실패할 수 있습니다. 이 브랜치에서 `npm run setup:python` 뒤 `npm run format:python`과 `npm run lint:python -- --fix`로 고쳐 커밋하세요."
+      ]
+    },
+    {
       "description": "Playwright of the E2E tests (npm) and of the backend (pinned in backend/pyproject.toml and backend/constraints.txt) in one pull request: the backend needs the Chromium build of its own release.",
       "matchPackageNames": ["@playwright/test", "playwright"],
       "groupName": "Playwright"

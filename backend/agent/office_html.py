@@ -433,7 +433,7 @@ def date_text(tokens, serial, locale, date1904=False):
         return None
     # Fractions of a second: s or ss followed by a point and zeros (ss.00).
     fraction_at, decimals = None, 0
-    for index, (kind, text) in enumerate(tokens):
+    for index, (kind, _) in enumerate(tokens):
         if kind == "point" and index and tokens[index - 1][0] == "date" and tokens[index - 1][1][0] == "s":
             fraction_at = index
             for kind_, text_ in tokens[index + 1 :]:
@@ -576,7 +576,7 @@ def number_text(tokens, number):
         out.append("".join(written[:lead]) + "".join(fill) + "".join(written[lead:]))
     else:
         placed = False
-        for index, (kind, text) in enumerate(whole_tokens):
+        for kind, text in whole_tokens:
             if kind == "digit" and not placed:
                 out.append(" " * max(0, spaces - len(whole)) + whole)
                 placed = True
@@ -638,7 +638,10 @@ def spreadsheet_xml(used):
 def style_props(element, props):
     for child in [] if element is None else element:
         name = child.tag[len(SS) :] if child.tag.startswith(SS) else ""
-        get = lambda key: child.get(SS + key)
+
+        def get(key, child=child):
+            return child.get(SS + key)
+
         if name == "Alignment":
             props.update(
                 {
@@ -1067,7 +1070,8 @@ def chart_html(chart, name=""):
             )
         return chart_table(title or name, kind, labels, series)
     except Exception:
-        return f"<p>{images.missing(f'[차트: {name}] 데이터를 읽지 못했습니다' if name else '[차트] 데이터를 읽지 못했습니다')}</p>"
+        note = f"[차트: {name}] 데이터를 읽지 못했습니다" if name else "[차트] 데이터를 읽지 못했습니다"
+        return f"<p>{images.missing(note)}</p>"
 
 
 def chart_picture(chart, name, exports):
@@ -1315,7 +1319,7 @@ def text_html(text_range):
         return f"<p>{html_text(text)}</p>" if text else ""
     html = []
     for paragraph in paragraphs:
-        runs = items_of(lambda *args: paragraph.Runs(*args)) or [paragraph]
+        runs = items_of(lambda *args, paragraph=paragraph: paragraph.Runs(*args)) or [paragraph]
         parts = []
         for position, run in enumerate(runs, 1):
             raw = str(read(run, "Text", "") or "")

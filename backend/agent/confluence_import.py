@@ -122,7 +122,7 @@ CAPTURE = """async ({url, server}) => {
     html: clone.innerHTML,
     text: clone.textContent?.trim() ?? '',
   };
-}"""
+}"""  # noqa: E501
 
 # An expand macro that shows its content already.
 EXPANDED = """(element) => {
@@ -142,7 +142,7 @@ SCROLL = """async () => {
   }
   scrollTo(0, 0);
   return y >= document.documentElement.scrollHeight;
-}"""
+}"""  # noqa: E501
 
 # Wait for the macros' and the renderer's changes of the body without networkidle (Confluence can long-poll): true once
 # the body has not changed for half a second, false when it still changes after 10 seconds.

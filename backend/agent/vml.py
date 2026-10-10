@@ -17,6 +17,7 @@ from .drawing import (
     Color,
     Line,
     Matrix,
+    arc_tangent,
     arrowhead,
     color_css,
     missing_picture,
@@ -28,7 +29,7 @@ from .drawing import (
 from .html_document import css, font_family
 
 V = "{urn:schemas-microsoft-com:vml}"
-O = "{urn:schemas-microsoft-com:office:office}"
+O = "{urn:schemas-microsoft-com:office:office}"  # noqa: E741 - named by its prefix (o:), as V, R and W are
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 SHAPES = {
@@ -224,7 +225,10 @@ class Formulas:
         parts = (equation or "val 0").split()
         operator, arguments = parts[0].lower(), [self.value(item) for item in parts[1:]]
         a, b, c = (arguments + [0.0, 0.0, 0.0])[:3]
-        angle = lambda value: math.radians(value / FD)
+
+        def angle(value):
+            return math.radians(value / FD)
+
         if operator == "sum":
             return a + b - c
         if operator in ("product", "prod"):
@@ -335,8 +339,12 @@ class Trace:
             scale_y = abs(self.map(0, 1)[1] - self.map(0, 0)[1])
             large = 1 if abs(sweep / pieces) > math.pi else 0
             self.emit(f"A{num(rx * scale_x)} {num(ry * scale_y)} 0 {large} {1 if sweep > 0 else 0} {num(px)} {num(py)}")
-            tangent = lambda value: (-rx * scale_x * math.sin(value) * sign, ry * scale_y * math.cos(value) * sign)
-            self.reached(origin, tangent(start + sweep * (piece - 1) / pieces), tangent(angle), (px, py))
+            self.reached(
+                origin,
+                arc_tangent(rx * scale_x, ry * scale_y, start + sweep * (piece - 1) / pieces, sign),
+                arc_tangent(rx * scale_x, ry * scale_y, angle, sign),
+                (px, py),
+            )
             self.x, self.y = target
 
     def close(self):

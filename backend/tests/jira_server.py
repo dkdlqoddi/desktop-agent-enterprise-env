@@ -27,7 +27,7 @@ SSO_PAGE = """<!doctype html><html><body><main>
 # Synthetic login choice: an ordinary form and an identity-provider link.
 DASHBOARD_PAGE = """<!doctype html><html><body><h1>Example Dashboard</h1>
 <form method="post" action="{action}"><p>{message}</p><input name="os_username"><input name="os_password" type="password">
-<button>Sign in</button><a id="sso-entry" href="{sso}" {late}>AD SSO</a></form>{script}</body></html>"""
+<button>Sign in</button><a id="sso-entry" href="{sso}" {late}>AD SSO</a></form>{script}</body></html>"""  # noqa: E501
 
 REFUSED = "Sorry, your username and password are incorrect - please try again."
 
@@ -48,7 +48,7 @@ CUSTOM_PAGE = """<!doctype html><html><head><title>포털</title></head><body>
   <button id="go" type="submit">들어가기</button>
 </form>
 <script>document.getElementById('open-login').onclick = () => {{ document.getElementById('custom-form').hidden = false; }};</script>
-</body></html>"""
+</body></html>"""  # noqa: E501
 
 # A plain form without the names or positions of any known login screen.
 GENERIC_PAGE = """<!doctype html><html><head><title>로그인</title></head><body>
@@ -71,7 +71,7 @@ STEPS_PAGE = """<!doctype html><html><head><title>통합 로그인</title></head
   document.getElementById('next').onclick = () => {{ document.getElementById('second').hidden = false; }};
   document.getElementById('go').onclick = () => document.getElementById('steps').submit();
 </script>
-</body></html>"""
+</body></html>"""  # noqa: E501
 
 # The SSO accepted the login but waits for an approval that never comes: the page never navigates.
 PENDING_PAGE = """<!doctype html><html><head><title>SSO 로그인</title></head><body>
@@ -209,7 +209,8 @@ def issue_json(key, origin):
                     "<table><tr><th>환경</th><th>결과</th></tr><tr><td>Chrome</td><td>실패</td></tr></table>"
                     '<div class="code panel"><div class="codeContent panelContent"><pre class="code-java">'
                     '<span class="code-keyword">int</span> answer = 1;</pre></div></div>'
-                    '<a href="/jira/browse/TEAM-2">관련 티켓</a> <a href="javascript:alert(1)" onclick="secret()">위험</a>'
+                    '<a href="/jira/browse/TEAM-2">관련 티켓</a> <a href="javascript:alert(1)" onclick="secret()">'
+                    "위험</a>"
                     ' <img src="/jira/secure/attachment/2/capture.png" alt="화면 캡처"><script>secret()</script>'
                 ),
                 "customfield_10001": "<p>로그인 후 목록이 보여야 한다</p>",
@@ -276,7 +277,10 @@ class JiraServer:
     def identity_page(self, page, destination, action, message=""):
         query = f"os_destination={quote(destination, safe='')}"
         # A link drawn a moment after the site's own form, as a script of the page may add it.
-        late = f"<script>setTimeout(() => {{ document.getElementById('sso-entry').hidden = false; }}, {self.sso_delay});</script>"
+        late = (
+            "<script>setTimeout(() => { document.getElementById('sso-entry').hidden = false; }, "
+            f"{self.sso_delay});</script>"
+        )
         return page.format(
             sso=f"/jira/sso/start?{query}",
             action=action,

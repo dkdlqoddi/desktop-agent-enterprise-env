@@ -132,7 +132,9 @@ def test_what_a_watched_page_changed_is_compared_after_its_import_is_saved(servi
     (an edit, another import) does not wait for the comparison or fail as locked."""
     import agent.changes as changes
 
-    tracked = lambda body: {**capture(service, body), "track_changes": True}
+    def tracked(body):
+        return {**capture(service, body), "track_changes": True}
+
     import_page(service, tracked("<p>첫 판</p>"))
     compare, saved = changes.compare, []
 

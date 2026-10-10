@@ -86,15 +86,18 @@ STYLES = """
       <w:bottom w:val="single" w:sz="4" w:color="auto"/><w:right w:val="single" w:sz="4" w:color="auto"/>
       <w:insideH w:val="single" w:sz="4" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:color="auto"/></w:tblBorders></w:tblPr>
     <w:tblStylePr w:type="firstRow"><w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr><w:tcPr><w:shd w:val="clear" w:fill="4472C4"/></w:tcPr></w:tblStylePr>
-  </w:style>"""
+  </w:style>"""  # noqa: E501
 THEME = part(
     "/word/theme/theme1.xml",
     """<a:theme><a:themeElements><a:fontScheme>
   <a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:font script="Hang" typeface="맑은 고딕"/></a:majorFont>
   <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:font script="Hang" typeface="맑은 고딕"/></a:minorFont>
-  </a:fontScheme></a:themeElements></a:theme>""",
+  </a:fontScheme></a:themeElements></a:theme>""",  # noqa: E501
 )
-A4 = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1701" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+A4 = (
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1701" w:right="1440" w:bottom="1440" w:left="1440"/>'
+    "</w:sectPr>"
+)
 
 
 def test_formatting_is_resolved_through_defaults_theme_styles_and_direct_formatting():
@@ -113,7 +116,7 @@ def test_formatting_is_resolved_through_defaults_theme_styles_and_direct_formatt
         <w:pBdr><w:left w:val="single" w:sz="12" w:space="4" w:color="808080"/></w:pBdr></w:pPr>
         <w:r><w:t>인용</w:t></w:r></w:p>
       <w:p><w:pPr><w:jc w:val="right"/><w:ind w:leftChars="200" w:hanging="300"/></w:pPr><w:r><w:t>오른쪽</w:t></w:r></w:p>
-    """,
+    """,  # noqa: E501
             styles=STYLES,
             parts=THEME,
             section=A4,
@@ -167,7 +170,7 @@ NUMBERING = """
   <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
   <w:num w:numId="3"><w:abstractNumId w:val="0"/></w:num>
   <w:num w:numId="4"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>
-  <w:num w:numId="5"><w:abstractNumId w:val="2"/></w:num>"""
+  <w:num w:numId="5"><w:abstractNumId w:val="2"/></w:num>"""  # noqa: E501
 
 
 def item(ident, level, text):
@@ -201,8 +204,8 @@ def test_lists_carry_the_numbers_and_bullets_word_draws():
     # A hanging number takes the indent's width, so the text starts at the indent, as at Word's tab stop.
     assert labels[0][0] == "display:inline-block;min-width:20pt;text-indent:0"
     assert (
-        '<p style="margin-left:40pt;text-indent:-20pt"><span style="display:inline-block;min-width:20pt;text-indent:0">2.가) </span>다시 가</p>'
-        in body
+        '<p style="margin-left:40pt;text-indent:-20pt">'
+        '<span style="display:inline-block;min-width:20pt;text-indent:0">2.가) </span>다시 가</p>' in body
     )
     # A Symbol bullet becomes Unicode; a symbol without a known match keeps its font for Windows to draw.
     assert "<p>• 글머리</p>" in body
@@ -253,7 +256,7 @@ def test_tables_keep_grid_merged_cells_borders_and_style_formatting():
             <w:tbl><w:tr><w:tc><w:p><w:r><w:t>안쪽 표</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc></w:tr>
         <w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc>
           <w:tc><w:p><w:r><w:t>e</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr>
-      </w:tbl>""",
+      </w:tbl>""",  # noqa: E501
             styles=STYLES,
         ),
         "표",
@@ -289,7 +292,8 @@ def test_table_styles_shape_their_paragraphs_and_banding_starts_after_the_header
     # Word's Table Grid: single spacing without space after, over the document's 8pt after.
     grid = STYLES.replace(
         '<w:basedOn w:val="TableNormal"/>\n    <w:tblPr>',
-        '<w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>\n    <w:tblPr>',
+        '<w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/>'
+        "</w:pPr>\n    <w:tblPr>",
     )
     banded = grid.replace(
         '<w:tblStylePr w:type="firstRow">',
@@ -334,7 +338,7 @@ def test_pictures_come_from_the_package_and_unshowable_ones_leave_a_marker():
     Image.new("RGB", (5, 5), (0, 128, 0)).save(tiff, "TIFF")
     drawing = """<w:r><w:drawing><wp:inline><wp:extent cx="1905000" cy="952500"/><wp:docPr id="1" name="그림 1" descr="{alt}"/>
       <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>
-        <pic:blipFill><a:blip r:{kind}="{ident}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"""
+        <pic:blipFill><a:blip r:{kind}="{ident}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"""  # noqa: E501
     html = word_xml_to_html(
         package(
             "<w:p>"
@@ -349,7 +353,8 @@ def test_pictures_come_from_the_package_and_unshowable_ones_leave_a_marker():
             + "<w:p>"
             + drawing.format(alt="", kind="embed", ident="rId4")
             + "</w:p>"
-            + '<w:p><w:r><w:pict><v:shape style="width:30pt;height:15pt"><v:imagedata r:id="rId1" o:title="VML 그림"/></v:shape></w:pict></w:r></w:p>',
+            + '<w:p><w:r><w:pict><v:shape style="width:30pt;height:15pt">'
+            '<v:imagedata r:id="rId1" o:title="VML 그림"/></v:shape></w:pict></w:r></w:p>',
             rels=[
                 ("rId1", "image", "media/image1.png", False),
                 ("rId2", "image", "media/scan.tif", False),
@@ -391,7 +396,7 @@ def test_links_bookmarks_fields_notes_and_comments():
         <w:commentRangeStart w:id="0"/><w:r><w:t>메모 단</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r>
         <w:r><w:t>미주</w:t></w:r><w:r><w:endnoteReference w:id="1"/></w:r></w:p>
       <w:p><w:pPr><w:pStyle w:val="1"/></w:pPr><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>개요</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>
-      <w:p><w:fldSimple w:instr=" HYPERLINK &quot;mailto:a@b.test&quot; "><w:r><w:t>메일</w:t></w:r></w:fldSimple></w:p>""",
+      <w:p><w:fldSimple w:instr=" HYPERLINK &quot;mailto:a@b.test&quot; "><w:r><w:t>메일</w:t></w:r></w:fldSimple></w:p>""",  # noqa: E501
             styles=STYLES,
             rels=[
                 ("rId1", "hyperlink", "https://wiki.test/page?a=1&amp;b=2", True),
@@ -403,7 +408,7 @@ def test_links_bookmarks_fields_notes_and_comments():
             parts=part(
                 "/word/footnotes.xml",
                 """<w:footnotes><w:footnote w:type="separator" w:id="-1"><w:p/></w:footnote>
-                <w:footnote w:id="2"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> 각주 본문</w:t></w:r></w:p></w:footnote></w:footnotes>""",
+                <w:footnote w:id="2"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> 각주 본문</w:t></w:r></w:p></w:footnote></w:footnotes>""",  # noqa: E501
             )
             + part(
                 "/word/endnotes.xml",
@@ -443,7 +448,7 @@ def test_equations_charts_text_boxes_and_symbols():
       <c:plotArea><c:barChart><c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>2026</c:v></c:pt></c:strCache></c:strRef></c:tx>
         <c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>1분기</c:v></c:pt><c:pt idx="1"><c:v>2분기</c:v></c:pt></c:strCache></c:strRef></c:cat>
         <c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>12.5</c:v></c:pt></c:numCache></c:numRef></c:val>
-      </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"""
+      </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"""  # noqa: E501
     html = word_xml_to_html(
         package(
             """
@@ -462,7 +467,7 @@ def test_equations_charts_text_boxes_and_symbols():
         </mc:AlternateContent></w:r><w:r><w:t>앵커 글</w:t></w:r></w:p>
       <w:p><w:r><w:sym w:font="Wingdings" w:char="F0FC"/><w:sym w:font="Symbol" w:char="F061"/><w:t>기호</w:t></w:r>
         <w:r><w:br w:type="page"/></w:r><w:r><w:t>다음 쪽</w:t></w:r></w:p>
-      <w:p><w:r><w:pict><v:rect o:hr="t"/></w:pict></w:r></w:p>""",
+      <w:p><w:r><w:pict><v:rect o:hr="t"/></w:pict></w:r></w:p>""",  # noqa: E501
             rels=[("rId5", "chart", "charts/chart1.xml", False)],
             parts=part("/word/charts/chart1.xml", chart),
         ),
@@ -484,7 +489,8 @@ def test_equations_charts_text_boxes_and_symbols():
     assert body.count("상자 안") == 1
     assert (
         '<p>앵커 글</p><div class="textbox" style="max-width:100%;box-sizing:border-box;display:flex;'
-        'flex-direction:column;justify-content:flex-start;padding:4.8px 9.6px 4.8px 9.6px;border:none"><p>상자 안</p></div>'
+        'flex-direction:column;justify-content:flex-start;padding:4.8px 9.6px 4.8px 9.6px;border:none">'
+        "<p>상자 안</p></div>"
     ) in body
     assert '<p>✓α기호<span class="pagebreak"></span>다음 쪽</p>' in body
     assert "<hr>" in body and "<p><hr>" not in body
@@ -502,7 +508,7 @@ def test_main_part_only_once_without_hidden_deleted_or_moved_away_text():
         <w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
       <w:sdt><w:sdtPr><w:alias w:val="컨트롤 이름"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>콘텐츠 컨트롤</w:t></w:r></w:p></w:sdtContent></w:sdt>
       <w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>MERGEFIELD 이름</w:instrText></w:r></w:p>
-      <w:p><w:r><w:t>닫히지 않은 필드 뒤</w:t></w:r></w:p>""")
+      <w:p><w:r><w:t>닫히지 않은 필드 뒤</w:t></w:r></w:p>""")  # noqa: E501
         + "",
         "본문",
     )
@@ -521,7 +527,8 @@ def test_headers_and_footers_the_package_carries():
             rels=[("rId7", "header", "header1.xml", False), ("rId8", "footer", "footer1.xml", False)],
             parts=part("/word/header1.xml", "<w:hdr><w:p><w:r><w:t>대외비</w:t></w:r></w:p></w:hdr>")
             + part("/word/footer1.xml", "<w:ftr><w:p><w:r><w:t>1쪽</w:t></w:r></w:p></w:ftr>"),
-            section='<w:sectPr><w:headerReference w:type="default" r:id="rId7"/><w:footerReference w:type="default" r:id="rId8"/>'
+            section='<w:sectPr><w:headerReference w:type="default" r:id="rId7"/>'
+            '<w:footerReference w:type="default" r:id="rId8"/>'
             '<w:headerReference w:type="first" r:id="rId9"/></w:sectPr>',
         ),
         "머리글",
@@ -551,8 +558,10 @@ def test_word_xml_without_anything_to_show_is_refused(xml, message):
 def test_a_document_of_only_pictures_is_a_page_now():
     html = word_xml_to_html(
         package(
-            '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="95250" cy="95250"/><wp:docPr id="1" name="사진"/><a:graphic>'
-            '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rId1"/>'
+            '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="95250" cy="95250"/><wp:docPr id="1" name="사진"/>'
+            "<a:graphic>"
+            '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill>'
+            '<a:blip r:embed="rId1"/>'
             "</pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>",
             rels=[("rId1", "image", "media/a.png", False)],
             parts=binary("/word/media/a.png", png(), "image/png"),
@@ -725,7 +734,8 @@ def test_cropped_pictures_show_the_part_word_shows():
     picture = png(10, 10)
     html = word_xml_to_html(
         package(
-            '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="952500" cy="476250"/><wp:docPr id="1" name="자른 그림"/><a:graphic>'
+            '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="952500" cy="476250"/>'
+            '<wp:docPr id="1" name="자른 그림"/><a:graphic>'
             '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill>'
             '<a:blip r:embed="rId1"/><a:srcRect t="10000" r="5000" b="40000" l="2500"/><a:stretch/></pic:blipFill>'
             "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"

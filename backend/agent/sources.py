@@ -2,11 +2,11 @@
 
 Every import keeps a row per document in its source table (db.SOURCE_TABLES): the file path or page link it came from,
 what the content was (source_hash), and the text and title it saved. An import of the same path or link again updates
-the documents of that earlier import in place: they keep their ids, which links, tasks and answers refer to, and take the
-new text, page and title, losing the AI analysis of the old text. The same content is saved once, so an unchanged source
-changes nothing; nor does a file whose bytes changed but not its text, which only records its new hash. Documents whose
-text the user changed since are left as they are unless the request says to replace it (`replace`, which the document
-window asks before sending); a title the user gave a document stays either way.
+the documents of that earlier import in place: they keep their ids, which links, tasks and answers refer to, and take
+the new text, page and title, losing the AI analysis of the old text. The same content is saved once, so an unchanged
+source changes nothing; nor does a file whose bytes changed but not its text, which only records its new hash. Documents
+whose text the user changed since are left as they are unless the request says to replace it (`replace`, which the
+document window asks before sending); a title the user gave a document stays either way.
 
 A file whose size and modification time are the ones its import recorded is not read again to tell it unchanged
 (stored_hash); a file moved or renamed takes its documents along (relink). A page or ticket whose version the site gives
@@ -84,7 +84,7 @@ def group(db, table, ident):
     """The documents of the import the document `ident` belongs to, by part: itself, or every part of a long one."""
     columns = key(table)
     row = db.execute(f"SELECT {','.join(columns)} FROM {table} WHERE doc_id=?", (ident,)).fetchone()
-    return rows(db, table, dict(zip(columns, row))) if row else []
+    return rows(db, table, dict(zip(columns, row, strict=True))) if row else []
 
 
 def earlier(db, table, source, target=None):
@@ -158,7 +158,7 @@ def unchanged(db, table, previous, split):
     if not previous or split is None or texts(db, table, previous) != [text for _, text in split.parts]:
         return None
     reason = "same"
-    for row, (page, _) in zip(previous, split.parts):
+    for row, (page, _) in zip(previous, split.parts, strict=True):
         if page is not None:
             stored = db.execute("SELECT html=? FROM document_html WHERE doc_id=?", (page, row["doc_id"])).fetchone()
             if stored is None:
@@ -353,7 +353,7 @@ def save(db, table, found, split, title, timestamp, values):
     no document: its sources take `values` (the new hash) and, when they changed, its parts their HTML pages."""
     count = len(split.parts)
     if found.action == "keep":
-        for row, (page, _) in zip(found.rows, split.parts):
+        for row, (page, _) in zip(found.rows, split.parts, strict=True):
             db.execute(
                 f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?",
                 [*values.values(), row["doc_id"]],
@@ -376,7 +376,7 @@ def save(db, table, found, split, title, timestamp, values):
 
     previous = found.rows if found.action == "update" else []
     ids = []
-    for row, (number, (page, text)) in zip(previous, enumerate(split.parts, 1)):
+    for row, (number, (page, text)) in zip(previous, enumerate(split.parts, 1), strict=False):
         ident = row["doc_id"]
         # A title the user gave the document stays. Before the import kept its title, it was the one this import
         # gives, as long as the source's title is the same.

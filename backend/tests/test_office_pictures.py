@@ -106,7 +106,8 @@ def test_pictures_of_a_published_page_are_found_by_shape_name(tmp_path):
         target.write_bytes(
             (
                 '<html><head><meta http-equiv=Content-Type content="text/html; charset=ks_c_5601-1987"></head><body>'
-                '<!--[if gte vml 1]><v:shape id="그림_x0020_1"><v:imagedata src="page.files/image001.png"/></v:shape><![endif]-->'
+                '<!--[if gte vml 1]><v:shape id="그림_x0020_1"><v:imagedata src="page.files/image001.png"/>'
+                "</v:shape><![endif]-->"
                 '<![if !vml]><img width=30 height=20 src="page.files/image002.png" v:shapes="그림_x0020_1"><![endif]>'
                 "<img src='page.files/image003.png' v:shapes='Group_x0020_5 _x0000_s1027 _x0000_s1028'>"
                 '<img src="../../outside.png" v:shapes="Escape"><img src="http://intranet/a.png" v:shapes="Remote">'

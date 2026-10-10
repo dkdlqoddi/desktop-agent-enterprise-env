@@ -332,7 +332,7 @@ def summarize(llm, title, content, nodes):
         for future in futures:
             if not future.cancelled() and future.exception():
                 raise future.exception()
-        return [(batch, future.result()) for batch, future in zip(pending, futures)]
+        return [(batch, future.result()) for batch, future in zip(pending, futures, strict=True)]
 
     first = [(batch, error) for batch, error in requests(batches) if error is not None]
     # A document of one request has no other to tell whether the LLM answers at all: its request is asked again too.

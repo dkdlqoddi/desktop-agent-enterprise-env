@@ -1,8 +1,9 @@
 """Login screens of other products on one local origin, for the login method tests: two-step Atlassian Cloud, ADFS, a
 plain form beside a search box, a custom screen behind a button, one whose login never finishes, one that redraws its
-password field while signing in, one that asks for a one-time code after the password, one that needs a domain typed beside the account, one that shows
-a second form after the ADFS one, an entry page whose "Log in with SSO" button leads to the plain form, and a link that
-answers without content. A login with the right account goes to /home, which names the signed-in user.
+password field while signing in, one that asks for a one-time code after the password, one that needs a domain typed
+beside the account, one that shows a second form after the ADFS one, an entry page whose "Log in with SSO" button leads
+to the plain form, and a link that answers without content. A login with the right account goes to /home, which names
+the signed-in user.
 
 The same pages answer on a second origin, localhost on the same port, as another site: /lure and /lure-script lead
 there with a ‘로그인’ link and a button that sends the browser there, and /away redirects there as an SSO does."""
@@ -13,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 PAGES = {
-    "/home": '<!doctype html><html><head><meta name="ajs-remote-user" content="tester"></head><body><h1>홈</h1></body></html>',
+    "/home": '<!doctype html><html><head><meta name="ajs-remote-user" content="tester"></head><body><h1>홈</h1></body>'
+    "</html>",
     "/anonymous": '<!doctype html><html><head><meta name="ajs-remote-user" content=""></head><body></body></html>',
     # An SSO entry as many sites label it, a button rather than a link.
     "/sso-button": """<!doctype html><p>로그인이 필요합니다.</p>

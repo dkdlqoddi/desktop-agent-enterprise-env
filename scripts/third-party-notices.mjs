@@ -19,7 +19,7 @@ const OUTPUT = path.join(projectRoot, 'THIRD_PARTY_NOTICES.md');
 const check = process.argv.includes('--check');
 
 // Python distributions of the virtual environment that never reach the backend executable: the test runner and its
-// plugins, PyInstaller with its own dependencies, the debugger and the coverage tool, the environment's installers
+// plugins, PyInstaller with its own dependencies, the debugger, coverage and ruff, the environment's installers
 // (setuptools and packaging too: scripts/build-python.mjs keeps them out of the executable), and the backports and
 // helpers some of them install only on Python 3.10, Windows or macOS. Their licenses are written here because the
 // virtual environment of one platform lacks some of them.
@@ -40,6 +40,7 @@ const PYTHON_DEV = {
   'pyinstaller-hooks-contrib': 'GPL-2.0-or-later AND Apache-2.0',
   pytest: 'MIT',
   'pywin32-ctypes': 'BSD-3-Clause',
+  ruff: 'MIT',
   setuptools: 'MIT',
   tomli: 'MIT',
 };

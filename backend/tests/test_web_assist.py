@@ -183,7 +183,7 @@ PAGE = """<!doctype html><html><head><title>tester 로그인</title></head><body
 <form><input type="search" placeholder="검색"><button disabled>검색</button></form>
 <a href="/help?x=1">도움말</a><div style="display:none"><input name="unseen"></div>
 <svg width="10" height="10" onclick="go()"><rect width="10" height="10"/></svg>
-</body></html>"""
+</body></html>"""  # noqa: E501
 
 
 def test_the_llm_reads_visible_fields_without_values_or_the_account():

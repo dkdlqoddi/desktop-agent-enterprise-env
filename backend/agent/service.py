@@ -60,10 +60,11 @@ MAX_ALIASES = 5
 
 
 def found_aliases(value, keys):
-    """The aliases an LLM answer gives of its keywords `keys` ({"keyword": ["alias", …]}) as (keyword, alias, normalized)
-    rows: the alias with its white space collapsed, and as search compares words (search.fold). Names of keywords the
-    answer does not have, a keyword's own name, repeats and names beyond MAX_ALIASES of a keyword are left out. Aliases
-    in any other form are no reason to fail an analysis that cost several LLM calls: the keywords are kept without."""
+    """The aliases an LLM answer gives of its keywords `keys` ({"keyword": ["alias", …]}) as (keyword, alias,
+    normalized) rows: the alias with its white space collapsed, and as search compares words (search.fold). Names of
+    keywords the answer does not have, a keyword's own name, repeats and names beyond MAX_ALIASES of a keyword are left
+    out. Aliases in any other form are no reason to fail an analysis that cost several LLM calls: the keywords are kept
+    without."""
     from .search import fold
 
     found = {}
@@ -95,7 +96,7 @@ Return ONLY a JSON object with this exact schema:
 Extract 3-12 concise canonical keywords that occur in or are directly supported by the document.
 Use lowercase English keywords. Every relation source and target MUST be a member of keywords.
 aliases: for each keyword, at most 5 other names users search it by: its Korean and English forms, common abbreviations and spellings, e.g. "database":["데이터베이스","DB"]. Only true equivalents; leave out keywords without any.
-At most 20 relations, only relationships supported by the document; do not invent facts. No markdown fences."""
+At most 20 relations, only relationships supported by the document; do not invent facts. No markdown fences."""  # noqa: E501
 
 # Dashboard preferences: which widgets, in what order, format, width and height, and whether searches ask the AI.
 WIDGET_ID = re.compile(r"[a-z][a-z0-9-]{0,39}")
@@ -904,7 +905,8 @@ class Service:
     def wiki_trash(self, _):
         """The documents in the trash, the last deleted first, with where each came from."""
         with self.db.connect() as db:
-            # Documents deleted together (the same instant) in the order of their titles, so a list reads the same twice.
+            # Documents deleted together (the same instant) in the order of their titles, so a list reads the same
+            # twice.
             docs = self.attach(
                 db,
                 [
@@ -950,7 +952,8 @@ class Service:
                     row[0]
                     for chunk in chunks(ids)
                     for row in db.execute(
-                        f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(chunk))}) AND deleted_at IS NOT NULL",
+                        f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(chunk))}) "
+                        "AND deleted_at IS NOT NULL",
                         chunk,
                     )
                 ]

@@ -1317,7 +1317,7 @@ def test_a_file_on_this_pc_is_written_by_a_hidden_word_that_saves_and_quits(monk
         assert document.events == [("close", {"SaveChanges": 0})] and calls[-1][0] == "quit"
 
 
-# --- The job -----------------------------------------------------------------------------------------------------------
+# --- The job ----------------------------------------------------------------------------------------------------------
 
 
 def lines_page(file):
@@ -1633,7 +1633,8 @@ def test_a_failed_write_that_changed_the_file_says_so(written):
     assert (job["status"], job["error"]) == (
         "error",
         (
-            "Word 파일 저장 실패: 디스크가 가득 찼습니다. 확인해 보니 원본 파일이 없거나 일부만 저장된 것으로 보입니다. "
+            "Word 파일 저장 실패: 디스크가 가득 찼습니다. "
+            "확인해 보니 원본 파일이 없거나 일부만 저장된 것으로 보입니다. "
             f"Wiki 폴더의 ‘{BACKUPS}’에 있는 {copy}을(를) 복원해 주세요."
         ),
     )

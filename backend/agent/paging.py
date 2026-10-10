@@ -60,7 +60,10 @@ def decode(p, kind, types):
         found = json.loads(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode("utf-8"))
         if not isinstance(found, list) or len(found) != len(types) + 1 or found[0] != kind:
             raise ValueError()
-        if any(isinstance(key, bool) or not isinstance(key, expected) for key, expected in zip(found[1:], types)):
+        if any(
+            isinstance(key, bool) or not isinstance(key, expected)
+            for key, expected in zip(found[1:], types, strict=True)
+        ):
             raise ValueError()
     except (ValueError, TypeError, RecursionError, binascii.Error):
         raise UserError(CURSOR) from None

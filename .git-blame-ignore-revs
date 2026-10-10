@@ -1,0 +1,7 @@
+# Commits that git blame looks through, to the change before them, once a checkout is set up for it:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub's blame view reads this file by itself. Only a commit that changes nothing but the layout of the code belongs
+# here, by its full hash, which a rebase or a squash of it would change.
+
+# style: format the Python backend with ruff
+d47ed260c5fb6521de6ed4f4068938481e5cd711

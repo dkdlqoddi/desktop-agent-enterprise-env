@@ -22,8 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Development only, never in the backend executable: tests and their coverage (npm run test:python:coverage), the
-# PyInstaller build, and debugpy for PRIVATE_AGENT_DEBUGPY (backend/main.py).
-dev = ["pytest>=8.3,<10", "pyinstaller>=6.12,<7", "coverage>=7.10,<8", "debugpy>=1.8,<2"]
+# PyInstaller build, debugpy for PRIVATE_AGENT_DEBUGPY (backend/main.py) and ruff, the linter and formatter.
+dev = ["pytest>=8.3,<10", "pyinstaller>=6.12,<7", "coverage>=7.10,<8", "debugpy>=1.8,<2", "ruff>=0.17,<1"]
 
 [tool.setuptools.packages.find]
 include = ["agent*"]
@@ -36,3 +36,37 @@ markers = [
     "office: needs desktop Office on Windows; runs only with PRIVATE_AGENT_OFFICE_TEST=1",
     "browser: drives Playwright's Chromium (npm run setup:browser); skipped without it unless PRIVATE_AGENT_REQUIRE_BROWSER=1",
 ]
+
+# Ruff, the backend's linter and formatter: npm run lint:python checks the code, npm run format:python formats it, and
+# CI runs the lint and npm run format:python:check. constraints.txt pins its version: another release may format or
+# lint otherwise.
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# The exclusions below hold for a file named on the command line too, as an editor names the file it formats.
+force-exclude = true
+# Relative to this file: the agent package and main.py, and the tests' helper modules (jira_server, site_pages, ...)
+# that the tests import by their bare names, are first-party.
+src = [".", "tests"]
+
+[tool.ruff.lint]
+# pycodestyle's errors and warnings, Pyflakes, isort, bugbear, pyupgrade, and noqa comments that suppress nothing.
+# E501 holds code, comments and docstrings to 120 columns, a Korean character counting as two. A string whose lines
+# are data (an LLM prompt, CSS, a script, SQL, a document's XML) ends with `# noqa: E501` instead of being rewrapped,
+# which would change it.
+select = ["E", "F", "W", "I", "B", "UP", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# DrawingML's preset geometries, generated from the standard's definitions file one shape a line: its lines are as
+# long as a shape is.
+"agent/shape_presets.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent"]
+# `from .vml import SHAPES as VML_SHAPES, Vml` stays one statement.
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+# Generated, and kept as generated: formatted, its line a shape would become some 9,000 lines.
+exclude = ["agent/shape_presets.py"]

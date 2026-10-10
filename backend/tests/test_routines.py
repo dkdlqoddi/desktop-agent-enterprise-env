@@ -443,8 +443,8 @@ def test_a_run_past_its_time_limit_stops_its_importers_job_and_fails_naming_the_
 
 
 def test_a_run_that_hangs_is_left_behind_at_its_time_limit_and_its_worker_goes_on(service, monkeypatch):
-    """A run that ignores its stop (stuck in a call of its own) is recorded as stopped at its limit once GRACE has passed,
-    and its routine and worker take the next run while it still hangs."""
+    """A run that ignores its stop (stuck in a call of its own) is recorded as stopped at its limit once GRACE has
+    passed, and its routine and worker take the next run while it still hangs."""
     monkeypatch.setattr(routines, "GRACE", 0.3)
     hung = threading.Event()
     monkeypatch.setattr(RECIPES["analyze_new"], "run", lambda run: hung.wait(30) and routines.outcome("늦게 끝"))
@@ -492,7 +492,7 @@ def test_runs_go_side_by_side_and_those_that_share_a_lane_take_turns(service, mo
     assert service.dispatch("routines.get", {"id": search["id"]})["queued"] and "검색" not in spans
     release.set()
     for routine in (tree, watch, search):
-        wait(lambda: not service.routines.pending(routine["id"]))
+        wait(lambda routine=routine: not service.routines.pending(routine["id"]))
     assert spans["검색"][0] >= spans["긴 티켓 감시"][1]
     assert all(
         service.dispatch("routines.runs", {"id": routine["id"]})[0]["summary"] == "끝"
@@ -549,12 +549,14 @@ def test_an_import_tells_what_changed_in_the_text_imported_before(service):
     long = compare("\n".join(map(str, range(200))), "\n".join(f"x{n}" for n in range(200)))
     assert (len(long["lines"]), long["more"]) == (60, 340)
 
-    capture = lambda body: {
-        "source_url": "https://jira.test/browse/TEAM-1",
-        "issue_key": "TEAM-1",
-        "html": f"<html><head><title>[TEAM-1] 제목</title></head><body>{body}</body></html>",
-        "track_changes": True,
-    }
+    def capture(body):
+        return {
+            "source_url": "https://jira.test/browse/TEAM-1",
+            "issue_key": "TEAM-1",
+            "html": f"<html><head><title>[TEAM-1] 제목</title></head><body>{body}</body></html>",
+            "track_changes": True,
+        }
+
     first = import_issue(service, capture("<p>상태 Open</p>"))
     assert first["status"] == "imported" and "change" not in first
     assert "change" not in import_issue(service, capture("<p>상태 Open</p>"))

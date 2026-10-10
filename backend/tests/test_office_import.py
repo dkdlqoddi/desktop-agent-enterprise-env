@@ -300,7 +300,10 @@ def used_range(top, left, value2, *, value=None, formula=None, xml=PLAIN_SPREADS
     """A UsedRange as COM returns it: a scalar for one cell, rows of values otherwise; Value(11) gives `xml`, here
     cells without formatting of their own."""
     single = len(value2) == len(value2[0]) == 1
-    grid = lambda rows: rows[0][0] if single else rows
+
+    def grid(rows):
+        return rows[0][0] if single else rows
+
     formula = formula or tuple(tuple("" if cell is None else str(cell) for cell in row) for row in value2)
     return NS(
         Rows=NS(Count=len(value2)),
@@ -357,7 +360,8 @@ def test_excel_keeps_cell_addresses_and_leaves_out_empty_rows_and_columns():
     result = markdown(excel_html(workbook))
     assert asked == ["A1:C33333"]
     assert (
-        "## 개발 \\& 운영\n\n시트가 커서 100,001행 중 앞 33,333행만 가져왔습니다 (시트 사용 범위 합계 100,000셀까지).\n\n"
+        "## 개발 \\& 운영\n\n시트가 커서 100,001행 중 앞 33,333행만 가져왔습니다 (시트 사용 범위 합계 "
+        "100,000셀까지).\n\n"
         "|  | A | C |\n| --- | --- | --- |\n| 1 | \\<담당자\\> | 홍길동 |"
     ) in result
     assert "## 요약 (숨긴 시트)\n\n|  | D |" in result
@@ -539,13 +543,16 @@ def excel_app(calls, *, fail=False, adopt=False):
         AskToUpdateLinks=True,
         AutomationSecurity=1,
     )
-    settings = lambda: (
-        app.DisplayAlerts,
-        app.ScreenUpdating,
-        app.EnableEvents,
-        app.AskToUpdateLinks,
-        app.AutomationSecurity,
-    )
+
+    def settings():
+        return (
+            app.DisplayAlerts,
+            app.ScreenUpdating,
+            app.EnableEvents,
+            app.AskToUpdateLinks,
+            app.AutomationSecurity,
+        )
+
     app.Quit = lambda **kw: calls.append(("quit", kw, settings()))
 
     def open_workbook(**kwargs):
@@ -1006,7 +1013,7 @@ SPREADSHEET = """<?xml version="1.0"?>
    </Row>
   </Table>
  </Worksheet>
-</Workbook>"""
+</Workbook>"""  # noqa: E501
 
 
 class SpreadsheetDispatch:
@@ -1084,24 +1091,30 @@ def test_excel_keeps_formatting_merged_cells_number_formats_comments_links_chart
     assert calls == [("name", "Value"), ("invoke", 6, 2, (11,))]
     assert (
         '<table class="cells" style="font-family:&quot;맑은 고딕&quot;;font-size:11pt;color:#000000"><colgroup><col>'
-        '<col style="width:80.25pt"><col><col style="width:120pt"></colgroup><tr><th></th><th>A</th><th>B</th><th>C</th></tr>'
+        '<col style="width:80.25pt"><col><col style="width:120pt"></colgroup><tr><th></th><th>A</th><th>B</th>'
+        "<th>C</th></tr>"
     ) in body
     assert (
-        '<tr style="height:20pt"><th>1</th><td colspan="2" style="font-weight:bold;color:#FFFFFF;background-color:#4472C4;'
+        '<tr style="height:20pt"><th>1</th><td colspan="2" style="font-weight:bold;color:#FFFFFF;'
+        "background-color:#4472C4;"
         'text-align:center;vertical-align:middle;border-bottom:1.5pt solid #000000">매출 현황</td>'
         '<td style="vertical-align:middle"><a href="https://wiki.test/a">링크</a></td></tr>'
     ) in body
     assert (
-        '<td data-formula="=SUM(A3:A4)" title="=SUM(A3:A4)" style="text-align:right;vertical-align:middle">1,234.50</td>'
-        '<td style="text-align:right;vertical-align:middle">2026년 9월 28일<span class="note-mark" title="메모">◥</span></td>'
-        '<td style="color:#FF0000;text-align:right;vertical-align:middle">25.6%<span class="note-mark" title="메모">◥</span></td>'
+        '<td data-formula="=SUM(A3:A4)" title="=SUM(A3:A4)" style="text-align:right;vertical-align:middle">'
+        "1,234.50</td>"
+        '<td style="text-align:right;vertical-align:middle">2026년 9월 28일<span class="note-mark" title="메모">'
+        "◥</span></td>"
+        '<td style="color:#FF0000;text-align:right;vertical-align:middle">'
+        '25.6%<span class="note-mark" title="메모">◥</span></td>'
     ) in body
     assert (
         '<tr class="hidden" title="숨긴 행"><th>3</th><td style="vertical-align:middle;white-space:pre-wrap">'
         '<strong>굵은</strong> 글<span style="color:#FF0000">빨강</span></td>'
     ) in body
     assert (
-        "<li>B2 · 홍길동: 홍길동:<br>확인 바랍니다</li><li>C2 · 김철수: 검토했습니다</li><li>C2 · 홍길동: 감사합니다</li>"
+        "<li>B2 · 홍길동: 홍길동:<br>확인 바랍니다</li><li>C2 · 김철수: 검토했습니다</li>"
+        "<li>C2 · 홍길동: 감사합니다</li>"
     ) in body
     assert "<figcaption>차트: 분기 매출 (세로 막대형)</figcaption>" in body and "<th>1분기</th><td>10</td>" in body
     assert '<li><span class="missing">[그림: 로고]</span> (E2)</li><li>참고 사항 (A10)</li>' in body
@@ -1189,8 +1202,8 @@ def test_number_formats_it_does_not_read_are_left_to_the_general_format(value, c
 @pytest.mark.parametrize(
     "value,code,date1904,expected",
     [
-        # Excel counts 1900 as a leap year: day 1 is 1900-01-01, day 60 the 29 February that never was, day 0 "1900-01-00",
-        # and the weekdays before March 1900 are Excel's (1900-01-01 a Sunday).
+        # Excel counts 1900 as a leap year: day 1 is 1900-01-01, day 60 the 29 February that never was, day 0
+        # "1900-01-00", and the weekdays before March 1900 are Excel's (1900-01-01 a Sunday).
         (1.0, "yyyy-mm-dd", False, "1900-01-01"),
         (59.0, "yyyy-mm-dd", False, "1900-02-28"),
         (60.0, "yyyy-mm-dd dddd", False, "1900-02-29 수요일"),
@@ -1345,7 +1358,8 @@ def test_powerpoint_keeps_run_formatting_bullets_fills_charts_pictures_comments_
     body = powerpoint_html(NS(Slides=collection([slide])))
     assert '<section class="slide hidden"><h2>슬라이드 1 · 결과 (숨긴 슬라이드)</h2>' in body
     assert (
-        '<p><span class="bullet">• </span><span style="font-family:&quot;맑은 고딕&quot;;font-size:24pt;font-weight:bold">굵게 </span>'
+        '<p><span class="bullet">• </span><span style="font-family:&quot;맑은 고딕&quot;;font-size:24pt;'
+        'font-weight:bold">굵게 </span>'
         '<span style="font-family:&quot;맑은 고딕&quot;;font-size:18pt;color:#FF0000">빨강</span></p>'
     ) in body
     assert '<p style="margin-left:18pt;text-align:center"><span class="bullet">III. </span>' in body

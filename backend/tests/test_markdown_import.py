@@ -73,7 +73,8 @@ def test_legacy_html_upgrade_preserves_edits_and_metadata_and_removes_html_colum
             "jira": "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL",
         }[kind]
         db.execute(
-            f"CREATE TABLE {kind}_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, {metadata}, html TEXT NOT NULL, "
+            f"CREATE TABLE {kind}_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) "
+            f"ON DELETE CASCADE, {metadata}, html TEXT NOT NULL, "
             + ("html_path TEXT NOT NULL, " if kind != "rtf" else "")
             + "imported_at TEXT NOT NULL"
             + (", UNIQUE(source_url, source_hash)" if kind in {"confluence", "jira"} else "")
