@@ -225,7 +225,11 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
     await expect(page.getByText('창을 닫지 않았습니다', { exact: false })).toBeVisible();
     await expect(box).toHaveValue('https://jira.example/browse/ABC-1');
-    await page.getByRole('button', { name: '알림 닫기' }).click();
+    // The messages stack, and the success of the last copy above may still be showing: the notice is closed by its
+    // own button.
+    const kept = page.getByRole('alert').filter({ hasText: '창을 닫지 않았습니다' });
+    await kept.getByRole('button', { name: '알림 닫기' }).click();
+    await expect(kept).toHaveCount(0);
     await box.fill('');
     expect((await ai.tool('app_navigate', { view: 'home' })).isError).toBe(false);
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -78,9 +78,13 @@ export default function Dashboard() {
     write(next && (whole ? stored(next) : keepHidden(preferences.widgets, stored(next))));
   };
   // A widget moved with ↑·↓ keeps the keyboard on the button pressed (the other one at either end): React moves the
-  // widget's section to reorder the grid, which takes the focus with it.
+  // widget's section to reorder the grid, which takes the focus with it. This is a layout effect, which runs in the very
+  // commit that moves the section. A passive effect would not be safe: the effect of an earlier commit (the answer to
+  // the previous save, which changes the widgets too) can still be waiting when the next press comes. React runs that
+  // effect first, before the section moves, so it would use up `moved`, and the moved widget would leave the focus
+  // on the page.
   const moved = useRef<{ id: string; down: boolean } | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const target = moved.current;
     moved.current = null;
     if (!target) return;

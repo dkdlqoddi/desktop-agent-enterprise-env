@@ -105,10 +105,21 @@ test('captions name what a job is doing', () => {
 
 // The app as the demo sees it: the screens it reads and works, the backend it asks, a clock that runs only when the
 // demo waits, and a recorder that writes small recordings. `stop(file, seconds)` ends the recording another way, and
-// `endRecording()` ends it by itself, as when the app's window closes.
+// `endRecording()` ends it by itself, as when the app's window closes. `frames(look)` is the size of the screen's frame
+// at each look the demo takes (1, 2, …), or nothing for the full-screen size.
 async function harness(
   t,
-  { items, plan = {}, llm = true, capabilities = {}, startErrors = {}, polls = {}, onPoll, stop },
+  {
+    items,
+    plan = {},
+    llm = true,
+    capabilities = {},
+    startErrors = {},
+    polls = {},
+    onPoll,
+    stop,
+    frames = () => null,
+  },
 ) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-demo-run-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -280,8 +291,12 @@ async function harness(
     throw new Error(`unexpected ${method}`);
   };
   let ended;
+  // When the recording started, by the frames looked at before it; and what the demo logged.
+  const starts = [];
+  const logs = [];
   const recorder = {
     async record(_target, file, { onAbort }) {
+      starts.push({ at: clock, looks: looks.length });
       recorder.onAbort = onAbort;
       const mime = 'video/mp4;codecs=avc1.42E028';
       return {
@@ -302,10 +317,28 @@ async function harness(
       return { file, mime: 'video/mp4;codecs=avc1.42E028' };
     },
   };
+  // A 1440×960 window on a 1920×1080 display, full screen as soon as it is asked; its screen's frames are as `frames`
+  // says. `looks` holds when each frame was looked at.
+  const display = { x: 0, y: 0, width: 1920, height: 1080 };
+  let fullScreen = false;
+  const looks = [];
   const window = {
     isDestroyed: () => false,
     isVisible: () => true,
-    setFullScreen: (on) => actions.push(['fullscreen', on, '']),
+    isFullScreen: () => fullScreen,
+    setFullScreen: (on) => {
+      fullScreen = on;
+      actions.push(['fullscreen', on, '']);
+    },
+    getBounds: () => (fullScreen ? display : { x: 240, y: 60, width: 1440, height: 960 }),
+    getContentSize: () => (fullScreen ? [display.width, display.height] : [1440, 960]),
+    webContents: {
+      capturePage: async () => {
+        looks.push(clock);
+        const size = frames(looks.length) ?? { width: display.width, height: display.height };
+        return { getSize: () => size };
+      },
+    },
   };
   demo = new DemoRun({
     plan: {
@@ -331,8 +364,22 @@ async function harness(
       clock += Math.max(1, ms);
       await new Promise((resolve) => setImmediate(resolve));
     },
+    log: (text) => logs.push(text),
+    display: () => display,
   });
-  return { demo, actions, calls, statuses, renders, root, screen, endRecording: () => ended() };
+  return {
+    demo,
+    actions,
+    calls,
+    statuses,
+    renders,
+    root,
+    screen,
+    looks,
+    starts,
+    logs,
+    endRecording: () => ended(),
+  };
 }
 
 const read = (folder, name) => fs.readFile(path.join(folder, name), 'utf8');
@@ -671,4 +718,38 @@ test('a demo that cannot reach its window records nothing and says why', async (
   assert.equal(outcome.video, null);
   const report = await read(outcome.folder, FILES.report);
   assert.match(report, /멈춘 이유: 앱 화면이 준비되지 않았습니다/);
+});
+
+test('the recording starts once the screen is drawn at full-screen size, twice in a row', async (t) => {
+  // The window manager resizes the window, and the screen draws its first full-size frames, a while after it is asked;
+  // a frame of the old size between two full-size ones starts the count again.
+  const small = { width: 1440, height: 960 };
+  const { demo, starts, logs } = await harness(t, {
+    items: [markdown],
+    frames: (look) => (look <= 3 || look === 5 ? small : null),
+  });
+  const outcome = await demo.run();
+  assert.equal(outcome.failure, null);
+  assert.ok(outcome.video);
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].looks, 7);
+  assert.deepEqual(
+    logs.filter((text) => text.includes('전체 화면')),
+    [],
+  );
+});
+
+test('a screen that is not drawn at full-screen size in time is recorded all the same, and the log says so', async (t) => {
+  const { demo, starts, looks, logs } = await harness(t, {
+    items: [markdown],
+    frames: () => ({ width: 1440, height: 960 }),
+  });
+  const outcome = await demo.run();
+  assert.equal(outcome.failure, null);
+  assert.ok(outcome.video);
+  assert.ok(starts[0].at - looks[0] >= 15_000, `${starts[0].at - looks[0]}`);
+  assert.match(
+    logs.join('\n'),
+    /15초 안에 전체 화면 크기로 그려지지 않아 그대로 녹화를 시작했습니다/,
+  );
 });
