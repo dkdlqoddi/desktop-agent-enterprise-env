@@ -334,7 +334,7 @@ const TOOLS = [
     'search_documents',
     '문서 검색',
     'read',
-    "Search the user's private work wiki: documents imported from Confluence, JIRA, Office, RTF and text files, plus notes written in the app (mostly Korean). Returns ranked documents with id, source, summary, keywords and the passages that matched. Read one in full with get_document. mode: auto (default; local word search like the app's search box, fast), word (every word must occur), keyword (comma-separated keywords the AI extracted), prompt (the LLM rewrites the question and picks documents and sections; slow).",
+    "Search the user's private work wiki: documents imported from Confluence, JIRA, Office, RTF and text files, plus notes written in the app (mostly Korean). Returns ranked documents with id, source, summary, keywords and the passages that matched. Read one in full with get_document. mode: auto (default; local word search like the app's search box, fast; extracted keywords also match by their Korean/English aliases), word (every word must occur), keyword (comma-separated keywords the AI extracted, or their aliases: 데이터베이스 finds database), prompt (the LLM rewrites the question and picks documents and sections; slow).",
     {
       query: string('Words or a question. "Quoted phrases" are matched as written.', {
         required: true,

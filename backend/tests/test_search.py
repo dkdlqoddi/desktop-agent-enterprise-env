@@ -422,7 +422,7 @@ def test_a_title_or_summary_changed_without_the_search_text_is_searched_as_it_is
 SEARCHES = [("auto", "레디스 클러스터"), ("auto", "캐시를 도입한 문서"), ("word", "레디스 클러스터"), ("word", "캐시"),
             ("auto", "abc"), ("auto", "r&d"), ("word", "api_spec_v2"), ("auto", "클러스터 운영"),
             ("auto", '"캐시 무효화"'), ("keyword", "cache"), ("word", "캐 시"), ("auto", "지연 시간과"),
-            ("word", "레디스 메뉴")]
+            ("auto", "캐싱"), ("keyword", "캐싱"), ("word", "레디스 메뉴")]
 
 
 def searched(service):
@@ -434,7 +434,7 @@ def searched(service):
 
 def fill(service):
     """Documents the searches reach by every way: words of three or more characters and shorter ones, in titles,
-    summaries and bodies, keywords, Markdown escapes and full-width letters."""
+    summaries and bodies, keywords and their aliases, Markdown escapes and full-width letters."""
     for title, content in (("캐시 도입 회의", "레디스 클러스터로 캐시를 도입했습니다. R\\&D 검토"),
                            ("ＡＢＣ 보고서", "Kafka 스트림 전환과 캐시 무효화 정책"),
                            ("성능 점검", "레디스 지연 시간과 클러스터 장애 대응"),
@@ -444,6 +444,8 @@ def fill(service):
         ident = db.execute("SELECT id FROM documents WHERE title='점심'").fetchone()[0]
         db.execute("UPDATE documents SET summary='클러스터 운영 요약' WHERE id=?", (ident,))
         db.execute("INSERT INTO keywords VALUES (?, 'cache')", (ident,))
+        # A word no text holds, which only the alias reaches past the trigram index.
+        db.execute("INSERT INTO keyword_aliases VALUES (?, 'cache', '캐싱', '캐싱')", (ident,))
         index_text(db, [ident])
 
 
@@ -667,3 +669,146 @@ def test_conversations_come_in_pages(service):
         conversations({"limit": 201})
     with pytest.raises(UserError, match="cursor"):
         conversations({"cursor": paging.encode("list", "2026", "c1")})
+
+
+# -- Keyword aliases -----------------------------------------------------------------------------------------------
+
+
+def analyzed(service, title, content, keywords, aliases):
+    """A document the LLM analyzed into these keywords and their aliases."""
+    doc = save(service, title, content)
+    service.llm.extract = {"summary": f"{title} 요약", "keywords": keywords, "aliases": aliases, "relations": []}
+    return service.wiki_analyze({"id": doc["id"]})
+
+
+def matches(service, query, mode="auto"):
+    """{title: match} of a search's documents, in their order."""
+    return {d["title"]: d["match"] for d in service.wiki_search({"query": query, "mode": mode})["documents"]}
+
+
+def test_a_korean_word_finds_an_english_keyword_by_its_alias_and_the_other_way_round(service, monkeypatch):
+    """The search box matches a word that is the alias of a keyword, in any form the search compares the same (case,
+    full width, a particle), as that keyword: the trigram index, which finds documents by their text, does not keep the
+    document out, and the result names the keyword with the alias that matched."""
+    analyzed(service, "Tuning notes", "Index and query tuning of the production server.", ["database", "index"],
+             {"database": ["데이터베이스", "DB"], "index": ["인덱스"]})
+    analyzed(service, "결제 흐름", "승인과 환불 절차를 정리했습니다.", ["결제"], {"결제": ["Payment"]})
+    save(service, "이전 기록", "데이터베이스를 새 서버로 옮겼습니다.")
+    for share in (0, 10 ** 9):  # The index's rows read one by one, and in one pass with the rest.
+        monkeypatch.setattr(search, "SCAN_SHARE", share)
+        found = matches(service, "데이터베이스")
+        assert list(found) == ["Tuning notes", "이전 기록"]
+        assert found["Tuning notes"]["matched"] == ["데이터베이스", "database"]
+        assert found["Tuning notes"]["aliases"] == [{"keyword": "database", "alias": "데이터베이스"}]
+        # The document holding the word in its text matches as it always has.
+        assert found["이전 기록"]["matched"] == ["데이터베이스"] and "aliases" not in found["이전 기록"]
+        assert set(matches(service, "데이터베이스를 옮긴 기록")) == {"Tuning notes", "이전 기록"}
+        # A word of two characters, which the trigram index does not look up.
+        for query in ("db", "ＤＢ", "Db"):
+            found = matches(service, query)
+            assert list(found) == ["Tuning notes"] and found["Tuning notes"]["matched"] == ["db", "database"]
+            assert found["Tuning notes"]["aliases"] == [{"keyword": "database", "alias": "DB"}]
+        found = matches(service, "PAYMENT")
+        assert list(found) == ["결제 흐름"] and found["결제 흐름"]["matched"] == ["payment", "결제"]
+        assert found["결제 흐름"]["aliases"] == [{"keyword": "결제", "alias": "Payment"}]
+    # The search words are what the screen highlights, as before; the alias is a keyword of the search.
+    result = service.wiki_search({"query": "데이터베이스", "mode": "auto"})
+    assert result["highlights"] == result["plan"]["terms"] == result["plan"]["keywords"] == ["데이터베이스"]
+    # A word within an alias matches as a word within a keyword does: it finds the document, marking no keyword.
+    part = matches(service, "데이터")["Tuning notes"]
+    assert part["matched"] == ["데이터"] and "aliases" not in part
+    assert stages(service) == ["extract", "extract"]
+
+
+def test_a_document_found_by_an_alias_ranks_as_if_its_keyword_had_been_typed(service):
+    """An alias is its keyword under another name: a document whose keyword database has the alias 데이터베이스 ranks
+    for 데이터베이스 as one whose keyword is 데이터베이스 itself, in the search box and the keyword search."""
+    by_alias = analyzed(service, "기록 하나", "같은 본문입니다.", ["database"], {"database": ["데이터베이스"]})
+    by_keyword = analyzed(service, "기록 둘", "같은 본문입니다.", ["데이터베이스"], {})
+    save(service, "기타", "다른 본문입니다.")
+    for mode in ("auto", "keyword"):
+        found = {d["id"]: d["match"] for d in service.wiki_search({"query": "데이터베이스", "mode": mode})["documents"]}
+        assert set(found) == {by_alias["id"], by_keyword["id"]}
+        assert found[by_alias["id"]]["score"] == found[by_keyword["id"]]["score"] > 0
+        assert found[by_keyword["id"]]["matched"] == ["데이터베이스"] and "aliases" not in found[by_keyword["id"]]
+        assert found[by_alias["id"]]["matched"] == ["데이터베이스", "database"]
+
+
+def test_the_keyword_and_prompt_searches_match_aliases_and_the_word_search_does_not(service):
+    english = analyzed(service, "Tuning notes", "Index and query tuning.", ["database", "index"],
+                       {"database": ["데이터베이스"], "index": ["인덱스", "색인"]})
+    korean = analyzed(service, "결제 흐름", "승인과 환불 절차", ["결제"], {"결제": ["payment"]})
+    plain = save(service, "이전 기록", "데이터베이스를 옮겼습니다.")
+    result = service.wiki_search({"query": "Payment, 인덱스", "mode": "keyword"})
+    assert result["plan"]["keywords"] == result["highlights"] == ["payment", "인덱스"]
+    assert {d["id"]: d["match"]["aliases"] for d in result["documents"]} == {
+        english["id"]: [{"keyword": "index", "alias": "인덱스"}], korean["id"]: [{"keyword": "결제", "alias": "payment"}]}
+    # The literal word search leaves aliases out, as it leaves keywords out.
+    assert found(service, "데이터베이스", "word") == [plain["id"]]
+    # The analysis of a prompt search is offered the English keyword of the question's Korean word first, and a term
+    # that is an alias finds the keyword's document.
+    service.llm.analysis = {"intent": "색인 기록 찾기", "terms": ["색인"], "keywords": [], "explanation": "색인"}
+    result = prompt(service, "색인 기록을 찾아줘")
+    analysis = next(payload for stage, payload, _ in service.llm.calls if stage == "analyze")
+    assert analysis["wiki_keywords"] == ["index", "database", "결제"]
+    assert [d["id"] for d in result["documents"]] == [english["id"]]
+    assert result["documents"][0]["match"]["aliases"] == [{"keyword": "index", "alias": "색인"}]
+
+
+def test_aliases_go_with_their_keywords(service):
+    """keyword_aliases refers to the keyword it names: a new analysis, taking back the analysis, a new text and emptying
+    the trash take the aliases with the keywords, and the trash keeps them for a restore."""
+    def aliases(ident):
+        with service.db.connect() as db:
+            return [tuple(row) for row in db.execute(
+                "SELECT keyword,alias,normalized FROM keyword_aliases WHERE doc_id=? ORDER BY normalized", (ident,))]
+
+    ident = analyzed(service, "Tuning notes", "Index and query tuning.", ["database"],
+                     {"database": ["데이터베이스", "DB"]})["id"]
+    assert aliases(ident) == [("database", "DB", "db"), ("database", "데이터베이스", "데이터베이스")]
+    with service.db.connect() as db:
+        assert {(r["table"], r["from"], r["to"], r["on_delete"]) for r in db.execute(
+            "PRAGMA foreign_key_list(keyword_aliases)")} == {("keywords", "doc_id", "doc_id", "CASCADE"),
+                                                             ("keywords", "keyword", "keyword", "CASCADE")}
+        assert [r[2] for r in db.execute("PRAGMA index_info(idx_keyword_aliases)")] == ["normalized"]
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO keyword_aliases VALUES (?, 'unknown', 'x', 'x')", (ident,))
+    service.llm.extract = {"summary": "다시", "keywords": ["database"], "aliases": {"database": ["디비"]}, "relations": []}
+    service.wiki_analyze({"id": ident})
+    assert aliases(ident) == [("database", "디비", "디비")] and found(service, "디비") == [ident]
+    assert not found(service, "데이터베이스")
+    service.wiki_delete({"id": ident})
+    assert not found(service, "디비") and aliases(ident)
+    service.wiki_restore({"ids": [ident]})
+    assert found(service, "디비") == [ident]
+    service.wiki_clear_analysis({"ids": [ident]})
+    assert aliases(ident) == [] and not found(service, "디비")
+    service.wiki_analyze({"id": ident})
+    service.wiki_save({"id": ident, "title": "Tuning notes", "content": "다른 내용"})
+    assert aliases(ident) == [] and not found(service, "디비")
+    service.wiki_analyze({"id": ident})
+    service.wiki_delete({"id": ident})
+    service.wiki_purge({"ids": [ident]})
+    with service.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM keyword_aliases").fetchone()[0] == 0
+
+
+def test_aliases_a_search_does_not_meet_change_nothing_of_it(tmp_path):
+    """A search none of whose words is an alias, or within one, finds and ranks as before aliases: the results of a Wiki
+    with an alias they do not meet are those of the same Wiki without it, with no aliases of their own."""
+    bare, named = (Service(Database(tmp_path / f"{name}.db"), RoutingLLM()) for name in ("bare", "named"))
+    fill(bare)
+    fill(named)
+    with bare.db.connect() as db:
+        db.execute("DELETE FROM keyword_aliases")
+
+    def outcome(service, mode, query):
+        result = service.wiki_search({"query": query, "mode": mode})
+        return (result["plan"], result["highlights"], result["total"], result.get("ai"), result["steps"],
+                [(d["title"], d["match"]) for d in result["documents"]])
+
+    queries = [(mode, query) for mode, query in SEARCHES if query != "캐싱"] + [("prompt", "캐시 관련 기록을 찾아줘")]
+    expected = [outcome(bare, *query) for query in queries]
+    assert [outcome(named, *query) for query in queries] == expected
+    assert all("aliases" not in match for *_, documents in expected for _, match in documents)
+    assert [payload for _, payload, _ in bare.llm.calls] == [payload for _, payload, _ in named.llm.calls]

@@ -54,6 +54,12 @@ export function ResultCard({
   onKeyword: (keyword: string) => void;
 }) {
   const { match } = doc;
+  // A keyword found by its alias (데이터베이스 for database) shows the alias the search named beside it. The keywords
+  // the search matched come first, so the six shown include them.
+  const aliases = new Map((match.aliases ?? []).map((item) => [item.keyword, item.alias]));
+  const keywords = [...doc.keywords].sort(
+    (a, b) => Number(match.matched.includes(b)) - Number(match.matched.includes(a)),
+  );
   // The title is the button that opens the document, inside its heading; the button reaches over the whole card (CSS),
   // which stays one place to click without putting the heading inside a button.
   return (
@@ -117,14 +123,16 @@ export function ResultCard({
         )}
       </div>
       <div className="tags">
-        {doc.keywords.slice(0, 6).map((key) => (
+        {keywords.slice(0, 6).map((key) => (
           <button
             key={key}
             disabled={busy}
             className={`tag${match.matched.includes(key) ? ' matched' : ''}`}
+            title={aliases.has(key) ? `‘${aliases.get(key)}’(으)로 찾은 키워드` : undefined}
             onClick={() => onKeyword(key)}
           >
             # {key}
+            {aliases.has(key) && ` (${aliases.get(key)})`}
           </button>
         ))}
         {doc.keywords.length > 6 && <span className="tag muted">+{doc.keywords.length - 6}</span>}

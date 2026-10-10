@@ -136,7 +136,9 @@ test('keywords search every document, whatever the next question is about, once 
   const llm = await llmServer(async ({ system, content }) => {
     if (system.includes('extract metadata')) {
       const title = content.split('\n')[0].replace('제목: ', '');
-      return { summary: `${title} 요약`, keywords: [title.split(' ')[0]], relations: [] };
+      // An alias of a keyword the document does not have is left out.
+      const aliases = { 캐시: ['cache'] };
+      return { summary: `${title} 요약`, keywords: [title.split(' ')[0]], aliases, relations: [] };
     }
     if (!system.includes('Answer questions about')) return '연결 성공';
     await held;
@@ -193,6 +195,13 @@ test('keywords search every document, whatever the next question is about, once 
       page.getByRole('button', { name: '배포 계획 문서에 질문하기 끝내기' }),
     ).toBeVisible();
     expect(llm.requests.filter((r) => r.system.includes('Answer questions about'))).toHaveLength(1);
+
+    // An English word finds the document by the alias of its Korean keyword, which the card names.
+    await page.getByRole('button', { name: '배포 계획 문서에 질문하기 끝내기' }).click();
+    await searchBox(page).fill('cache');
+    await searchBox(page).press('Enter');
+    await expect(results(page).locator('.result-card')).toHaveCount(1);
+    await expect(results(page).locator('.result-card .tag.matched')).toHaveText('# 캐시 (cache)');
     expect(errors).toEqual([]);
   } finally {
     await app?.close();

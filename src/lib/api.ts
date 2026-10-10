@@ -363,6 +363,9 @@ export type SearchMatch = {
   sections: { id: string; title: string }[];
   reason: string;
   selected: boolean;
+  // The keywords the document matched by an alias (another name the AI analysis gave the keyword: its Korean or
+  // English form, an abbreviation), each with the alias the search named; they are in `matched` too. Absent otherwise.
+  aliases?: { keyword: string; alias: string }[];
 };
 export type SearchStep = {
   kind: 'analyze' | 'keyword' | 'agent' | 'search' | 'outline' | 'fallback';

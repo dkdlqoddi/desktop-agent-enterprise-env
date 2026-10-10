@@ -65,10 +65,15 @@ def build(path):
                      "wiki" if analyzed else "", stamp, stamp))
         if analyzed:
             keywords += [(ident, word) for word in set(rng.choices(words[:2000], k=6))]
+    # Three aliases a keyword, words of the vocabulary as an analysis's other names would be, so the queries' words meet
+    # some of them; drawn apart, so the documents are those they were before aliases.
+    other = random.Random(11)
+    aliases = [(ident, word, name, name) for ident, word in keywords for name in set(other.sample(words, 3)) - {word}]
     with sqlite3.connect(path) as db:
         db.executemany("""INSERT INTO documents(id,title,content,summary,status,index_mode,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?)""", rows)
         db.executemany("INSERT INTO keywords VALUES (?,?)", keywords)
+        db.executemany("INSERT INTO keyword_aliases VALUES (?,?,?,?)", aliases)
     database = Database(path)
     started = time.perf_counter()
     assert database._index()
