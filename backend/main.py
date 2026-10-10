@@ -17,11 +17,14 @@ from agent.db import Database
 from agent.folders import sweep_scratch
 from agent.llm import LLM, UserError
 from agent.service import Service
+from agent.storage import Refused
 
 # Requests that wait on the LLM or a browser can take minutes. They get their own lane, so the quick
 # reads a screen makes all at once (lists, statuses) are never refused behind them.
 SLOW = frozenset({"settings.test", "prompts.run", "wiki.analyze", "assistant.ask", "briefing.generate",
-                  "tasks.extract", "schedules.run", "schedules.execute", "confluence.check", "jira.check"})
+                  "tasks.extract", "schedules.run", "schedules.execute", "confluence.check", "jira.check",
+                  # A backup and the copy of one to restore read and write the whole Wiki.
+                  "wiki.backup", "wiki.restore_backup"})
 SLOW_SLOTS = 4
 QUICK_SLOTS = 24
 # Electron sends a request's parameters as at most 900,000 characters of JSON.
@@ -79,7 +82,16 @@ def main():
     diagnostics.LOG.info("backend started · Python %s%s", sys.version.split()[0],
                          " · packaged" if getattr(sys, "frozen", False) else "")
     threading.Thread(target=sweep_leftovers, name="sweep-scratch", daemon=True).start()
-    service = Service(Database(data_dir / "wiki.db"), LLM())
+    database = data_dir / "wiki.db"
+    try:
+        wiki = Database(database)
+    except Refused as refused:  # Damaged, or changed by a later version: left as it is, and the user told what to do.
+        diagnostics.LOG.error("the Wiki was not opened: %s", refused)
+        return refuse(str(refused))
+    except Exception as exc:  # Locked by another program, a drive gone, a migration that failed: logged with its ID.
+        return refuse(diagnostics.report(exc, f"Wiki 데이터베이스({database})를 열지 못했습니다. 앱을 다시 실행해 보고, "
+                                              "계속되면 ‘진단 정보 복사’로 문제를 알려 주세요.", "Wiki 열기"))
+    service = Service(wiki, LLM())
     write_lock = threading.Lock()
     lanes = {True: threading.BoundedSemaphore(SLOW_SLOTS), False: threading.BoundedSemaphore(QUICK_SLOTS)}
 
@@ -127,6 +139,19 @@ def main():
         # End of input (the app is closing): stop the imports, browsers and analysis as backend.shutdown does, before
         # leaving this block waits for the requests still running.
         service.shutdown()
+
+
+def refuse(message):
+    """The Wiki could not be opened: every request is answered with `message` until the input ends. Electron's start
+    asks `health` first and fails with the answer, which the first-run screen shows (Electron's StorageManager), and
+    then ends this process; a backend that exited instead would leave it only "the backend ended" to tell."""
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            ident = request.get("id") if isinstance(request, dict) else None
+        except Exception:
+            ident = request_id(line)
+        print(json.dumps({"id": ident, "error": message}, ensure_ascii=False), flush=True)
 
 
 def read_text(path):

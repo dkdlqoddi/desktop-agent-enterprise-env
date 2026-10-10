@@ -5,6 +5,8 @@ import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import migrations, storage
+
 # A backslash before an ASCII punctuation mark is a Markdown escape (CommonMark), which the screen does not show. The
 # text of an imported page has many: markdownify writes R\&D, API\_SPEC and C\+\+.
 MARKDOWN_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
@@ -66,6 +68,13 @@ class Database:
     def __init__(self, path):
         self.path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        # Before anything writes to the Wiki: a restore asked for in the last run takes its place, and one that is
+        # damaged or newer than this code is refused as it is (storage.prepare). A new one, without tables yet, is
+        # numbered before the block makes them, so a first start stopped midway never leaves them to be taken for an
+        # earlier version's (migrations.py).
+        if storage.prepare(path):
+            with self.connect() as db:
+                migrations.stamp(db)
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
@@ -223,6 +232,9 @@ class Database:
                 for index, prompt in enumerate(SEEDS):
                     db.execute("INSERT INTO prompts VALUES (?,?,?,?,?,?,?,?)", (f"starter-{index}", *prompt, now(), now()))
                 db.execute("INSERT INTO metadata VALUES ('seeded', '1')")
+        # What the block above cannot do, numbered by the schema version the Wiki keeps (migrations.py).
+        with self.connect() as db:
+            migrations.upgrade(db)
         self._index()
 
     def _index(self, budget=10.0):

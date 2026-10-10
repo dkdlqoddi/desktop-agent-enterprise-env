@@ -16,13 +16,13 @@ const ACCESS_LEVELS = [
     id: 'write',
     label: '조회·변경·앱 제어',
     description:
-      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문과 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 등록하지 않은 사이트의 링크, 휴지통 비우기, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
+      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
   },
   {
     id: 'full',
     label: '전체',
     description:
-      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다.',
+      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다.',
   },
 ];
 const DEFAULT_ACCESS = 'read';
@@ -34,8 +34,8 @@ const SCOPES = {
   // Importing this PC's files: the app reads them with the user's own rights.
   files: { label: '파일 가져오기', levels: ['full'] },
   admin: { label: '설정', levels: ['full'] },
-  // Emptying the trash: nothing brings a purged document back.
-  destructive: { label: '영구 삭제', levels: ['full'] },
+  // Emptying the trash, where nothing brings a purged document back, and putting a backup in the Wiki's place.
+  destructive: { label: '영구 삭제·백업 복원', levels: ['full'] },
 };
 
 const allows = (access, scope) => !!SCOPES[scope]?.levels.includes(access);
@@ -120,6 +120,20 @@ const METHODS = {
   'wiki.trash': method('read', '휴지통의 문서 목록'),
   'wiki.restore': method('write', '휴지통의 문서 복원'),
   'wiki.purge': method('destructive', '휴지통의 문서 영구 삭제 (ids, 또는 all: true로 비우기)'),
+  'wiki.backups': method(
+    'write',
+    'Wiki 백업 목록: 하루 한 번 자동·직접 만든 백업과 복원 전 Wiki, 예약된 복원과 지난 복원 결과',
+  ),
+  'wiki.backup': method(
+    'write',
+    'Wiki 백업 지금 만들기 (Wiki 폴더의 backups, 직접 만든 백업은 최근 7개 보관)',
+    { slow: true },
+  ),
+  'wiki.restore_backup': method(
+    'destructive',
+    '백업으로 Wiki 되돌리기 예약: 앱을 다시 실행할 때 복원하고 지금 Wiki는 복원 전 백업으로 남김 (cancel: true로 취소)',
+    { slow: true },
+  ),
   'wiki.analyze': method('write', '문서 하나를 LLM으로 분석 (요약·키워드·관계·목차)', {
     slow: true,
   }),
@@ -582,6 +596,36 @@ const GROUPS = [
         id: string('작업 ID', { required: true }),
       }),
       route('GET', '/graph', 'wiki.graph', '지식 관계도: 키워드(최대 1,000개)·관계·문서'),
+    ],
+  },
+  {
+    id: 'backups',
+    title: '백업·복원',
+    description:
+      'Wiki(wiki.db)를 Wiki 폴더의 backups 폴더에 파일 하나로 백업합니다. 앱이 켜져 있으면 하루에 한 번 자동으로 백업하고(최근 7개 보관), 직접 만든 백업도 따로 최근 7개를 보관합니다. 복원은 앱을 다시 실행할 때 이루어지며, 그때까지의 Wiki는 복원 전 백업으로 남습니다.',
+    routes: [
+      route(
+        'GET',
+        '/backups',
+        'wiki.backups',
+        '백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore)과 지난 복원 결과(last_restore)',
+      ),
+      route(
+        'POST',
+        '/backups',
+        'wiki.backup',
+        'Wiki 백업 지금 만들기. 만든 백업과 보관 개수를 넘어 지운 직접 백업(removed)을 돌려줌',
+      ),
+      route(
+        'POST',
+        '/backups/restore',
+        'wiki.restore_backup',
+        '백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다',
+        {
+          file: string('복원할 백업 파일 이름 (GET /backups의 file). cancel이 true면 생략'),
+          cancel: boolean('예약한 복원 취소', { default: false }),
+        },
+      ),
     ],
   },
   {

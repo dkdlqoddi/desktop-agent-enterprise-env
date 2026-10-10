@@ -287,6 +287,37 @@ test('needs the full level to change the AI analysis of login pages, not the das
   }
 });
 
+test('backs the Wiki up with the write level, and restores a backup only with the full level', async () => {
+  calls.length = 0;
+  assert.deepEqual((await request({ path: '/api/v1/backups' })).json, {
+    ok: true,
+    result: { method: 'wiki.backups' },
+  });
+  assert.equal((await request({ path: '/api/v1/backups', method: 'POST' })).status, 200);
+  assert.equal(calls.at(-1).method, 'wiki.backup');
+  const restore = { path: '/api/v1/backups/restore', method: 'POST', body: { file: 'wiki-1.db' } };
+  const refused = await request(restore);
+  assert.equal(refused.status, 403);
+  assert.match(refused.json.error.message, /백업 복원/);
+  assert.equal(calls.at(-1).method, 'wiki.backup');
+  settings.access = 'full';
+  try {
+    assert.equal((await request(restore)).status, 200);
+    assert.deepEqual(calls.at(-1), {
+      method: 'wiki.restore_backup',
+      params: { file: 'wiki-1.db', cancel: false },
+    });
+  } finally {
+    settings.access = 'write';
+  }
+  settings.access = 'read';
+  try {
+    assert.equal((await request({ path: '/api/v1/backups' })).status, 403);
+  } finally {
+    settings.access = 'write';
+  }
+});
+
 test('speaks MCP over Streamable HTTP', async () => {
   const mcp = (body, headers) => request({ path: '/mcp', method: 'POST', body, headers });
   const init = await mcp({

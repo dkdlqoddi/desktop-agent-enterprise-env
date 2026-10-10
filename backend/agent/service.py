@@ -6,7 +6,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from . import diagnostics, pageindex, sources
+from . import diagnostics, pageindex, sources, storage
 from .db import index_text
 from .llm import UserError
 
@@ -84,10 +84,28 @@ SOURCES = (("rtf_sources", "rtf", "source_path,imported_at,part,parts"),
 
 # The most documents one request on the document list's selection may name.
 MAX_SELECTED = 10000
-# How long a deleted document waits in the trash before it is purged at a start of the backend.
+# How long a deleted document waits in the trash before the retention policy purges it.
 TRASH_DAYS = 30
 # Documents that are not in the trash, as every list, search and analysis reads them.
 LIVE = "deleted_at IS NULL"
+# The retention policy of what the Wiki logs, applied at each start of the backend and once a day while the app runs
+# (Service.retain): the history of prompt runs keeps its newest RUNS_KEPT runs of the last RUNS_DAYS days; each
+# conversation keeps its newest MESSAGES_KEPT messages (the screen shows the last 100) and the newest CONVERSATIONS_KEPT
+# conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS. The logs are trimmed
+# only while a backup of the Wiki exists. The automatic routines keep their last 30 runs each by themselves
+# (routines.MAX_RUNS).
+RUNS_KEPT = 2000
+RUNS_DAYS = 90
+MESSAGES_KEPT = 200
+CONVERSATIONS_KEPT = 1000
+# The Wiki's daily upkeep (Service.upkeep), looked at whenever Electron asks the routines what is due (every 30 seconds
+# while the app runs): at most every UPKEEP_EVERY seconds, the first time UPKEEP_DELAY seconds after the start so that
+# the screens load first. It makes the daily backup once the newest is a day old and applies the retention policy daily.
+UPKEEP_DELAY = 60
+UPKEEP_EVERY = 3600
+RETAIN_EVERY = 24 * 3600
+# What the user is told while another backup, or the copy of a restore, is being made.
+BACKUP_BUSY = "다른 백업이나 복원 준비가 진행 중입니다. 끝난 뒤 다시 시도해 주세요."
 
 # What a schedule's run that cannot fill in its template's inputs asks the user to do.
 SCHEDULE_INPUTS = "예약을 열어 입력 내용을 확인하고 저장해 주세요."
@@ -128,12 +146,20 @@ class Service:
         from .routines import Routines
         self.routines = Routines(self)
         self.active, self.active_lock = {}, threading.Lock()
+        # One backup, or copy of a backup to restore, at a time: the daily one and those asked for.
+        self.backup_lock = threading.Lock()
+        self.upkeep_lock, self.upkeep_thread = threading.Lock(), None
+        self.upkeep_at = time.monotonic() + UPKEEP_DELAY
         # An interrupted extraction must remain retryable on the next startup.
         with db.connect() as conn:
             conn.execute("UPDATE documents SET status='pending', error='' WHERE status='indexing'")
-            # The trash is emptied of what has waited TRASH_DAYS: the rest stays for the user to restore.
-            conn.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?",
-                         ((datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).isoformat(),))
+        try:
+            trimmed = "runs" in self.retain()
+        except Exception as error:  # Housekeeping never keeps the Wiki from opening; the upkeep tries again.
+            trimmed = False
+            diagnostics.report(error, "", "보존 정책")
+        # When the logs were last trimmed: never yet sends the upkeep's first look to do it, after its backup.
+        self.retained_at = time.time() if trimmed else 0.0
 
     def shutdown(self, _=None):
         """The app is closing: stop the automatic routines, the imports, a write to an original file before it saves,
@@ -176,6 +202,8 @@ class Service:
             "wiki.delete": self.wiki_delete, "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
             "wiki.delete_many": self.wiki_delete_many, "wiki.clear_analysis": self.wiki_clear_analysis,
             "wiki.trash": self.wiki_trash, "wiki.restore": self.wiki_restore, "wiki.purge": self.wiki_purge,
+            "wiki.backup": self.wiki_backup, "wiki.backups": self.wiki_backups,
+            "wiki.restore_backup": self.wiki_restore_backup,
             "wiki.search": self.wiki_search, "wiki.graph": self.wiki_graph,
             "wiki.source_markdown": self.wiki_source_markdown, "wiki.source_html": self.wiki_source_html,
             "wiki.source_status": self.wiki_source_status,
@@ -618,6 +646,116 @@ class Service:
                 purged = sum(db.execute(f"DELETE FROM documents WHERE id IN ({','.join('?' * len(chunk))}) "
                                         "AND deleted_at IS NOT NULL", chunk).rowcount for chunk in chunks(ids))
         return {"purged": purged}
+
+    def retain(self):
+        """Apply the retention policy (RUNS_KEPT and the others): what it removed, counted by table. The logs (runs,
+        conversations, messages) are trimmed only while a backup of the Wiki exists, which still holds what goes for
+        good: the first start of this version leaves them to the upkeep, which trims them after its first backup. The
+        trash is emptied either way, as it always was."""
+        def cutoff(days):
+            return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        try:
+            logs = any(item["kind"] != "before_restore" for item in storage.backups(self.db.path))
+        except OSError:  # The backups folder cannot be read: no backup to count on.
+            logs = False
+        removed = {}
+        with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if logs:
+                removed["runs"] = db.execute("""DELETE FROM runs WHERE created_at<? OR id NOT IN
+                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)""", (cutoff(RUNS_DAYS), RUNS_KEPT)).rowcount
+                # A conversation goes with its messages (ON DELETE CASCADE).
+                removed["conversations"] = db.execute("""DELETE FROM conversations WHERE id NOT IN
+                    (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?)""", (CONVERSATIONS_KEPT,)).rowcount
+                removed["messages"] = db.execute("""DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq,
+                    row_number() OVER (PARTITION BY conversation_id ORDER BY seq DESC) AS position FROM messages)
+                    WHERE position>?)""", (MESSAGES_KEPT,)).rowcount
+            # The rest of the trash stays for the user to restore.
+            removed["documents"] = db.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?",
+                                              (cutoff(TRASH_DAYS),)).rowcount
+        if any(removed.values()):
+            diagnostics.LOG.info("retention policy removed %s",
+                                 ", ".join(f"{count} {table}" for table, count in removed.items() if count))
+        return removed
+
+    def upkeep(self):
+        """Start the Wiki's daily upkeep in the background when it is due (UPKEEP_EVERY); quick otherwise. Electron's
+        routine runner calls it with every look at what is due (routines.due), so it needs no scheduler of its own."""
+        with self.upkeep_lock:
+            if time.monotonic() < self.upkeep_at or (self.upkeep_thread and self.upkeep_thread.is_alive()):
+                return
+            self.upkeep_at = time.monotonic() + UPKEEP_EVERY
+            self.upkeep_thread = threading.Thread(target=self.daily, name="upkeep", daemon=True)
+            self.upkeep_thread.start()
+
+    def daily(self):
+        """The upkeep's work: the daily backup once the newest is a day old (storage.backup_due), and the retention
+        policy once a day. What fails is logged and tried again at the next look."""
+        try:
+            if storage.backup_due(self.db.path):
+                self.backup("auto")
+        except UserError as error:  # Another backup under way, or a failure backup() has logged with its ID.
+            diagnostics.LOG.warning("daily backup not made: %s", error)
+        except Exception as error:
+            diagnostics.report(error, "", "자동 백업")
+        if time.time() - self.retained_at >= RETAIN_EVERY:
+            try:
+                if "runs" in self.retain():  # Without a backup yet the logs wait, and the next look tries again.
+                    self.retained_at = time.time()
+            except Exception as error:
+                diagnostics.report(error, "", "보존 정책")
+
+    def backup(self, kind):
+        """A backup of the Wiki of `kind` (auto or manual) in its backups folder (storage.snapshot): (it, the older
+        ones of its kind removed)."""
+        if not self.backup_lock.acquire(blocking=False):
+            raise UserError(BACKUP_BUSY)
+        try:
+            with self.db.connect() as db:
+                return storage.snapshot(db, self.db.path, kind)
+        except Exception as error:
+            raise UserError(diagnostics.report(
+                error, "백업을 만들지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "백업")) from None
+        finally:
+            self.backup_lock.release()
+
+    def wiki_backups(self, _):
+        """The Wiki's backups, the newest first, with the restore the next start carries out and how the last went."""
+        path = self.db.path
+        return {"folder": str(storage.backup_folder(path)), "keep": storage.KEEP, "backups": storage.backups(path),
+                "pending_restore": storage.pending_restore(path), "last_restore": storage.last_restore(path)}
+
+    def wiki_backup(self, _):
+        """Back up the Wiki now. Backups asked for keep their own newest storage.KEEP, beside the daily ones."""
+        made, removed = self.backup("manual")
+        return {**made, "removed": removed}
+
+    def wiki_restore_backup(self, p):
+        """Have the next start of the backend put the backup `file` in the Wiki's place, or take that back (`cancel`).
+        The Wiki cannot be replaced under the connections and jobs of the backend that runs (storage.py says why), so
+        the answer tells the screen that the app must be started again."""
+        cancel = p.get("cancel", False)
+        if not isinstance(cancel, bool):
+            raise UserError("복원 취소(cancel) 값을 확인해 주세요.")
+        if not self.backup_lock.acquire(blocking=False):
+            raise UserError(BACKUP_BUSY)
+        try:
+            if cancel:
+                cancelled = storage.cancel_restore(self.db.path)
+                return {"restart_required": False, "cancelled": cancelled,
+                        "message": "예약한 복원을 취소했습니다." if cancelled else "예약한 복원이 없습니다."}
+            request = storage.stage_restore(self.db.path, p.get("file"))
+        except UserError:
+            raise
+        except Exception as error:
+            raise UserError(diagnostics.report(
+                error, "복원을 준비하지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "복원 준비")) from None
+        finally:
+            self.backup_lock.release()
+        return {"restart_required": True, **request,
+                "message": f"앱을 다시 실행하면 Wiki를 백업 {request['file']}의 내용으로 되돌립니다. 지금의 Wiki는 백업 "
+                           "폴더에 wiki-before-restore-….db로 남깁니다. 되돌리지 않으려면 다시 실행하기 전에 복원을 "
+                           "취소해 주세요."}
 
     def wiki_clear_analysis(self, p):
         """Take back the AI analysis of the chosen documents (summary, keywords, relations, table of contents and a
