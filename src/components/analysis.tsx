@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, LoaderCircle, Sparkles, Square, X } from 'lucide-react';
 import { api, type AnalysisJob, type WikiDocument } from '@/lib/api';
-import { useApp } from './app';
 import { activeJob } from './import-jobs';
+import { useActions, useJobs } from './state';
 
 // Whether the LLM has post-processed a document: it has a summary, keywords and relations of its current text.
 // Editing the text takes them back; a failed second analysis keeps those of the first.
@@ -20,55 +19,8 @@ const LABELS = {
   none: ['분석 전', 'LLM으로 분석하지 않은, 가져온 그대로의 문서입니다.'],
 } as const;
 
-// The background analysis of chosen documents keeps running when the document list is gone, so the app follows
-// it and reloads the documents whenever one is done.
-export function useAnalysisJob(onProgress: () => Promise<void>, enabled: boolean) {
-  const [job, setJob] = useState<AnalysisJob | null>(null);
-  const [watching, setWatching] = useState(0);
-  const progress = useRef(onProgress);
-  progress.current = onProgress;
-  const shown = useRef('');
-  const done = useRef<string | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      let delay = 0;
-      try {
-        const next = await api<AnalysisJob | null>('analysis.status');
-        if (disposed) return;
-        if (next && activeJob(next.status)) delay = 1000;
-        // A document takes seconds to minutes: the screens draw again only when the job changed.
-        const text = JSON.stringify(next);
-        if (text !== shown.current) {
-          shown.current = text;
-          setJob(next);
-        }
-        // Not when the app starts, whose documents were just loaded.
-        const mark = next ? `${next.id}:${next.processed}:${next.status}` : '';
-        const first = done.current === null;
-        if (mark !== done.current) {
-          done.current = mark;
-          if (!first) await progress.current();
-        }
-      } catch {
-        delay = 3000; // The backend is busy; look again shortly.
-      }
-      if (!disposed && delay) timer = setTimeout(poll, delay);
-    }
-    void poll();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [watching, enabled]);
-  // Reloads the job after it is started, stopped or cleared; a running job is followed until it ends.
-  const watch = useCallback(() => setWatching((value) => value + 1), []);
-  const queued = useMemo(() => new Set<string>(job?.status === 'running' ? job.queue : []), [job]);
-  return useMemo(() => ({ job, queued, watch }), [job, queued, watch]);
-}
-
+// The background analysis of chosen documents keeps running when the document list is gone; the jobs' feed
+// (import-jobs.ts) follows it and reloads the documents whenever one is done.
 function stateOf(doc: Labelled, job: AnalysisJob | null, queued: ReadonlySet<string>) {
   if (doc.status === 'indexing' || (job && activeJob(job.status) && job.current?.id === doc.id))
     return 'running';
@@ -77,10 +29,10 @@ function stateOf(doc: Labelled, job: AnalysisJob | null, queued: ReadonlySet<str
   return doc.status === 'error' ? 'failed' : 'none';
 }
 
-// Whether the LLM has analyzed a document, wherever documents are listed and in the document window.
+// Whether the LLM has analyzed a document, wherever documents are listed and in the document window. A label draws
+// again only when its own document's state changes, not with every step of the analysis.
 export function AnalysisLabel({ doc }: { doc: Labelled }) {
-  const { analysis } = useApp();
-  const state = stateOf(doc, analysis.job, analysis.queued);
+  const state = useJobs((jobs) => stateOf(doc, jobs.analysis, jobs.queued));
   const [label, title] = LABELS[state];
   return (
     <span className={`status-label ${state}`} title={state === 'failed' ? doc.error : title}>
@@ -115,12 +67,14 @@ function statusText(job: AnalysisJob) {
 
 // The progress of the chosen documents' analysis, above the document list.
 export function AnalysisJobView() {
-  const { analysis, notify, openDocument } = useApp();
-  const job = analysis.job;
+  const job = useJobs((jobs) => jobs.analysis);
+  const { notify, openDocument, watchJobs } = useActions();
   if (!job || job.dismissed) return null;
   const running = activeJob(job.status);
-  const act = (method: string, params: Record<string, unknown> = {}) =>
-    api(method, params).then(analysis.watch, (error: Error) => notify(error.message, true));
+  const act = (
+    method: 'analysis.cancel' | 'analysis.dismiss',
+    params: Record<string, unknown> = {},
+  ) => api(method, params).then(watchJobs, (error: Error) => notify(error.message, true));
   return (
     <div className={`job analysis-job ${job.status}`}>
       {/* Only the state is live, so a screen reader hears it change, not every document counted. */}

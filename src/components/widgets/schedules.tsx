@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertCircle, Check, LoaderCircle, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import { api, dayTime, relative, type Run, type Schedule } from '@/lib/api';
-import { useApp } from '../app';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
 import {
@@ -11,10 +10,15 @@ import {
   type ScheduleDraft,
 } from '../prompt-schedules';
 import { useActiveRuns, useNow } from '../run-history';
+import { useActions, useConfigured, usePrompts, useQuery } from '../state';
 
 export default function SchedulesWidget() {
-  const { prompts, configured, openAdmin, notify, runsVersion, bumpRuns } = useApp();
-  const [schedules, setSchedules] = useState<Schedule[] | null>(null);
+  const prompts = usePrompts();
+  const configured = useConfigured();
+  const { openAdmin, notify, bumpRuns } = useActions();
+  // Loaded again when the runs or the templates change (its tags).
+  const { data, error } = useQuery<Schedule[]>('schedules.list');
+  const schedules = data ?? null;
   const [editing, setEditing] = useState<ScheduleDraft | null>(null);
   const [busy, setBusy] = useState('');
   // The schedules run now with ▶: each waits for the LLM, up to minutes, while the other rows stay usable.
@@ -23,19 +27,10 @@ export default function SchedulesWidget() {
   const [flipped, setFlipped] = useState<Record<string, boolean>>({});
   const running = new Set(useActiveRuns(bumpRuns).map((run) => run.schedule_id));
   const now = useNow(60_000);
+  useEffect(() => setFlipped({}), [data]);
   useEffect(() => {
-    let live = true;
-    api<Schedule[]>('schedules.list')
-      .then((items) => {
-        if (!live) return;
-        setSchedules(items);
-        setFlipped({});
-      })
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [prompts, runsVersion, notify]);
+    if (error) notify(error.message, true);
+  }, [error, notify]);
   async function act(key: string, action: () => Promise<void>) {
     setBusy(key);
     try {

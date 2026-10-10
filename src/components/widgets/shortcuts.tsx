@@ -1,5 +1,5 @@
 import { ArrowRight, BookOpen, FilePlus2, Import, Sparkles } from 'lucide-react';
-import { useApp } from '../app';
+import { useActions } from '../state';
 import { useWidgetFrame, WidgetHead } from '../dashboard';
 
 const SHORTCUTS = [
@@ -28,7 +28,7 @@ const SHORTCUTS = [
 ] as const;
 
 function useShortcuts() {
-  const { navigate, newDocument } = useApp();
+  const { navigate, newDocument } = useActions();
   const run = (id: (typeof SHORTCUTS)[number]['id']) =>
     id === 'new' ? newDocument() : id === 'import' ? navigate('library', 'import') : navigate(id);
   return SHORTCUTS.map((shortcut) => ({ ...shortcut, run: () => run(shortcut.id) }));

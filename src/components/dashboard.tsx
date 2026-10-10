@@ -12,7 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { WidgetHeight, WidgetPlacement, WidgetSize } from '@/lib/api';
-import { useApp } from './app';
+import { useActions, usePreferences } from './state';
 import ErrorBoundary from './error-boundary';
 import {
   fromTemplate,
@@ -54,7 +54,8 @@ function namesOf(layout: Placed[]) {
 // Home is a dashboard of widgets: the user picks a template, adds any content in any of its formats as often as they
 // like, and saves each widget's order, format, width and height.
 export default function Dashboard() {
-  const { preferences, savePreferences, notify } = useApp();
+  const preferences = usePreferences();
+  const { savePreferences, notify } = useActions();
   const [editing, setEditing] = useState(false);
   const [dragged, setDragged] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);

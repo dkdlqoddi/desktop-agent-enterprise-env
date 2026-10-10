@@ -29,7 +29,7 @@ import {
   type WebDiagnosis,
 } from '@/lib/api';
 import { httpUrl, isConfluencePageUrl, jiraIssueKey } from '@/lib/links';
-import { useApp } from '../app';
+import { useActions, useConfigured, usePreferences, useSettings } from '../state';
 import Confirm from '../confirm';
 import Diagnosis from '../diagnosis';
 import { rove } from '../roving';
@@ -252,7 +252,10 @@ function orderOf(methods: LoginMethod[], saved: string | null, learned: LoginSte
 }
 
 export default function SitesSection({ draft }: { draft?: { url: string; kind?: SiteKind } }) {
-  const { notify, configured, preferences, savePreferences, settings } = useApp();
+  const configured = useConfigured();
+  const preferences = usePreferences();
+  const settings = useSettings();
+  const { notify, savePreferences } = useActions();
   const external = configured && !localEndpoint(settings.base_url);
   const [state, setState] = useState<SitesState | null>(null);
   const [windows, setWindows] = useState<SiteWindows | null>(null);

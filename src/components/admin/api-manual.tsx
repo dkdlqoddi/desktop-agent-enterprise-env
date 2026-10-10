@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { LoaderCircle, Search } from 'lucide-react';
 import { api, type ApiManual, type ApiParam } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions } from '../state';
 
 const SCOPES: Record<string, string> = {
   public: '공개',
@@ -46,7 +46,7 @@ function Scope({ scope, slow }: { scope: string; slow?: boolean }) {
 // The manual of the local API, from the same document GET /api/v1/manual serves, so the page and the endpoint
 // always agree.
 export default function ApiManualSection() {
-  const { notify } = useApp();
+  const { notify } = useActions();
   const [doc, setDoc] = useState<ApiManual | null>(null);
   const [filter, setFilter] = useState('');
   useEffect(() => {

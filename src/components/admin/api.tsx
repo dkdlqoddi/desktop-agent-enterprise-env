@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BookOpenText, CircleAlert, Copy, ExternalLink, LoaderCircle } from 'lucide-react';
 import { api, clock, type ApiAccess, type ApiState } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions } from '../state';
 import Confirm from '../confirm';
 import { rove } from '../roving';
 
@@ -10,7 +10,7 @@ type Change = Partial<{ enabled: boolean; port: number; access: ApiAccess }>;
 // The local API and MCP server that AI tools on this PC use. The token never comes to this screen: the copy buttons
 // put it on the clipboard from the main process, already filled into each tool's settings.
 export default function ApiSection({ onManual }: { onManual: () => void }) {
-  const { notify } = useApp();
+  const { notify } = useActions();
   const [state, setState] = useState<ApiState | null>(null);
   const [port, setPort] = useState('');
   const [client, setClient] = useState('claude-code');

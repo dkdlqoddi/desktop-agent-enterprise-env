@@ -13,7 +13,7 @@ import {
   Unplug,
 } from 'lucide-react';
 import { api, type BackupMade, type SiteKind } from '@/lib/api';
-import { useApp } from './app';
+import { useActions, usePreferences, useStats, useStorageDirectory } from './state';
 import ApiSection from './admin/api';
 import ApiManualSection from './admin/api-manual';
 import LlmSettings from './admin/llm';
@@ -95,7 +95,8 @@ export default function Admin({
 }
 
 function Preferences() {
-  const { preferences, savePreferences, notify } = useApp();
+  const preferences = usePreferences();
+  const { savePreferences, notify } = useActions();
   const [theme, setTheme] = useState<Theme>(storedTheme);
   const layout = layoutOf(preferences.widgets);
   const template = templateOf(layout);
@@ -189,7 +190,9 @@ function Preferences() {
 }
 
 function About() {
-  const { storageDirectory, stats, notify } = useApp();
+  const storageDirectory = useStorageDirectory();
+  const stats = useStats();
+  const { notify } = useActions();
   const [backingUp, setBackingUp] = useState(false);
   async function run(method: 'diagnostics.copy' | 'diagnostics.open_folder') {
     try {

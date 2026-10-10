@@ -1,22 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { MessageSquareText, Trash2 } from 'lucide-react';
 import { api, date, type Conversation } from '@/lib/api';
-import { useApp } from '../app';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
+import { useActions, useQuery, useSearch } from '../state';
 
 export default function ConversationsWidget() {
-  const { search, notify, version } = useApp();
-  const [items, setItems] = useState<Conversation[] | null>(null);
+  const search = useSearch();
+  const { notify } = useActions();
+  // Loaded again whenever a conversation is saved or deleted (the search session invalidates them).
+  const { data: items, error } = useQuery<Conversation[]>('assistant.conversations');
   useEffect(() => {
-    let live = true;
-    api<Conversation[]>('assistant.conversations')
-      .then((value) => live && setItems(value))
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [search.saved, version, notify]);
+    if (error) notify(error.message, true);
+  }, [error, notify]);
   const current = search.state?.conversationId;
   return (
     <>

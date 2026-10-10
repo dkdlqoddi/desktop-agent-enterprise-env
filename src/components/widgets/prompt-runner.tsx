@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   AlertCircle,
   BookOpen,
@@ -20,19 +20,21 @@ import {
   type RunItem,
   type Schedule,
 } from '@/lib/api';
-import { useApp } from '../app';
 import { WidgetHead } from '../dashboard';
 import Markdown from '../markdown';
 import { ScheduleForm, scheduleDraft, type ScheduleDraft } from '../prompt-schedules';
 import { useNow } from '../run-history';
+import { useActions, useConfigured, usePrompts, useQuery } from '../state';
+
+const NO_RUNS: RunItem[] = [];
 
 export default function PromptWidget() {
-  const { prompts, configured, openAdmin, notify, refresh, openRun, runsVersion, bumpRuns } =
-    useApp();
+  const prompts = usePrompts();
+  const configured = useConfigured();
+  const { openAdmin, notify, refresh, openRun, bumpRuns } = useActions();
   const [promptId, setPromptId] = useState('');
   const [variables, setVariables] = useState<Record<string, string>>({});
   const [output, setOutput] = useState<Run | null>(null);
-  const [recent, setRecent] = useState<RunItem[]>([]);
   const [scheduling, setScheduling] = useState<ScheduleDraft | null>(null);
   const [busy, setBusy] = useState('');
   const [startedAt, setStartedAt] = useState(0);
@@ -40,17 +42,12 @@ export default function PromptWidget() {
   const prompt = prompts.find((p) => p.id === promptId) ?? prompts[0];
   const names = prompt ? variablesOf(prompt.template) : [];
   const categories = [...new Set(prompts.map((p) => p.category))];
-  // This prompt's latest runs until a new answer arrives.
-  useEffect(() => {
-    if (!prompt) return;
-    let live = true;
-    api<RunItem[]>('runs.list', { prompt_id: prompt.id, limit: 5 })
-      .then((items) => live && setRecent(items))
-      .catch(() => live && setRecent([]));
-    return () => {
-      live = false;
-    };
-  }, [prompt, output, runsVersion]);
+  // This prompt's latest runs until a new answer arrives; loaded again when the runs change (a run ends).
+  const latest = useQuery<RunItem[]>(
+    'runs.list',
+    prompt ? { prompt_id: prompt.id, limit: 5 } : null,
+  );
+  const recent = (!latest.error && latest.data) || NO_RUNS;
   async function act(key: string, action: () => Promise<void>) {
     setBusy(key);
     try {

@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { AlertCircle, Check } from 'lucide-react';
-import { api, seconds, type RunStats } from '@/lib/api';
-import { useApp } from '../app';
+import { seconds, type RunStats } from '@/lib/api';
 import { WidgetHead } from '../dashboard';
 import RunHistory, { RunChart, STATUS_FILL } from '../run-history';
+import { useActions, useQuery, useStats } from '../state';
 import { Loading, Metrics } from './parts';
 
 export default function HistoryWidget() {
-  const { stats } = useApp();
+  const stats = useStats();
   return (
     <>
       <WidgetHead id="history" title="실행 기록" count={undefined}>
@@ -20,20 +20,17 @@ export default function HistoryWidget() {
 
 const DAYS = 14;
 
-// The run totals of the last two weeks, as the run history counts them.
+// The run totals of the last two weeks, as the run history counts them; the chart and the numbers share them.
 function useRunStats() {
-  const { runsVersion, notify } = useApp();
-  const [stats, setStats] = useState<RunStats | null>(null);
+  const { notify } = useActions();
+  const { data, error } = useQuery<RunStats>('runs.stats', {
+    days: DAYS,
+    timezone_offset: new Date().getTimezoneOffset(),
+  });
   useEffect(() => {
-    let live = true;
-    api<RunStats>('runs.stats', { days: DAYS, timezone_offset: new Date().getTimezoneOffset() })
-      .then((value) => live && setStats(value))
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [runsVersion, notify]);
-  return stats;
+    if (error) notify(error.message, true);
+  }, [error, notify]);
+  return data ?? null;
 }
 
 // The run history's daily chart alone.

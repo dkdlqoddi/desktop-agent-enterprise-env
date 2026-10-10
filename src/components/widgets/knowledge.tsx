@@ -1,30 +1,26 @@
 import { useEffect, useState } from 'react';
-import { api, type Graph } from '@/lib/api';
-import { useApp } from '../app';
+import type { Graph } from '@/lib/api';
 import { useWidgetFrame, WidgetHead } from '../dashboard';
 import KnowledgeExplorer, { type Panel } from '../graph';
+import { useActions, useQuery, useStats } from '../state';
 import { Bars, Loading } from './parts';
 
-// Analysis and imports change the keywords; the graph loads again with every document change.
+// Analysis and imports change the keywords; the graph loads again with every document change (its tag), once for all
+// the widgets that show it.
 function useGraph() {
-  const { version, notify } = useApp();
-  const [graph, setGraph] = useState<Graph | null>(null);
+  const { notify } = useActions();
+  const { data, error } = useQuery<Graph>('wiki.graph');
   useEffect(() => {
-    let live = true;
-    api<Graph>('wiki.graph')
-      .then((data) => live && setGraph(data))
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [version, notify]);
-  return graph;
+    if (error) notify(error.message, true);
+  }, [error, notify]);
+  return data ?? null;
 }
 
 const NO_KEYWORDS = '문서를 AI로 분석하면 키워드가 모여 이곳에 놓입니다.';
 
 export default function KnowledgeWidget() {
-  const { stats, searchKeyword, openDocument } = useApp();
+  const stats = useStats();
+  const { searchKeyword, openDocument } = useActions();
   const graph = useGraph();
   const [panel, setPanel] = useState<Panel>('keywords');
   return (
@@ -55,7 +51,7 @@ export default function KnowledgeWidget() {
 
 // The keywords most documents share, as bars; a keyword searches for itself.
 export function KeywordRanking() {
-  const { searchKeyword } = useApp();
+  const { searchKeyword } = useActions();
   const { size } = useWidgetFrame('knowledge');
   const graph = useGraph();
   const top = [...(graph?.nodes ?? [])]
@@ -89,7 +85,7 @@ export function KeywordRanking() {
 
 // Up to 40 keywords in alphabetical order, larger the more documents share them; a keyword searches for itself.
 export function KeywordCloud() {
-  const { searchKeyword } = useApp();
+  const { searchKeyword } = useActions();
   const graph = useGraph();
   const words = [...(graph?.nodes ?? [])]
     .sort((a, b) => b.count - a.count)

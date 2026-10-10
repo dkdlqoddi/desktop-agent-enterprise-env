@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('assistant:delta', listener);
       return () => ipcRenderer.removeListener('assistant:delta', listener);
     },
+    // A background job (an import, the AI analysis) or the automatic routines changed while the main process followed
+    // them (electron/job-progress.cjs): { seq, kind, job } or { seq, kind: 'routines', routines }.
+    onJobProgress: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('job:progress', listener);
+      return () => ipcRenderer.removeListener('job:progress', listener);
+    },
     // The local API's commands to the screen (open a document, read the screen, …), each answered once.
     onControl: (handler) => {
       const listener = async (_event, command) => {

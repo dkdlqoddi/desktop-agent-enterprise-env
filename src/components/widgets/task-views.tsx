@@ -10,7 +10,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, clock, date, localDay, type Task } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions } from '../state';
 import { useWidgetFrame, WidgetHead } from '../dashboard';
 import EmptyState from '../empty-state';
 import { useNow } from '../run-history';
@@ -22,7 +22,7 @@ type Status = Task['status'];
 
 // Saves one change to the tasks and reloads them, reporting a failure; the formats share it.
 function useTaskAction() {
-  const { notify } = useApp();
+  const { notify } = useActions();
   const { refresh } = useAssistantData();
   const [busy, setBusy] = useState(false);
   async function act(action: () => Promise<unknown>) {
@@ -48,7 +48,7 @@ const overdue = (task: Task, now: number) =>
 
 // Open tasks to tick off, the most urgent first (the list comes ordered by deadline); a line adds one.
 export function TaskChecklist() {
-  const { navigate } = useApp();
+  const { navigate } = useActions();
   const { tasks, briefing } = useAssistantData();
   const { size } = useWidgetFrame('tasks');
   const { busy, act, setStatus } = useTaskAction();

@@ -1,7 +1,7 @@
 import { ArrowRight, FileText, Plus } from 'lucide-react';
 import { date, plain, type WikiDocument } from '@/lib/api';
 import { analyzed } from '../analysis';
-import { useApp } from '../app';
+import { useActions, useDocuments, useStats } from '../state';
 import { useWidgetFrame, WidgetHead } from '../dashboard';
 import EmptyState from '../empty-state';
 import { ICONS } from './documents';
@@ -21,7 +21,7 @@ const SOURCES: Record<Kind, string> = {
 const kindOf = (doc: WikiDocument): Kind => doc.source?.kind ?? 'written';
 
 function NoDocuments() {
-  const { navigate } = useApp();
+  const { navigate } = useActions();
   return (
     <EmptyState
       icon={FileText}
@@ -39,7 +39,8 @@ function NoDocuments() {
 
 // The latest documents as cards: where each came from, its summary and keywords.
 export function DocumentCards() {
-  const { documents, openDocument, newDocument, navigate } = useApp();
+  const documents = useDocuments();
+  const { openDocument, newDocument, navigate } = useActions();
   const { size } = useWidgetFrame('documents');
   const shown = documents.slice(0, { s: 3, m: 4, l: 6, xl: 8 }[size]);
   return (
@@ -90,7 +91,8 @@ export function DocumentCards() {
 
 // How much the Wiki holds and how much of it the LLM has analyzed.
 export function DocumentStats() {
-  const { documents, stats } = useApp();
+  const documents = useDocuments();
+  const stats = useStats();
   const done = documents.filter(analyzed).length;
   const share = documents.length ? Math.round((done / documents.length) * 100) : 0;
   return (
@@ -118,7 +120,7 @@ export function DocumentStats() {
 
 // How many documents each kind of source brought, the largest first.
 export function DocumentSources() {
-  const { documents } = useApp();
+  const documents = useDocuments();
   const counts = new Map<Kind, number>();
   for (const doc of documents) counts.set(kindOf(doc), (counts.get(kindOf(doc)) ?? 0) + 1);
   return (
