@@ -23,7 +23,7 @@
 AI 도구(Claude Code 등)   --127.0.0.1 REST·MCP, Bearer 토큰, 접근 등급--> Electron 메인
 ```
 
-- **렌더러**: `sandbox`·`contextIsolation`, 스크립트 해시 기반 CSP, 외부 이동·새 창·webview 차단. 가져온 HTML은 allowlist로 정제해 shadow DOM에 넣고 외부 이미지는 불러오지 않습니다.
+- **렌더러**: `sandbox`·`contextIsolation`, 스크립트 해시 기반 CSP, 외부 이동·새 창·webview 차단. 가져온 HTML은 allowlist로 정제해 shadow DOM에 넣고 외부 이미지는 불러오지 않습니다. `agent://` 프로토콜의 경로·CSP(`electron/protocol.cjs`), IPC를 보낸 곳과 `ALLOWED`(`electron/trusted-sender.cjs`), 정제기의 XSS 사례 95가지는 메인 프로세스 테스트(`tests/protocol.test.cjs`, `tests/trusted-sender.test.cjs`, `tests/sanitize.test.cjs`)가 확인합니다.
 - **가져온 문서의 프롬프트 인젝션**: MCP 응답은 매번 바뀌는 ID의 `<<<untrusted>>>` 마커로 감쌉니다. 삭제·비우기 같은 파괴적 확인 버튼은 AI 도구가 ‘전체’ 등급에서만 누를 수 있고, 문서 삭제는 휴지통으로 가므로 복원할 수 있습니다.
 - **브라우저 자동화**: Chromium 렌더러 샌드박스를 켠 채 실행합니다. 사이트 주소는 https가 기본이며 http로 내려가지 않습니다(http는 `http://`를 명시한 사이트만). 비밀번호는 등록한 사이트와, 처음 로그인에 성공한 인증 화면 주소(계정에 고정)에만, 비밀번호 입력란에만 입력합니다. LLM이 고른 클릭은 다른 호스트로 이동하지 못합니다. 로그인·접속 실패 시 AI 분석은 기본으로 꺼져 있습니다.
 - **로컬 API·MCP**: 기본 꺼짐, `127.0.0.1` 전용, Host·Origin 검사(DNS rebinding 차단), 본문 1MiB 상한. 접근 등급(조회만 / 조회·변경·앱 제어 / 전체)으로 메서드를 제한하며, 이 PC의 파일 가져오기, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, 설정 변경(CA 인증서 경로의 다른 컴퓨터 경로 포함)은 ‘전체’ 등급에서만 가능합니다. ‘조회·변경·앱 제어’ 등급이 백업을 거듭 만들어도 직접 만든 백업끼리만 오래된 것이 지워지고, 하루 한 번의 자동 백업은 남습니다.

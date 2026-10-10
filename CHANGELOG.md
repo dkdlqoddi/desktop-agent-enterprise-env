@@ -44,12 +44,14 @@
 - 어두운 테마와 화면 테마 설정, 화면 배율 단축키(`Ctrl` + `=`·`-`·`0`, `Ctrl` + 휠, 50~200%)
 - LLM 설정에 최대 출력 토큰, 컨텍스트 크기, 동시 요청 수를 추가했습니다. **관리 → LLM 연결 → 고급 설정**에서 바꾸며, 범위를 벗어난 값은 저장하기 전에 그 칸에서 알려 줍니다.
 - 진단 복사본에 빌드한 커밋을 적습니다.
-- 개발 도구: 터미널 로그(`PRIVATE_AGENT_LOG_CONSOLE`), 로그 수준(`PRIVATE_AGENT_LOG_LEVEL`), 파일 변경 시 자동 재시작, debugpy 연결(`PRIVATE_AGENT_DEBUGPY`), 소스 백엔드로 E2E 실행, ruff 검사·형식(`npm run lint:python`, `npm run format:python`), 서드파티 고지 생성(`npm run notices`), 화면 메서드 타입 생성(`npm run generate:methods`), 커버리지 보고서
+- 개발 도구: 터미널 로그(`PRIVATE_AGENT_LOG_CONSOLE`), 로그 수준(`PRIVATE_AGENT_LOG_LEVEL`), 파일 변경 시 자동 재시작, debugpy 연결(`PRIVATE_AGENT_DEBUGPY`), 소스 백엔드로 E2E 실행, ruff 검사·형식(`npm run lint:python`, `npm run format:python`), ESLint 검사(`npm run lint`: 화면의 TypeScript·React 훅·접근성·Next.js 규칙, Electron 메인 프로세스의 처리되지 않은 Promise), Electron 메인 프로세스와 스크립트의 타입 검사(`npm run typecheck:electron`), 서드파티 고지 생성(`npm run notices`), 화면 메서드 타입 생성(`npm run generate:methods`), 커버리지 보고서
+- 테스트: `agent://` 프로토콜(경로 이탈, CSP 해시)과 IPC를 보낸 곳·`ALLOWED` 검사의 단위 테스트, 가져온 HTML 정제기의 XSS 사례 95가지(jsdom)
 - CI: PR마다 Node.js 22·24와 Python 3.10·3.13(Ubuntu)·3.13(Windows) 검사, 매일 밤 Linux 가상 디스플레이 E2E(`e2e-linux.yml`), 접근성 검사(`tests/a11y.spec.ts`)
 - 문서: [LICENSE](LICENSE)(MIT), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [SECURITY.md](SECURITY.md), [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [PRIVACY.md](PRIVACY.md), 카탈로그에서 만드는 [API 문서](docs/api.md)와 [OpenAPI](docs/openapi.json)(`npm run docs:api`)
 
 ### 변경
 
+- 개발에 필요한 Node.js가 22.13 이상입니다(ESLint 10, jsdom 29).
 - 문서 삭제는 휴지통으로 옮깁니다. 영구 삭제(`wiki.purge`)는 허용 범위 ‘전체’에서만 할 수 있습니다.
 - LLM 호출: HTTP 429·408·5xx·529와 끊긴 연결은 지수 백오프로 다시 시도해 모두 네 번까지 요청하고, `Retry-After`를 따릅니다. 모두 설정한 응답 제한 시간 안에서 이루어집니다. 사용자가 기다리는 요청이 일괄 작업보다 먼저 가며, 출력 한도에서 잘린 답변은 그렇다고 표시합니다.
 - 자동 작업과 예약 프롬프트를 하나의 스케줄러가 작업자 3개로 실행합니다. 작업마다 실행 시간 제한이 있고, 절전에서 깨어나거나 화면 잠금을 풀 때도 실행할 것을 확인합니다.
@@ -63,6 +65,9 @@
 
 ### 수정
 
+- 진단 정보 복사, API 설정 복사, `clipboard.write`가 클립보드에 쓰기를 마친 뒤 답하고, 쓰지 못하면 오류를 알립니다. 전에는 쓰기 전에 성공으로 답하고 실패는 드러나지 않았습니다.
+- 앱 화면을 처음 불러오지 못하면 그 이유를 앱 로그에 남깁니다.
+- 손상된 시연 녹화 파일은 형식 오류로 알립니다(영상 트랙 헤더가 없을 때 내부 오류가 보였습니다).
 - 로그와 진단 복사본에서 `Authorization: Bearer <토큰>`은 토큰까지, 쿠키 헤더는 쿠키 전부를 가립니다. 전에는 'Bearer'라는 낱말과 첫 쿠키만 가려졌습니다.
 - 중지한 스트리밍 답변이 Windows에서도 바로 멈춥니다.
 - 검색 색인이 있는 Wiki에서 시작 검사가 시간 안에 끝나지 않으면, 손상으로 보지 않고 검사 없이 엽니다.

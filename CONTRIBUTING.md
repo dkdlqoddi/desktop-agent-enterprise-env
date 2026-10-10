@@ -30,7 +30,7 @@ npm run dev
 
 ## 테스트
 
-`npm run check`는 TypeScript 검사, Python 테스트, Electron 메인 프로세스 테스트를 차례로 실행합니다. 하나만 실행하려면 다음처럼 합니다.
+`npm run check`는 ESLint 검사, TypeScript 검사(화면, Electron 메인 프로세스), Python 테스트, Electron 메인 프로세스 테스트를 차례로 실행합니다. 하나만 실행하려면 다음처럼 합니다.
 
 ```bash
 # Python: 파일 하나, 테스트 하나, 이름으로 고르기(경로와 함께)
@@ -89,14 +89,21 @@ LLM 연결의 초기값은 `.env.example`의 이름(`BASE_URL`, `API_KEY`, `MODE
 
 ```bash
 npm run format          # Prettier로 고치기
-npm run format:check    # Prettier 검사: src, electron, scripts, tests, 루트의 *.json·*.ts·*.md, docs/*.md, 워크플로
-npm run typecheck       # TypeScript 검사
+npm run format:check    # Prettier 검사: src, electron, scripts, tests, 루트의 *.json·*.ts·*.mjs·*.md, docs/*.md, 워크플로
+npm run lint            # ESLint 검사(경고도 실패): 화면, Electron 메인 프로세스와 preload, 스크립트, 테스트
+npm run lint:fix        # ESLint로 고칠 수 있는 것을 고치기
+npm run typecheck       # 화면의 TypeScript 검사(tsconfig.json)
+npm run typecheck:electron  # electron/*.cjs와 scripts/*.mjs의 TypeScript 검사(checkJs, tsconfig.electron.json)
 npm run lint:python     # ruff 검사(npm run lint:python -- --fix는 고칠 수 있는 것을 고침)
 npm run format:python   # ruff로 백엔드 형식 맞추기
 npm run format:python:check
 ```
 
-Prettier 설정은 `.prettierrc.json`, ruff 설정은 `backend/pyproject.toml`의 `[tool.ruff]`에 있습니다. ruff 버전은 `backend/constraints.txt`에 고정되어 있습니다.
+Prettier 설정은 `.prettierrc.json`, ESLint 설정은 `eslint.config.mjs`, Electron 코드의 타입 검사 설정은 `tsconfig.electron.json`, ruff 설정은 `backend/pyproject.toml`의 `[tool.ruff]`에 있습니다. ruff 버전은 `backend/constraints.txt`에, ESLint와 플러그인 버전은 `package.json`에 고정되어 있습니다.
+
+- 형식은 Prettier만 맞추고, ESLint에는 배치에 관한 규칙이 없습니다.
+- 이 코드에 맞지 않는 규칙은 `eslint.config.mjs`에서 이유와 함께 끄고(전체 또는 해당 파일만), 파일 전체를 끄는 인라인 주석은 쓰지 않습니다. 훅의 의존성 목록에서 값을 일부러 뺀 줄만 `// eslint-disable-next-line react-hooks/exhaustive-deps -- 이유`로 이유를 적습니다. 쓰이지 않게 된 비활성화 주석은 검사를 실패시킵니다.
+- 메인 프로세스 코드는 JavaScript이므로 타입은 JSDoc으로 적습니다(`@param`, `@type`). 매개변수 타입이 없으면 `any`로 보고, 기본값 때문에 타입이 너무 좁게 추론되는 곳에만 JSDoc을 붙입니다. `tests/*.test.cjs`는 타입 검사에서 뺍니다.
 
 ## 생성 파일
 
@@ -140,7 +147,7 @@ GitHub의 blame 화면은 이 파일을 알아서 읽습니다. 리베이스나 
 
 `.github/workflows/check.yml`이 `main`으로의 푸시와 모든 PR에서 실행됩니다.
 
-- Node.js 22·24: `npm ci`, `npm run format:check`, `npm run typecheck`, `npm run test:main`(생성 파일이 최신인지 포함), `npm run build:web`
+- Node.js 22·24: `npm ci`, `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run typecheck:electron`, `npm run test:main`(생성 파일이 최신인지 포함), `npm run build:web`
 - Python 3.10·3.13(Ubuntu)과 3.13(Windows): `npm run setup:python`, `npm run setup:browser`, `npm run test:python`(`PRIVATE_AGENT_REQUIRE_BROWSER=1`이라 브라우저 테스트도 실행)
 - Python 3.13(Ubuntu)에서 한 번: `npm run lint:python`, `npm run format:python:check`, `npm run notices:check`
 

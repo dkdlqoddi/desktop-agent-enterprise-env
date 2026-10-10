@@ -54,7 +54,9 @@ AI 코딩 에이전트가 이 저장소에서 지킬 규칙입니다. 위의 Nex
 
 ```bash
 npm run format          # 또는 npm run format:check
+npm run lint            # ESLint(경고도 실패). 고칠 수 있는 것은 npm run lint:fix
 npm run typecheck
+npm run typecheck:electron   # electron/*.cjs, scripts/*.mjs(JSDoc 타입)
 npm run test:main
 npm run test:python     # 바꾼 부분만: npm run test:python -- backend/tests/test_x.py
 npm run lint:python && npm run format:python:check   # 백엔드를 바꿨을 때

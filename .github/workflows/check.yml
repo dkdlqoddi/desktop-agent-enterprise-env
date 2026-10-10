@@ -1,6 +1,7 @@
 name: Check
-# Every push to main and every pull request, as jobs that run side by side: formatting, types, the Electron main
-# process's tests and the static export of the screens on Node.js 22 and 24; the Python tests, with the browser tests
+# Every push to main and every pull request, as jobs that run side by side: formatting, ESLint, the types of the screens
+# and of the Electron main process, its tests and the static export of the screens on Node.js 22 and 24; the Python
+# tests, with the browser tests
 # on Playwright's Chromium, on Linux with the oldest and the newest Python the backend supports and on Windows, the
 # backend's lint and formatting (ruff), and whether THIRD_PARTY_NOTICES.md is up to date. The Windows exe with its E2E
 # tests is build.yml, on a v* tag or by hand.
@@ -36,7 +37,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run format:check
+      - run: npm run lint
       - run: npm run typecheck
+      - run: npm run typecheck:electron
       - run: npm run test:main
       - run: npm run build:web
         env:

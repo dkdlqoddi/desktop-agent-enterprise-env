@@ -37,7 +37,7 @@
     "test:e2e": "node scripts/test-e2e.mjs",
     "test:main": "node --test \"tests/*.test.cjs\"",
     "test:main:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"electron/**\" \"tests/*.test.cjs\"",
-    "check": "npm run typecheck && npm run test:python && npm run test:main",
+    "check": "npm run lint && npm run typecheck && npm run typecheck:electron && npm run test:python && npm run test:main",
     "notices": "node scripts/third-party-notices.mjs",
     "notices:check": "node scripts/third-party-notices.mjs --check",
     "generate:methods": "node scripts/generate-methods.mjs",
