@@ -1163,7 +1163,7 @@ def test_backups_are_kept_by_file_the_newest_five_of_each(written, tmp_path, mon
     folder.mkdir()
     # A copy an earlier version made, which no record names, and a file the user put there stay.
     (folder / "20260101-000000 예전.docx").write_bytes(b"old")
-    (folder / "메모.txt").write_text("사용자가 둔 파일")
+    (folder / "메모.txt").write_text("사용자가 둔 파일", encoding="utf-8")
     other = tmp_path / "다른 파일.docx"
     other.write_text("다른 내용", encoding="utf-8")
     theirs = writeback.backup(other, "other")

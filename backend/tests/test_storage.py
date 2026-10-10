@@ -59,7 +59,7 @@ def test_what_a_stopped_copy_left_is_removed_and_the_copy_made_again(tmp_path):
     # Electron stopped a copy that made no progress: its file and SQLite's journal stay behind.
     (folder / "wiki.db.0123abcd.copying").write_bytes(b"half a database")
     (folder / "wiki.db.0123abcd.copying-journal").write_bytes(b"journal")
-    (folder / "notes.txt").write_text("사용자 파일")
+    (folder / "notes.txt").write_text("사용자 파일", encoding="utf-8")
     migrate_database(source, folder / "wiki.db")
     assert sorted(path.name for path in folder.iterdir()) == ["notes.txt", "wiki.db"]
 

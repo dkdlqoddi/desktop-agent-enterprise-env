@@ -28,7 +28,7 @@ def test_fresh_install_cannot_send_to_an_unconfigured_provider(monkeypatch):
 
 
 def test_builtin_login_steps_have_no_urls_or_absolute_page_layouts():
-    catalog = json.loads((Path(__file__).resolve().parents[2] / "electron/login-methods.json").read_text())
+    catalog = json.loads((Path(__file__).resolve().parents[2] / "electron/login-methods.json").read_text(encoding="utf-8"))
     for method in catalog["methods"]:
         targets = method["detect"] + [step.get("target", "") for step in method["steps"]]
         assert all(not target.startswith("xpath=/html/") for target in targets)

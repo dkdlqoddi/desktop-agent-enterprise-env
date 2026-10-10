@@ -12,7 +12,9 @@ const pytest = [
   ...(targets.length ? targets : ['backend/tests']),
   '-q',
 ];
-const env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1' };
+// UTF-8 mode, as the app runs its backend (main.cjs sets it; the frozen backend has -X utf8): on Windows the tests
+// would otherwise read and write text files in the code page and fail on Korean names.
+const env = { PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1', PYTHONUTF8: '1' };
 if (coverage) {
   const measured = ['--source=backend', '--omit=*/backend/tests/*,*/backend/.venv/*'];
   runPython(['-m', 'coverage', 'run', '--branch', ...measured, ...pytest], env);

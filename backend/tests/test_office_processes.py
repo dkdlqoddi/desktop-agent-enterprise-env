@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent import word_converter
+from agent import office_processes, word_converter
 from agent.llm import UserError
 from agent.office_converter import OfficeConverter
 from agent.office_processes import Watch, dialog, system
@@ -104,7 +104,7 @@ def test_a_hidden_office_that_shows_only_a_dialog_box_is_still_ended():
     assert dialog("#32770") and dialog("bosa_sdm_XL9") and not dialog("OpusApp") and not dialog("XLMAIN")
 
 
-def test_password_prompts_powerpoint_shows_for_the_worker_are_cancelled():
+def test_password_prompts_powerpoint_shows_for_the_worker_are_cancelled(monkeypatch):
     windows = FakeWindows({10: process("POWERPNT.EXE", 100.0), 30: process("EXCEL.EXE", 100.0)},
                           windows=[(100, 10, "암호", "#32770")])  # The user was asked before the import began.
     watch = Watch(["PowerPoint"], windows=windows, clock=iter([1000.0, 1010.0]).__next__)
@@ -113,8 +113,11 @@ def test_password_prompts_powerpoint_shows_for_the_worker_are_cancelled():
                         (103, 10, "발표.pptx - PowerPoint", "PPTFrameClass")]
     assert watch.refuse_prompts() is True and windows.closed == [101]
     assert watch.refuse_prompts() is False and windows.closed == [101]
-    # Only PowerPoint asks: Word and Excel are given an empty password and fail at once.
-    assert not Watch(["Word"], windows=windows).prompting and not Watch(["PowerPoint"], windows=None).prompting
+    # Only PowerPoint asks: Word and Excel are given an empty password and fail at once. Where Windows lists no windows
+    # (no pywin32, as off Windows: system() is None), no prompt can be cancelled either.
+    assert not Watch(["Word"], windows=windows).prompting
+    monkeypatch.setattr(office_processes, "system", lambda: None)
+    assert not Watch(["PowerPoint"], windows=None).prompting
     # Windows that will not list its windows leaves the time limit as it was, and never fails the import.
     windows.visible = lambda: 1 / 0
     assert not Watch(["PowerPoint"], windows=windows).prompting

@@ -750,7 +750,7 @@ def test_a_streamed_answer_comes_as_events_before_its_answer_and_stops_when_aske
             """The events before the answer of request `ident`, and that answer."""
             events = []
             while True:
-                message = lines.get(timeout=20)
+                message = lines.get(timeout=120)  # A cold start of the backend on a slow CI runner takes a while.
                 if message.get("id") == ident:
                     return events, message
                 if "id" not in message:
