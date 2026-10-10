@@ -366,9 +366,11 @@ function LibraryDocuments() {
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [sentinel, box]);
+  // Whether the documents shown are those of the current filters (useDocumentPages), not a ref.
+  const currentList = list.current;
   useEffect(() => {
-    if (near && list.current && !loading && !error && next !== null) void more().catch(() => {});
-  }, [near, list.current, loading, error, next, more]);
+    if (near && currentList && !loading && !error && next !== null) void more().catch(() => {});
+  }, [near, currentList, loading, error, next, more]);
 
   const shownAll = items.length > 0 && chosen.length === items.length;
   const nothing = list.loaded && list.current && !items.length;

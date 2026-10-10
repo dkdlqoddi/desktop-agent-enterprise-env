@@ -99,7 +99,7 @@ class JobProgress {
     this.timer = undefined;
     if (this.stopped) return;
     this.running = true;
-    let next = null;
+    let next;
     try {
       if (!this.ready()) throw new Error('not ready');
       const read = await this.readJobs();

@@ -68,6 +68,7 @@ export function AssistantData({
     const timer = setInterval(load, 30000);
     window.addEventListener('focus', load);
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- a counter, not a DOM node: stale loads stop answering
       generation.current++;
       clearInterval(timer);
       window.removeEventListener('focus', load);

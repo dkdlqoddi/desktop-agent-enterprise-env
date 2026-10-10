@@ -170,7 +170,7 @@ class ApiServer {
           : error.code === 'EACCES'
             ? `포트 ${port}을(를) 열 수 없습니다(사용 권한 또는 Windows 예약 포트). 다른 포트를 지정해 주세요.`
             : `로컬 API 서버를 시작하지 못했습니다: ${error.message}`;
-      throw new Error(this.error);
+      throw new Error(this.error, { cause: error });
     }
     server.on('error', () => {});
     this.server = server;

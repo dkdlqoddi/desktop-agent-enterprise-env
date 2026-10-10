@@ -57,7 +57,7 @@ export function useActiveRuns(onDone: () => void) {
       } catch {
         /* The next poll retries; actions report their own errors. */
       }
-      if (live) timer = setTimeout(poll, previous.size ? 2500 : 5000);
+      if (live) timer = setTimeout(() => void poll(), previous.size ? 2500 : 5000);
     };
     void poll();
     return () => {

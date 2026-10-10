@@ -23,8 +23,8 @@ export function npmCiSteps() {
 
 export function runWorkflow(steps, env = {}) {
   const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 22 || (major === 22 && minor < 12)) {
-    console.error('Node.js 22.12 이상이 필요합니다. Node.js 설치와 PATH를 확인하세요.');
+  if (major < 22 || (major === 22 && minor < 13)) {
+    console.error('Node.js 22.13 이상이 필요합니다. Node.js 설치와 PATH를 확인하세요.');
     process.exit(1);
   }
   // npm provides its CLI path, including when launched through npm.cmd on Windows.

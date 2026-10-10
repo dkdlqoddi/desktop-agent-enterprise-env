@@ -138,8 +138,9 @@ async function readUserText(file, { readProtected, what = '파일', limit = MAX_
       throw new Error(`${what}이 너무 큽니다(${Math.floor(limit / 1024 / 1024)}MB 이하): ${file}`);
     bytes = await fs.readFile(file);
   } catch (error) {
-    if (error.code === 'ENOENT') throw new Error(`${what}을 찾을 수 없습니다: ${file}`);
-    if (error.code) throw new Error(`${what}을 읽지 못했습니다: ${file}`);
+    if (error.code === 'ENOENT')
+      throw new Error(`${what}을 찾을 수 없습니다: ${file}`, { cause: error });
+    if (error.code) throw new Error(`${what}을 읽지 못했습니다: ${file}`, { cause: error });
     throw error;
   }
   const text = decodeText(bytes);
@@ -152,7 +153,9 @@ async function readUserText(file, { readProtected, what = '파일', limit = MAX_
   try {
     return await readProtected(file);
   } catch (error) {
-    throw new Error(`${encrypted} 메모장으로도 읽지 못했습니다: ${error.message}`);
+    throw new Error(`${encrypted} 메모장으로도 읽지 못했습니다: ${error.message}`, {
+      cause: error,
+    });
   }
 }
 
@@ -368,7 +371,8 @@ async function prepareWiki(folder, keep = []) {
   try {
     entries = await fs.readdir(folder);
   } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error(`시연 Wiki 폴더를 열지 못했습니다: ${folder}`);
+    if (error.code !== 'ENOENT')
+      throw new Error(`시연 Wiki 폴더를 열지 못했습니다: ${folder}`, { cause: error });
     entries = null;
   }
   if (entries && !entries.includes(MARKER)) {

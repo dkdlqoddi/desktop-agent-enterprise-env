@@ -573,7 +573,9 @@ class DemoRun {
         failures = 0;
       } catch (error) {
         if (++failures >= 30)
-          throw new Error(`가져오기 진행 상황을 읽지 못했습니다: ${error.message}`);
+          throw new Error(`가져오기 진행 상황을 읽지 못했습니다: ${error.message}`, {
+            cause: error,
+          });
       }
       if (job?.id === id) {
         missing = 0;
@@ -886,7 +888,7 @@ async function renderAgain(folder, { recorder, readText }) {
     project = JSON.parse(await readText(path.join(folder, FILES.project), '편집 정보 파일'));
   } catch (error) {
     if (!/찾을 수 없습니다/.test(error.message))
-      throw new Error(`${FILES.project}를 읽지 못했습니다: ${error.message}`);
+      throw new Error(`${FILES.project}를 읽지 못했습니다: ${error.message}`, { cause: error });
   }
   // Captions of a long demo are larger than a list may be (about 700 KB an hour of progress captions).
   const cues = parseSrt(

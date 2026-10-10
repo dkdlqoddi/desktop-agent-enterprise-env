@@ -115,7 +115,7 @@ class StorageManager {
     } catch (error) {
       if (error.code === 'ENOENT') return null;
       this.unreadable = `Wiki 저장 위치 설정 파일(storage.json)을 읽지 못했습니다(${error.code || error.message}). 백신 등 다른 프로그램이 파일을 잡고 있을 수 있으니 잠시 후 앱을 다시 실행해 주세요. 저장된 위치를 덮어쓰지 않도록 이번 실행에서는 저장 위치를 고를 수 없습니다.`;
-      throw new Error(this.unreadable);
+      throw new Error(this.unreadable, { cause: error });
     }
     let record = null;
     try {
@@ -162,6 +162,7 @@ class StorageManager {
         error.code === 'ETIMEDOUT'
           ? `저장된 Wiki 폴더가 ${Math.round(this.checkLimit / 1000)}초 안에 응답하지 않습니다. 네트워크 드라이브 연결을 확인한 뒤 앱을 다시 실행하거나 ‘이 위치에 저장하고 시작’을 눌러 주세요.`
           : `저장된 Wiki 폴더를 확인하지 못했습니다(${error.code || error.message}). 드라이브 연결과 폴더 권한을 확인한 뒤 저장 위치를 선택해 주세요.`,
+        { cause: error },
       );
     }
     if (!found) throw new Error(MISSING);
@@ -216,6 +217,7 @@ class StorageManager {
       if (error.code)
         throw new Error(
           '저장 폴더를 준비하지 못했습니다. 폴더 권한과 디스크 공간을 확인해 주세요.',
+          { cause: error },
         );
       throw error;
     } finally {

@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { RoutineRunner, WAKE_DELAY, onWake, readsFiles } = require('../electron/routines.cjs');
+const { RoutineRunner, WAKE_DELAY, onWake } = require('../electron/routines.cjs');
 
 const due = [
   {

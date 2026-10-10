@@ -5,7 +5,12 @@ import {
   type Page,
 } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { createServer, type IncomingHttpHeaders } from 'node:http';
+import {
+  createServer,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 import path from 'node:path';
 
 // PRIVATE_AGENT_E2E_SOURCE_BACKEND=1 runs the backend from source, backend/.venv's Python with backend/main.py, instead
@@ -191,7 +196,7 @@ export async function llmServer(
   ) => string | object | StreamedReply | Promise<string | object | StreamedReply>,
 ) {
   const requests: LlmRequest[] = [];
-  const server = createServer(async (request, response) => {
+  const answer = async (request: IncomingMessage, response: ServerResponse) => {
     let body = '';
     for await (const chunk of request) body += chunk;
     const payload = JSON.parse(body);
@@ -213,7 +218,9 @@ export async function llmServer(
       response.on('error', () => {});
       const gone = () => response.destroyed || request.socket.destroyed;
       if (!payload.stream) {
-        const text = (await Promise.all(content.parts)).join('');
+        // Each part as Promise.all would take it: text, or a promise of text.
+        const parts = await Promise.all(content.parts.map((part) => Promise.resolve(part)));
+        const text = parts.join('');
         if (gone()) return;
         response.writeHead(200, { 'Content-Type': 'application/json' });
         response.end(
@@ -245,7 +252,8 @@ export async function llmServer(
         ],
       }),
     );
-  });
+  };
+  const server = createServer((request, response) => void answer(request, response));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as { port: number };
   return {

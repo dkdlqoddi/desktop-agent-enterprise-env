@@ -343,6 +343,7 @@ export function useQuery<T>(
   const { queries } = useStores();
   const key = params && QueryCache.key(method, params);
   // The entry follows the method and the parameters' content (key), not the object they come in.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- key stands for method and params
   const entry = useMemo(() => (params ? queries.entry(method, params) : null), [queries, key]);
   const subscribe = useCallback(
     (listener: () => void) => (entry ? queries.subscribe(entry, listener, load) : () => {}),
@@ -408,6 +409,7 @@ export function useDocumentPages(filters: DocumentQuery | null) {
   // The list follows the filters' content (key), not the object they come in.
   const list = useMemo(
     () => (filters ? queries.list<WikiDocument>('wiki.list', filters, DOCUMENT_PAGE) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key stands for the filters
     [queries, key],
   );
   const subscribe = useCallback(

@@ -61,7 +61,7 @@ export default function PromptWidget() {
   const run = () => {
     setStartedAt(Date.now());
     void act('run', async () => {
-      setOutput(await api<Run>('prompts.run', { prompt_id: prompt!.id, variables }));
+      setOutput(await api<Run>('prompts.run', { prompt_id: prompt.id, variables }));
       bumpRuns();
     });
   };

@@ -101,7 +101,7 @@ function originOf(value) {
  *  query or trailing slash.
  *  An address typed without its scheme is an https address: the site is never opened over http unless
  *  http:// is written out. Throws on anything but a plain http(s) address. */
-function normalizeUrl(value, kind) {
+function normalizeUrl(value) {
   const found = typeof value === 'string' && value.length <= 2048 ? addressOf(value) : null;
   if (!found) throw new SiteError(ADDRESS_ERROR);
   const { url } = found;
@@ -554,7 +554,7 @@ class SiteStore {
         throw new SiteError(
           '사이트 주소를 입력해 주세요. 계정은 이 주소의 링크를 가져올 때만 로그인에 씁니다.',
         );
-      const url = normalizeUrl(rawUrl, kind);
+      const url = normalizeUrl(rawUrl);
       const method = params.method ?? existing?.method ?? 'auto';
       if (typeof method !== 'string' || !this.knownMethod(method))
         throw new SiteError('로그인 방식을 선택해 주세요.');

@@ -143,10 +143,10 @@ test('the package carries the commit it was built from', async () => {
 // The Node.js the project needs, named alike in package.json's engines, .nvmrc (nvm, fnm, setup-node) and the check of
 // scripts/workflow.mjs; CI runs this major version and the next LTS (.github/workflows/check.yml).
 test('one Node.js version everywhere', () => {
-  assert.equal(pkg.engines.node, '>=22.12');
+  assert.equal(pkg.engines.node, '>=22.13');
   assert.equal(readFileSync(path.join(root, '.nvmrc'), 'utf8').trim(), '22');
   assert.match(
     readFileSync(path.join(root, 'scripts', 'workflow.mjs'), 'utf8'),
-    /major < 22 \|\| \(major === 22 && minor < 12\)/,
+    /major < 22 \|\| \(major === 22 && minor < 13\)/,
   );
 });

@@ -172,7 +172,7 @@ class Recorder {
       failure = new Error(
         `영상 파일을 쓰지 못했습니다. 디스크 공간과 폴더 권한을 확인해 주세요. (${error.code || error.message})`,
       );
-      job.fail(failure.message);
+      void job.fail(failure.message);
     });
     let resolveStart;
     let rejectStart;
@@ -246,7 +246,7 @@ class Recorder {
       await win.loadURL(`${ORIGIN}/page.html`);
     } catch (error) {
       win.destroy();
-      throw new Error(`녹화 화면을 열지 못했습니다: ${error.message}`);
+      throw new Error(`녹화 화면을 열지 못했습니다: ${error.message}`, { cause: error });
     }
     return { win, job, started, done, closed };
   }

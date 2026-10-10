@@ -6,7 +6,6 @@ import type {
   JobProgressEvent,
   Jobs,
   JobsSnapshot,
-  LocalImportJob,
   Routine,
 } from '@/lib/api';
 import type { Store } from '@/lib/store';
@@ -34,9 +33,7 @@ export const FALLBACK_MS = 30_000;
 
 // A job's results by their count: the same text means nothing the screens show changed (a job keeps up to 5,000).
 const signature = (job: unknown) =>
-  JSON.stringify(
-    job && { ...(job as object), results: (job as { results?: unknown[] }).results?.length ?? 0 },
-  );
+  JSON.stringify(job && { ...job, results: (job as { results?: unknown[] }).results?.length ?? 0 });
 const queuedOf = (job: AnalysisJob | null): ReadonlySet<string> =>
   new Set(job?.status === 'running' ? job.queue : []);
 
@@ -114,7 +111,7 @@ export class JobsFeed {
     if (!job) return false;
     let news = false;
     if ('batch' in job) {
-      const batch = (job as LocalImportJob).batch;
+      const batch = job.batch;
       news = batch > (this.batches.get(job.id) ?? batch);
       this.batches.set(job.id, batch);
     }

@@ -193,10 +193,12 @@ function DocumentReader({
     return () => {
       live = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- show is new each render; this runs when the analysis ends
   }, [waiting, doc]);
   // An update from the source or a write back into it, kept here while the window shows the editor or the raw text.
-  const jobs = useSourceJobs(doc, (id) =>
-    doc && id !== doc.id ? openDocument(id) : reload(id, '이 문서가 바뀌었습니다.'),
+  const jobs = useSourceJobs(
+    doc,
+    (id) => void (doc && id !== doc.id ? openDocument(id) : reload(id, '이 문서가 바뀌었습니다.')),
   );
   // Editing waits for them: the text they bring would land under the editor.
   const held = !!busy || jobs.running;
@@ -932,11 +934,12 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
     return () => {
       live = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- asks once a document, not again as its content changes
   }, [doc?.id, writable]);
   // Followed every second until it ends: a file of this PC is then read into the document again.
   useEffect(() => {
     if (!doc || !writing || !activeJob(writing.status)) return;
-    const timer = setTimeout(async () => {
+    const follow = async () => {
       let job: WritebackJob | null;
       try {
         job = await api<WritebackJob | null>('writeback.status', { id: writing.id });
@@ -946,8 +949,10 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
       if (job && activeJob(job.status)) return setWriting(job);
       setWriting(null);
       if (job) await ended(job, doc);
-    }, 1000);
+    };
+    const timer = setTimeout(() => void follow(), 1000);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the write; doc and ended are read when it ends
   }, [writing]);
   async function write() {
     if (!doc) return;
@@ -986,6 +991,7 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
       setUpdating(false);
       notify('원본에서 업데이트를 중지했습니다.');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- finish and notify are new each render; this follows the job
   }, [job, watched]);
   async function update(replace: boolean) {
     const at = doc;

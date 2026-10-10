@@ -73,7 +73,7 @@ class ScreenZoom {
       const direction = zoomKey(input);
       if (direction === null) return;
       event.preventDefault();
-      this.set(stepZoom(this.factor, direction));
+      void this.set(stepZoom(this.factor, direction));
     });
     // Ctrl+wheel and the touchpad's pinch: Electron asks, and zooms only as told.
     contents.on('zoom-changed', (_event, way) =>

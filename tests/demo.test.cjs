@@ -251,7 +251,7 @@ async function harness(
       return {};
     },
   };
-  const rpc = async (method, params = {}) => {
+  const rpc = async (method) => {
     calls.push(method);
     const [kind, action] = method.split('.');
     if (method === 'wiki.list')

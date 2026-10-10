@@ -11,26 +11,11 @@ const {
   looksEncrypted,
   readUserText,
   parseList,
-  readPlan,
   writeTemplate,
   prepareWiki,
   createRunFolder,
   findRecording,
 } = require('../electron/demo-plan.cjs');
-
-const extensions = {
-  markdown: ['md', 'markdown'],
-  text: ['txt'],
-  office: ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'vsdx'],
-  rtf: ['rtf'],
-  image: ['png', 'svg'],
-};
-// As main.cjs routes links.
-const linkKind = (value) => {
-  const url = new URL(value);
-  if (/\/browse\/[A-Z][A-Z0-9_]*-\d+\/?$/i.test(url.pathname)) return 'jira';
-  return /\/display\/[^/]+\/[^/]+/.test(url.pathname) ? 'confluence' : null;
-};
 
 async function folder(t) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-demo-plan-')));

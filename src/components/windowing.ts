@@ -51,6 +51,7 @@ export function useWindowing(keys: readonly string[], estimate: number) {
   const end = Math.max(start, Math.min(keys.length, search(offsets, bottom - 0.5)));
 
   // The drawn rows' heights, measured after each drawing; a change draws again before the screen shows it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- after every drawing; it sets heights only when one changed
   useLayoutEffect(() => {
     if (!box) return;
     let changed: Map<string, number> | null = null;

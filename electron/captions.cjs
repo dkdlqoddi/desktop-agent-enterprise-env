@@ -96,7 +96,7 @@ function milliseconds(match, at) {
 // The cues of an .srt file as a person may have edited it: numbering, blank lines at the end, either kind of line
 // break and "." before the milliseconds are all taken. A cue whose times cannot be read is an error, with its line.
 function parseSrt(text) {
-  const lines = text.replace(/^﻿/, '').split(/\r\n|\r|\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
   const cues = [];
   let cue = null;
   lines.forEach((line, index) => {

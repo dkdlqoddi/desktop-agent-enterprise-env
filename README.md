@@ -33,7 +33,7 @@
 
 ## 개발 환경
 
-Node.js 22.12 이상(`.nvmrc`)과 Python 3.10 이상을 사용합니다. 배포 파일은 Python 3.13(`.python-version`)으로 빌드합니다. 데스크톱 실행에는 그래픽 환경이 필요합니다. Windows Office·RTF 가져오기와 원본 반영에는 해당 Office 데스크톱 앱이 설치되어 있어야 합니다. Windows 텍스트 가져오기는 메모장을 사용합니다.
+Node.js 22.13 이상(`.nvmrc`)과 Python 3.10 이상을 사용합니다. 배포 파일은 Python 3.13(`.python-version`)으로 빌드합니다. 데스크톱 실행에는 그래픽 환경이 필요합니다. Windows Office·RTF 가져오기와 원본 반영에는 해당 Office 데스크톱 앱이 설치되어 있어야 합니다. Windows 텍스트 가져오기는 메모장을 사용합니다.
 
 ```bash
 npm ci

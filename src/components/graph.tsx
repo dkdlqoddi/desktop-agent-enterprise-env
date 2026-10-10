@@ -88,6 +88,7 @@ function highlightOf(target: Selection, graph: Graph, edges: GraphEdge[]): Highl
 // while nothing drawn changed, so nothing is laid out or drawn again.
 function useModel(graph: Graph, limit: number, docs: boolean) {
   const fresh = useMemo(() => graphModel(graph, limit, docs), [graph, limit, docs]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- kept while its key (what is drawn) stays the same
   return useMemo(() => fresh, [fresh.key]);
 }
 

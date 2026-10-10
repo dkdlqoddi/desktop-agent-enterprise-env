@@ -1,4 +1,4 @@
-import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication } from '@playwright/test';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -54,8 +54,7 @@ async function panel(app: ElectronApplication) {
       { timeout: 60_000 },
     )
     .toBe(true);
-  for (const page of app.windows())
-    if ((await page.title()) === 'Private Agent 녹화') return page as Page;
+  for (const page of app.windows()) if ((await page.title()) === 'Private Agent 녹화') return page;
   throw new Error('no recording panel');
 }
 

@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld(
     },
     // The local API's commands to the screen (open a document, read the screen, …), each answered once.
     onControl: (handler) => {
-      const listener = async (_event, command) => {
+      const answer = async (command) => {
         let reply;
         try {
           reply = { id: command.id, ok: true, result: await handler(command.type, command.params) };
@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld(
         }
         ipcRenderer.send('control:result', reply);
       };
+      // A command that fails is answered as such above; nothing reads the promise.
+      const listener = (_event, command) => void answer(command);
       ipcRenderer.on('control:command', listener);
       ipcRenderer.send('control:ready');
       return () => ipcRenderer.removeListener('control:command', listener);

@@ -48,6 +48,7 @@ export default function WritebackBackupsList({
   }
   useEffect(() => {
     if (open) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reloads on opening, a new revision and the end of a write
   }, [open, doc.id, doc.revision, disabled]);
   async function restore(id: string) {
     try {

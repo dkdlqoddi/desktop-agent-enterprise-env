@@ -128,8 +128,7 @@ const failure = (error: unknown) => (error instanceof Error ? error : new Error(
 // the top, which the cursor of the next page is past, so this keeps only a list that changed in between from showing
 // one twice.
 function joined<T>(items: readonly T[], next: readonly T[]): T[] {
-  const id = (item: unknown) =>
-    plain(item) && typeof item.id === 'string' ? (item.id as string) : undefined;
+  const id = (item: unknown) => (plain(item) && typeof item.id === 'string' ? item.id : undefined);
   const seen = new Set(items.map(id).filter(Boolean));
   return [...items, ...next.filter((item) => !seen.has(id(item)))];
 }

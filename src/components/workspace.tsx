@@ -221,7 +221,7 @@ export default function WorkspacePage({
               tabIndex={selected === id ? 0 : -1}
               onClick={() => navigate(view, id)}
               onKeyDown={(event) => {
-                let next = index;
+                let next: number;
                 if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
                 else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
                 else if (event.key === 'Home') next = 0;

@@ -144,6 +144,7 @@ class BackendProcess {
       const { code, signal } = this.ended;
       throw new Error(
         `Python 백엔드가 시작하는 중에 종료되었습니다(종료 코드 ${code ?? '없음'}${signal ? `, 신호 ${signal}` : ''}). 앱을 다시 실행해 주세요.`,
+        { cause: error },
       );
     } finally {
       clearTimeout(timer);

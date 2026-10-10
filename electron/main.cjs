@@ -1149,7 +1149,7 @@ async function apiRequest(method, params) {
             .find((item) => item.id === client)
             ?.snippets.find((item) => item.id === snippet)?.text;
     if (!text) throw new Error('복사할 항목을 찾을 수 없습니다.');
-    clipboard.writeText(text);
+    await clipboard.writeText(text);
     return { ok: true };
   } else if (method === 'api.manual') return apiDocument();
   else if (method === 'api.open_docs') {
@@ -1209,7 +1209,7 @@ async function handle(method, params, { access } = {}) {
   let result;
   if (method === 'storage.get') result = storage.info();
   else if (method === 'diagnostics.copy') {
-    clipboard.writeText(await diagnostics.report(diagnosticFacts()));
+    await clipboard.writeText(await diagnostics.report(diagnosticFacts()));
     result = { ok: true };
   } else if (method === 'diagnostics.open_folder') {
     await fs.mkdir(diagnostics.directory, { recursive: true });
@@ -1317,7 +1317,7 @@ async function handle(method, params, { access } = {}) {
   else if (method === 'clipboard.write') {
     if (typeof params.text !== 'string' || params.text.length > 800_000)
       throw new Error('복사할 텍스트의 크기나 형식을 확인해 주세요.');
-    clipboard.writeText(params.text);
+    await clipboard.writeText(params.text);
     result = { ok: true };
   } else result = await rpc(method, params);
   // A job started, stopped or cleared, or a routine's run, by the screens or an AI tool: its progress goes to the window.
@@ -1424,7 +1424,10 @@ function createWindow() {
     reloads.end();
     if (window === current) window = null;
   });
-  current.loadURL(screen);
+  // A first load that fails leaves the window blank: the log says why, as it does for a reload above.
+  current
+    .loadURL(screen)
+    .catch((error) => void diagnostics.record(`앱 화면을 불러오지 못했습니다: ${error.message}`));
 }
 
 // A start of the app asked for while this one closes, which would otherwise end unseen: it runs once this one has
@@ -1457,7 +1460,7 @@ const hasLock =
   LAUNCH?.kind === 'render'
     ? (app.setPath('userData', path.join(app.getPath('temp'), 'private-agent-render')), false)
     : app.requestSingleInstanceLock({ execPath: process.execPath, args: process.argv.slice(1) });
-if (LAUNCH?.kind === 'render') app.whenReady().then(() => renderOnly(LAUNCH.path));
+if (LAUNCH?.kind === 'render') void app.whenReady().then(() => renderOnly(LAUNCH.path));
 else if (!hasLock) app.quit();
 else {
   app.on('second-instance', (_event, argv, _directory, started) => {

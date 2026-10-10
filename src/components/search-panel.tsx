@@ -423,7 +423,10 @@ export default function SearchPanel() {
     () => [...new Set([...(state.local?.highlights ?? []), ...(state.ai?.highlights ?? [])])],
     [state.local, state.ai],
   );
-  const picked = state.ai?.documents.filter((doc) => doc.match.selected) ?? [];
+  const picked = useMemo(
+    () => state.ai?.documents.filter((doc) => doc.match.selected) ?? [],
+    [state.ai],
+  );
   const others = useMemo(() => {
     const seen = new Set(picked.map((doc) => doc.id));
     return [...(state.local?.documents ?? []), ...(state.ai?.documents ?? [])].filter((doc) => {

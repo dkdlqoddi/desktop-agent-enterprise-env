@@ -403,8 +403,9 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
 
     // A change the Wiki refused does not stay on screen: the saved layout comes back, with the reason.
     await app.evaluate(({ BrowserWindow, ipcMain }) => {
-      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })
-        ._invokeHandlers;
+      const handlers = (
+        ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> }
+      )._invokeHandlers;
       const original = handlers.get('agent:request')!;
       BrowserWindow.getAllWindows()[0].webContents.ipc.handle(
         'agent:request',
