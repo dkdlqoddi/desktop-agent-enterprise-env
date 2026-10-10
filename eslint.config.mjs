@@ -27,6 +27,10 @@ export default defineConfig(
     'build/',
     'test-results/',
     'playwright-report/',
+    // The agent worktrees of this checkout and the development app's own data: whole copies of the repository that
+    // the type-aware rules would read as well, until the memory runs out.
+    '.claude/',
+    '.local-data/',
     'backend/',
     'next-env.d.ts',
   ]),
