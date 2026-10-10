@@ -322,19 +322,20 @@ export function useSearch() {
 const IDLE: QueryState = { data: undefined, error: null };
 
 // One answer of the backend, shared by every component that shows it: loaded when the first of them appears, again
-// when one of its tags is invalidated (src/lib/query.ts TAGS), and on reload(). null parameters load nothing yet.
-export function useQuery<T>(method: Method, params: Record<string, unknown> | null = {}) {
+// when one of its tags is invalidated (src/lib/query.ts TAGS), and on reload(). null parameters load nothing yet;
+// `load` false only reads an answer the app loads itself (the lists of loadLibrary).
+export function useQuery<T>(
+  method: Method,
+  params: Record<string, unknown> | null = {},
+  { load = true }: { load?: boolean } = {},
+) {
   const { queries } = useStores();
   const key = params && QueryCache.key(method, params);
-  // The entry follows the method and the parameters' content, not the object they come in.
-  const entry = useMemo(
-    () => (params ? queries.entry(method, params) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [queries, key],
-  );
+  // The entry follows the method and the parameters' content (key), not the object they come in.
+  const entry = useMemo(() => (params ? queries.entry(method, params) : null), [queries, key]);
   const subscribe = useCallback(
-    (listener: () => void) => (entry ? queries.subscribe(entry, listener) : () => {}),
-    [queries, entry],
+    (listener: () => void) => (entry ? queries.subscribe(entry, listener, load) : () => {}),
+    [queries, entry, load],
   );
   const read = () => entry?.state ?? IDLE;
   const state = useSyncExternalStore(subscribe, read, read) as QueryState<T>;
@@ -364,9 +365,12 @@ export function useInvalidated(tags: readonly Tag[]) {
 
 const NONE: never[] = [];
 const NO_STATS: Stats = { prompts: 0, documents: 0, keywords: 0, relations: 0 };
-export const useDocuments = () => useQuery<WikiDocument[]>('wiki.list').data ?? NONE;
-export const usePrompts = () => useQuery<Prompt[]>('prompts.list').data ?? NONE;
-export const useStats = () => useQuery<Stats>('stats').data ?? NO_STATS;
+// The lists every screen may show, which the app loads as it starts and keeps loaded (AppStores.loadLibrary): a
+// component that shows them asks for nothing, also not before the Wiki is known.
+const LOADED = { load: false };
+export const useDocuments = () => useQuery<WikiDocument[]>('wiki.list', {}, LOADED).data ?? NONE;
+export const usePrompts = () => useQuery<Prompt[]>('prompts.list', {}, LOADED).data ?? NONE;
+export const useStats = () => useQuery<Stats>('stats', {}, LOADED).data ?? NO_STATS;
 
 // Everything at once, as the screens read it before the state was split: a component that uses it draws again with
 // any change of any slice. Kept for code written against it; the screens use the hooks above.

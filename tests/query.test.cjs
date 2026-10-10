@@ -53,6 +53,20 @@ test('the first component to show an answer loads it; others share it until none
   assert.deepEqual(entry.state.data, { nodes: [] });
 });
 
+test('a component that only reads what the app loads asks for nothing', async () => {
+  const { cache, pending } = backend();
+  const entry = cache.entry('stats');
+  let told = 0;
+  cache.subscribe(entry, () => told++, false);
+  assert.equal(pending.length, 0);
+  // The app loads it (loadLibrary): the reader hears the answer.
+  void cache.load(entry);
+  pending[0].resolve({ documents: 2 });
+  await flush();
+  assert.equal(told, 1);
+  assert.deepEqual(entry.state.data, { documents: 2 });
+});
+
 test('an earlier request answering after a later one is dropped', async () => {
   const { cache, pending } = backend();
   const entry = cache.entry('wiki.list');

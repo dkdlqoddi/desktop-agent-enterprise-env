@@ -131,11 +131,12 @@ export class QueryCache {
     return entry;
   }
 
-  // Listens to an entry. The first listener after none loads it afresh, unless a request is under way.
-  subscribe(entry: Entry, listener: () => void) {
+  // Listens to an entry. The first listener after none loads it afresh, unless a request is under way or the listener
+  // only reads what something else loads (`load` false).
+  subscribe(entry: Entry, listener: () => void, load = true) {
     const first = entry.listeners.size === 0;
     entry.listeners.add(listener);
-    if (first && !entry.request) this.fetch(entry).catch(() => {});
+    if (load && first && !entry.request) this.fetch(entry).catch(() => {});
     return () => {
       entry.listeners.delete(listener);
     };
