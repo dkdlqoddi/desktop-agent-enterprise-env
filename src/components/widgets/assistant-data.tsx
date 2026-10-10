@@ -1,6 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { api, type Briefing, type Task } from '@/lib/api';
-import { useApp } from '../app';
+import { keepEqual } from '@/lib/query';
+import { useInvalidated } from '../state';
 import { Loading } from './parts';
 
 type Data = {
@@ -17,7 +26,8 @@ const Context = createContext<Data | null>(null);
 export const useAssistantData = () => useContext(Context)!;
 
 // Tasks, today's briefing and reminder support, shared by the briefing, reminder and task widgets.
-// They load again every 30 seconds, when the window gets focus, and after any change.
+// They load again every 30 seconds, when the window gets focus, and after a change of the tasks or the documents (whose
+// titles they show).
 export function AssistantData({
   children,
   enabled = true,
@@ -25,7 +35,7 @@ export function AssistantData({
   children: React.ReactNode;
   enabled?: boolean;
 }) {
-  const { version } = useApp();
+  const version = useInvalidated(['tasks', 'documents']);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [notification, setNotification] = useState<Data['notification']>(null);
@@ -40,9 +50,10 @@ export function AssistantData({
         api<{ supported: boolean; error: string }>('reminders.status'),
       ]);
       if (current !== generation.current) return;
-      setTasks(items);
-      setBriefing(snapshot);
-      setNotification(status);
+      // What did not change keeps its objects, so the widgets that show it do not draw again.
+      setTasks((shown) => keepEqual(shown, items));
+      setBriefing((shown) => keepEqual(shown, snapshot));
+      setNotification((shown) => keepEqual(shown, status));
       setError('');
     } catch (e) {
       // Only the latest load answers for what the widgets show.
@@ -62,11 +73,12 @@ export function AssistantData({
       window.removeEventListener('focus', load);
     };
   }, [refresh, version, enabled]);
-  return (
-    <Context.Provider value={{ tasks, briefing, notification, loaded: !!briefing, error, refresh }}>
-      {children}
-    </Context.Provider>
+  // The same value until something in it changes: the widgets that read it draw again only then.
+  const value = useMemo(
+    () => ({ tasks, briefing, notification, loaded: !!briefing, error, refresh }),
+    [tasks, briefing, notification, error, refresh],
   );
+  return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
 // Why the tasks could not be loaded, with a way to try again.

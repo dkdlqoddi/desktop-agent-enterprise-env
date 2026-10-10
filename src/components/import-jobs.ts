@@ -1,117 +1,150 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  api,
-  type ConfluenceStatus,
-  type JiraStatus,
-  type LocalImportJob,
-  type Routine,
+import { useEffect } from 'react';
+import type {
+  AnalysisJob,
+  ImportKind,
+  JobKind,
+  JobProgressEvent,
+  Jobs,
+  JobsSnapshot,
+  LocalImportJob,
+  Routine,
 } from '@/lib/api';
+import type { Store } from '@/lib/store';
 
-export type ImportKind = 'office' | 'rtf' | 'image' | 'text' | 'confluence' | 'jira';
-export type ImportJobs = {
-  office: LocalImportJob | null;
-  rtf: LocalImportJob | null;
-  image: LocalImportJob | null;
-  text: LocalImportJob | null;
-  confluence: ConfluenceStatus['job'];
-  jira: JiraStatus['job'];
-};
+export type { ImportKind } from '@/lib/api';
+export type ImportJobs = Omit<Jobs, 'analysis'>;
 export const activeJob = (status: string | undefined) =>
   !!status && ['scanning', 'login', 'running', 'cancelling'].includes(status);
 
-// What the screens show of the jobs, with a job's results by their count: the same signature means nothing changed,
-// and the app is not drawn again every second for nothing (a job keeps up to 5,000 results).
-const signature = (jobs: ImportJobs) =>
-  JSON.stringify(
-    Object.values(jobs).map(
-      (job) => job && { ...job, results: (job as { results?: unknown[] }).results?.length ?? 0 },
-    ),
-  );
+// What the screens show of the background jobs: the import box's jobs, the AI analysis of chosen documents, and the
+// documents that analysis has still to reach.
+export type JobsState = {
+  imports: ImportJobs;
+  analysis: AnalysisJob | null;
+  queued: ReadonlySet<string>;
+};
+export const NO_JOBS: JobsState = {
+  imports: { office: null, rtf: null, image: null, text: null, confluence: null, jira: null },
+  analysis: null,
+  queued: new Set(),
+};
 
-// The background imports of this app session. They keep running when their widget is gone, so the
-// app watches them and reloads the documents whenever one finishes. An automatic routine's run starts
-// its imports one after another, the first once it leaves the queue: while a run is queued or running
-// they are looked for too, so the import box shows each one as it starts.
-export function useImportJobs(onFinished: () => Promise<void>, enabled: boolean) {
-  const [jobs, setJobs] = useState<ImportJobs>({
-    office: null,
-    rtf: null,
-    image: null,
-    text: null,
-    confluence: null,
-    jira: null,
-  });
-  const [watching, setWatching] = useState(0);
-  const known = useRef<Set<string> | null>(null);
-  const batches = useRef(new Map<string, number>());
-  const shown = useRef('');
-  const finished = useRef(onFinished);
-  finished.current = onFinished;
+// How often every job is read even without an event: one may have been missed while the window loaded.
+export const FALLBACK_MS = 30_000;
+
+// A job's results by their count: the same text means nothing the screens show changed (a job keeps up to 5,000).
+const signature = (job: unknown) =>
+  JSON.stringify(
+    job && { ...(job as object), results: (job as { results?: unknown[] }).results?.length ?? 0 },
+  );
+const queuedOf = (job: AnalysisJob | null): ReadonlySet<string> =>
+  new Set(job?.status === 'running' ? job.queue : []);
+
+// The background jobs of this app session, as the main process reads them (electron/job-progress.cjs): every job once
+// as the app starts, then each change as an event while a job runs, and every job again now and then. Each read is
+// numbered, and a read older than the one shown is dropped. Jobs keep running when their widget is gone, so this also
+// tells when the documents changed: when an import finished, or a batch of a folder imported in batches, or the
+// analysis moved on.
+export class JobsFeed {
+  private seqs = new Map<JobKind, number>();
+  private shown = new Map<JobKind, string>();
+  // The finished jobs told of; null until the first read, whose finished jobs are no news (the documents were just
+  // loaded with the app).
+  private known: Set<string> | null = null;
+  private batches = new Map<string, number>();
+  private analysisMark: string | null = null;
+
+  constructor(
+    private options: {
+      store: Store<JobsState>;
+      request: () => Promise<JobsSnapshot>;
+      changed: () => void;
+      routines: (routines: Routine[]) => void;
+    },
+  ) {}
+
+  // Reads every job now: as the app starts, after a job was started, stopped or cleared, and now and then.
+  async refresh() {
+    let read: JobsSnapshot;
+    try {
+      read = await this.options.request();
+    } catch {
+      return; // The backend is busy: the next read, or an event, brings the jobs.
+    }
+    this.snapshot(read);
+  }
+
+  snapshot({ seq, jobs }: JobsSnapshot) {
+    const quiet = this.known === null;
+    this.known ??= new Set();
+    this.take(seq, jobs, quiet);
+  }
+
+  event(event: JobProgressEvent) {
+    if (event.kind === 'routines') return this.options.routines(event.routines);
+    this.take(event.seq, { [event.kind]: event.job }, this.known === null);
+  }
+
+  private take(seq: number, jobs: Partial<Jobs>, quiet: boolean) {
+    let state = this.options.store.get();
+    let news = false;
+    for (const kind of Object.keys(jobs) as JobKind[]) {
+      if (seq <= (this.seqs.get(kind) ?? 0)) continue;
+      this.seqs.set(kind, seq);
+      const job = jobs[kind] ?? null;
+      news =
+        (kind === 'analysis'
+          ? this.analysisMoved(job as AnalysisJob | null, quiet)
+          : this.importNews(job as ImportJobs[ImportKind], quiet)) || news;
+      const text = signature(job);
+      if (text === this.shown.get(kind)) continue;
+      this.shown.set(kind, text);
+      state =
+        kind === 'analysis'
+          ? { ...state, analysis: job as AnalysisJob | null, queued: queuedOf(job as AnalysisJob) }
+          : { ...state, imports: { ...state.imports, [kind]: job } };
+    }
+    this.options.store.set(state);
+    if (news) this.options.changed();
+  }
+
+  // A job that finished since the first read, or a batch of a folder done (its documents show then, not only once the
+  // whole job is).
+  private importNews(job: ImportJobs[ImportKind], quiet: boolean) {
+    if (!job) return false;
+    let news = false;
+    if ('batch' in job) {
+      const batch = (job as LocalImportJob).batch;
+      news = batch > (this.batches.get(job.id) ?? batch);
+      this.batches.set(job.id, batch);
+    }
+    if (!activeJob(job.status) && !this.known?.has(job.id)) {
+      this.known?.add(job.id);
+      news ||= !quiet;
+    }
+    return news;
+  }
+
+  // The analysis reached another document, started, or ended: each document takes seconds to minutes.
+  private analysisMoved(job: AnalysisJob | null, quiet: boolean) {
+    const mark = job ? `${job.id}:${job.processed}:${job.status}` : '';
+    const moved = this.analysisMark !== null && mark !== this.analysisMark;
+    this.analysisMark = mark;
+    return moved && !quiet;
+  }
+}
+
+// Follows the jobs while the Wiki is open: their changes come as events, every job is read once now and then every
+// FALLBACK_MS. The events are listened to before the first read, so that none is lost in between.
+export function useJobsFeed(feed: JobsFeed, enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      let delay = 0;
-      try {
-        const [office, rtf, image, text, confluence, jira] = await Promise.all([
-          api<LocalImportJob | null>('office.status'),
-          api<LocalImportJob | null>('rtf.status'),
-          api<LocalImportJob | null>('image.status'),
-          api<LocalImportJob | null>('text.status'),
-          api<ConfluenceStatus>('confluence.status'),
-          api<JiraStatus>('jira.status'),
-        ]);
-        if (disposed) return;
-        const next = {
-          office,
-          rtf,
-          image,
-          text,
-          confluence: confluence.job,
-          jira: jira.job,
-        };
-        const changed = signature(next);
-        if (changed !== shown.current) {
-          shown.current = changed;
-          setJobs(next);
-        }
-        // A folder imported in batches: the documents of a batch show once it is done, not only when the job is.
-        const batchesNow = new Map(
-          [office, rtf, image, text].flatMap((job) => (job ? [[job.id, job.batch] as const] : [])),
-        );
-        const batchDone = [...batchesNow].some(
-          ([id, batch]) => batch > (batches.current.get(id) ?? batch),
-        );
-        batches.current = batchesNow;
-        const done = Object.values(next).filter((job) => job && !activeJob(job.status));
-        if (Object.values(next).some((job) => job && activeJob(job.status))) delay = 1000;
-        else if (
-          (await api<Routine[]>('routines.list').catch((): Routine[] => [])).some(
-            (routine) => routine.running || routine.queued,
-          )
-        )
-          delay = 2000;
-        if (disposed) return;
-        // Jobs that had already finished when the app (or a reloaded screen) started are not news.
-        const first = known.current === null;
-        known.current ??= new Set();
-        const fresh = done.filter((job) => !known.current!.has(job!.id));
-        fresh.forEach((job) => known.current!.add(job!.id));
-        if ((fresh.length && !first) || batchDone) await finished.current();
-      } catch {
-        delay = 3000; // The backend is busy; look again shortly.
-      }
-      if (!disposed && delay) timer = setTimeout(poll, delay);
-    }
-    void poll();
+    const off = window.privateAgent?.onJobProgress?.((event) => feed.event(event));
+    void feed.refresh();
+    const timer = setInterval(() => void feed.refresh(), FALLBACK_MS);
     return () => {
-      disposed = true;
-      clearTimeout(timer);
+      off?.();
+      clearInterval(timer);
     };
-  }, [watching, enabled]);
-  // Reloads the jobs after one is started, cancelled or cleared, or a routine's run is started or queued; a running
-  // job, or run, is followed until it ends.
-  const watch = useCallback(() => setWatching((value) => value + 1), []);
-  return useMemo(() => ({ jobs, watch }), [jobs, watch]);
+  }, [feed, enabled]);
 }

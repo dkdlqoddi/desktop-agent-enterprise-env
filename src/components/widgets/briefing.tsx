@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CircleCheck, LoaderCircle, Sparkles } from 'lucide-react';
 import { api, date, type Task } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions, useConfigured } from '../state';
 import { WidgetHead } from '../dashboard';
 import EmptyState from '../empty-state';
 import Markdown from '../markdown';
@@ -9,7 +9,8 @@ import { LoadError, useAssistantData } from './assistant-data';
 import { Loading, Metrics, Ring } from './parts';
 
 export default function BriefingWidget() {
-  const { configured, openAdmin, notify } = useApp();
+  const configured = useConfigured();
+  const { openAdmin, notify } = useActions();
   const { briefing, error } = useAssistantData();
   const [summary, setSummary] = useState<{
     content: string;

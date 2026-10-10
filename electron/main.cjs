@@ -27,6 +27,7 @@ const { ReminderScheduler } = require('./reminders.cjs');
 const { PromptScheduler } = require('./schedules.cjs');
 const { RoutineRunner, readsFiles } = require('./routines.cjs');
 const { ImportNotices } = require('./import-notices.cjs');
+const { JobProgress } = require('./job-progress.cjs');
 const { ApiError, ACCESS_LEVELS, allows, authorize, forbidden } = require('./api-catalog.cjs');
 const { ApiSettings } = require('./api-settings.cjs');
 const { ApiServer } = require('./api-server.cjs');
@@ -109,6 +110,8 @@ const ALLOWED = new Set([
   'analysis.status',
   'analysis.cancel',
   'analysis.dismiss',
+  // Every background job at once, read by the main process, which then follows them for the screens (job:progress).
+  'jobs.status',
   'preferences.get',
   'preferences.save',
   'settings.get',
@@ -230,6 +233,8 @@ let reminders;
 let schedules;
 let routines;
 let notices;
+// The background jobs and routines followed for the screens (electron/job-progress.cjs).
+let jobs;
 let apiSettings;
 let apiServer;
 let control;
@@ -1213,6 +1218,7 @@ async function callApi(method, params, access) {
 
 // The screens reload what an AI tool changed, and follow the jobs it started.
 function changed() {
+  jobs?.follow({ routines: true });
   clearTimeout(changeTimer);
   changeTimer = setTimeout(() => {
     if (window && !window.isDestroyed()) window.webContents.send('api:changed');
@@ -1372,6 +1378,7 @@ async function handle(method, params, { access } = {}) {
     result = await control.perform(method, params, { access });
   } else if (Object.hasOwn(apiMethods, method))
     result = await apiMethods[method](params, { access });
+  else if (method === 'jobs.status') result = await jobs.snapshot();
   else if (method === 'reminders.status') result = reminders.status();
   else if (method === 'sites.list') result = sites.list();
   else if (method === 'sites.save') result = await sites.save(params);
@@ -1453,6 +1460,8 @@ async function handle(method, params, { access } = {}) {
     clipboard.writeText(params.text);
     result = { ok: true };
   } else result = await rpc(method, params);
+  // A job started, stopped or cleared, or a routine's run, by the screens or an AI tool: its progress goes to the window.
+  jobs?.observe(method);
   return result;
 }
 
@@ -1725,6 +1734,13 @@ else {
         canEncrypt,
       });
       control = new AppControl({ window: () => window, Notification });
+      jobs = new JobProgress({
+        rpc,
+        ready: () => storage.initialized && !!backend?.running && !opening && !stopping,
+        send: (event) => {
+          if (window && !window.isDestroyed()) window.webContents.send('job:progress', event);
+        },
+      });
       apiMethods = createApiMethods({ handle, linkKind, extensions: FILE_KINDS });
       checkPaths = createPathCheck({ handle, wikiDirectory: () => storage.directory });
       const mcp = new McpServer({
@@ -1861,6 +1877,7 @@ app.on('before-quit', (event) => {
   schedules?.stop();
   routines?.stop();
   notices?.stop();
+  jobs?.stop();
   control?.stop();
   clearTimeout(changeTimer);
   // A demo still recording keeps what it recorded, with its captions, without making the video.

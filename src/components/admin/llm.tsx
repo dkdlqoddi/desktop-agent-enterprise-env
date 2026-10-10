@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Check, CircleAlert, LoaderCircle, Plus, Trash2, Unplug } from 'lucide-react';
 import { api, type LlmFormat, type LlmHeader, type Settings } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions, useSettings } from '../state';
 import { rove } from '../roving';
 import SecretInput from '../secret-input';
 
@@ -61,7 +61,8 @@ function plainHttp(value: string) {
 }
 
 export default function LlmSettings() {
-  const { settings, setSettings, notify } = useApp();
+  const settings = useSettings();
+  const { setSettings, notify } = useActions();
   const formRef = useRef<HTMLFormElement>(null);
   const [form, setForm] = useState(() => formOf(settings));
   const [keys, setKeys] = useState<Record<Secret, string>>({ api_key: '' });

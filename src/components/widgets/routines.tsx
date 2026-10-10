@@ -33,7 +33,6 @@ import {
   type RoutineRecipe,
   type RoutineRun,
 } from '@/lib/api';
-import { useApp } from '../app';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
 import Diagnosis from '../diagnosis';
@@ -47,6 +46,7 @@ import RoutineForm, {
   type RoutineDraft,
 } from '../routine-form';
 import { useNow } from '../run-history';
+import { useActions, useQuery, useRoutineFocus } from '../state';
 import { Loading, Metrics } from './parts';
 
 export const ROUTINE_ICONS: Record<string, LucideIcon> = {
@@ -108,11 +108,16 @@ function useCatalog() {
 // The automatic routines: the ready-made jobs to pick from, each routine with its schedule and switch, what its runs
 // found, and the form that sets one up, in place of the list.
 export default function RoutinesWidget() {
-  const { notify, runsVersion, bumpRuns, routineFocus, imports } = useApp();
+  const routineFocus = useRoutineFocus();
+  const { notify, invalidate, watchJobs } = useActions();
   const { catalog, error: catalogError, retry: retryCatalog } = useCatalog();
-  const [routines, setRoutines] = useState<Routine[] | null>(null);
+  // The routines load with the widget and again when they change (a run ended, an AI tool changed one). While a run is
+  // queued or running, the main process sends them as they change (electron/job-progress.cjs), with what the run is
+  // doing, so the widget does not ask for them every few seconds.
+  const { data, error: listError, reload: load } = useQuery<Routine[]>('routines.list');
+  const routines = data ?? null;
   // Why the list could not be read, shown while there is none to show.
-  const [failed, setFailed] = useState('');
+  const failed = routines === null && listError ? listError.message : '';
   const [mode, setMode] = useState<
     'list' | 'catalog' | { recipe: RoutineRecipe; draft: RoutineDraft }
   >('list');
@@ -123,31 +128,16 @@ export default function RoutinesWidget() {
   // A switch flips at once and settles once its own change has been saved and the list read again.
   const [flipped, setFlipped] = useState<Record<string, boolean>>({});
   const now = useNow(60_000);
-  const load = useCallback(async () => {
-    const items = await api<Routine[]>('routines.list');
-    setRoutines(items);
-    setFailed('');
-    return items;
-  }, []);
   useEffect(() => {
-    void load().catch((error) => {
-      setFailed(error.message);
-      notify(error.message, true);
-    });
-  }, [load, notify, runsVersion]);
-  // A run that waits or runs is followed until it ends; its results then load again. bumpRuns changes with every
-  // render of the app, which would restart the poll before it fires.
+    if (listError) notify(listError.message, true);
+  }, [listError, notify]);
+  // A run that waited or ran has ended: the routines' results load again.
   const active = !!routines?.some((routine) => routine.running || routine.queued);
   const wasActive = useRef(false);
-  const bump = useRef(bumpRuns);
-  bump.current = bumpRuns;
   useEffect(() => {
-    if (wasActive.current && !active) bump.current();
+    if (wasActive.current && !active) void invalidate(['routines']).catch(() => {});
     wasActive.current = active;
-    if (!active) return;
-    const timer = setInterval(() => void load().catch(() => {}), 2000);
-    return () => clearInterval(timer);
-  }, [active, load]);
+  }, [active, invalidate]);
   const editing = typeof mode === 'object' ? mode : null;
   // A notification was clicked: show that routine's results. A form being filled in stays; they show once it closes.
   useEffect(() => {
@@ -232,8 +222,7 @@ export default function RoutinesWidget() {
               onClick={() => {
                 if (catalog === null) retryCatalog();
                 if (routines !== null) return;
-                setFailed('');
-                void load().catch((error) => setFailed(error.message));
+                void load().catch(() => {});
               }}
             >
               다시 시도
@@ -269,7 +258,7 @@ export default function RoutinesWidget() {
                       onChange={(e) => {
                         const enabled = e.target.checked;
                         setFlipped((current) => ({ ...current, [routine.id]: enabled }));
-                        // Kept until the change's own reload: a list the poll reads before it is saved has the old state.
+                        // Kept until the change's own reload: a list read or sent before it is saved has the old state.
                         void act(`toggle:${routine.id}`, () =>
                           api('routines.toggle', { id: routine.id, enabled }),
                         ).then(() =>
@@ -364,7 +353,7 @@ export default function RoutinesWidget() {
                             await api('routines.run', { id: routine.id });
                             setOpen(routine.id);
                             // The import box shows the run's imports as 자동 작업 ‘이름’ while it lasts.
-                            imports.watch();
+                            watchJobs();
                           })
                         }
                       >
@@ -472,22 +461,25 @@ function RoutineCatalog({
 
 // What a routine's latest runs found: the chosen run in full, the earlier ones by a line.
 function RoutineResults({ routine }: { routine: Routine }) {
-  const { runsVersion, notify } = useApp();
-  const [runs, setRuns] = useState<RoutineRun[] | null>(null);
+  const { notify } = useActions();
+  const { data, error, reload } = useQuery<RoutineRun[]>('routines.runs', {
+    id: routine.id,
+    limit: 6,
+  });
+  const runs = data ?? null;
   const [chosen, setChosen] = useState(0);
+  useEffect(() => setChosen(0), [data]);
   useEffect(() => {
-    let live = true;
-    api<RoutineRun[]>('routines.runs', { id: routine.id, limit: 6 })
-      .then((found) => {
-        if (!live) return;
-        setRuns(found);
-        setChosen(0);
-      })
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [routine.id, routine.last_run_at, routine.last_status, runsVersion, notify]);
+    if (error) notify(error.message, true);
+  }, [error, notify]);
+  // The routine's last run changed (one started or ended): its runs load again.
+  const last = `${routine.last_run_at}|${routine.last_status}`;
+  const seen = useRef(last);
+  useEffect(() => {
+    if (seen.current === last) return;
+    seen.current = last;
+    void reload().catch(() => {});
+  }, [last, reload]);
   if (runs === null) return <Loading />;
   const run = runs[chosen];
   return (
@@ -530,7 +522,7 @@ function DocumentLinks({
   documents: { id: string; title: string }[];
   label: string;
 }) {
-  const { openDocument } = useApp();
+  const { openDocument } = useActions();
   return (
     <p className="routine-docs">
       <span>{label}</span>
@@ -550,7 +542,7 @@ function DocumentLinks({
 }
 
 function RunDetail({ run }: { run: RoutineRun }) {
-  const { openDocument } = useApp();
+  const { openDocument } = useActions();
   return (
     <div className="routine-run">
       <p className="routine-run-head">
@@ -629,17 +621,12 @@ function RunDetail({ run }: { run: RoutineRun }) {
 
 // The latest runs of every routine, newest first, for the dashboard.
 export function RoutineFeed() {
-  const { runsVersion, notify, navigate, openDocument, showRoutine } = useApp();
-  const [runs, setRuns] = useState<RoutineRun[] | null>(null);
+  const { notify, navigate, openDocument, showRoutine } = useActions();
+  const { data, error } = useQuery<RoutineRun[]>('routines.runs', { limit: 8 });
+  const runs = data ?? null;
   useEffect(() => {
-    let live = true;
-    api<RoutineRun[]>('routines.runs', { limit: 8 })
-      .then((found) => live && setRuns(found))
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [runsVersion, notify]);
+    if (error) notify(error.message, true);
+  }, [error, notify]);
   return (
     <>
       <WidgetHead count={runs?.filter((run) => run.changed).length} />

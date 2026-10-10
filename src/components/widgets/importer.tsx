@@ -22,7 +22,7 @@ import {
   type TextImport,
 } from '@/lib/api';
 import { importTarget, type ImportTarget } from '@/lib/links';
-import { useApp } from '../app';
+import { useActions, useConfigured, useImports } from '../state';
 import { loginSummary } from '../admin/sites';
 import { WidgetHead } from '../dashboard';
 import Diagnosis from '../diagnosis';
@@ -48,7 +48,9 @@ const ROLES: Record<JiraRole, string> = {
 };
 
 export default function ImportWidget() {
-  const { configured, notify, refresh, imports, openAdmin } = useApp();
+  const configured = useConfigured();
+  const imports = useImports();
+  const { notify, refresh, openAdmin } = useActions();
   const [value, setValue] = useState('');
   const [folderPicked, setFolderPicked] = useState(false);
   const [analyze, setAnalyze] = useState(false);

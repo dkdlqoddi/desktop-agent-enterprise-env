@@ -1,25 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ArrowRight, CalendarClock } from 'lucide-react';
-import { api, type Schedule } from '@/lib/api';
-import { useApp } from '../app';
+import type { Schedule } from '@/lib/api';
 import { WidgetHead } from '../dashboard';
 import EmptyState from '../empty-state';
 import { describeSchedule } from '../prompt-schedules';
+import { useActions, useQuery } from '../state';
 import { Agenda, Loading } from './parts';
 
 // The schedules that are on, in the order they run next, under their days.
 export function ScheduleAgenda() {
-  const { prompts, runsVersion, notify, navigate } = useApp();
-  const [schedules, setSchedules] = useState<Schedule[] | null>(null);
+  const { notify, navigate } = useActions();
+  const { data, error } = useQuery<Schedule[]>('schedules.list');
+  const schedules = data ?? null;
   useEffect(() => {
-    let live = true;
-    api<Schedule[]>('schedules.list')
-      .then((items) => live && setSchedules(items))
-      .catch((error) => live && notify(error.message, true));
-    return () => {
-      live = false;
-    };
-  }, [prompts, runsVersion, notify]);
+    if (error) notify(error.message, true);
+  }, [error, notify]);
   const next = (schedules ?? [])
     .filter((schedule) => schedule.enabled && schedule.next_run_at)
     .sort((a, b) => new Date(a.next_run_at!).getTime() - new Date(b.next_run_at!).getTime());

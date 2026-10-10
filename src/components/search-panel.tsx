@@ -18,7 +18,7 @@ import {
   type Conversation,
   type SearchResult,
 } from '@/lib/api';
-import { useApp } from './app';
+import { useActions, useConfigured, usePreferences, useSearch } from './state';
 import Highlight from './highlight';
 import Markdown from './markdown';
 import { ResultCard, SearchSteps } from './search-results';
@@ -173,7 +173,7 @@ export const Omnibox = forwardRef<HTMLInputElement, { onSubmit: () => void }>(fu
   { onSubmit },
   ref,
 ) {
-  const { search } = useApp();
+  const search = useSearch();
   const [value, setValue] = useState('');
   const state = search.state;
   const continuing = !!state?.followUp && !!state.conversationId;
@@ -254,7 +254,10 @@ export const Omnibox = forwardRef<HTMLInputElement, { onSubmit: () => void }>(fu
 });
 
 export default function SearchPanel() {
-  const { search, configured, preferences, openAdmin, openDocument, searchKeyword } = useApp();
+  const search = useSearch();
+  const configured = useConfigured();
+  const preferences = usePreferences();
+  const { openAdmin, openDocument, searchKeyword } = useActions();
   const state = search.state!;
   const terms = useMemo(
     () => [...new Set([...(state.local?.highlights ?? []), ...(state.ai?.highlights ?? [])])],
@@ -405,7 +408,7 @@ export default function SearchPanel() {
 
 // A question or an answer with its search steps and the evidence it cites.
 function MessageView({ message }: { message: ChatMessage }) {
-  const { notify, openDocument } = useApp();
+  const { notify, openDocument } = useActions();
   if (message.role === 'user') return <p className="question">{message.content}</p>;
   return (
     <article className="answer">

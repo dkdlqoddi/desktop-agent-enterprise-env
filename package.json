@@ -34,6 +34,7 @@
     "check": "npm run typecheck && npm run test:python && npm run test:main",
     "notices": "node scripts/third-party-notices.mjs",
     "notices:check": "node scripts/third-party-notices.mjs --check",
+    "generate:methods": "node scripts/generate-methods.mjs",
     "package": "node scripts/package.mjs",
     "package:dir": "node scripts/package.mjs dir",
     "package:win": "node scripts/package.mjs win"

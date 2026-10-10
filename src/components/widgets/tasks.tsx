@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BellRing, Check, CircleCheck, LoaderCircle, Plus, Sparkles, Trash2 } from 'lucide-react';
 import EmptyState from '../empty-state';
 import { api, date, type Task } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions, useConfigured, useDocuments } from '../state';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
 import { blankTask, TaskFields } from '../task-editor';
@@ -62,7 +62,9 @@ export function QuickAdd({
 }
 
 export default function TasksWidget() {
-  const { configured, openAdmin, notify, documents } = useApp();
+  const configured = useConfigured();
+  const documents = useDocuments();
+  const { openAdmin, notify } = useActions();
   const { tasks, refresh } = useAssistantData();
   const [filter, setFilter] = useState<keyof typeof FILTERS>('open');
   const [editing, setEditing] = useState<Task | null>(null);
@@ -270,7 +272,7 @@ function ExtractTasks({
   onClose: () => void;
   onSaved: (count: number) => Promise<void>;
 }) {
-  const { documents } = useApp();
+  const documents = useDocuments();
   const [source, setSource] = useState('');
   const [content, setContent] = useState('');
   const [drafts, setDrafts] = useState<Task[] | null>(null);

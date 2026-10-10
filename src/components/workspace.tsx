@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { useApp } from './app';
+import { useActions, useSettings, useStats, useView, useWorkspaceTab } from './state';
 import { WidgetHead } from './dashboard';
 import ErrorBoundary from './error-boundary';
 import { defaultView, WIDGETS } from './widgets';
@@ -47,7 +47,10 @@ export const WORKSPACE_VIEWS = {
 };
 
 export function WorkspaceSidebar() {
-  const { view, navigate, newDocument, openAdmin, settings, stats } = useApp();
+  const view = useView();
+  const settings = useSettings();
+  const stats = useStats();
+  const { navigate, newDocument, openAdmin } = useActions();
   const { tasks } = useAssistantData();
   const open = tasks.filter((task) => task.status === 'open').length;
   return (
@@ -174,7 +177,8 @@ export default function WorkspacePage({
 }: {
   view: Exclude<WorkspaceView, 'home' | 'admin'>;
 }) {
-  const { workspaceTab, navigate, newDocument } = useApp();
+  const workspaceTab = useWorkspaceTab();
+  const { navigate, newDocument } = useActions();
   const { title, description } = WORKSPACE_VIEWS[view];
   const tabs = view === 'tasks' ? null : TABS[view];
   const selected = tabs?.find(([id]) => id === workspaceTab)?.[0] ?? tabs?.[0][0];

@@ -12,7 +12,7 @@ import {
 } from '@/lib/api';
 import { httpUrl } from '@/lib/links';
 import { loginSummary } from './admin/sites';
-import { useApp } from './app';
+import { useActions, useConfigured } from './state';
 
 // What the form edits: the recipe's fields and the schedule; urls and paths as one entry a line.
 export type RoutineDraft = RoutineSchedule & {
@@ -107,7 +107,8 @@ export default function RoutineForm({
   onClose: () => void;
   onSaved: (routine: Routine) => void;
 }) {
-  const { configured, openAdmin } = useApp();
+  const configured = useConfigured();
+  const { openAdmin } = useActions();
   const [form, setForm] = useState(() => ({
     ...draft,
     // Lists are edited as text, one entry a line.
@@ -395,7 +396,7 @@ function FieldInput({
 
 // Folders and files chosen in Windows' own dialog, added as lines.
 function PathPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const { notify } = useApp();
+  const { notify } = useActions();
   async function add(mode: 'directory' | 'file') {
     try {
       const path = await api<string | null>('import.choose', { mode });
@@ -418,7 +419,7 @@ function PathPicker({ value, onChange }: { value: string; onChange: (value: stri
 
 // The site account the field's link signs in with, as the import box shows it.
 function SiteAccount({ kind, url }: { kind: SiteKind; url: string }) {
-  const { openAdmin } = useApp();
+  const { openAdmin } = useActions();
   const [match, setMatch] = useState<SiteMatch | null>(null);
   useEffect(() => {
     if (!httpUrl(url)) return setMatch(null);

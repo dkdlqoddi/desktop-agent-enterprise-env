@@ -2,14 +2,14 @@ import { useState } from 'react';
 import { Bell, BellRing } from 'lucide-react';
 import EmptyState from '../empty-state';
 import { api, clock, date, localDay, relative, type Task } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions } from '../state';
 import { WidgetHead } from '../dashboard';
 import { useNow } from '../run-history';
 import { Loaded, useAssistantData } from './assistant-data';
 import { Agenda, Metrics } from './parts';
 
 export default function RemindersWidget() {
-  const { notify } = useApp();
+  const { notify } = useActions();
   const { briefing, notification, refresh } = useAssistantData();
   const [busy, setBusy] = useState(false);
   const reminders = briefing?.reminders ?? [];

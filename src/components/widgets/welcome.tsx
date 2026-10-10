@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ArrowRight, ArrowUp, CalendarDays, ShieldCheck, Sparkles } from 'lucide-react';
 import { localDay } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions, useConfigured, useSearch } from '../state';
 import { useWidgetFrame } from '../dashboard';
 
 const greeting = (now: Date) =>
@@ -19,7 +19,8 @@ function Today({ now }: { now: Date }) {
 
 // The question box of the greeting: it asks what the search box asks, and the answer opens above the dashboard.
 function AskForm() {
-  const { ask, search } = useApp();
+  const search = useSearch();
+  const { ask } = useActions();
   const [question, setQuestion] = useState('');
   return (
     <form
@@ -54,7 +55,8 @@ function AskForm() {
 
 // The greeting as the large banner the home page always had.
 export function WelcomeBanner() {
-  const { configured, openAdmin } = useApp();
+  const configured = useConfigured();
+  const { openAdmin } = useActions();
   const { id } = useWidgetFrame('welcome');
   const now = new Date();
   return (
@@ -114,7 +116,8 @@ export function WelcomeBanner() {
 
 // The greeting in one line beside the question box, for dashboards that want the room for widgets.
 export function WelcomeStrip() {
-  const { configured, openAdmin } = useApp();
+  const configured = useConfigured();
+  const { openAdmin } = useActions();
   const { id } = useWidgetFrame('welcome');
   const now = new Date();
   return (

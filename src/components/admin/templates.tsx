@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Braces, LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api, variablesOf, type Prompt, type Schedule } from '@/lib/api';
-import { useApp } from '../app';
+import { useActions, usePrompts } from '../state';
 import Confirm from '../confirm';
 
 const blank = {
@@ -14,7 +14,8 @@ const blank = {
 type Draft = typeof blank & { id?: string };
 
 export default function TemplatesSection() {
-  const { prompts, refresh, notify } = useApp();
+  const prompts = usePrompts();
+  const { refresh, notify } = useActions();
   const [editing, setEditing] = useState<Draft | null>(null);
   return (
     <div className="templates">
@@ -97,7 +98,7 @@ function TemplateForm({
   onCancel: () => void;
   onSaved: (prompt: Prompt) => void;
 }) {
-  const { refresh, notify } = useApp();
+  const { refresh, notify } = useActions();
   const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

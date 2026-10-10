@@ -20,9 +20,9 @@ import {
   type RunItem,
   type RunStats,
 } from '@/lib/api';
-import { useApp } from './app';
 import Highlight from './highlight';
 import { rove } from './roving';
+import { useActions, useInvalidated, usePrompts } from './state';
 
 const PAGE = 30;
 // The theme's pair (theme.css), validated for color vision: CVD ΔE 14 (deutan), and 16 for the dark theme's (CIEDE2000
@@ -105,7 +105,10 @@ const kindLabel = (run: Pick<RunItem, 'kind' | 'schedule_id' | 'schedule_name'>)
   }`;
 
 export default function RunHistory() {
-  const { prompts, runsVersion: version, openRun, notify } = useApp();
+  const prompts = usePrompts();
+  // Its pages of runs load in their own way: again whenever the runs change.
+  const version = useInvalidated(['runs']);
+  const { openRun, notify } = useActions();
   const [promptId, setPromptId] = useState('');
   const [days, setDays] = useState<7 | 14 | 30>(14);
   const [status, setStatus] = useState<'' | 'success' | 'error'>('');

@@ -40,7 +40,7 @@ import {
 } from '@/lib/api';
 import { readableSource } from '@/lib/html-document';
 import { AnalysisLabel, analyzed } from './analysis';
-import { useApp } from './app';
+import { useActions, useConfigured, useJobs } from './state';
 import Confirm from './confirm';
 import ErrorBoundary, { RenderError } from './error-boundary';
 import { findAll, MatchNavigator, useMatches } from './highlight';
@@ -102,17 +102,9 @@ function DocumentReader({
   target: Extract<ReaderTarget, { kind: 'document' | 'new' }>;
   onClose: () => void;
 }) {
-  const {
-    configured,
-    notify,
-    undoable,
-    refresh,
-    searchKeyword,
-    askAbout,
-    openAdmin,
-    openDocument,
-    analysis,
-  } = useApp();
+  const configured = useConfigured();
+  const { notify, undoable, refresh, searchKeyword, askAbout, openAdmin, openDocument } =
+    useActions();
   const [doc, setDoc] = useState<WikiDocument | null>(null);
   const [focus, setFocus] = useState(target.kind === 'document' ? (target.focus ?? null) : null);
   // source: the Markdown a Confluence or JIRA page became; html: the HTML page an imported file became; conflict: what
@@ -184,7 +176,10 @@ function DocumentReader({
     void api<WikiDocument>('wiki.get', { id: doc.id }).then(setDoc, (e) => setError(e.message));
   };
   // The analysis of documents chosen in the list may reach this one while it is open: show its result once done.
-  const waiting = !!doc && (analysis.queued.has(doc.id) || analysis.job?.current?.id === doc.id);
+  // Only whether it waits draws the window again, not every step of the analysis.
+  const waiting = useJobs(
+    (jobs) => !!doc && (jobs.queued.has(doc.id) || jobs.analysis?.current?.id === doc.id),
+  );
   const waited = useRef(false);
   useEffect(() => {
     const ended = waited.current && !waiting && doc;
@@ -891,7 +886,8 @@ const partsOf = (doc: WikiDocument) =>
 // the raw text, and offers neither meanwhile: what they bring never lands under an open editor, the spinner stays,
 // and the window shows the result when they end.
 function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void) {
-  const { configured, notify, refresh, imports } = useApp();
+  const configured = useConfigured();
+  const { notify, refresh, watchJobs } = useActions();
   // The job of the update with the document as it was when the update started.
   const [job, setJob] = useState<{ kind: ImportKind; id: string; doc: WikiDocument } | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -977,7 +973,7 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
     updated(ids.length && !ids.includes(at.id) ? ids[0] : at.id);
   }
   // The job of the update, until it ends.
-  const watched = job ? imports.jobs[job.kind] : null;
+  const watched = useJobs((jobs) => (job ? jobs.imports[job.kind] : null));
   useEffect(() => {
     if (!job || !watched || watched.id !== job.id || activeJob(watched.status)) return;
     setJob(null);
@@ -1019,7 +1015,7 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
         ...options,
       });
       setJob({ kind, id: 'job' in started ? started.job.id : started.id, doc: at });
-      imports.watch();
+      watchJobs();
     } catch (e) {
       setUpdating(false);
       setError((e as Error).message);
@@ -1165,7 +1161,7 @@ function DocumentSource({ doc, jobs }: { doc: WikiDocument; jobs: SourceJobs }) 
 
 // A document that is one part of an import too long for one document leads to the parts beside it.
 function PartLinks({ doc }: { doc: WikiDocument }) {
-  const { openDocument } = useApp();
+  const { openDocument } = useActions();
   const parts = doc.parts ?? [];
   const index = parts.findIndex((part) => part.id === doc.id);
   const previous = index > 0 ? parts[index - 1] : undefined;
@@ -1262,7 +1258,7 @@ const kindLabel = (run: Pick<Run, 'kind' | 'schedule_id' | 'schedule_name'>) =>
   }`;
 
 function RunReader({ id, terms, onClose }: { id: string; terms?: string[]; onClose: () => void }) {
-  const { notify, refresh, bumpRuns } = useApp();
+  const { notify, refresh, bumpRuns } = useActions();
   const [run, setRun] = useState<Run | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');

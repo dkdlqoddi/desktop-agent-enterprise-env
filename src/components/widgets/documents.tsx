@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   Eraser,
@@ -17,12 +17,12 @@ import {
 } from 'lucide-react';
 import { api, date, plain, type Deleted, type Trash, type WikiDocument } from '@/lib/api';
 import { AnalysisJobView, AnalysisLabel, analyzed } from '../analysis';
-import { useApp } from '../app';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
 import EmptyState from '../empty-state';
 import { activeJob } from '../import-jobs';
 import { rove } from '../roving';
+import { useActions, useConfigured, useDocuments, useJobs, useQuery, useView } from '../state';
 
 export const ICONS = {
   confluence: Globe,
@@ -39,33 +39,19 @@ const FILTERS = { all: '전체', analyzed: 'AI 분석 완료', plain: '분석 �
 type Filter = keyof typeof FILTERS;
 
 export default function DocumentsWidget() {
-  const { documents, openDocument, newDocument, navigate, view, version, refresh } = useApp();
+  const documents = useDocuments();
+  const view = useView();
+  const { openDocument, newDocument, navigate, refresh } = useActions();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   // Documents chosen for the library's bulk actions; the actions take those the filters show.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const anchor = useRef<string | null>(null);
   const library = view === 'library';
-  // The trash, shown in place of the list in the library; loaded again with every reload of the documents.
+  // The trash, shown in place of the list in the library; loaded again with every reload of the documents (its tag).
   const [trash, setTrash] = useState(false);
-  const [bin, setBin] = useState<Trash | null>(null);
-  useEffect(() => {
-    if (!library) return;
-    let live = true;
-    api<Trash>('wiki.trash')
-      .then((found) => {
-        if (live) setBin(found);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [library, version]);
+  const bin = useQuery<Trash>('wiki.trash', library ? {} : null).data ?? null;
   const binned = bin?.documents.length ?? 0;
-  const reloadTrash = async () => {
-    setBin(await api<Trash>('wiki.trash'));
-    await refresh();
-  };
   const done = documents.filter(analyzed).length;
   const counts = { all: documents.length, analyzed: done, plain: documents.length - done };
   // The filter also finds documents by where they came from: a folder, a file name, a JIRA key or a page address.
@@ -94,6 +80,15 @@ export default function DocumentsWidget() {
     select(from < 0 ? [doc] : filtered.slice(Math.min(from, to), Math.max(from, to) + 1), on);
     anchor.current = doc.id;
   }
+  // The rows take one toggle that stays the same, so a row draws again only when its document or its check changed.
+  const latest = useRef(toggle);
+  useLayoutEffect(() => {
+    latest.current = toggle;
+  });
+  const onToggle = useCallback(
+    (doc: WikiDocument, on: boolean, range: boolean) => latest.current(doc, on, range),
+    [],
+  );
   return (
     <>
       <WidgetHead id="documents" title="문서" count={documents.length}>
@@ -141,7 +136,7 @@ export default function DocumentsWidget() {
           </button>
         </div>
       )}
-      {trash && library && <TrashView bin={bin} onChanged={reloadTrash} />}
+      {trash && library && <TrashView bin={bin} onChanged={refresh} />}
       {!(trash && library) && <AnalysisJobView />}
       {!(trash && library) && !documents.length && (
         <EmptyState
@@ -178,15 +173,9 @@ export default function DocumentsWidget() {
           <DocumentRow
             key={doc.id}
             doc={doc}
-            onOpen={() => openDocument(doc.id)}
-            selection={
-              library
-                ? {
-                    checked: selected.has(doc.id),
-                    onToggle: (on, range) => toggle(doc, on, range),
-                  }
-                : undefined
-            }
+            onOpen={openDocument}
+            checked={library ? selected.has(doc.id) : undefined}
+            onToggle={onToggle}
           />
         ))}
       </ul>
@@ -204,7 +193,7 @@ const sourceOf = (doc: WikiDocument) =>
 
 // The trash: the deleted documents wait `days` days to be restored, or to be deleted for good by the user.
 function TrashView({ bin, onChanged }: { bin: Trash | null; onChanged: () => Promise<void> }) {
-  const { notify } = useApp();
+  const { notify } = useActions();
   const [busy, setBusy] = useState('');
   async function run(key: string, action: () => Promise<string>) {
     setBusy(key);
@@ -304,10 +293,11 @@ function BulkActions({
   onSelectAll: (on: boolean) => void;
   onClear: () => void;
 }) {
-  const { configured, openAdmin, notify, undoable, refresh, analysis } = useApp();
+  const configured = useConfigured();
+  const { openAdmin, notify, undoable, refresh, watchJobs } = useActions();
   const [busy, setBusy] = useState(false);
   const ids = chosen.map((doc) => doc.id);
-  const running = !!analysis.job && activeJob(analysis.job.status);
+  const running = useJobs((jobs) => !!jobs.analysis && activeJob(jobs.analysis.status));
   async function run(action: () => Promise<string | void>) {
     setBusy(true);
     try {
@@ -351,7 +341,7 @@ function BulkActions({
               configured
                 ? void run(async () => {
                     await api('analysis.start', { ids });
-                    analysis.watch();
+                    watchJobs();
                   })
                 : openAdmin('llm')
             }
@@ -410,31 +400,35 @@ function BulkActions({
   );
 }
 
-function DocumentRow({
+// A row of the list, drawn again only when its document (kept as the same object while it does not change, see
+// keepEqual in src/lib/query.ts) or its check changed. Without `checked` it has no checkbox.
+const DocumentRow = memo(function DocumentRow({
   doc,
   onOpen,
-  selection,
+  checked,
+  onToggle,
 }: {
   doc: WikiDocument;
-  onOpen: () => void;
-  selection?: { checked: boolean; onToggle: (on: boolean, range: boolean) => void };
+  onOpen: (id: string) => void;
+  checked?: boolean;
+  onToggle: (doc: WikiDocument, on: boolean, range: boolean) => void;
 }) {
   const Icon = doc.source ? ICONS[doc.source.kind] : FileText;
   return (
-    <li className={selection ? `selectable${selection.checked ? ' selected' : ''}` : undefined}>
-      {selection && (
+    <li className={checked === undefined ? undefined : `selectable${checked ? ' selected' : ''}`}>
+      {checked !== undefined && (
         <input
           type="checkbox"
           className="document-check"
           aria-label={`${doc.title} 선택`}
-          checked={selection.checked}
+          checked={checked}
           // React reports a checkbox change with the click that made it, so Shift can be read.
           onChange={(event) =>
-            selection.onToggle(event.target.checked, !!(event.nativeEvent as MouseEvent).shiftKey)
+            onToggle(doc, event.target.checked, !!(event.nativeEvent as MouseEvent).shiftKey)
           }
         />
       )}
-      <button className="document-row" onClick={onOpen}>
+      <button className="document-row" onClick={() => onOpen(doc.id)}>
         <Icon size={15} aria-hidden="true" />
         <span className="document-title">
           <strong>{doc.title}</strong>
@@ -451,4 +445,4 @@ function DocumentRow({
       </button>
     </li>
   );
-}
+});
