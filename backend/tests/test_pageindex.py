@@ -2,9 +2,17 @@ import pytest
 
 from agent import pageindex
 from agent.db import Database
-from agent.llm import UserError
+from agent.llm import LLMRequestError, LLMTruncatedError, UserError
 from agent.service import Service
 from test_search import RoutingLLM, long_document, paragraphs
+
+BUSY = "LLM API가 HTTP 503를 반환했습니다. 서버가 바쁘거나 일시적인 오류일 수 있으니 잠시 후 다시 시도해 주세요."
+
+
+def alternating():
+    """Long and short sections in turn (ids 1, 3, … 13 long, 2, 4, … 14 short), packed into four requests:
+    [1, 3], [5, 7], [9, 11] and the last long one with every short one."""
+    return "".join(f"## 긴 {i}\n\n{'가' * 5900}\n\n## 짧은 {i}\n\n{'나' * 350}\n\n" for i in range(7)).strip()
 
 
 @pytest.fixture
@@ -126,10 +134,10 @@ def test_long_document_analysis_uses_bounded_requests(service):
 
 def test_summaries_are_packed_into_few_bounded_requests():
     # Long and short sections alternate; packing the longest first needs 4 requests, not 7.
-    content = "".join(f"## 긴 {i}\n\n{'가' * 5900}\n\n## 짧은 {i}\n\n{'나' * 350}\n\n" for i in range(7)).strip()
+    content = alternating()
     nodes = pageindex.build(content)
     llm = RoutingLLM()
-    assert pageindex.summarize(llm, "문서", content, nodes) == 4
+    assert pageindex.summarize(llm, "문서", content, nodes) == {"batches": 4, "failed": [], "labels": [], "error": ""}
     for _, payload, _ in llm.calls:
         sections = payload["sections"]
         assert sum(len(s["text"]) for s in sections) <= pageindex.BATCH_CHARS
@@ -159,6 +167,100 @@ def test_summary_batches_fail_cleanly_or_fall_back(service):
     analyzed = service.wiki_analyze({"id": doc["id"]})
     summaries = [o["summary"] for o in analyzed["outline"]]
     assert "하나만" in summaries and all(summaries)
+
+
+def asked(llm):
+    """The section ids of each summary request the LLM got, in no particular order."""
+    return sorted(tuple(s["id"] for s in payload["sections"])
+                  for stage, payload, _ in llm.calls if stage == "summarize")
+
+
+def test_a_summary_batch_that_fails_is_asked_again_in_halves():
+    content, llm = alternating(), RoutingLLM()
+    nodes = pageindex.build(content)
+    answer = llm.summarize
+
+    def busy_once(payload):
+        if [s["id"] for s in payload["sections"]] == ["1", "3"]:
+            raise LLMRequestError(BUSY, 503, transient=True)
+        return answer(payload)
+
+    llm.summarize = busy_once
+    assert pageindex.summarize(llm, "문서", content, nodes)["failed"] == []
+    # The other batches were not asked again; the failed one was, in halves.
+    assert asked(llm) == sorted([("1", "3"), ("5", "7"), ("9", "11"), ("2", "4", "6", "8", "10", "12", "13", "14"),
+                                 ("1",), ("3",)])
+    assert all(n["summary"] == f"요약 {n['id']}" for n in nodes)
+
+
+def test_a_document_of_one_request_asks_it_again():
+    content, llm = "# 제목\n\n" + "가" * 400, RoutingLLM()
+    nodes = pageindex.build(content)
+    answer, tries = llm.summarize, []
+
+    def busy_once(payload):
+        tries.append(payload)
+        if len(tries) == 1:
+            raise LLMRequestError(BUSY, 503, transient=True)
+        return answer(payload)
+
+    llm.summarize = busy_once
+    assert pageindex.summarize(llm, "문서", content, nodes)["failed"] == [] and len(tries) == 2
+    assert nodes[0]["summary"] == "요약 1"
+
+
+def test_a_batch_that_fails_again_keeps_what_succeeded_and_says_which_sections_lost_their_summaries(service):
+    doc = service.wiki_save({"title": "설계서", "content": alternating()})
+    answer = service.llm.summarize
+
+    def busy(payload):
+        if "1" in [s["id"] for s in payload["sections"]]:
+            raise LLMRequestError(BUSY, 503, transient=True)
+        return answer(payload)
+
+    service.llm.summarize = busy
+    analyzed = service.wiki_analyze({"id": doc["id"]})
+    # The analysis stands, with every summary that came; the section whose requests failed keeps its text's beginning.
+    assert analyzed["status"] == "ready" and analyzed["index_mode"] == "pageindex" and analyzed["keywords"]
+    summaries = {o["id"]: o["summary"] for o in analyzed["outline"]}
+    assert summaries["1"] == "가" * 159 + "…" and all(summaries[i] == f"요약 {i}" for i in summaries if i != "1")
+    assert analyzed["error"] == (f"섹션 1개(1 긴 0)는 LLM 요약에 실패해 본문 앞부분으로 요약을 대신했습니다: {BUSY} "
+                                 "다시 분석하면 이 섹션들도 다시 요약합니다.")
+    # Analyzed again once the LLM answers, the note goes.
+    service.llm.summarize = answer
+    assert service.wiki_analyze({"id": doc["id"]})["error"] == ""
+
+
+def test_when_no_batch_is_answered_the_analysis_fails_without_another_round(service):
+    doc = service.wiki_save({"title": "설계서", "content": alternating()})
+
+    def busy(payload):
+        raise LLMRequestError(BUSY, 503, transient=True)
+
+    service.llm.summarize = busy
+    with pytest.raises(UserError, match="HTTP 503"):
+        service.wiki_analyze({"id": doc["id"]})
+    assert len(asked(service.llm)) == 4
+    failed = service.wiki_get({"id": doc["id"]})
+    assert failed["status"] == "error" and failed["outline"] == []
+
+
+def test_answers_cut_short_are_asked_again_in_halves_and_their_sections_counted(service):
+    doc = service.wiki_save({"title": "설계서", "content": alternating()})
+    answer = service.llm.summarize
+
+    def cut_short(payload):
+        if len(payload["sections"]) > 1:
+            raise LLMTruncatedError("LLM 응답이 최대 출력 길이에서 잘려 결과를 읽지 못했습니다.")
+        return answer(payload)
+
+    service.llm.summarize = cut_short
+    analyzed = service.wiki_analyze({"id": doc["id"]})
+    # No batch of the first round was answered, yet cut-short answers are asked again: the pairs of long sections
+    # one by one, the halves of the large batch still too many at once.
+    assert len(asked(service.llm)) == 4 + 8
+    assert analyzed["status"] == "ready" and analyzed["error"].startswith(
+        "섹션 8개(2 짧은 0, 4 짧은 1, 6 짧은 2, 8 짧은 3, 10 짧은 4 외 3개)는 LLM 요약에 실패해")
 
 
 def test_stored_tree_is_ignored_after_content_changes_elsewhere(service):

@@ -376,7 +376,9 @@ def test_http_errors_never_expose_response_body_or_credentials(monkeypatch, stat
         def __exit__(self, *args): pass
         def json(self): raise AssertionError("Error body must not be read or disclosed")
 
-    monkeypatch.setattr("agent.llm.requests.post", lambda *a, **kw: Response())
+    # Every request goes through the LLM's session; the retries of 429 and 503 do not wait here.
+    monkeypatch.setattr("agent.llm.requests.Session.post", lambda *a, **kw: Response())
+    monkeypatch.setattr("agent.llm.BACKOFF", 0)
     with pytest.raises(UserError, match=f"HTTP {status}") as error:
         configured_llm().complete([{"role": "user", "content": "hi"}])
     assert "test-secret" not in str(error.value)
@@ -387,7 +389,8 @@ def test_failed_llm_request_preserves_existing_configuration(monkeypatch):
     import requests
     def fail(*args, **kwargs):
         raise requests.exceptions.Timeout("sensitive diagnostic test-secret")
-    monkeypatch.setattr("agent.llm.requests.post", fail)
+    monkeypatch.setattr("agent.llm.requests.Session.post", fail)
+    monkeypatch.setattr("agent.llm.BACKOFF", 0)
     llm = configured_llm()
     with pytest.raises(UserError, match="제한 시간") as error:
         llm.complete([{"role": "user", "content": "hi"}])
@@ -512,7 +515,8 @@ def test_quick_requests_have_their_own_lane_beside_llm_requests(tmp_path):
     env = {name: value for name, value in os.environ.items() if not name.lower().endswith("_proxy")}
     env.update({"PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1", "PYTHONPATH": "", "NO_PROXY": "127.0.0.1",
                 "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1", "API_KEY": "k", "MODEL_NAME": "m",
-                "TEMPERATURE": "0.5", "LLM_TIMEOUT": "120", "CA_BUNDLE": ""})
+                "TEMPERATURE": "0.5", "LLM_TIMEOUT": "120", "CA_BUNDLE": "", "LLM_MAX_TOKENS": "0",
+                "LLM_CONTEXT_WINDOW": "64000", "LLM_CONCURRENCY": "3"})
     child = subprocess.Popen([sys.executable, str(backend / "main.py")], cwd=backend, text=True, encoding="utf-8",
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
     try:
@@ -544,6 +548,118 @@ def test_quick_requests_have_their_own_lane_beside_llm_requests(tmp_path):
     finally:
         release.set()
         with contextlib.suppress(OSError):  # The pipe is already closed when the backend has exited.
+            child.stdin.close()
+        child.wait(20)
+        child.stdout.close()
+        server.shutdown()
+        server.server_close()
+
+
+def test_requests_the_user_waits_for_get_the_llm_first():
+    """The LLM requests of a question, a test of the connection or a prompt run go before batch work's (llm.Slots);
+    those of a scheduled run, an import or a routine do not. Stopping an answer is a quick request of its own."""
+    import main
+    from agent.llm import BATCH, INTERACTIVE
+    assert all(main.priority_of({"method": name}) == INTERACTIVE
+               for name in ("assistant.ask", "settings.test", "prompts.run", "wiki.analyze", "tasks.extract"))
+    assert all(main.priority_of({"method": name}) == BATCH
+               for name in ("schedules.execute", "analysis.start", "routines.run", "office.start"))
+    assert not main.slow({"method": "assistant.cancel"}) and main.slow({"method": "assistant.ask"})
+
+
+def test_a_streamed_answer_comes_as_events_before_its_answer_and_stops_when_asked(tmp_path):
+    """Through the backend's own input and output, as Electron talks to it: the parts of an answer asked with stream
+    are lines without an id, ended by assistant.done, before the answer's line; assistant.cancel, a quick request,
+    stops an answer whose stream stands still, at once."""
+    import contextlib
+    import os
+    import queue
+    import subprocess
+    import sys
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+
+    release = threading.Event()
+
+    class StreamingLLM(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def chunk(self, data):
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
+            self.wfile.flush()
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            stalls = "멈출" in body["messages"][-1]["content"]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            with contextlib.suppress(OSError):  # A stopped answer's connection is gone.
+                for number, part in enumerate(['{"answer": "캐시를 ', '도입했습니다. [1]", ', '"citations": [1]}']):
+                    event = {"choices": [{"delta": {"content": part}, "finish_reason": None}]}
+                    self.chunk(b"data: " + json.dumps(event).encode() + b"\n\n")
+                    if stalls and number == 0:
+                        release.wait(20)  # The rest comes only after the user stopped the answer.
+                self.chunk(b'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}\n\ndata: [DONE]\n\n')
+                self.wfile.write(b"0\r\n\r\n")
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), StreamingLLM)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    backend = Path(__file__).resolve().parents[1]
+    env = {name: value for name, value in os.environ.items() if not name.lower().endswith("_proxy")}
+    env.update({"PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1", "PYTHONPATH": "", "NO_PROXY": "127.0.0.1",
+                "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1", "API_KEY": "k", "MODEL_NAME": "m",
+                "TEMPERATURE": "0.5", "LLM_TIMEOUT": "60", "CA_BUNDLE": "", "LLM_MAX_TOKENS": "0",
+                "LLM_CONTEXT_WINDOW": "64000", "LLM_CONCURRENCY": "3"})
+    child = subprocess.Popen([sys.executable, str(backend / "main.py")], cwd=backend, text=True, encoding="utf-8",
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    lines = queue.Queue()
+    threading.Thread(target=lambda: [lines.put(json.loads(line)) for line in child.stdout], daemon=True).start()
+    try:
+        def send(ident, method, params):
+            child.stdin.write(json.dumps({"id": ident, "method": method, "params": params}) + "\n")
+            child.stdin.flush()
+
+        def until(ident):
+            """The events before the answer of request `ident`, and that answer."""
+            events = []
+            while True:
+                message = lines.get(timeout=20)
+                if message.get("id") == ident:
+                    return events, message
+                if "id" not in message:
+                    events.append(message)
+
+        send("save", "wiki.save", {"title": "회의록", "content": "개발팀이 캐시를 도입하기로 결정했습니다."})
+        doc = until("save")[1]["result"]["id"]
+        send("ask", "assistant.ask", {"question": "결정은?", "document_ids": [doc], "stream": True, "request_id": "r1"})
+        events, reply = until("ask")
+        deltas = [event["params"] for event in events if event["event"] == "assistant.delta"]
+        assert "".join(delta["text"] for delta in deltas) == reply["result"]["messages"][-1]["content"]
+        assert reply["result"]["messages"][-1]["content"] == "캐시를 도입했습니다. [1]"
+        assert events[-1] == {"event": "assistant.done", "params": {
+            "request_id": "r1", "conversation_id": reply["result"]["conversation_id"], "status": "completed",
+            "truncated": False}}
+        send("stalled", "assistant.ask", {"question": "멈출 질문", "document_ids": [doc], "stream": True,
+                                          "request_id": "r2"})
+        # The first part, without the space at its end until more follows.
+        assert lines.get(timeout=20)["params"]["text"] == "캐시를"
+        started = time.monotonic()
+        send("stop", "assistant.cancel", {"request_id": "r2"})
+        assert until("stop")[1]["result"] == {"ok": True, "cancelled": True}
+        events, reply = until("stalled")
+        assert time.monotonic() - started < 10 and events[-1]["params"]["status"] == "cancelled"
+        assert reply["result"]["cancelled"]
+        assert reply["result"]["messages"][-1]["content"] == "캐시를\n\n(답변을 중지했습니다.)"
+    finally:
+        release.set()
+        with contextlib.suppress(OSError):
             child.stdin.close()
         child.wait(20)
         child.stdout.close()

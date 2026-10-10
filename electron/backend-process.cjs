@@ -21,6 +21,8 @@ function spawnFailure(error, executable, packaged) {
 // One process of the Python backend. Requests go to it as JSON lines on its standard input and are answered by the line
 // of its standard output with the same id; the end of its error output is kept for the log (Diagnostics.capture).
 // `exited` hears of an end the process came to by itself and gives the message its requests still waiting fail with.
+// `onEvent(name, params)` hears the events the backend sends of its own accord: lines {event, params} without an id,
+// such as the parts of an answer as the LLM writes it.
 class BackendProcess {
   constructor({
     executable,
@@ -31,9 +33,10 @@ class BackendProcess {
     limits = {},
     limit = LIMIT,
     exited = () => ENDED,
+    onEvent = () => {},
     spawn = childProcess.spawn,
   }) {
-    Object.assign(this, { executable, diagnostics, packaged, limits, limit, exited });
+    Object.assign(this, { executable, diagnostics, packaged, limits, limit, exited, onEvent });
     this.pending = new Map();
     // Why the program could not be started, once that is known.
     this.failure = '';
@@ -154,6 +157,17 @@ class BackendProcess {
     try {
       message = JSON.parse(line);
     } catch {
+      return;
+    }
+    // A line without an id is no answer but an event of the backend's own; one its listener fails on stays its own.
+    if (message && message.id === undefined && typeof message.event === 'string') {
+      try {
+        this.onEvent(message.event, message.params ?? {});
+      } catch (error) {
+        void this.diagnostics.record(
+          `백엔드 이벤트 ${message.event}을(를) 전하지 못했습니다: ${error.message}`,
+        );
+      }
       return;
     }
     const item = this.pending.get(message?.id);

@@ -131,6 +131,7 @@ const METHODS = {
   'analysis.dismiss': method('write', '끝난 AI 분석 작업 지우기'),
 
   'assistant.ask': method('write', '문서를 근거로 LLM이 답변 (대화로 저장)', { slow: true }),
+  'assistant.cancel': method('write', '진행 중인 답변 중지 (받은 데까지 대화에 저장)'),
   'assistant.conversations': method('read', '최근 대화 50개'),
   'assistant.history': method('read', '대화의 메시지와 근거'),
   'assistant.delete': method('write', '대화 삭제'),
@@ -595,6 +596,16 @@ const GROUPS = [
         conversation_id: string('이어서 물을 대화 ID'),
         document_ids: array('이 문서들만 근거로 쓰기 (최대 6개)'),
       }),
+      route(
+        'POST',
+        '/ask/cancel',
+        'assistant.cancel',
+        '진행 중인 답변 중지: 받은 데까지 "답변을 중지했습니다" 표시와 함께 대화에 저장. cancelled는 중지할 답변이 있었는지',
+        {
+          conversation_id: string('답변 중인 대화 ID'),
+          request_id: string('질문의 요청 ID (대화 ID를 아직 모르는 새 대화)'),
+        },
+      ),
       route('GET', '/conversations', 'assistant.conversations', '최근 대화 50개'),
       route('GET', '/conversations/{id}', 'assistant.history', '대화의 메시지·근거·검색 과정', {
         id: ID,
@@ -869,8 +880,17 @@ const GROUPS = [
           },
         ),
         temperature: number('Temperature 0~2 (Anthropic 형식에는 보내지 않음)'),
-        timeout: integer('응답 제한 시간(초) 5~300, 기본 300'),
+        timeout: integer(
+          '응답 제한 시간(초) 5~300, 기본 300. 일시적인 오류(HTTP 429·5xx, 연결 끊김)의 재시도도 이 안에서 함',
+        ),
         ca_bundle: string('CA 인증서(PEM) 경로: 사설·자체 서명 인증서를 쓰는 서버일 때'),
+        max_tokens: integer(
+          '답변의 최대 출력 토큰: 0(자동, 기본: 서버 기본값, Anthropic 형식은 16,000) 또는 256~1,000,000',
+        ),
+        context_window: integer(
+          '모델의 컨텍스트 크기(토큰) 4,096~10,000,000, 기본 64,000. 질문에 넣는 근거와 대화 기록의 양이 이에 맞춰짐',
+        ),
+        concurrency: integer('LLM에 동시에 보내는 요청 수 1~8, 기본 3 (질문이 일괄 분석보다 먼저)'),
       }),
       route('POST', '/settings/test', 'settings.test', '사용 중인 LLM 연결 테스트'),
       route('GET', '/preferences', 'preferences.get', '검색·대시보드 설정'),

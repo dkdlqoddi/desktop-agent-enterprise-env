@@ -23,6 +23,16 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   else if (method === 'noise') {
     process.stdout.write('null\\nnot json\\n{"id": null}\\n');
     reply({ id, result: 'after noise' });
+  } else if (method === 'stream') {
+    // An answer's parts as the backend sends them, lines without an id, before the answer itself; an event with an id,
+    // or one without a name, is no event.
+    const { request_id } = params;
+    reply({ event: 'assistant.delta', params: { request_id, conversation_id: 'c1', text: '캐시를' } });
+    reply({ event: 'assistant.delta', params: { request_id, conversation_id: 'c1', text: ' 도입' } });
+    reply({ id: 'someone-else', event: 'assistant.delta', params: {} });
+    reply({ event: 7 });
+    reply({ event: 'assistant.done', params: { request_id, conversation_id: 'c1', status: 'completed' } });
+    reply({ id, result: { conversation_id: 'c1' } });
   } else if (method === 'crash') {
     process.stderr.write('Traceback (most recent call last):\\nImportError: DLL load failed\\n');
     setTimeout(() => process.exit(3), 20);
@@ -30,7 +40,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 });
 `;
 
-async function setup(t, { env = {}, executable, spawn, packaged = true, limits } = {}) {
+async function setup(t, { env = {}, executable, spawn, packaged = true, limits, onEvent } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-backend-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const script = path.join(root, 'backend.cjs');
@@ -61,6 +71,7 @@ async function setup(t, { env = {}, executable, spawn, packaged = true, limits }
       return '다시 시작하는 중입니다.';
     },
     ...(spawn ? { spawn } : {}),
+    ...(onEvent ? { onEvent } : {}),
   });
   t.after(() => backend.stop());
   return { backend, records, diagnostics, exits };
@@ -79,6 +90,32 @@ test('a backend that answers starts, answers its requests, and leaves no time-ou
   // The start's time limit has passed since: it ended with the start.
   await pause(400);
   assert.deepEqual(records, []);
+});
+
+test("the backend's own events reach their listener in order, before the answer they belong to", async (t) => {
+  const events = [];
+  const { backend, records } = await setup(t, {
+    onEvent: (name, params) => {
+      events.push([name, params]);
+      // A listener that fails costs neither the other events nor the answer.
+      if (params.text === ' 도입') throw new Error('창이 닫혔습니다');
+    },
+  });
+  await backend.started();
+  const answer = await backend.request('stream', { request_id: 'r1' });
+  assert.deepEqual(answer, { conversation_id: 'c1' });
+  assert.deepEqual(events, [
+    ['assistant.delta', { request_id: 'r1', conversation_id: 'c1', text: '캐시를' }],
+    ['assistant.delta', { request_id: 'r1', conversation_id: 'c1', text: ' 도입' }],
+    ['assistant.done', { request_id: 'r1', conversation_id: 'c1', status: 'completed' }],
+  ]);
+  assert.deepEqual(records, [
+    '백엔드 이벤트 assistant.delta을(를) 전하지 못했습니다: 창이 닫혔습니다',
+  ]);
+  // Without a listener, events are passed over.
+  const { backend: quiet } = await setup(t);
+  await quiet.started();
+  assert.deepEqual(await quiet.request('stream', { request_id: 'r2' }), { conversation_id: 'c1' });
 });
 
 test('a backend whose program is missing says so, logs the error, and fails its requests at once', async (t) => {

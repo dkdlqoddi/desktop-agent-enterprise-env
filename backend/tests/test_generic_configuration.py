@@ -14,7 +14,7 @@ def test_fresh_install_cannot_send_to_an_unconfigured_provider(monkeypatch):
         monkeypatch.delenv(name, raising=False)
         monkeypatch.delenv("PRIVATE_AGENT_" + name, raising=False)
     calls = []
-    monkeypatch.setattr("agent.llm.requests.post", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr("agent.llm.requests.Session.post", lambda *args, **kwargs: calls.append(args))
     llm = LLM()
     settings = llm.public()
     assert settings["provider"] == "general"

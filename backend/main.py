@@ -15,13 +15,17 @@ from dotenv import load_dotenv
 from agent import diagnostics
 from agent.db import Database
 from agent.folders import sweep_scratch
-from agent.llm import LLM, UserError
+from agent.llm import BATCH, INTERACTIVE, LLM, UserError, priority
 from agent.service import Service
 
 # Requests that wait on the LLM or a browser can take minutes. They get their own lane, so the quick
 # reads a screen makes all at once (lists, statuses) are never refused behind them.
 SLOW = frozenset({"settings.test", "prompts.run", "wiki.analyze", "assistant.ask", "briefing.generate",
                   "tasks.extract", "schedules.run", "schedules.execute", "confluence.check", "jira.check"})
+# Requests a user waits for on the screen (or an AI tool for its answer): their LLM requests go before those of batch
+# work (analyses, imports, routines, scheduled runs), which also leaves them a slot of their own (llm.Slots).
+INTERACTIVE_METHODS = frozenset({"assistant.ask", "settings.test", "prompts.run", "briefing.generate", "tasks.extract",
+                                 "wiki.search", "wiki.analyze", "schedules.run", "confluence.check", "jira.check"})
 SLOW_SLOTS = 4
 QUICK_SLOTS = 24
 # Electron sends a request's parameters as at most 900,000 characters of JSON.
@@ -41,6 +45,11 @@ def slow(request):
     params = request.get("params")
     return request.get("method") in SLOW or (
         request.get("method") == "wiki.search" and isinstance(params, dict) and params.get("mode") == "prompt")
+
+
+def priority_of(request):
+    """The priority of a request's LLM requests (llm.PRIORITY)."""
+    return INTERACTIVE if request.get("method") in INTERACTIVE_METHODS else BATCH
 
 
 def sweep_leftovers():
@@ -87,10 +96,18 @@ def main():
         with write_lock:
             print(json.dumps(message, ensure_ascii=False), flush=True)
 
+    def emit(event, params):
+        """An event of the backend's own (an answer as the LLM writes it): a line without an id, which Electron passes
+        to the window instead of taking it for an answer."""
+        write({"event": event, "params": params})
+
+    service.emit = emit
+
     def handle(request, slots):
         ident = request.get("id")
         try:
-            result = service.dispatch(request.get("method"), request.get("params", {}))
+            with priority(priority_of(request)):
+                result = service.dispatch(request.get("method"), request.get("params", {}))
             write({"id": ident, "result": result})
         except UserError as exc:
             write({"id": ident, "error": str(exc)})
@@ -124,8 +141,9 @@ def main():
                 # Whatever a line holds (not JSON, nesting deeper than the parser goes, the wrong shape), it is refused
                 # and the next one is read: one request must never end the backend.
                 write({"id": ident or request_id(line), "error": "잘못된 RPC 요청입니다."})
-        # End of input (the app is closing): stop the imports, browsers and analysis as backend.shutdown does, before
-        # leaving this block waits for the requests still running.
+        # End of input (the app is closing): stop the answers being written, the imports, browsers and analysis as
+        # backend.shutdown does, before leaving this block waits for the requests still running.
+        service.assistant.cancel_all()
         service.shutdown()
 
 

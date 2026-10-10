@@ -171,6 +171,8 @@ const ALLOWED = new Set([
   'assistant.history',
   'assistant.delete',
   'assistant.ask',
+  // Stops an answer in progress; with stream, assistant.ask sends its parts on 'assistant:delta' (forwardEvent).
+  'assistant.cancel',
   'briefing.get',
   'briefing.generate',
   // The admin page's own settings of the local API for AI tools; never reachable through that API.
@@ -195,6 +197,9 @@ const LLM_FIELDS = [
   'temperature',
   'timeout',
   'ca_bundle',
+  'max_tokens',
+  'context_window',
+  'concurrency',
 ];
 const LLM_SECRETS = ['api_key'];
 // The Python backend's process (a BackendProcess), and the start under way: until the backend that starts has its LLM
@@ -250,8 +255,8 @@ function osUser() {
   }
 }
 
-// Requests making several LLM calls of up to 300 seconds each (the settings' limit), plus a margin:
-// prompt search = analysis + 2 AI search steps, a question = those + the answer, and a long document's
+// Requests making several LLM calls of up to 300 seconds each (the settings' limit, which the retries of a call share),
+// plus a margin: prompt search = analysis + 2 AI search steps, a question = those + the answer, and a long document's
 // PageIndex analysis = up to 5 rounds of section summaries + the metadata.
 const RPC_TIMEOUTS = {
   // Auto detection may wait for several login screens and submissions in a row, and the LLM's help.
@@ -263,6 +268,18 @@ const RPC_TIMEOUTS = {
 };
 
 const RESTARTING = 'Python 백엔드를 다시 시작하고 있습니다. 잠시 후 다시 시도해 주세요.';
+
+// The events the backend sends of its own accord (lines without an id) that reach the window, by the type each has
+// there on 'assistant:delta': the parts of an answer as the LLM writes it, and its end, for a question asked with
+// stream (assistant.ask). Any other event is dropped.
+const BACKEND_EVENTS = { 'assistant.delta': 'delta', 'assistant.done': 'done' };
+
+function forwardEvent(name, params) {
+  const type = Object.hasOwn(BACKEND_EVENTS, name) ? BACKEND_EVENTS[name] : null;
+  if (!type || !params || typeof params !== 'object' || Array.isArray(params)) return;
+  if (window && !window.isDestroyed())
+    window.webContents.send('assistant:delta', { ...params, type });
+}
 
 // A request to the backend. While it starts (again) a request waits until it has its LLM settings, so that nothing
 // reaches a backend that would answer without them: the screens', an AI tool's, or a check of the schedules, routines
@@ -411,6 +428,10 @@ async function launchBackend(dataDirectory) {
     diagnostics,
     packaged: app.isPackaged,
     limits: RPC_TIMEOUTS,
+    // Only the backend in use speaks to the window.
+    onEvent: (name, params) => {
+      if (backend === child) forwardEvent(name, params);
+    },
     // Not stopped by the app: what the backend last wrote to its error output says why. Once the Wiki is open it is
     // started again; a first start that fails is reported by the storage screen instead.
     exited: ({ code, signal }) => {

@@ -157,7 +157,8 @@ export async function llmServer(
     requests.push(entry);
     const content = await reply(entry);
     if (content instanceof Error) {
-      response.writeHead(503).end();
+      // The backend sends a request refused with 503 again, up to 4 times in all: Retry-After 0 spares the waits.
+      response.writeHead(503, { 'Retry-After': '0' }).end();
       return;
     }
     response.writeHead(200, { 'Content-Type': 'application/json' });

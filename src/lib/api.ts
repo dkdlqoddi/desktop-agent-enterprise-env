@@ -278,8 +278,16 @@ export type Settings = {
   has_api_key: boolean;
   key_stored: boolean;
   temperature: number;
+  // Seconds an answer may take, retries of failures that may pass (HTTP 429 and 5xx, a dropped connection) included.
   timeout: number;
   ca_bundle: string;
+  // The cap of an answer in tokens: 0 leaves it automatic (the server's own; 16,000 for the Anthropic format).
+  // Optional only for screens written before them: settings.get always sends these three.
+  max_tokens?: number;
+  // The tokens the model reads and writes in one request; a question's evidence and history scale with it.
+  context_window?: number;
+  // LLM requests at once (1~8); questions go before batch work such as analyses.
+  concurrency?: number;
   // Whether the LLM in use has what a request needs, and its model.
   configured: boolean;
   active_model: string;
@@ -721,6 +729,8 @@ declare global {
   interface Window {
     privateAgent?: {
       onAssistantOpen?: (callback: () => void) => () => void;
+      // An answer as the LLM writes it, for a question asked with stream (assistant.ask).
+      onAssistantDelta?: (callback: (event: AssistantStreamEvent) => void) => () => void;
       onScheduleEvent?: (callback: (event: ScheduleEvent) => void) => () => void;
       onRoutineEvent?: (callback: (event: RoutineEvent) => void) => () => void;
       onImportNotice?: (callback: (text: string) => void) => () => void;
@@ -847,22 +857,50 @@ export type Citation = {
   terms?: string[];
 };
 export type Conversation = { id: string; title: string; updated_at: string };
-// An answer from the search box; an automatic search also lists every document it found.
+// An answer from the search box; an automatic search also lists every document it found. Asked with
+// { stream: true, request_id }, the same answer also reaches onAssistantDelta while the LLM writes it. An answer the
+// user stopped (assistant.cancel) or the LLM's output limit cut short keeps what came, with a note at its end.
 export type Answer = {
   conversation_id: string;
   messages: ChatMessage[];
   search: SearchResult | null;
+  request_id?: string;
+  cancelled?: boolean;
+  truncated?: boolean;
 };
+// What assistant.ask sends while the LLM writes an answer asked with stream, for its request_id: parts of the
+// answer's text (delta; with reset, the text replaces what came before, as when a failed attempt starts over), then
+// one end (done). A new conversation's ID comes with its first event, for assistant.cancel.
+export type AssistantStreamEvent =
+  | {
+      type: 'delta';
+      request_id: string;
+      conversation_id: string;
+      text: string;
+      reset?: boolean;
+    }
+  | {
+      type: 'done';
+      request_id: string;
+      conversation_id: string;
+      status: 'completed' | 'cancelled' | 'error';
+      // The LLM stopped at its output limit (max_tokens): the answer ends with a note saying so.
+      truncated: boolean;
+      error?: string;
+    };
+// assistant.cancel {conversation_id} or {request_id}: whether there was an answer to stop.
+export type AssistantCancel = { ok: boolean; cancelled: boolean };
 export type ChatMessage = {
   seq: number;
   role: 'user' | 'assistant';
   content: string;
   citations: Citation[];
-  // How the evidence was found, for assistant answers.
+  // How the evidence was found, for assistant answers; outcome when the answer did not end by itself.
   trace?: {
     terms: string[];
     steps: SearchStep[];
     sources: { title: string; sections: string[] }[];
+    outcome?: 'cancelled' | 'truncated';
   } | null;
   created_at: string;
 };
