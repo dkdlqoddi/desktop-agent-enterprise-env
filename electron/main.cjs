@@ -15,11 +15,12 @@ const {
   screen: displays,
 } = require('electron');
 const { spawn } = require('node:child_process');
-const { createHash } = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { readJsonFile, writeFileSafely } = require('./files.cjs');
+const { BUNDLE, PRIVILEGES: AGENT_SCHEME, SCHEME, bundleHandler } = require('./protocol.cjs');
+const { allowedRequest, trustedSender } = require('./trusted-sender.cjs');
 const { BackendProcess, ENDED, spawnFailure } = require('./backend-process.cjs');
 const { editMenu } = require('./context-menu.cjs');
 const { ownStart, relaunchOptions } = require('./relaunch.cjs');
@@ -55,153 +56,7 @@ const DEV_URL = !app.isPackaged ? process.env.PRIVATE_AGENT_DEV_URL : undefined;
 const LAUNCH = demoLaunch(process.argv);
 if (process.env.PRIVATE_AGENT_USER_DATA)
   app.setPath('userData', process.env.PRIVATE_AGENT_USER_DATA);
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'agent',
-    // codeCache: the screens' scripts are compiled once and kept, as Chromium does for https pages.
-    privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true },
-  },
-  RECORDER_SCHEME,
-]);
-const ALLOWED = new Set([
-  'health',
-  'stats',
-  'prompts.list',
-  'prompts.save',
-  'prompts.delete',
-  'prompts.run',
-  'runs.list',
-  'runs.get',
-  'runs.delete',
-  'runs.stats',
-  'runs.active',
-  'schedules.list',
-  'schedules.save',
-  'schedules.toggle',
-  'schedules.delete',
-  'schedules.run',
-  // Automatic routines: ready-made jobs on a schedule. Due runs start from the main process (RoutineRunner).
-  'routines.catalog',
-  'routines.list',
-  'routines.get',
-  'routines.save',
-  'routines.toggle',
-  'routines.delete',
-  'routines.run',
-  'routines.cancel',
-  'routines.runs',
-  'wiki.list',
-  'wiki.get',
-  'wiki.save',
-  // Read only: an edit wiki.save refused, compared with the document as it is now.
-  'wiki.compare',
-  'wiki.delete',
-  'wiki.delete_many',
-  'wiki.trash',
-  'wiki.restore',
-  'wiki.purge',
-  // Backups of the Wiki in its backups folder, and the restore of one at the next start.
-  'wiki.backup',
-  'wiki.backups',
-  'wiki.restore_backup',
-  'wiki.analyze',
-  'wiki.clear_analysis',
-  'wiki.search',
-  'wiki.graph',
-  'analysis.start',
-  'analysis.status',
-  'analysis.cancel',
-  'analysis.dismiss',
-  // Every background job at once, read by the main process, which then follows them for the screens (job:progress).
-  'jobs.status',
-  'preferences.get',
-  'preferences.save',
-  'settings.get',
-  'settings.update',
-  'settings.test',
-  'import.choose',
-  'files.import_text',
-  'clipboard.write',
-  'storage.get',
-  'storage.choose',
-  'storage.initialize',
-  'rtf.capabilities',
-  'rtf.start',
-  'rtf.status',
-  'rtf.cancel',
-  'rtf.dismiss',
-  'office.capabilities',
-  'office.start',
-  'office.status',
-  'office.cancel',
-  'office.dismiss',
-  'image.capabilities',
-  'image.start',
-  'image.status',
-  'image.cancel',
-  'image.dismiss',
-  'text.capabilities',
-  'text.start',
-  'text.status',
-  'text.cancel',
-  'text.dismiss',
-  'wiki.source_markdown',
-  'wiki.source_html',
-  'wiki.source_status',
-  // Writing a document's changes back into the file it came from, and the copies of the file kept before each write.
-  'writeback.start',
-  'writeback.status',
-  'writeback.cancel',
-  'writeback.dismiss',
-  'writeback.backups',
-  'writeback.restore_backup',
-  'confluence.start',
-  'confluence.status',
-  'confluence.cancel',
-  'confluence.dismiss',
-  'jira.start',
-  'jira.status',
-  'jira.cancel',
-  'jira.dismiss',
-  'sites.list',
-  'sites.save',
-  'sites.delete',
-  'sites.match',
-  'sites.check',
-  'sites.check_cancel',
-  'sites.login',
-  'sites.login_close',
-  'sites.status',
-  'tasks.list',
-  'tasks.save',
-  'tasks.save_many',
-  'tasks.delete',
-  'tasks.extract',
-  'tasks.snooze',
-  'reminders.due',
-  'reminders.ack',
-  'reminders.status',
-  'assistant.conversations',
-  'assistant.history',
-  'assistant.delete',
-  'assistant.ask',
-  // Stops an answer in progress; with stream, assistant.ask sends its parts on 'assistant:delta' (forwardEvent).
-  'assistant.cancel',
-  'briefing.get',
-  'briefing.generate',
-  // The admin page's own settings of the local API for AI tools; never reachable through that API.
-  'api.get',
-  'api.update',
-  'api.rotate_token',
-  'api.copy',
-  'api.manual',
-  'api.open_docs',
-  // What to send when reporting a problem; also from the first-run screen, when the backend fails to start.
-  'diagnostics.copy',
-  'diagnostics.open_folder',
-  // 지금 다시 시작 once a restore of a Wiki backup waits for the next start; the screens' own, never an AI tool's.
-  'app.relaunch',
-]);
+protocol.registerSchemesAsPrivileged([AGENT_SCHEME, RECORDER_SCHEME]);
 // The LLM settings settings.json keeps as they are (the custom headers by their names alone), and the secrets it keeps
 // encrypted beside them: the API Key, and the headers' values (encrypted_headers).
 const LLM_FIELDS = [
@@ -938,14 +793,9 @@ async function removeSite(id) {
   return result;
 }
 
-function trustedSender(event) {
-  const url = event.senderFrame?.url;
-  return (
-    event.sender === window?.webContents &&
-    event.senderFrame === event.sender.mainFrame &&
-    (DEV_URL ? url?.startsWith(DEV_URL + '/') : url?.startsWith('agent://bundle/'))
-  );
-}
+// The app's own screen, which IPC messages must come from (electron/trusted-sender.cjs): the main frame of the current
+// window, at agent://bundle/ or, in a source run, at the development server.
+const ownScreen = () => ({ window, devUrl: DEV_URL });
 
 // Markdown files are imported through files.import_text; .txt files are read through a hidden Notepad by the backend
 // (text.start).
@@ -1347,7 +1197,7 @@ function checkParams(params) {
 }
 
 // One request of the screens or of an AI tool through the local API, once each has been checked: the screens by
-// their sender and ALLOWED, AI tools by their token and access level.
+// their sender and ALLOWED (electron/trusted-sender.cjs), AI tools by their token and access level.
 async function handle(method, params, { access } = {}) {
   let result;
   if (method === 'storage.get') result = storage.info();
@@ -1468,49 +1318,6 @@ async function handle(method, params, { access } = {}) {
   return result;
 }
 
-async function registerProtocol() {
-  const output = path.join(ROOT, 'out');
-  const types = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'text/javascript',
-    '.css': 'text/css',
-    '.json': 'application/json',
-    '.svg': 'image/svg+xml',
-    '.png': 'image/png',
-    '.ico': 'image/x-icon',
-    '.woff2': 'font/woff2',
-    '.txt': 'text/plain',
-  };
-  protocol.handle('agent', async (request) => {
-    try {
-      const url = new URL(request.url);
-      if (url.hostname !== 'bundle' || request.method !== 'GET')
-        return new Response('', { status: 403 });
-      let pathname = decodeURIComponent(url.pathname);
-      if (pathname.endsWith('/')) pathname += 'index.html';
-      const file = path.resolve(output, '.' + pathname);
-      if (!file.startsWith(output + path.sep)) return new Response('', { status: 403 });
-      const data = await fs.readFile(file);
-      const hashes =
-        path.extname(file) === '.html'
-          ? [...data.toString().matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
-              .filter((m) => m[1])
-              .map((m) => `'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`)
-              .join(' ')
-          : '';
-      return new Response(data, {
-        headers: {
-          'Content-Type': types[path.extname(file)] || 'application/octet-stream',
-          'Content-Security-Policy': `default-src 'self'; script-src 'self' ${hashes}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`,
-          'X-Content-Type-Options': 'nosniff',
-        },
-      });
-    } catch {
-      return new Response('Not found', { status: 404 });
-    }
-  });
-}
-
 // How soon closing the window again closes it with changes the user has not saved.
 const CLOSE_AGAIN = 10_000;
 
@@ -1535,7 +1342,7 @@ function createWindow() {
   });
   window = current;
   zoom?.attach(current.webContents);
-  const screen = DEV_URL || 'agent://bundle/';
+  const screen = DEV_URL || BUNDLE;
   // The packaged app has no menu: Electron's default one would reload the screen (Ctrl+R), open the developer tools
   // (Ctrl+Shift+I) and close the only window (Ctrl+W), quitting the app. Chromium itself still copies, pastes and undoes
   // in text fields on Windows; source runs keep the menu for development.
@@ -1719,7 +1526,8 @@ else {
         callback(false),
       );
       session.defaultSession.setPermissionCheckHandler(() => false);
-      await registerProtocol();
+      // The screens: the static export in out/, with its script-hash CSP (electron/protocol.cjs).
+      protocol.handle(SCHEME, bundleHandler(path.join(ROOT, 'out')));
       storage = new StorageManager({
         configDirectory: app.getPath('userData'),
         suggestedPath: plan ? plan.wiki : path.join(app.getPath('documents'), 'Private Agent'),
@@ -1777,7 +1585,7 @@ else {
       const started = Promise.all([storage.load(), sites.load(), apiSettings.load()]);
       ipcMain.handle('agent:request', async (event, method, params = {}) => {
         try {
-          if (!trustedSender(event) || !ALLOWED.has(method))
+          if (!allowedRequest(event, method, ownScreen()))
             throw new Error('허용되지 않은 요청입니다.');
           checkParams(params);
           await started;
@@ -1797,10 +1605,10 @@ else {
       });
       // The screen answers the local API's commands once it has registered for them after each load.
       ipcMain.on('control:ready', (event) => {
-        if (trustedSender(event)) control.attach();
+        if (trustedSender(event, ownScreen())) control.attach();
       });
       ipcMain.on('control:result', (event, reply) => {
-        if (trustedSender(event)) control.settle(reply);
+        if (trustedSender(event, ownScreen())) control.settle(reply);
       });
       createWindow();
       await started;

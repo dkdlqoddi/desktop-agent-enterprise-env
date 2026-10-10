@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 
-// The screens reach the backend through one channel the main process guards with its ALLOWED set (electron/main.cjs),
-// and a method left out of it fails only when a user meets it. These tests find every method the screens call and
-// check that each is allowed, and that each allowed method is handled: by the main process itself, or by the backend's
-// dispatch table.
+// The screens reach the backend through one channel the main process guards with its ALLOWED set
+// (electron/trusted-sender.cjs), and a method left out of it fails only when a user meets it. These tests find every
+// method the screens call and check that each is allowed, and that each allowed method is handled: by the main process
+// itself, or by the backend's dispatch table.
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const generator = import('../scripts/generate-methods.mjs');
@@ -145,7 +145,11 @@ test('every method the screens call is allowed by the main process', async () =>
   ])
     assert.ok(found.has(method), `${method} was not found`);
   const missing = [...found].filter(([method]) => !allowed.has(method));
-  assert.deepEqual(missing, [], 'electron/main.cjs ALLOWED에 없는 메서드를 화면이 호출합니다.');
+  assert.deepEqual(
+    missing,
+    [],
+    'electron/trusted-sender.cjs ALLOWED에 없는 메서드를 화면이 호출합니다.',
+  );
 });
 
 test('every allowed method is handled by the main process or the backend', async () => {

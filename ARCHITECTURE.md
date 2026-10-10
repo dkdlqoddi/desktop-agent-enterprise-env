@@ -26,7 +26,7 @@ Python 백엔드(backend/main.py → agent/service.py) ──▶ wiki.db, LLM �
 
 1. 화면이 `api(method, params)`를 부릅니다(`src/lib/api/transport.ts`). `method`는 `src/lib/api/methods.generated.ts`의 `Method` 타입이어야 합니다.
 2. preload(`electron/preload.cjs`)가 `ipcRenderer.invoke('agent:request', method, params)`로 보냅니다.
-3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `trustedSender`(메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버)와 `ALLOWED.has(method)`를 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다.
+3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `allowedRequest()`(`electron/trusted-sender.cjs`)로 보낸 곳이 메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버인지(`trustedSender`), 메서드가 `ALLOWED`에 있는지 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다.
 4. `api.*`는 로컬 API 설정(`apiRequest`), `app.relaunch`(예약한 백업 복원을 적용하는 ‘지금 다시 시작’)는 앱을 닫고 같은 프로그램으로 다시 실행하며, 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
 5. `rpc()`는 백엔드가 (다시) 시작하는 동안 기다렸다가 `{"id", "method", "params"}` 한 줄을 표준 입력에 씁니다. 응답 제한 시간은 `RPC_TIMEOUTS`(`electron/main.cjs`)에 있으면 그 값, 없으면 330초입니다. 시간이 지나면 메인 프로세스 쪽만 실패로 끝나고 백엔드의 작업은 계속됩니다.
 6. 백엔드(`backend/main.py`)는 줄마다 처리 줄을 고릅니다. `SLOW`의 메서드와 `mode`가 `prompt`인 `wiki.search`는 느린 줄(4개), 나머지는 빠른 줄(24개)입니다. 줄이 차 있으면 기다리지 않고 바로 "진행 중인 요청이 많습니다"로 답합니다. `INTERACTIVE_METHODS`의 LLM 요청은 일괄 작업보다 먼저 갑니다(`agent/llm.py`의 `Slots`).
@@ -109,20 +109,22 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 
 ### electron
 
-| 모듈                                                    | 역할                                                                                           |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `main.cjs`                                              | 앱 시작과 종료, 창, `ALLOWED`와 `handle()`, 백엔드 실행, `settings.json`, 각 부분의 연결       |
-| `preload.cjs`                                           | 화면에 여는 `window.privateAgent`: 요청 하나와 이벤트 구독                                     |
-| `backend-process.cjs`, `restarts.cjs`                   | 백엔드 프로세스 하나의 요청·응답·이벤트·제한 시간, 예기치 않게 끝난 백엔드의 재시작            |
-| `storage.cjs`                                           | Wiki 폴더 선택(`storage.json`), 이전 버전 Wiki 복사, 폴더 쓰기 확인                            |
-| `sites.cjs`, `login-methods.json`                       | 사이트 계정(`sites.json`, 암호화한 비밀번호)과 로그인 계획, 로그인 방식 목록                   |
-| `api-catalog.cjs`                                       | 로컬 API의 모든 메서드, 범위, REST 경로. REST·MCP·매뉴얼·OpenAPI가 모두 이 표에서 만들어집니다 |
-| `api-server.cjs`, `mcp.cjs`, `mcp-stdio.cjs`            | 127.0.0.1 REST·MCP 서버, MCP 도구·리소스·프롬프트, stdio 연결 프로그램                         |
-| `api-manual.cjs`, `api-settings.cjs`, `api-methods.cjs` | 매뉴얼(JSON·Markdown·HTML·OpenAPI), `api.json`, AI 도구 전용 메서드와 경로 검사                |
-| `app-control.cjs`                                       | 로컬 API가 창과 화면을 다루는 명령                                                             |
-| `job-progress.cjs`, `routines.cjs`, `reminders.cjs`     | 작업 진행 알림, 자동 작업·예약 실행 시각 확인(30초), 할 일 알림(15초)                          |
-| `diagnostics.cjs`, `zoom.cjs`, `files.cjs`              | `app.log`와 진단 복사본, 화면 배율, 원자적 JSON 파일 쓰기                                      |
-| `demo.cjs`, `demo-plan.cjs`, `recorder.cjs`, `mp4.cjs`  | 데모 녹화(`record-demo.cmd`)                                                                   |
+| 모듈                                                    | 역할                                                                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `main.cjs`                                              | 앱 시작과 종료, 창, `handle()`, 백엔드 실행, `settings.json`, 각 부분의 연결                                  |
+| `protocol.cjs`                                          | `agent://bundle/` 프로토콜: `out/` 밖의 경로를 거절하고 파일 종류와 스크립트 해시 CSP를 붙여 정적 화면 제공   |
+| `trusted-sender.cjs`                                    | IPC를 보낸 곳 확인(`trustedSender`: 메인 창의 메인 프레임과 화면 주소)과 화면이 부를 수 있는 메서드 `ALLOWED` |
+| `preload.cjs`                                           | 화면에 여는 `window.privateAgent`: 요청 하나와 이벤트 구독                                                    |
+| `backend-process.cjs`, `restarts.cjs`                   | 백엔드 프로세스 하나의 요청·응답·이벤트·제한 시간, 예기치 않게 끝난 백엔드의 재시작                           |
+| `storage.cjs`                                           | Wiki 폴더 선택(`storage.json`), 이전 버전 Wiki 복사, 폴더 쓰기 확인                                           |
+| `sites.cjs`, `login-methods.json`                       | 사이트 계정(`sites.json`, 암호화한 비밀번호)과 로그인 계획, 로그인 방식 목록                                  |
+| `api-catalog.cjs`                                       | 로컬 API의 모든 메서드, 범위, REST 경로. REST·MCP·매뉴얼·OpenAPI가 모두 이 표에서 만들어집니다                |
+| `api-server.cjs`, `mcp.cjs`, `mcp-stdio.cjs`            | 127.0.0.1 REST·MCP 서버, MCP 도구·리소스·프롬프트, stdio 연결 프로그램                                        |
+| `api-manual.cjs`, `api-settings.cjs`, `api-methods.cjs` | 매뉴얼(JSON·Markdown·HTML·OpenAPI), `api.json`, AI 도구 전용 메서드와 경로 검사                               |
+| `app-control.cjs`                                       | 로컬 API가 창과 화면을 다루는 명령                                                                            |
+| `job-progress.cjs`, `routines.cjs`, `reminders.cjs`     | 작업 진행 알림, 자동 작업·예약 실행 시각 확인(30초), 할 일 알림(15초)                                         |
+| `diagnostics.cjs`, `zoom.cjs`, `files.cjs`              | `app.log`와 진단 복사본, 화면 배율, 원자적 JSON 파일 쓰기                                                     |
+| `demo.cjs`, `demo-plan.cjs`, `recorder.cjs`, `mp4.cjs`  | 데모 녹화(`record-demo.cmd`)                                                                                  |
 
 ### src
 
@@ -155,7 +157,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 1. 백엔드: `backend/agent/service.py`의 `dispatch` 표(또는 그 표에 합쳐지는 `assistant.py`·`schedules.py`·`routines.py`의 `methods`)에 처리 함수를 등록합니다. 사용자가 고칠 수 있는 문제는 `UserError`로 알립니다.
 2. LLM이나 브라우저를 기다리는 메서드는 `backend/main.py`의 `SLOW`에, 사용자가 화면에서 기다리는 메서드는 `INTERACTIVE_METHODS`에 넣습니다.
 3. 330초보다 오래 걸릴 수 있으면 `electron/main.cjs`의 `RPC_TIMEOUTS`에 제한 시간을 정합니다.
-4. 화면이 부르는 메서드는 `electron/main.cjs`의 `ALLOWED`에 넣습니다. 비밀 값, 대화 상자, 클립보드, 사이트 계정처럼 메인 프로세스만 할 수 있는 일은 `handle()`에서 처리합니다.
+4. 화면이 부르는 메서드는 `electron/trusted-sender.cjs`의 `ALLOWED`에 넣습니다. 비밀 값, 대화 상자, 클립보드, 사이트 계정처럼 메인 프로세스만 할 수 있는 일은 `handle()`에서 처리합니다.
 5. 응답 타입을 `src/lib/api/types.ts`에 적습니다. 화면이 캐시하는 목록이면 `src/lib/query.ts`의 `TAGS`와, 바꾼 뒤 무효로 할 태그를 정합니다.
 6. AI 도구도 쓰게 하려면 `electron/api-catalog.cjs`의 `METHODS`에 범위와 설명을 넣고, 필요하면 `GROUPS`에 REST 경로와 매개변수를, 값 하나가 더 높은 범위를 요구하면 `FIELD_SCOPES`를 적습니다. 전용 MCP 도구가 필요하면 `electron/mcp.cjs`의 `TOOLS`에 추가합니다. 파괴적인 기능은 범위 `destructive`나 `admin`으로 둡니다.
 7. 새 종류의 백그라운드 작업은 `<종류>.start`·`status`·`cancel`·`dismiss`를 갖추고 `electron/job-progress.cjs`의 `JOB_KINDS`에 넣어, 진행이 `job:progress`로 창에 가게 합니다.

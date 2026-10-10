@@ -128,7 +128,7 @@ npm run test:e2e
 
 `lint:python`은 Python 백엔드를 ruff로 검사하고(`npm run lint:python -- --fix`는 고칠 수 있는 것을 고칩니다), `format:python`은 형식을 맞추며, `format:python:check`는 형식이 맞는지만 확인합니다. 규칙은 `backend/pyproject.toml`의 `[tool.ruff]`에 있습니다. 백엔드 전체의 형식을 한 번에 맞춘 커밋은 `.git-blame-ignore-revs`에 있으니, `git config blame.ignoreRevsFile .git-blame-ignore-revs`로 설정하면 `git blame`이 그 커밋을 건너뜁니다.
 
-`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다). 화면이 부를 수 있는 메서드 타입(`src/lib/api/methods.generated.ts`)은 `electron/api-catalog.cjs`의 `METHODS`와 `electron/main.cjs`의 `ALLOWED`에서 만들어지므로, 둘 중 하나를 바꾸면 `npm run generate:methods`를 실행해 함께 커밋합니다. 메인 프로세스 테스트가 이 파일이 최신인지, 화면이 부르는 메서드가 모두 `ALLOWED`에 있고 메인 프로세스나 백엔드가 처리하는지 확인합니다. 로컬 API의 문서(`docs/api.md`, `docs/openapi.json`)도 카탈로그에서 만들어지므로, API를 바꾸면 `npm run docs:api`를 실행해 함께 커밋합니다(`tests/api-docs.test.cjs`가 최신인지 확인합니다).
+`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다). 화면이 부를 수 있는 메서드 타입(`src/lib/api/methods.generated.ts`)은 `electron/api-catalog.cjs`의 `METHODS`와 `electron/trusted-sender.cjs`의 `ALLOWED`에서 만들어지므로, 둘 중 하나를 바꾸면 `npm run generate:methods`를 실행해 함께 커밋합니다. 메인 프로세스 테스트가 이 파일이 최신인지, 화면이 부르는 메서드가 모두 `ALLOWED`에 있고 메인 프로세스나 백엔드가 처리하는지 확인합니다. 로컬 API의 문서(`docs/api.md`, `docs/openapi.json`)도 카탈로그에서 만들어지므로, API를 바꾸면 `npm run docs:api`를 실행해 함께 커밋합니다(`tests/api-docs.test.cjs`가 최신인지 확인합니다).
 
 Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
 

@@ -102,11 +102,11 @@ Prettier 설정은 `.prettierrc.json`, ruff 설정은 `backend/pyproject.toml`�
 
 다음 파일은 손으로 고치지 않고 명령으로 다시 만들어 함께 커밋합니다. 최신이 아니면 테스트나 CI가 실패합니다.
 
-| 파일                               | 다시 만드는 명령           | 언제                                                                                    | 확인                      |
-| ---------------------------------- | -------------------------- | --------------------------------------------------------------------------------------- | ------------------------- |
-| `THIRD_PARTY_NOTICES.md`           | `npm run notices`          | npm·Python 의존성을 바꾼 뒤                                                             | `npm run notices:check`   |
-| `src/lib/api/methods.generated.ts` | `npm run generate:methods` | `electron/api-catalog.cjs`의 `METHODS`나 `electron/main.cjs`의 `ALLOWED`를 바꾼 뒤      | `tests/methods.test.cjs`  |
-| `docs/api.md`, `docs/openapi.json` | `npm run docs:api`         | `electron/api-catalog.cjs`·`api-manual.cjs`·`mcp.cjs`나 `package.json`의 버전을 바꾼 뒤 | `tests/api-docs.test.cjs` |
+| 파일                               | 다시 만드는 명령           | 언제                                                                                         | 확인                      |
+| ---------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------- | ------------------------- |
+| `THIRD_PARTY_NOTICES.md`           | `npm run notices`          | npm·Python 의존성을 바꾼 뒤                                                                  | `npm run notices:check`   |
+| `src/lib/api/methods.generated.ts` | `npm run generate:methods` | `electron/api-catalog.cjs`의 `METHODS`나 `electron/trusted-sender.cjs`의 `ALLOWED`를 바꾼 뒤 | `tests/methods.test.cjs`  |
+| `docs/api.md`, `docs/openapi.json` | `npm run docs:api`         | `electron/api-catalog.cjs`·`api-manual.cjs`·`mcp.cjs`나 `package.json`의 버전을 바꾼 뒤      | `tests/api-docs.test.cjs` |
 
 `npm run notices`는 `node_modules`와 `backend/.venv`를 읽으므로 `npm ci`와 `npm run setup:python` 뒤에 실행합니다. `npm run docs:api -- --check`는 파일을 쓰지 않고 최신인지만 확인합니다.
 

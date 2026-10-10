@@ -99,8 +99,8 @@ test('the packaged exe runs only its own app code, from its validated archive', 
   assert.equal(pkg.build.asarUnpack, undefined);
   assert.equal(fuses.enableEmbeddedAsarIntegrityValidation, true);
   assert.equal(fuses.onlyLoadAppFromAsar, true);
-  // The screens come from the agent:// protocol (main.cjs) and the recorder's own scheme, never from file://, so file://
-  // pages need none of the privileges early Electron gave them.
+  // The screens come from the agent:// protocol (protocol.cjs) and the recorder's own scheme, never from file://, so
+  // file:// pages need none of the privileges early Electron gave them.
   assert.equal(fuses.grantFileProtocolExtraPrivileges, false);
   for (const [name, source] of sources)
     assert.doesNotMatch(source, /loadFile\(|['"`]file:\/\//, name);

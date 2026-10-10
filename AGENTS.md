@@ -38,7 +38,7 @@ AI 코딩 에이전트가 이 저장소에서 지킬 규칙입니다. 위의 Nex
 
 1. `backend/agent/service.py`의 `dispatch` 표(또는 `assistant.py`·`schedules.py`·`routines.py`의 `methods`)에 등록합니다.
 2. LLM이나 브라우저를 기다리면 `backend/main.py`의 `SLOW`(사용자가 기다리면 `INTERACTIVE_METHODS`도)에, 330초를 넘을 수 있으면 `electron/main.cjs`의 `RPC_TIMEOUTS`에 넣습니다.
-3. 화면이 부르면 `electron/main.cjs`의 `ALLOWED`에, 응답 타입은 `src/lib/api/types.ts`에 넣습니다.
+3. 화면이 부르면 `electron/trusted-sender.cjs`의 `ALLOWED`에, 응답 타입은 `src/lib/api/types.ts`에 넣습니다.
 4. AI 도구도 쓰면 `electron/api-catalog.cjs`의 `METHODS`(필요하면 `GROUPS`의 REST 경로와 `FIELD_SCOPES`)에, 전용 MCP 도구는 `electron/mcp.cjs`의 `TOOLS`에 넣습니다.
 5. `npm run generate:methods`와 `npm run docs:api`를 실행합니다.
 
