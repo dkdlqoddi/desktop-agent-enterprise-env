@@ -244,7 +244,7 @@ class Service:
             "settings.get": lambda p: self.llm.public(),
             "settings.update": lambda p: self.llm.update(p),
             "settings.load": lambda p: self.llm.load(p),
-            # The main process alone (never a screen or an AI tool: electron/main.cjs ALLOWED leaves it out).
+            # The main process alone (never a screen or an AI tool: electron/trusted-sender.cjs ALLOWED leaves it out).
             "settings.secrets": lambda p: self.llm.secrets(),
             # Answers shown as text say so when the LLM stopped them at its output limit (shown).
             "settings.test": lambda p: {
