@@ -357,9 +357,36 @@ class Assistant:
                        (next_at, notified_at, now(), ident))
         return {"ok": True, "acknowledged": True}
 
-    def conversations(self, _):
+    def conversations(self, p):
+        """The latest 50 conversations, or with `limit` or `cursor` a page of them after the cursor's (updated_at, id)
+        (paging): {conversations, next_cursor}. updated_from and updated_to keep those updated within the range."""
+        from . import paging
+        since, until = paging.period(p)
+        clauses, args = [], []
+        if since:
+            clauses.append("updated_at>=?")
+            args.append(since)
+        if until:
+            clauses.append("updated_at<?")
+            args.append(until)
+        if not paging.wanted(p):
+            with self.db.connect() as db:
+                return [dict(r) for r in db.execute(f"""SELECT * FROM conversations
+                    {'WHERE ' + ' AND '.join(clauses) if clauses else ''} ORDER BY updated_at DESC LIMIT 50""", args)]
+        limit = paging.size(p, "대화 목록은", 200)
+        after = paging.decode(p, "conversations", (str, str))
+        if after:
+            clauses.append("updated_at<=? AND (updated_at<? OR id<?)")
+            args += [after[0], after[0], after[1]]
         with self.db.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM conversations ORDER BY updated_at DESC LIMIT 50")]
+            found = [dict(r) for r in db.execute(f"""SELECT * FROM conversations
+                {'WHERE ' + ' AND '.join(clauses) if clauses else ''} ORDER BY updated_at DESC, id DESC LIMIT ?""",
+                                                 [*args, limit + 1])]
+        if len(found) <= limit:
+            return {"conversations": found, "next_cursor": None}
+        last = found[limit - 1]
+        return {"conversations": found[:limit],
+                "next_cursor": paging.encode("conversations", last["updated_at"], last["id"])}
 
     def history(self, p):
         ident = text(p.get("id"), "대화 ID", 80)

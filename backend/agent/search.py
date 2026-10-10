@@ -13,21 +13,24 @@ Prompt search, and the assistant's automatic search, run in three stages:
 Every result carries the passages where the search words occur, so the screen can highlight them.
 
 Words and documents are compared as db.search_text has them: an imported page's Markdown escapes (R\\&D) are not
-there, full-width letters, ① or decomposed Hangul are their plain text, and case does not count. The content's text is
-kept so in document_search; titles are made so as they are compared, and summaries, which the LLM writes as plain
-text, are compared as they are.
+there, full-width letters, ① or decomposed Hangul are their plain text, and case does not count. Each document's
+title, summary and content are kept so in document_search, with a trigram index (document_fts) that finds the documents
+which may hold a word of three or more characters; shorter words are compared with LIKE over the kept text, as every
+word is where SQLite has no trigram index. The words are counted in what is found, so the index only decides which
+documents are read, never how they rank.
 """
 import itertools
 import json
 import math
 import ntpath
 import re
+import sqlite3
 import unicodedata
 from collections import defaultdict
 from urllib.parse import urlsplit
 
-from . import pageindex
-from .db import search_text
+from . import pageindex, paging
+from .db import FTS_COVERED, FTS_DONE, search_text
 from .llm import UserError
 from .service import keyword, like, text
 
@@ -72,6 +75,13 @@ FILLER = {"무엇", "뭐야", "어떤", "어떻게", "언제", "어디", "누구
           "해줘", "주세요", "대한", "대해", "그리고", "the", "and", "for", "what", "how", "about", "with"}
 # ASCII punctuation, which the Markdown of an imported page may escape (R\&D).
 PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+# Terms at least this long are looked up in the trigram index; shorter ones have no trigram to look up.
+TRIGRAM = 3
+LOOKUP = 6  # Trigrams a long term is looked up by: fewer than all narrow as surely, and read less of the index.
+# Rows found in the index that are more than one in SCAN_SHARE of all cost more read one by one, with the stale ones
+# looked for apart, than read in one pass with the rest (Search.scanned): about as much at a third of 10,000, less above.
+SCAN_SHARE = 2
+PAGE_LIMIT = 100  # Results a page of a search (limit) may hold: each is read whole for its passages.
 
 
 def normalize(value):
@@ -147,6 +157,27 @@ def chunks(values, size=500):
     return (values[i:i + size] for i in range(0, len(values), size))
 
 
+def lookup(term):
+    """An FTS5 query of the trigram index for a term of TRIGRAM or more characters: up to LOOKUP of its trigrams, all of
+    which every document holding the term has. The index keeps no positions, so it also finds documents that have the
+    trigrams apart; the search counts the term in what it finds."""
+    grams = list(dict.fromkeys(term[i:i + 3] for i in range(len(term) - 2)))
+    if len(grams) > LOOKUP:
+        grams = [grams[round(i * (len(grams) - 1) / (LOOKUP - 1))] for i in range(LOOKUP)]
+    return " AND ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
+
+
+def tuples(db, sql, args=()):
+    """The rows of a query as plain tuples, which a search reading thousands of rows fetches faster than sqlite3.Row."""
+    cursor = db.cursor()
+    cursor.row_factory = None
+    return cursor.execute(sql, args)
+
+
+# The counts of a term a document does not hold: in its title, summary, sections and body.
+ABSENT = (0, 0, 0, 0)
+
+
 def bm25(tf, length, average, k1=1.2, b=0.75):
     return tf * (k1 + 1) / (tf + k1 * (1 - b + b * length / average)) if tf else 0.0
 
@@ -154,14 +185,16 @@ def bm25(tf, length, average, k1=1.2, b=0.75):
 def snippets(content, pattern, nodes=None, count=3, width=SNIPPET_CHARS):
     """Up to `count` passages around the search words, preferring those with more distinct words, in
     document order and as plain text. Passages of a long document name their section."""
-    spots = []
+    spots, folded = [], {}
     for match in itertools.islice(pattern.finditer(content), 400) if pattern else ():
         start = max(0, match.start() - width // 3)
         if start:
             space = content.find(" ", start, match.start())
             start = space + 1 if 0 <= space < start + 20 else start
         end = min(len(content), start + width)
-        found = [fold(hit.group(0)) for hit in pattern.finditer(content, start, end)]
+        # A word found again and again is folded once.
+        found = [folded[word] if word in folded else folded.setdefault(word, fold(word))
+                 for word in (hit.group(0) for hit in pattern.finditer(content, start, end))]
         spots.append((len(set(found)), len(found), -start, start, end, match.start()))
     chosen = []
     for *_, start, end, position in sorted(spots, reverse=True):
@@ -265,13 +298,22 @@ def source_label(source):
     return f"{label} · {host}" if host else label
 
 
-# The documents with the text search compares of their content: the row of document_search made for the document's
-# revision, else (a document an earlier version saved, not indexed yet) made from the content now.
+# The documents with the text search compares of their title, summary and content (db.index_text).
 INDEXED = "documents d LEFT JOIN document_search s ON s.doc_id=d.id"
 # Documents in the trash are not searched; their keywords count for nothing.
 LIVE = "d.deleted_at IS NULL"
+# The same test where documents are looked up by id: without statistics SQLite takes idx_documents_deleted for a
+# selective way in, though nearly every document is live, and would read them all to find a few (the + keeps it out).
+LIVE_ROW = "+d.deleted_at IS NULL"
 KEYWORDS = f"keywords k JOIN documents d ON d.id=k.doc_id AND {LIVE}"
-BODY = "CASE WHEN s.revision=d.revision THEN s.content ELSE search_text(d.content) END"
+# A document's search text is fresh when it was made for the document's revision by this version, which keeps the title
+# (an earlier one kept the content alone) and marks it stale when the title or summary changes (documents_search_stale).
+FRESH = "(s.revision IS d.revision AND s.title IS NOT NULL)"
+# What measure() reads of a document: its fresh search text, with the content as UTF-8, which is counted without being
+# decoded, and its length; else the document's own title, summary and content, to be made so (search_text).
+FIELDS = f"""d.rowid, d.id, d.updated_at, {FRESH}, s.id, s.title, s.summary, s.length,
+    CASE WHEN {FRESH} THEN CAST(s.content AS BLOB) END, CASE WHEN NOT {FRESH} THEN d.title END,
+    CASE WHEN NOT {FRESH} THEN d.summary END, CASE WHEN NOT {FRESH} THEN d.content END"""
 
 
 class Search:
@@ -280,15 +322,95 @@ class Search:
 
     # -- Local keyword search ------------------------------------------------------------------------
 
+    def covered(self, db):
+        """The id of document_search up to which the trigram index covers the search text, or None without one."""
+        if not self.db.fts:
+            return None
+        found = db.execute(f"SELECT {FTS_COVERED}").fetchone()[0]
+        return found if found is not None and found > 0 else None
+
+    def texts(self, db, terms, strict):
+        """What measure() reads of the live documents that may hold any of the terms (strict: in the title or body), in
+        the order of the documents table: (id, updated_at, title, summary, body, length, look), where `look` names the
+        terms, by their place in `terms`, that the document may hold and measure() counts; None counts every term.
+        For a row the trigram index covers they are the long terms it found the row by and the short terms the row
+        holds, as it holds no other."""
+        covered = self.covered(db)
+        long = [i for i, t in enumerate(terms) if len(t) >= TRIGRAM] if covered is not None else []
+        maybe = defaultdict(list)
+        try:
+            for i in long:
+                for (rid,) in db.execute("SELECT rowid FROM document_fts WHERE document_fts MATCH ?",
+                                         (lookup(terms[i]),)):
+                    maybe[rid].append(i)
+        except sqlite3.DatabaseError:
+            # An index this SQLite cannot read after all, or a damaged one: the terms are compared over the search text,
+            # as without an index.
+            covered, long, maybe = None, [], defaultdict(list)
+        short = [i for i in range(len(terms)) if i not in long]
+        many = maybe and len(maybe) * SCAN_SHARE > (db.execute("SELECT max(id) FROM document_search").fetchone()[0] or 0)
+        if short or many or covered is None or covered < FTS_DONE:
+            found = self.scanned(db, terms, strict, covered, maybe, short)
+            return [found[order] for order in sorted(found)]
+        found = {}
+        # Every term was looked up, and the index covers every row: the rows it found...
+        for chunk in chunks(maybe):
+            for order, ident, updated, _, rid, title, summary, length, body, *_ in tuples(
+                    db, f"""SELECT {FIELDS} FROM document_search s JOIN documents d ON d.id=s.doc_id
+                    WHERE s.id IN ({','.join('?' * len(chunk))}) AND {LIVE_ROW} AND {FRESH}""", chunk):
+                found[order] = (ident, updated, title, summary, body, length, maybe[rid])
+        # ...and the documents whose search text is not fresh, made so to be counted as they are now.
+        for order, ident, updated, *_, title, summary, content in tuples(
+                db, f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE} AND NOT {FRESH}"):
+            body = search_text(content)
+            found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
+        return [found[order] for order in sorted(found)]
+
+    @staticmethod
+    def scanned(db, terms, strict, covered, maybe, short):
+        """The documents that may hold a term, read in one pass over the search text, as a search with a word too short
+        for the trigram index, or without the index, must read every row: the rows the index found, the other rows it
+        covers that hold a short term, and the rows it does not cover (yet) that hold any term. Python finds a word in a
+        row's text as LIKE does, twice as fast, and what it finds is all measure() then counts. A live document without
+        a fresh row is read itself and made so. Returns {documents.rowid: text}."""
+        live = {ident: (order, updated, revision) for order, ident, updated, revision in tuples(
+            db, f"SELECT d.rowid, d.id, d.updated_at, d.revision FROM documents d WHERE {LIVE}")}
+        some = [(i, terms[i], terms[i].encode("utf-8")) for i in short]
+        every = [(i, t, t.encode("utf-8")) for i, t in enumerate(terms)]
+        found, fresh = {}, set()
+        for rid, ident, revision, title, summary, length, body in tuples(
+                db, "SELECT id,doc_id,revision,title,summary,length,CAST(content AS BLOB) FROM document_search"):
+            known = live.get(ident)
+            if known is None or revision != known[2] or title is None:
+                continue  # In the trash, or not fresh: read below.
+            fresh.add(ident)
+            summary = "" if strict else summary or ""
+            indexed = covered is not None and rid <= covered
+            look = [i for i, t, encoded in (some if indexed else every)
+                    if t in title or t in summary or encoded in body]
+            if indexed and rid in maybe:
+                look = sorted(maybe[rid] + look) if look else maybe[rid]
+            if look:
+                found[known[0]] = (ident, known[1], title, summary, body, length, look)
+        stale = [ident for ident in live if ident not in fresh]
+        for chunk in chunks(stale):
+            for order, ident, updated, title, summary, content in tuples(
+                    db, f"SELECT d.rowid,d.id,d.updated_at,d.title,d.summary,d.content FROM documents d WHERE {LIVE_ROW} "
+                        f"AND d.id IN ({','.join('?' * len(chunk))})", chunk):
+                body = search_text(content)
+                found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
+        return found
+
     def lexical(self, terms=(), keywords=(), *, strict=False, phrase=""):
         """Rank the documents matching any term or exact keyword by BM25 over title, summary, PageIndex
         section summaries and body, plus keyword matches. A strict (word) search needs every term in the
-        title or body and ignores AI metadata. Returns [{id, score, matched, updated_at}]."""
+        title or body and ignores AI metadata; a term's IDF counts the documents holding it in either, the
+        OR set, since every ranked document holds every term. Returns [{id, score, matched, updated_at}]."""
         terms, keywords = list(dict.fromkeys(terms)), list(dict.fromkeys(keywords))
         hits = defaultdict(set)
         nodes = {}
         stats = {}
-        columns = f"d.id,d.title,d.summary,{BODY} AS body,d.updated_at"
+        held = [0] * len(terms)  # Strict: documents holding each term in the title or body.
         with self.db.connect() as db:
             total = db.execute(f"SELECT count(*) FROM documents d WHERE {LIVE}").fetchone()[0]
             if not strict and (terms or keywords):
@@ -306,45 +428,85 @@ class Search:
                         GROUP BY n.doc_id""", [like(t) for t in terms]):
                     nodes[row["doc_id"]] = search_text(row["text"])
 
-            def measure(row):
-                title, summary = search_text(row["title"]), "" if strict else search_text(row["summary"])
-                body, sections = row["body"], nodes.get(row["id"], "")
-                stats[row["id"]] = {"updated_at": row["updated_at"], "length": len(body),
-                                    "tf": [(title.count(t), summary.count(t), sections.count(t), body.count(t)) for t in terms],
-                                    "phrase": bool(phrase) and (phrase in title or phrase in body)}
+            encoded = {t: t.encode("utf-8") for t in terms}
+            every = range(len(terms))
+            # The terms within the whole phrase: a body without one of them cannot hold the phrase, and is not read for it.
+            within = [i for i, t in enumerate(terms) if t in phrase] if phrase else []
+            whole = {False: phrase, True: phrase.encode("utf-8")}
+
+            def measure(item, check=True):
+                """Count the terms in a document: those it may hold (texts() `look`), as it holds no other in its title,
+                summary or body, or every term. With `check` the document is kept only when it holds a term there
+                (strict: every term in the title or body), as the search found it."""
+                ident, updated, title, summary, body, length, look = item
+                summary, sections = "" if strict else summary, nodes.get(ident, "")
+                binary = isinstance(body, bytes)
+                if look is None or sections:
+                    look = every
+                tf, counted, holding = [ABSENT] * len(terms), [], []
+                for i in look:
+                    t = terms[i]
+                    counts = (title.count(t), summary.count(t), sections.count(t) if sections else 0,
+                              body.count(encoded[t] if binary else t))
+                    if counts != ABSENT:
+                        tf[i] = counts
+                        counted.append(i)
+                        if counts[0] or counts[1] or counts[3]:
+                            holding.append(i)
+                if check and strict:
+                    for i in holding:
+                        held[i] += 1
+                if check and not (len(holding) == len(terms) if strict else holding):
+                    return
+                # `counted` keeps the terms counted somewhere, in order: the only ones that weigh unless a keyword matches.
+                stats[ident] = {"updated_at": updated, "length": length, "tf": tf, "counted": counted,
+                                "phrase": bool(phrase) and (phrase in title or all(tf[i][3] for i in within)
+                                                            and whole[binary] in body)}
 
             if terms:
-                field = f"(search_text(d.title) LIKE ? ESCAPE '\\' OR {BODY} LIKE ? ESCAPE '\\'" + \
-                        ("" if strict else " OR d.summary LIKE ? ESCAPE '\\'") + ")"
-                args = [like(t) for t in terms for _ in range(2 if strict else 3)]
-                for row in db.execute(f"SELECT {columns} FROM {INDEXED} WHERE {LIVE} AND (" +
-                                      (" AND " if strict else " OR ").join([field] * len(terms)) + ")", args):
-                    measure(row)
-            for chunk in chunks(i for i in set(hits) | set(nodes) if i not in stats):
-                for row in db.execute(f"SELECT {columns} FROM {INDEXED} WHERE {LIVE} AND d.id IN ({','.join('?' * len(chunk))})",
-                                      chunk):
-                    measure(row)
+                for item in self.texts(db, terms, strict):
+                    measure(item)
+            rest = [i for i in set(hits) | set(nodes) if i not in stats]
+            for chunk in chunks(rest):
+                own = {}
+                for row in tuples(db, f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE_ROW} AND d.id IN "
+                                      f"({','.join('?' * len(chunk))})", chunk):
+                    order, ident, updated, fresh, _, title, summary, length, body, *values = row
+                    if not fresh:
+                        title, summary, body = (search_text(value) for value in values)
+                        length = len(body)
+                    own[order] = (ident, updated, title, summary, body, length, None)
+                for order in sorted(own):
+                    measure(own[order], check=False)
         if not stats:
             return []
         average = max(1, sum(s["length"] for s in stats.values()) / len(stats))
-        found = [sum(1 for ident, s in stats.items() if any(s["tf"][i]) or ("exact", t) in hits[ident]
-                     or ("partial", t) in hits[ident]) for i, t in enumerate(terms)]
+        found = held
+        if not strict:
+            found = [0] * len(terms)
+            for ident, s in stats.items():
+                marks = hits.get(ident, ())
+                for i in s["counted"] if not marks else range(len(terms)):
+                    if s["tf"][i] != ABSENT or ("exact", terms[i]) in marks or ("partial", terms[i]) in marks:
+                        found[i] += 1
         idf = [math.log(1 + (total - df + 0.5) / (df + 0.5)) for df in found]
         keyword_idf = {k: math.log(1 + (total - n + 0.5) / (n + 0.5))
-                       for k in keywords for n in [sum(("keyword", k) in hits[i] for i in stats)]}
+                       for k in keywords for n in [sum(("keyword", k) in hits.get(i, ()) for i in stats)]}
         ranked = []
         for ident, s in stats.items():
-            score, matched = 0.0, []
-            for i, term in enumerate(terms):
-                title, summary, sections, body = s["tf"][i]
+            score, matched, marks = 0.0, [], hits.get(ident, ())
+            # A term counted nowhere and matching no keyword weighs nothing; the rest add up in the order of the terms.
+            for i in s["counted"] if not marks else range(len(terms)):
+                term, counts = terms[i], s["tf"][i]
+                title, summary, sections, body = counts
                 weight = 2.0 * min(title, 2) + min(summary, 2) + 0.8 * min(sections, 2) + \
                     bm25(body, s["length"], average)
-                weight += 2.5 if ("exact", term) in hits[ident] else 1.0 if ("partial", term) in hits[ident] else 0
+                weight += 2.5 if ("exact", term) in marks else 1.0 if ("partial", term) in marks else 0
                 if weight:
                     score += idf[i] * weight
                     matched.append(term)
             for key in keywords:
-                if ("keyword", key) in hits[ident]:
+                if ("keyword", key) in marks:
                     score += 2.5 * keyword_idf[key]
                     matched.append(key)
             # Documents matching more of the search words rank higher, whole phrases higher still.
@@ -360,7 +522,8 @@ class Search:
         with self.db.connect() as db:
             rows = {}
             for chunk in chunks(ranked):
-                for row in db.execute(f"SELECT * FROM documents d WHERE {LIVE} AND id IN ({','.join('?' * len(chunk))})", chunk):
+                for row in db.execute(f"SELECT * FROM documents d WHERE {LIVE_ROW} AND id IN ({','.join('?' * len(chunk))})",
+                                      chunk):
                     rows[row["id"]] = dict(row)
             docs = self.service.attach(db, [rows[ident] for ident in ranked if ident in rows])
             for doc in docs:
@@ -379,10 +542,16 @@ class Search:
     def run(self, p):
         query = text(p.get("query"), "검색어", 2000)
         mode = p.get("mode", "word")
+        filters = paging.Filters.of(p)
+        page = (paging.size(p, "검색 결과는", PAGE_LIMIT),
+                paging.decode(p, "search", ((int, float), str, str))) if paging.wanted(p) else None
         if mode == "prompt":
+            if filters or page:
+                raise UserError("AI 검색(prompt)은 거르거나 나누어 받을 수 없습니다. 출처·AI 분석·수정 시각과 "
+                                "limit·cursor 없이 요청해 주세요.")
             return self.prompt(query)
         if mode == "auto":
-            return self.auto(query)
+            return self.auto(query, page, filters)
         if mode == "word":
             # Every word must occur; "quoted phrases" as written. The whole query as a phrase ranks first.
             phrases, rest = self.phrases(query)
@@ -399,9 +568,66 @@ class Search:
             terms, plan = keys, {"terms": [], "keywords": keys, "explanation": "", "intent": ""}
         else:
             raise UserError("검색 방식을 확인해 주세요.")
-        docs = self.hydrate(ranked[:RESULT_LIMIT], matcher(terms))
-        return {"documents": [public(doc) for doc in docs], "plan": plan, "highlights": terms,
-                "steps": [], "total": len(ranked)}
+        return self.results(ranked, terms, plan, page, filters)
+
+    def results(self, ranked, highlights, plan, page=None, filters=None):
+        """What a local search answers: its best RESULT_LIMIT documents, or with `page` (limit, cursor) one page of
+        them and next_cursor. `filters` keep the documents they name, and `total` counts the documents kept."""
+        if filters:
+            ranked = self.kept(ranked, filters)
+        result = {"documents": [], "plan": plan, "highlights": highlights, "steps": [], "total": len(ranked)}
+        if page is None:
+            docs = self.hydrate(ranked[:RESULT_LIMIT], matcher(highlights))
+        else:
+            entries, result["next_cursor"] = self.page(ranked, *page)
+            docs = self.hydrate([entry for entry, _ in entries], matcher(highlights))
+            parts = {entry["id"]: found for entry, found in entries}
+            for doc in docs:
+                doc["parts"] = parts[doc["id"]]
+        result["documents"] = [public(doc) for doc in docs]
+        return result
+
+    def kept(self, ranked, filters):
+        """The ranked documents that pass `filters` (paging.Filters), in their order."""
+        test, args = filters.sql("d")
+        allowed = set()
+        with self.db.connect() as db:
+            for chunk in chunks([r["id"] for r in ranked]):
+                allowed.update(row[0] for row in db.execute(
+                    f"SELECT d.id FROM documents d WHERE d.id IN ({','.join('?' * len(chunk))}) AND {test}",
+                    [*chunk, *args]))
+        return [r for r in ranked if r["id"] in allowed]
+
+    def page(self, ranked, size, after):
+        """The page of `size` entries after the cursor `after` (score, updated_at, id) of the ranked documents, in the
+        order of their score, then the newest first and then by id, so a page never repeats or skips one. Of an import
+        saved in parts only its first-ranked document is an entry, with the import's documents (parts). Returns
+        ([(entry, parts)], next cursor or None)."""
+        order = sorted(ranked, key=lambda r: (r["score"], r["updated_at"], r["id"]), reverse=True)
+        rank = {r["id"]: i for i, r in enumerate(order)}
+        position = 0
+        if after:
+            position = next((i for i, r in enumerate(order) if (r["score"], r["updated_at"], r["id"]) < tuple(after)),
+                            len(order))
+        entries = []
+        with self.db.connect() as db:
+            while position < len(order) and len(entries) <= size:
+                window = order[position:position + size + 1]
+                position += len(window)
+                groups = paging.imports(db, [r["id"] for r in window])
+                for entry in window:
+                    found = []
+                    if entry["id"] in groups:
+                        found = paging.members(db, *groups[entry["id"]])
+                        if any(rank.get(member["id"], len(order)) < rank[entry["id"]] for member in found):
+                            continue
+                    entries.append((entry, paging.parts(found)))
+                    if len(entries) > size:
+                        break
+        if len(entries) <= size:
+            return entries, None
+        last = entries[size - 1][0]
+        return entries[:size], paging.encode("search", last["score"], last["updated_at"], last["id"])
 
     @staticmethod
     def phrases(query):
@@ -409,11 +635,11 @@ class Search:
         found = [fold(q) for q in re.findall(r'"([^"]+)"', query) if fold(q)]
         return found, re.sub(r'"[^"]*"', " ", query).replace('"', " ")
 
-    def auto(self, query):
+    def auto(self, query, page=None, filters=None):
         """The search box without the LLM: documents with any of the query's words, those with more of them
         and with the whole phrase first. Question words and Korean particles are dropped (캐시를 → 캐시),
         verb forms also search their stem (도입한 → 도입), and words that are extracted keywords also
-        match as keywords."""
+        match as keywords. `page` and `filters` are those of results()."""
         phrases, rest = self.phrases(query)
         found = [form for word in words(rest) for form in (word, stem(word)) if form]
         terms = list(dict.fromkeys(phrases + found))[:16] or list(dict.fromkeys(fold(rest).split()))[:16]
@@ -425,11 +651,8 @@ class Search:
                 f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({','.join('?' * len(proposed))})", proposed)
             ] if proposed else []
         ranked = self.lexical(terms, keys, phrase=fold(query.replace('"', "")) if len(terms) > 1 else "")
-        highlights = list(dict.fromkeys(terms + keys))
-        docs = self.hydrate(ranked[:RESULT_LIMIT], matcher(highlights))
-        return {"documents": [public(doc) for doc in docs],
-                "plan": {"terms": terms, "keywords": keys, "explanation": "", "intent": ""},
-                "highlights": highlights, "steps": [], "total": len(ranked)}
+        return self.results(ranked, list(dict.fromkeys(terms + keys)),
+                            {"terms": terms, "keywords": keys, "explanation": "", "intent": ""}, page, filters)
 
     # -- Prompt search -------------------------------------------------------------------------------
 

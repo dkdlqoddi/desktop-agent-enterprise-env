@@ -6,7 +6,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from . import diagnostics, pageindex, sources, storage
+from . import diagnostics, pageindex, paging, sources, storage
 from .db import index_text
 from .llm import UserError, shown
 
@@ -106,6 +106,9 @@ UPKEEP_EVERY = 3600
 RETAIN_EVERY = 24 * 3600
 # What the user is told while another backup, or the copy of a restore, is being made.
 BACKUP_BUSY = "다른 백업이나 복원 준비가 진행 중입니다. 끝난 뒤 다시 시도해 주세요."
+# What the document list shows of each document: a short excerpt, never the full text.
+LISTED = """d.id,d.title,substr(d.content,1,200) AS excerpt,d.summary,d.status,d.error,d.revision,d.index_mode,d.format,
+    d.created_at,d.updated_at"""
 
 # What a schedule's run that cannot fill in its template's inputs asks the user to do.
 SCHEDULE_INPUTS = "예약을 열어 입력 내용을 확인하고 저장해 주세요."
@@ -516,12 +519,51 @@ class Service:
             doc["source"], doc["keywords"] = sources.get(doc["id"]), keywords[doc["id"]]
         return docs
 
-    def wiki_list(self, _):
+    def wiki_list(self, p):
+        """The live documents, the last updated first; `source`, `analysis` and `updated_from`/`updated_to` keep those
+        they name (paging.Filters). With `limit` or `cursor` one page of them (paging): {documents, next_cursor}."""
+        filters = paging.Filters.of(p)
+        test, args = filters.sql("d") if filters else ("1", [])
+        if paging.wanted(p):
+            return self.wiki_page(p, filters, test, args)
         with self.db.connect() as db:
             # List entries carry a short excerpt, never the full text of every document.
-            return self.attach(db, [dict(row) for row in db.execute(f"""SELECT id,title,substr(content,1,200) AS excerpt,
-                summary,status,error,revision,index_mode,format,created_at,updated_at FROM documents WHERE {LIVE}
-                ORDER BY updated_at DESC""")])
+            return self.attach(db, [dict(row) for row in db.execute(f"""SELECT {LISTED} FROM documents d
+                WHERE d.{LIVE} AND {test} ORDER BY d.updated_at DESC""", args)])
+
+    def wiki_page(self, p, filters, test, args):
+        """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. An import
+        saved in parts is one entry, its document updated last of those the filters keep, with the import's
+        documents in `parts` ([] for a document not saved in parts)."""
+        limit = paging.size(p, "문서 목록은", 500)
+        after = paging.decode(p, "list", (str, str))
+        entries = []
+        with self.db.connect() as db:
+            while len(entries) <= limit:
+                # Before the cursor's entry: written so the index is searched from it rather than read from the top.
+                keyset, keys = ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]]) \
+                    if after else ("1", [])
+                # The + keeps the planner from finding the live documents by idx_documents_deleted and sorting them all.
+                rows = [dict(row) for row in db.execute(f"""SELECT {LISTED} FROM documents d
+                    WHERE +d.{LIVE} AND {test} AND {keyset} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?""",
+                                                         [*args, *keys, limit + 1])]
+                if not rows:
+                    break
+                docs = self.attach(db, rows)
+                groups = paging.imports(db, [doc["id"] for doc in docs if doc["source"] and doc["source"]["parts"] > 1])
+                for doc in docs:
+                    after = (doc["updated_at"], doc["id"])
+                    found = paging.members(db, *groups[doc["id"]], filters) if doc["id"] in groups else []
+                    if any(row["passes"] and (row["updated_at"], row["id"]) > after for row in found):
+                        continue  # A document of the same import comes first.
+                    doc["parts"] = paging.parts(found)
+                    entries.append(doc)
+                    if len(entries) > limit:
+                        break
+        if len(entries) <= limit:
+            return {"documents": entries, "next_cursor": None}
+        last = entries[limit - 1]
+        return {"documents": entries[:limit], "next_cursor": paging.encode("list", last["updated_at"], last["id"])}
 
     def wiki_get(self, p):
         return self.document(p.get("id"), html=True)
@@ -596,7 +638,7 @@ class Service:
                     revision=revision+1,updated_at=?,format='markdown' WHERE id=?""", (title, content, now(), ident))
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id=?", (ident,))
-            if row is None or row["content"].strip() != content:
+            if row is None or row["content"].strip() != content or row["title"] != title:
                 index_text(db, [ident])
         return self.wiki_get({"id": ident})
 
@@ -811,6 +853,7 @@ class Service:
                            chunk)
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id IN ({marks})", chunk)
+            index_text(db, cleared)
         return {"cleared": len(cleared), "busy": busy}
 
     def wiki_source_markdown(self, p):
@@ -903,6 +946,7 @@ class Service:
                 db.executemany("INSERT INTO relations VALUES (?,?,?,?)", sorted(relations))
                 if nodes:
                     pageindex.save(db, doc["id"], doc["revision"], nodes)
+                index_text(db, [doc["id"]])  # The search text takes the new summary.
         except Exception as exc:
             error = diagnostics.report(exc, "문서 분석에 실패했습니다. 다시 시도해 주세요.", "AI 분석")
             with self.db.connect() as db:
