@@ -114,6 +114,14 @@ const METHODS = {
   'writeback.status': method('read', '원본 반영 진행 상황과 결과'),
   'writeback.cancel': method('write', '원본 반영 중지 (파일을 저장하기 전까지)'),
   'writeback.dismiss': method('write', '끝난 원본 반영 작업 지우기'),
+  'writeback.backups': method(
+    'files',
+    '원본 파일의 백업 목록 (반영·복원하기 전의 파일, 파일마다 최근 5개)과 강제 종료로 끊긴 반영이 남긴 상태',
+  ),
+  'writeback.restore_backup': method(
+    'files',
+    '그 문서의 원본 백업 하나를 원본 파일 자리에 복원 (지금 파일은 먼저 백업)',
+  ),
   'wiki.save': method('write', '문서 만들기·고치기 (본문이 바뀌면 AI 분석 결과를 지움)'),
   'wiki.compare': method(
     'read',
@@ -567,6 +575,23 @@ const GROUPS = [
         '/write-back/cancel',
         'writeback.cancel',
         '원본 반영 중지 (파일을 저장하기 전까지)',
+      ),
+      route(
+        'GET',
+        '/documents/{doc_id}/backups',
+        'writeback.backups',
+        '원본 파일의 백업 목록: 원본에 반영하거나 복원하기 전의 파일을 파일마다 최근 5개 (최근 것부터). interrupted는 앱이 강제로 종료되어 끊긴 반영이 남긴 파일 상태(intact·partial·unknown)',
+        { doc_id: ID },
+      ),
+      route(
+        'POST',
+        '/documents/{doc_id}/backups/restore',
+        'writeback.restore_backup',
+        '원본 백업 하나를 원본 파일 자리에 복원 (그 문서의 파일을 백업한 것만, 지금 파일은 먼저 백업). 문서는 그대로이니 다시 읽으려면 원본에서 업데이트하세요',
+        {
+          doc_id: ID,
+          backup: string('복원할 백업의 id (GET /documents/{doc_id}/backups)', { required: true }),
+        },
       ),
       route(
         'POST',

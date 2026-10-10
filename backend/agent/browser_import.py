@@ -10,18 +10,27 @@ in gets the LLM's help and its analysis of why (web_assist.py).
 A site address saved without its scheme (portal.example.com) is opened over https, never over http: a site that only
 answers over http is saved with http:// written out, the user's own choice. The browser keeps Chromium's renderer
 sandbox on: the pages it opens are other people's.
+
+The importers' requests to a site go through polite(): a few a second per host (Throttle), and an answer that there
+were too many (HTTP 429, or 503 with Retry-After) is waited out and tried again, so that a routine over many pages
+neither floods the site nor loses pages to a refusal.
 """
 import asyncio
 import contextlib
 import hashlib
 import os
+import random
 import shutil
 import sys
 import re
 import threading
+import time
 import traceback
 from copy import deepcopy
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import diagnostics
 from .llm import BusyError, UserError
@@ -42,6 +51,15 @@ START_ATTEMPTS = 2
 START_PAUSE = 2  # Seconds
 # Jobs Electron may still read by ID after the next one started: it keeps how each job signed in for the site.
 RECENT_JOBS = 8
+# Requests to a site, per host: BURST at once, then RATE a second.
+RATE = 4.0
+BURST = 4
+# A request the site refuses as one too many is tried up to ATTEMPTS times: after as long as its Retry-After asks, at
+# most MAX_WAIT seconds, else after BACKOFF seconds doubled at each try up to MAX_BACKOFF.
+ATTEMPTS = 6
+BACKOFF = 1.0
+MAX_BACKOFF = 30.0
+MAX_WAIT = 300.0
 
 
 def use_shared_browsers():
@@ -101,6 +119,96 @@ class Worker:
             pass  # Already finished.
 
 
+def host_of(url):
+    """The host a request goes to, which its rate is counted by."""
+    try:
+        return (urlsplit(url).hostname or url or "").lower()
+    except ValueError:
+        return url or ""
+
+
+def retry_seconds(value, now=None):
+    """The seconds a Retry-After header asks to wait (a number of seconds or an HTTP date); None if it says neither."""
+    value = (value or "").strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - (now or datetime.now(timezone.utc))).total_seconds())
+
+
+class Throttle:
+    """The rate of the requests to each host, for every browser of the app (each on a thread of its own): a token
+    bucket of `burst` requests that refills at `rate` a second, and a pause of every request to a host that refused one
+    as too many, as long as it asked."""
+
+    def __init__(self, rate=RATE, burst=BURST, clock=time.monotonic):
+        self.rate, self.burst, self.clock = rate, burst, clock
+        self.lock = threading.Lock()
+        self.buckets = {}  # host: (tokens, when they were counted)
+        self.paused = {}  # host: the clock's time before which no request goes to it
+
+    def reserve(self, url):
+        """Seconds to wait before a request to the host of `url` goes; the request is counted."""
+        host, now = host_of(url), self.clock()
+        with self.lock:
+            tokens, then = self.buckets.get(host, (float(self.burst), now))
+            tokens = min(float(self.burst), tokens + (now - then) * self.rate) - 1
+            self.buckets[host] = (tokens, now)
+            return max(0.0, -tokens / self.rate, self.paused.get(host, now) - now)
+
+    async def wait(self, url):
+        delay = self.reserve(url)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def pause(self, url, attempt, retry=""):
+        """The host of `url` refused the `attempt`-th try of a request as one too many: every request to it waits as
+        long as its Retry-After header (`retry`) asks, else for an exponential backoff with a little jitter. False
+        when it asks for more than MAX_WAIT, which a job does not wait for."""
+        seconds = retry_seconds(retry)
+        if seconds is None:
+            seconds = min(MAX_BACKOFF, BACKOFF * 2 ** (attempt - 1)) * (1 + random.random() / 4)
+        elif seconds > MAX_WAIT:
+            return False
+        host, now = host_of(url), self.clock()
+        with self.lock:
+            self.paused[host] = max(self.paused.get(host, now), now + seconds)
+        return True
+
+
+THROTTLE = Throttle()
+
+
+def answered(answer):
+    """(status, Retry-After) of a request's answer: an in-page fetch's {"status", "retry"}, a navigation's Playwright
+    Response, or None (a navigation a client-side redirect replaced)."""
+    if isinstance(answer, dict):
+        return answer.get("status"), answer.get("retry") or ""
+    headers = getattr(answer, "headers", None)
+    return getattr(answer, "status", None), headers.get("retry-after", "") if isinstance(headers, dict) else ""
+
+
+async def polite(url, send, throttle=None):
+    """`send()`, a request to `url`, within the rate of its host (THROTTLE). An answer that it was one too many, HTTP
+    429 or 503 with a Retry-After header, is waited out and the request sent again, up to ATTEMPTS times in all; the
+    last answer is returned, as any other, for the caller to tell."""
+    throttle = throttle or THROTTLE
+    for attempt in range(1, ATTEMPTS + 1):
+        await throttle.wait(url)
+        answer = await send()
+        status, retry = answered(answer)
+        if not (status == 429 or (status == 503 and retry)) or attempt == ATTEMPTS \
+                or not throttle.pause(url, attempt, retry):
+            return answer
+
+
 def first_line(error):
     """Playwright's first line says why, e.g. a missing browser or a profile another window still uses."""
     return " ".join(str(error).split("\n", 1)[0].split())[:200]
@@ -110,7 +218,7 @@ async def open_page(page, url, product, assist=None):
     """Open a page of the site; a client-side redirect, e.g. to the SSO page, may replace the navigation. With the
     LLM's help, a page that does not open may be opened once more (web_assist.Assist.reconnect)."""
     try:
-        return await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        return await polite(url, lambda: page.goto(url, wait_until="domcontentloaded", timeout=45000))
     except Exception as error:
         if redirected(error):
             return None

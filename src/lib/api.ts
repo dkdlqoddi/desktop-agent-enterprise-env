@@ -352,10 +352,12 @@ export type StorageInfo = {
   error: string;
 };
 // What an import did with one file, page or ticket: saved new documents, updated the documents of the same path or
-// link in place, skipped it or failed. A skipped one says why: the same content is saved (same), or the user changed
-// the text of its documents since they were imported (edited).
+// link in place, skipped it or failed. A skipped one says why: the same content is saved (same, also a page or ticket
+// a routine did not read again as the site said it had not changed), the user changed the text of its documents since
+// they were imported (edited), a routine left its documents in the trash (trashed) or left out a source whose
+// documents the user purged (ignored), or a moved or renamed file took its documents along (moved).
 export type ImportOutcome = 'imported' | 'updated' | 'skipped' | 'failed';
-export type SkipReason = 'same' | 'edited';
+export type SkipReason = 'same' | 'edited' | 'trashed' | 'ignored' | 'moved';
 export type LocalImportJob = {
   id: string;
   status: 'scanning' | 'running' | 'cancelling' | 'completed' | 'cancelled' | 'error';
@@ -364,6 +366,10 @@ export type LocalImportJob = {
   imported: number;
   updated: number;
   skipped: number;
+  // Of the skipped: files whose documents' text the user changed (edited), and files a routine left out because the
+  // user purged their documents from the trash (ignored).
+  edited?: number;
+  ignored?: number;
   failed: number;
   analysis_failed: number;
   // A folder of more files than a batch (5,000) is imported batch after batch: the batch being imported, of `batches`.
@@ -533,6 +539,34 @@ export type WritebackJob = {
   // Its end was shown to the user (writeback.dismiss), so a document window does not tell it again.
   dismissed?: boolean;
 };
+// A copy of the file a document came from, kept before a write-back or a restore changed the file (writeback.backups):
+// the newest five of each file stay. state: how the write it was made for went (writing while it runs, interrupted
+// when the app was closed by force during it); current: the file holds these bytes now.
+export type WritebackBackup = {
+  id: string;
+  name: string;
+  created_at: string;
+  size: number;
+  kind: 'write' | 'restore';
+  state: 'writing' | 'written' | 'failed' | 'interrupted' | 'done';
+  current: boolean;
+};
+// What a write-back cut short by a forced close left of the file, as the next write-back tells it before writing:
+// as it was (intact), missing or partly written (partial), or another whole file (unknown).
+export type WritebackInterruption = {
+  state: 'intact' | 'partial' | 'unknown';
+  backup: string;
+  name: string;
+  message: string;
+};
+export type WritebackBackups = {
+  file: string;
+  keep: number;
+  backups: WritebackBackup[];
+  interrupted: WritebackInterruption | null;
+};
+// writeback.restore_backup: whether the file was replaced, and the copy of the file it replaced ('' when none).
+export type WritebackRestore = { restored: boolean; backup: string; message: string };
 
 // The kinds of site accounts (electron/sites.cjs).
 export type SiteKind = 'jira' | 'confluence';

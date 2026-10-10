@@ -38,6 +38,9 @@ def import_issue(service, params):
     if not KEY.fullmatch(issue_key):
         raise UserError("JIRA 티켓 키가 올바르지 않습니다.")
     target, replace = sources.options(params)
+    # The ticket's updated time as JIRA gave it with this read ('' when unknown), which a routine compares before it
+    # reads the ticket again (jira_import.JiraImporter._unchanged).
+    updated = params.get("updated") if isinstance(params.get("updated"), str) else ""
     title, content = html_to_markdown(params.get("html"), source_url)
     title = text(title, "JIRA 제목", 200)
     split = markdown_parts(content)
@@ -51,10 +54,16 @@ def import_issue(service, params):
         # A watching routine (routines.py) learns what the ticket changed in the text imported before.
         before = sources.base(db, "jira_sources", found, params.get("track_changes") is True)
         if found.action == "skip":
+            # The text saved is this read's: its time is recorded with it, unless the user changed the document's
+            # text, which a routine then still compares at every run.
+            if found.reason == "same":
+                sources.touch(db, "jira_sources", found.rows,
+                              {"read_at": timestamp, **({"updated": updated[:40]} if updated else {})}, source_url)
             result = sources.skipped(found, "동일한 티켓 내용이 이미 저장되어 있습니다.")
         else:
             ids, removed = sources.save(db, "jira_sources", found, split, title, timestamp,
-                                        {"source_url": source_url, "issue_key": issue_key, "source_hash": checksum})
+                                        {"source_url": source_url, "issue_key": issue_key, "source_hash": checksum,
+                                         "updated": updated[:40], "read_at": timestamp})
             result = sources.outcome(found, split, ids, removed, "Markdown 문서를 Wiki에 저장했습니다.", "Markdown")
     # Compared once the import is committed: a long ticket takes a while, and other saves must not wait for it.
     change = sources.change(before, split)

@@ -85,10 +85,13 @@ def forget_session(importer, server):
 
 
 def finish(service, ident, logins=()):
-    """Run the routine now, as ▶ on the screen does, and wait for the run to end: the run as the screens read it."""
+    """Run the routine now, as ▶ on the screen does, and wait for the run to end: the run as the screens read it. It is
+    told by its id, not as the latest: a clock the system sets back (a time sync) orders it before the last run."""
+    before = {run["id"] for run in service.dispatch("routines.runs", {"id": ident, "limit": routines.MAX_RUNS})}
     service.dispatch("routines.run", {"id": ident, "logins": list(logins), "allow_files": True})
     wait(lambda: not service.routines.pending(ident))
-    return service.dispatch("routines.runs", {"id": ident, "limit": 1})[0]
+    return next(run for run in service.dispatch("routines.runs", {"id": ident, "limit": routines.MAX_RUNS})
+                if run["id"] not in before)
 
 
 # --- Catalog, forms and schedules -----------------------------------------------------------------------------------
@@ -227,6 +230,21 @@ def test_source_refresh_updates_changed_files_takes_new_ones_and_tells_missing_o
     run = finish(service, other["id"])
     assert run["items"][0] == {"title": str(tmp_path / "없는 폴더"), "status": "failed", "doc_id": None,
                                "url": str(tmp_path / "없는 폴더"), "message": "파일이나 폴더를 찾을 수 없습니다."}
+
+
+def test_source_refresh_leaves_out_the_files_whose_documents_were_purged(service, tmp_path):
+    folder = tmp_path / "업무"
+    folder.mkdir()
+    (folder / "회의.md").write_text("# 회의\n\n결정 A", encoding="utf-8")
+    (folder / "그림.png").write_bytes(PIXEL)
+    routine = save(service, "source_refresh", config={"paths": str(folder)})
+    assert finish(service, routine["id"])["summary"] == "새 문서 2 · 그대로 0"
+    service.wiki_delete_many({"ids": [doc["id"] for doc in service.wiki_list({})]})
+    service.wiki_purge({"all": True})
+    # Emptied from the trash for good: the routine does not bring them back, and says why.
+    run = finish(service, routine["id"])
+    assert (run["summary"], run["changed"], run["items"]) == ("그대로 0 · 영구 삭제한 문서라 건너뜀 2", False, [])
+    assert service.wiki_list({}) == []
 
 
 def test_source_refresh_counts_every_file_of_a_folder_whose_job_lists_fewer(service, tmp_path, monkeypatch):

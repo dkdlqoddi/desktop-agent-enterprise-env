@@ -165,6 +165,7 @@ class JiraServer:
         self.pending = False  # The SSO accepts logins but never returns to JIRA.
         self.sso_delay = 0  # Milliseconds after which a script shows the AD SSO link of style mixed.
         self.drop = 0  # The next this many ticket page loads get an answer the browser refuses.
+        self.throttled = 0  # The next this many REST requests are answered 429 Too Many Requests (Retry-After: 0).
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -301,6 +302,9 @@ class JiraServer:
             return self.send(handler, 404, "Not found")
         if not signed_in:
             return self.json(handler, {"errorMessages": ["로그인이 필요합니다."]}, 401)
+        if self.throttled:
+            self.throttled -= 1
+            return self.send(handler, 429, "Too Many Requests", headers={"Retry-After": "0"})
         resource = api[1]
         if resource == "search":
             return self.search(handler, query)

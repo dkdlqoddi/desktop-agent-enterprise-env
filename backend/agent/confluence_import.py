@@ -5,6 +5,9 @@ page as the server rendered it, with a request made inside a Confluence page so 
 trust apply. A page whose body only scripts draw (Cloud) is opened and read from the rendered page once its expand
 macros are open. With subpages, the page tree is listed through Confluence's REST API, also inside the page. Each page
 goes to confluence.import_page as an in-memory HTML capture; nothing but the browser profile is written to disk.
+
+A routine's import (track_changes) asks Confluence for a page's version number first, which the subpage list gives
+along: a page still at the version the Wiki took, read in full within sources.RECHECK, is not read again.
 """
 import asyncio
 import contextlib
@@ -12,10 +15,10 @@ import json
 import re
 import uuid
 from html import escape
-from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, unquote_plus, urlencode, urljoin, urlsplit, urlunsplit
 
 from . import diagnostics, sources
-from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page
+from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page, polite
 from .confluence import import_page
 from .llm import BusyError, UserError
 from .service import routine_name
@@ -60,7 +63,8 @@ FETCH_JSON = """async ({url, limit}) => {
     headers: {Accept: 'application/json'}, signal: AbortSignal.timeout(30000),
   });
   const text = response.ok ? await response.text() : '';
-  return {status: response.status, link: response.headers.get('link') || '', text: text.length > limit ? null : text};
+  return {status: response.status, link: response.headers.get('link') || '', text: text.length > limit ? null : text,
+          retry: response.headers.get('retry-after') || ''};
 }"""
 
 # Runs in the page. With `server`, it reads the server-rendered page with the page's session: Confluence's scripts later
@@ -73,7 +77,7 @@ CAPTURE = """async ({url, server}) => {
   if (server) {
     const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(45000)});
     if (new URL(response.url).origin !== location.origin) return null;
-    if (!response.ok) return {status: response.status};
+    if (!response.ok) return {status: response.status, retry: response.headers.get('retry-after') || ''};
     doc = new DOMParser().parseFromString(await response.text(), 'text/html');
     base = response.url;
     root = doc.querySelector('#main-content');
@@ -234,16 +238,117 @@ def arrived_at(origin):
 
 def page_request(page):
     """REST requests made inside the signed-in page: the browser's cookies and certificate trust apply, where the
-    backend's own requests could refuse a private certificate authority."""
+    backend's own requests could refuse a private certificate authority. Each goes within the site's rate, and one the
+    site refuses as too many is waited out and sent again (browser_import.polite)."""
     async def request(url):
-        return await page.evaluate(FETCH_JSON, {"url": url, "limit": MAX_LIST_CHARS})
+        return await polite(url, lambda: page.evaluate(FETCH_JSON, {"url": url, "limit": MAX_LIST_CHARS}))
     return request
 
 
+async def json_page(page, url, origin):
+    """A REST answer of the site read by opening its address in the browser, which also brings the browser to the site
+    for the in-page requests after it; as FETCH_JSON answers, or None when the site sent another page (its login) or
+    did not answer."""
+    try:
+        response = await polite(url, lambda: page.goto(url, wait_until="domcontentloaded", timeout=45000))
+        if response is None or origin_of(page.url) != origin:
+            return None
+        text = await response.text()
+        return {"status": response.status, "link": response.headers.get("link", ""),
+                "text": text if len(text) <= MAX_LIST_CHARS else None}
+    except Exception:
+        return None
+
+
+def site_request(page, origin):
+    """REST requests inside a page of the site (page_request), or while the browser is on no page of it yet, by opening
+    the request's address itself (json_page); a login page instead answers as a login redirect does (status 0)."""
+    inside = page_request(page)
+
+    async def request(url):
+        if origin_of(page.url) == origin:
+            return await inside(url)
+        return await json_page(page, url, origin) or {"status": 0, "link": "", "text": ""}
+    return request
+
+
+def version_of(item):
+    """The version number a REST answer gives of a page ({"version": {"number"}}), as text; '' when it gives none."""
+    version = item.get("version") if isinstance(item, dict) else None
+    number = version.get("number") if isinstance(version, dict) else None
+    return str(number) if isinstance(number, int) and not isinstance(number, bool) and number >= 0 else ""
+
+
+async def page_version(request, info):
+    """The version number of the page `info` (id, base) as Confluence gives it, or '' when it does not: from the
+    content API of Server and Data Center, else from Cloud's v2 API."""
+    endpoints = [f"{info['base']}/rest/api/content/{info['id']}?expand=version"]
+    if urlsplit(info["base"]).path == "/wiki":
+        endpoints.append(f"{info['base']}/api/v2/pages/{info['id']}")
+    for endpoint in endpoints:
+        response = await request(endpoint)
+        status = response.get("status") if isinstance(response, dict) else None
+        if status in (404, 405, 410):
+            continue
+        if status != 200 or not isinstance(response.get("text"), str):
+            return ""
+        try:
+            body = json.loads(response["text"])
+        except ValueError:
+            return ""
+        return version_of(body) if str(body.get("id") if isinstance(body, dict) else "") == info["id"] else ""
+    return ""
+
+
+def title_of(value):
+    """(site base, space key, title) of a page link that names its page by its space and title: /display/SPACE/Title
+    or viewpage.action?spaceKey=…&title=…; None for another link."""
+    try:
+        url = urlsplit(page_url(value))
+    except UserError:
+        return None
+    query = parse_qs(url.query)
+    if url.path.endswith("/pages/viewpage.action") and not query.get("pageId"):
+        prefix = url.path[:-len("/pages/viewpage.action")]
+        space, title = (query.get("spaceKey") or [""])[0], (query.get("title") or [""])[0]
+    else:
+        match = re.fullmatch(r"(.*?)/display/([^/]+)/([^/]+)/?", url.path)
+        if not match:
+            return None
+        prefix, space, title = match[1], unquote(match[2]), unquote_plus(match[3])
+    if not space or not title or (prefix and not re.fullmatch(r"/(?!/)[^?#\\\s]*", prefix)):
+        return None
+    return f"{url.scheme}://{url.netloc}{prefix.rstrip('/')}", space, title
+
+
+async def page_by_title(request, link):
+    """The page a link names by its space and title (title_of), found through Confluence's content search, as
+    {"id", "base", "url", "version"}; None when the link names none that way or the search does not find exactly one."""
+    named = title_of(link)
+    if not named:
+        return None
+    base, space, title = named
+    query = urlencode({"spaceKey": space, "title": title, "expand": "version", "limit": 2})
+    response = await request(f"{base}/rest/api/content?{query}")
+    if not isinstance(response, dict) or response.get("status") != 200 or not isinstance(response.get("text"), str):
+        return None
+    try:
+        results = json.loads(response["text"]).get("results")
+    except (ValueError, AttributeError):
+        return None
+    item = results[0] if isinstance(results, list) and len(results) == 1 and isinstance(results[0], dict) else {}
+    ident = str(item.get("id") or "")
+    if not DIGITS.fullmatch(ident):
+        return None
+    return {"id": ident, "base": base, "url": f"{base}/pages/viewpage.action?pageId={ident}",
+            "version": version_of(item)}
+
+
 async def children(request, info, on_child):
-    """Each subpage of the page `info` (id, base) as on_child({"id", "base", "url"}), following every page of the list
-    the server gives: Server/Data Center offsets and Link headers, and Cloud's v2 cursors."""
-    endpoint = f"{info['base']}/rest/api/content/{info['id']}/child/page?limit=100&start=0"
+    """Each subpage of the page `info` (id, base) as on_child({"id", "base", "url", "version"}), following every page of
+    the list the server gives: Server/Data Center offsets and Link headers, and Cloud's v2 cursors. The version number
+    comes along where the list gives it ('' where not)."""
+    endpoint = f"{info['base']}/rest/api/content/{info['id']}/child/page?limit=100&start=0&expand=version"
     visited, count = [], 0
     while endpoint:
         if endpoint in visited:
@@ -256,6 +361,9 @@ async def children(request, info, on_child):
             continue
         if status == 0:
             raise UserError("하위 페이지 목록 요청이 로그인 화면으로 이동했습니다. 로그인 상태를 확인해 주세요.")
+        if status == 429:
+            raise UserError("요청이 너무 많다며 Confluence가 하위 페이지 목록을 거절했습니다 (HTTP 429). 잠시 후 다시 "
+                            "시도해 주세요.")
         if not isinstance(status, int) or not 200 <= status <= 299:
             raise UserError(f"하위 페이지 목록을 읽지 못했습니다 (HTTP {status}). 로그인·권한·REST API 사용 가능 여부를 "
                             "확인해 주세요.")
@@ -277,7 +385,8 @@ async def children(request, info, on_child):
             count += 1
             if count > MAX_PAGES:
                 raise UserError(f"하위 페이지가 {MAX_PAGES:,}개를 초과합니다. 범위를 나누어 가져와 주세요.")
-            on_child({"id": ident, "base": info["base"], "url": f"{info['base']}/pages/viewpage.action?pageId={ident}"})
+            on_child({"id": ident, "base": info["base"], "url": f"{info['base']}/pages/viewpage.action?pageId={ident}",
+                      "version": version_of(item)})
         links = body.get("_links") if isinstance(body.get("_links"), dict) else {}
         following = links.get("next") or (header[1] if header else None)
         endpoint = api_link(following, endpoint, info["base"]) if following else ""
@@ -293,7 +402,7 @@ async def open_source(page, url, origin, assist=None):
     """Open a page of the site in the browser and wait for its body. With the LLM's help (web_assist.py), a page that
     does not open may be opened once more."""
     try:
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        response = await polite(url, lambda: page.goto(url, wait_until="domcontentloaded", timeout=45000))
     except Exception as error:
         if redirected(error):  # A client-side redirect, e.g. to the SSO page, replaced the navigation.
             response = None
@@ -337,8 +446,9 @@ async def snapshot(page, source, origin, assist=None):
     opened = origin_of(page.url) != origin
     if opened:  # The in-page request needs a Confluence page.
         await open_source(page, source["url"], origin, assist)
+    target = page.url if opened else source["url"]
     try:
-        data = await page.evaluate(CAPTURE, {"url": page.url if opened else source["url"], "server": True})
+        data = await polite(target, lambda: page.evaluate(CAPTURE, {"url": target, "server": True}))
     except Exception:
         data = None
     if isinstance(data, dict) and data.get("status"):
@@ -436,7 +546,9 @@ class ConfluenceImporter(BrowserImporter):
                 job["current_url"] = ""
 
     async def _pages(self, job, page, url, origin, options, assist):
-        """Read the page, and with `recursive` every page below it, one after another, each saved once it is read."""
+        """Read the page, and with `recursive` every page below it, one after another, each saved once it is read. A
+        routine's import (track_changes) skips the pages it need not read again (_unchanged)."""
+        request = site_request(page, origin)
         root = {"url": url}
         with contextlib.suppress(UserError):  # Short and title links: the browser finds the page.
             root = {**location_info(url), "url": url}
@@ -459,16 +571,21 @@ class ConfluenceImporter(BrowserImporter):
             source = queue[cursor]
             self._update(job, current_url=source["url"])
             try:
-                # The first page shows whether Confluence opens; it may be opened again (web_assist.py).
-                captured = await snapshot(page, source, origin, assist if cursor == 0 else None)
-                source = {"id": captured["id"], "base": captured["base"], "url": captured["url"]}
-                seen.add(f"{source['base']}:{source['id']}")
-                result = import_page(self.service, {"source_url": source["url"], "page_id": source["id"],
-                                                    "html": captured["html"], "doc_id": options["doc_id"],
-                                                    "replace": options["replace"],
-                                                    "track_changes": options["track_changes"]})
-                if options["analyze"] and result["status"] in ("imported", "updated"):
-                    await self._analyze(job, result)
+                result = await self._unchanged(request, source) if options["track_changes"] else None
+                if result is None:
+                    # The first page shows whether Confluence opens; it may be opened again (web_assist.py).
+                    captured = await snapshot(page, source, origin, assist if cursor == 0 else None)
+                    source = {"id": captured["id"], "base": captured["base"], "url": captured["url"],
+                              "version": source.get("version", "")}
+                    seen.add(f"{source['base']}:{source['id']}")
+                    result = import_page(self.service, {"source_url": source["url"], "page_id": source["id"],
+                                                        "html": captured["html"], "doc_id": options["doc_id"],
+                                                        "replace": options["replace"], "version": source["version"],
+                                                        "track_changes": options["track_changes"]})
+                    if options["analyze"] and result["status"] in ("imported", "updated"):
+                        await self._analyze(job, result)
+                else:
+                    seen.add(f"{source['base']}:{source['id']}")
             except Exception as error:
                 result = {"status": "failed", "message": diagnostics.report(
                     error, "페이지를 읽거나 저장하지 못했습니다. 네트워크·접근 권한·저장 공간을 확인해 주세요.",
@@ -482,7 +599,7 @@ class ConfluenceImporter(BrowserImporter):
             # Even when a page fails, the pages below it are listed by its known ID.
             if options["recursive"] and source.get("id"):
                 try:
-                    await children(page_request(page), source, add)
+                    await children(request, source, add)
                 except Exception as error:
                     result["discovery_error"] = str(error) if isinstance(error, UserError) else \
                         "하위 페이지 목록을 읽지 못했습니다. 이 페이지 아래에 누락된 문서가 있을 수 있습니다."
@@ -493,6 +610,31 @@ class ConfluenceImporter(BrowserImporter):
                 job[result["status"]] += 1
                 job["processed"] += 1
             cursor += 1
+
+    async def _unchanged(self, request, source):
+        """For a routine's import: the result of the page `source` when it need not be read again, or None to read
+        it. A page whose documents were all purged is left out (sources.ignored); one Confluence says is still at the
+        version the Wiki holds, read in full within sources.RECHECK, is skipped (sources.fresh). Its version is asked
+        for unless the subpage list gave it, and a link that names its page by title is looked up; both go into
+        `source`. A page whose version cannot be asked for is read in full."""
+        try:
+            if "id" not in source:
+                found = await page_by_title(request, source["url"])
+                if not found:
+                    return None
+                source.update(id=found["id"], base=found["base"], version=found["version"])
+            link = f"{source['base']}/pages/viewpage.action?pageId={source['id']}"
+            with self.service.db.connect() as db:
+                if sources.ignored(db, "confluence_sources", link):
+                    return sources.skipped(sources.Plan("skip", [], "ignored"), "")
+            # Asked for also when the Wiki has no version to compare with yet: the import records it with the page.
+            if not source.get("version"):
+                source["version"] = await page_version(request, source)
+        except Exception:
+            return None
+        with self.service.db.connect() as db:
+            found = sources.fresh(db, "confluence_sources", link, "version", source["version"])
+        return sources.unmodified(found) if found else None
 
     async def _analyze(self, job, result):
         """A long page is saved as several documents; each is analyzed."""
