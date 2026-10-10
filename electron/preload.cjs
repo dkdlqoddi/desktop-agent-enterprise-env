@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('import:notice', listener);
       return () => ipcRenderer.removeListener('import:notice', listener);
     },
+    // An answer as the LLM writes it, for a question asked with stream (assistant.ask): its parts (type 'delta') and
+    // its end (type 'done'), each naming the request_id and conversation_id it belongs to.
+    onAssistantDelta: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('assistant:delta', listener);
+      return () => ipcRenderer.removeListener('assistant:delta', listener);
+    },
     // The local API's commands to the screen (open a document, read the screen, …), each answered once.
     onControl: (handler) => {
       const listener = async (_event, command) => {

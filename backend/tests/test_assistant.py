@@ -1,10 +1,12 @@
 import json
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agent import search
+from agent import assistant as module, llm, search
 from agent.db import Database
 from agent.llm import UserError
 from agent.service import Service
@@ -15,6 +17,8 @@ class FakeLLM:
     def __init__(self):
         self.responses = []
         self.calls = []
+        # Characters a request may carry (LLM.prompt_chars): the default context window's.
+        self.window = module.PROMPT_CHARS
 
     def structured(self, system, content):
         self.calls.append((system, json.loads(content) if content.startswith('{') else content))
@@ -23,9 +27,26 @@ class FakeLLM:
             raise result
         return result
 
-    def complete(self, messages):
-        self.calls.append(messages)
-        return '오늘의 저장된 업무를 확인하세요.'
+    def complete(self, messages, **options):
+        """The assistant's answer (its system prompt ANSWER) comes from `responses` like the structured answers: as
+        JSON, a reply of its own (a str), or what a function of the options returns; it streams in parts of five
+        characters through options['stream']. Any other request is the briefing's."""
+        if messages[0]['content'] != module.ANSWER:
+            self.calls.append(messages)
+            return '오늘의 저장된 업무를 확인하세요.'
+        self.calls.append((module.ANSWER, json.loads(messages[-1]['content'])))
+        result = self.responses.pop(0)
+        if callable(result):
+            result = result(options)
+        if isinstance(result, Exception):
+            raise result
+        reply = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        for end in range(5, len(reply) + 5, 5) if options.get('stream') else ():
+            options['stream'](reply[:end])
+        return reply
+
+    def prompt_chars(self):
+        return self.window
 
 
 @pytest.fixture
@@ -530,3 +551,196 @@ def test_editing_completed_task_does_not_change_completion_date(service, monkeyp
     assert reopened['completed_at'] is None
     completed = call(service, 'tasks.save', id=created['id'], status='done')
     assert completed['completed_at'] == '2026-09-28T00:00:00+00:00'
+
+
+@pytest.fixture
+def emitted(service, monkeypatch):
+    """The events the backend sends of its own accord (main.py writes them as lines without an id), with every part of
+    an answer sent at once."""
+    sent = []
+    service.emit = lambda event, params: sent.append((event, params))
+    monkeypatch.setattr(module, 'DELTA_SECONDS', 0)
+    return sent
+
+
+def wait_until(condition, seconds=5):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, 'the condition never came true'
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize('reply, shown', [
+    ('{"citations": [1], "ans', ''),
+    ('{"answer": "첫 줄\\n둘', '첫 줄\n둘'),
+    ('{"answer": "끝\\', '끝'),  # An escape cut off waits for the rest of it...
+    ('{"answer": "글자 \\uD55', '글자 '),
+    ('{"answer": "\\uD55C\\uAE00 \\ud83d', '한글 '),  # ...as does the first half of a surrogate pair.
+    ('{"answer": "경로 C:\\\\u12', '경로 C:\\u12'),  # An escaped backslash is no escape.
+    ('{"answer": "API\\_SPEC 참고", "citations": [1]}', 'API\\_SPEC 참고'),  # A Markdown escape stays as written.
+    ('<think>{"answer": "초안"}</think>\n{"answer": "진짜 답', '진짜 답'),  # The thinking is no answer.
+])
+def test_the_answer_is_read_from_the_json_the_llm_is_still_writing(reply, shown):
+    assert module.partial_answer(reply) == shown
+
+
+def test_an_answer_asked_with_stream_reaches_the_screen_as_it_is_written(service, emitted):
+    doc = document(service)
+    service.llm.responses = [{'answer': '캐시를 "도입"하기로\n했습니다. [1]', 'citations': [1]}]
+    result = call(service, 'assistant.ask', question='결정 사항은?', document_ids=[doc['id']], stream=True,
+                  request_id='req-1')
+    deltas = [params for event, params in emitted if event == 'assistant.delta']
+    assert ''.join(d['text'] for d in deltas) == result['messages'][-1]['content'] == '캐시를 "도입"하기로\n했습니다. [1]'
+    assert len(deltas) > 3 and not any(d.get('reset') for d in deltas)
+    assert {(d['request_id'], d['conversation_id']) for d in deltas} == {('req-1', result['conversation_id'])}
+    assert emitted[-1] == ('assistant.done', {'request_id': 'req-1', 'conversation_id': result['conversation_id'],
+                                              'status': 'completed', 'truncated': False})
+    assert result['request_id'] == 'req-1' and not result['cancelled'] and not result['truncated']
+    # Asked without stream (the REST API, MCP tools), an answer comes whole, and no event is sent.
+    emitted.clear()
+    service.llm.responses = [{'answer': '캐시입니다. [1]', 'citations': [1]}]
+    result = call(service, 'assistant.ask', question='결정은?', conversation_id=result['conversation_id'],
+                  document_ids=[doc['id']])
+    assert emitted == [] and result['messages'][-1]['content'] == '캐시입니다. [1]' and len(result['messages']) == 4
+    # A failed answer ends its stream with the error.
+    service.llm.responses = [UserError('LLM API에 연결할 수 없습니다.')]
+    with pytest.raises(UserError):
+        call(service, 'assistant.ask', question='또?', document_ids=[doc['id']], stream=True, request_id='req-x')
+    assert emitted[-1][1]['status'] == 'error' and emitted[-1][1]['error'] == 'LLM API에 연결할 수 없습니다.'
+
+
+def test_a_stopped_answer_keeps_what_came_and_the_conversation_takes_the_next_question(service, emitted):
+    doc = document(service)
+
+    def stoppable(options):
+        options['stream']('{"answer": "캐시를 도입')
+        assert llm.CANCEL.get().wait(5)  # Until the user stops it.
+        raise llm.Cancelled('{"answer": "캐시를 도입하기로')
+
+    service.llm.responses = [stoppable]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        asking = pool.submit(call, service, 'assistant.ask', question='결정 사항은?', document_ids=[doc['id']],
+                             stream=True, request_id='req-2')
+        wait_until(lambda: any(event == 'assistant.delta' for event, _ in emitted))
+        # A new conversation's ID comes with its first part; the request's own ID stops it too.
+        assert call(service, 'assistant.cancel', request_id='req-2') == {'ok': True, 'cancelled': True}
+        result = asking.result(5)
+    message = result['messages'][-1]
+    assert result['cancelled'] and message['content'] == '캐시를 도입하기로\n\n(답변을 중지했습니다.)'
+    assert message['trace']['outcome'] == 'cancelled' and message['citations'] == []
+    assert emitted[-1][1]['status'] == 'cancelled'
+    # Nothing runs any more: stopping again finds nothing, and the conversation answers its next question.
+    assert call(service, 'assistant.cancel', conversation_id=result['conversation_id']) == {'ok': True,
+                                                                                           'cancelled': False}
+    service.llm.responses = [{'answer': '캐시입니다. [1]', 'citations': [1]}]
+    followup = call(service, 'assistant.ask', question='다시', conversation_id=result['conversation_id'],
+                    document_ids=[doc['id']])
+    assert len(followup['messages']) == 4 and followup['messages'][1]['content'].endswith('(답변을 중지했습니다.)')
+
+
+def test_an_answer_stopped_while_documents_are_searched_asks_the_llm_nothing(service, monkeypatch):
+    doc = document(service)
+    found = service.search.picked
+
+    def picked(*args):
+        assert call(service, 'assistant.cancel', request_id='req-3')['cancelled']
+        return found(*args)
+
+    monkeypatch.setattr(service.search, 'picked', picked)
+    result = call(service, 'assistant.ask', question='결정은?', document_ids=[doc['id']], request_id='req-3')
+    assert result['cancelled'] and result['messages'][-1]['content'] == '(답변을 중지했습니다.)'
+    assert service.llm.calls == []
+
+    # Stopped while the question is analyzed, whose LLM request then ends Cancelled: the same, without sources.
+    def gather(*args):
+        assert call(service, 'assistant.cancel', request_id='req-4')['cancelled']
+        raise llm.Cancelled()
+
+    monkeypatch.setattr(service.search, 'gather', gather)
+    result = call(service, 'assistant.ask', question='결정은?', request_id='req-4')
+    assert result['cancelled'] and result['messages'][-1]['content'] == '(답변을 중지했습니다.)'
+    assert result['messages'][-1]['trace'] == {'terms': [], 'steps': [], 'sources': [], 'outcome': 'cancelled'}
+
+
+def test_conversations_answer_at_once_and_each_one_question_at_a_time(service):
+    doc = document(service)
+    service.llm.responses = [{'answer': '캐시입니다. [1]', 'citations': [1]}]
+    first = call(service, 'assistant.ask', question='결정은?', document_ids=[doc['id']])['conversation_id']
+    release, waiting = threading.Event(), []
+
+    def held(options):
+        waiting.append(1)
+        assert release.wait(5)
+        return {'answer': '답입니다. [1]', 'citations': [1]}
+
+    service.llm.responses = [held, held]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        followup = pool.submit(call, service, 'assistant.ask', question='후속', conversation_id=first,
+                               document_ids=[doc['id']])
+        other = pool.submit(call, service, 'assistant.ask', question='새 질문', document_ids=[doc['id']])
+        # Two conversations wait for the LLM at once.
+        wait_until(lambda: len(waiting) == 2)
+        # The first one takes no other question, and is not deleted, while it answers.
+        with pytest.raises(UserError, match='이전 질문에 답하는 중'):
+            call(service, 'assistant.ask', question='또', conversation_id=first, document_ids=[doc['id']])
+        with pytest.raises(UserError, match='완료된 뒤 삭제'):
+            call(service, 'assistant.delete', id=first)
+        release.set()
+        assert len(followup.result(5)['messages']) == 4 and len(other.result(5)['messages']) == 2
+    call(service, 'assistant.delete', id=first)
+    assert not call(service, 'assistant.history', id=first)
+
+
+def test_an_answer_cut_short_keeps_its_text_with_a_note(service, emitted):
+    doc = document(service)
+    service.llm.responses = [llm.reply('{"answer": "캐시를 도입했고 [1] 이후', truncated=True)]
+    result = call(service, 'assistant.ask', question='결정은?', document_ids=[doc['id']], stream=True)
+    message = result['messages'][-1]
+    assert result['truncated'] and message['content'] == f'캐시를 도입했고 [1] 이후\n\n{llm.TRUNCATED_NOTE}'
+    assert [c['number'] for c in message['citations']] == [1] and message['trace']['outcome'] == 'truncated'
+    assert emitted[-1][1]['status'] == 'completed' and emitted[-1][1]['truncated'] is True
+    # Cut short before the answer began, there is nothing to keep: the user is told to raise the limit.
+    service.llm.responses = [llm.reply('{"citations": [1], "ans', truncated=True)]
+    with pytest.raises(UserError, match='최대 출력'):
+        call(service, 'assistant.ask', question='다시?', document_ids=[doc['id']])
+    assert len(call(service, 'assistant.conversations')) == 1
+
+
+def test_the_context_window_scales_the_evidence_and_the_history(service):
+    content = '서론입니다. ' * 1500 + '꼬리키워드: 최종 담당자는 개발팀입니다.'
+    doc = document(service, content)
+
+    def asked(window, **params):
+        service.llm.window = window
+        service.llm.responses = [{'answer': '개발팀입니다. [1]', 'citations': [1]}]
+        call(service, 'assistant.ask', question='꼬리키워드 담당자는?', document_ids=[doc['id']], **params)
+        return service.llm.calls[-1][1]
+
+    # The default window reads the passages of a document of 10,500 characters; three times the window reads all of it
+    # (4,500 characters of a document become 13,500), and a quarter of it a quarter as much.
+    source = asked(module.PROMPT_CHARS)['documents'][0]
+    assert source['partial'] and len(source['excerpt']) <= 4550
+    source = asked(module.PROMPT_CHARS * 3)['documents'][0]
+    assert not source['partial'] and source['excerpt'] == content
+    assert len(asked(module.PROMPT_CHARS // 4)['documents'][0]['excerpt']) <= 1150
+    # The history's messages are cut to their share as well.
+    service.llm.window = module.PROMPT_CHARS
+    service.llm.responses = [{'answer': '가' * 5000 + ' [1]', 'citations': [1]}]
+    conversation = call(service, 'assistant.ask', question='길게?', document_ids=[doc['id']])['conversation_id']
+    for window, kept in ((module.PROMPT_CHARS, 2000), (module.PROMPT_CHARS * 2, 4000)):
+        assert len(asked(window, conversation_id=conversation)['history'][1]['content']) == kept
+
+
+def test_stopping_names_a_conversation_or_a_request(service):
+    with pytest.raises(UserError, match='conversation_id'):
+        call(service, 'assistant.cancel')
+    assert call(service, 'assistant.cancel', conversation_id='없는 대화') == {'ok': True, 'cancelled': False}
+    with pytest.raises(UserError, match='요청 ID'):
+        call(service, 'assistant.ask', question='질문', request_id='bad id!')
+
+
+def test_a_briefing_cut_short_says_so(service, monkeypatch):
+    monkeypatch.setattr(service.llm, 'complete',
+                        lambda messages: llm.reply('## 오늘\n' + '- 업무 확인\n' * 3000, truncated=True))
+    result = call(service, 'briefing.generate')
+    assert result['truncated'] and len(result['content']) <= 20000 and result['content'].endswith(llm.TRUNCATED_NOTE)

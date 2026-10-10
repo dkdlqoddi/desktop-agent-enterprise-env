@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import diagnostics, pageindex, sources, storage
 from .db import index_text
-from .llm import UserError
+from .llm import UserError, shown
 
 
 _clock = threading.Lock()
@@ -121,6 +121,9 @@ def document_ids(value, limit=MAX_SELECTED):
 class Service:
     def __init__(self, db, llm):
         self.db, self.llm = db, llm
+        # Events the backend sends of its own accord, as emit(name, params): main.py writes each as a line without an
+        # id, which Electron passes to the window (an answer as the LLM writes it). Nothing listens without it.
+        self.emit = lambda event, params: None
         from .image_import import ImageImporter
         from .office_import import OfficeImporter
         from .rtf_import import RtfImporter
@@ -193,7 +196,8 @@ class Service:
             "settings.load": lambda p: self.llm.load(p),
             # The main process alone (never a screen or an AI tool: electron/main.cjs ALLOWED leaves it out).
             "settings.secrets": lambda p: self.llm.secrets(),
-            "settings.test": lambda p: {"message": self.llm.complete([{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}])},
+            # Answers shown as text say so when the LLM stopped them at its output limit (shown).
+            "settings.test": lambda p: {"message": shown(self.llm.complete([{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}]))},
             "stats": self.stats, "prompts.list": self.prompts_list, "prompts.save": self.prompts_save,
             "prompts.delete": self.prompts_delete, "prompts.run": self.prompts_run,
             "runs.list": self.runs_list, "runs.get": self.runs_get, "runs.delete": self.runs_delete,
@@ -380,7 +384,7 @@ class Service:
         try:
             messages = self.prompt_messages(row, variables)
             run["input"] = messages[-1]["content"]
-            run["output"] = self.llm.complete(messages)
+            run["output"] = shown(self.llm.complete(messages))
         except Exception as exc:
             error = diagnostics.report(exc, "프롬프트를 실행하지 못했습니다. 설정과 입력을 확인해 주세요.", "프롬프트 실행")
             if schedule_id and not run["input"] and isinstance(exc, UserError):
@@ -861,13 +865,14 @@ class Service:
             if not updated.rowcount:
                 raise UserError("이미 분석 중이거나 문서가 변경되었습니다. 잠시 후 다시 시도해 주세요.")
         try:
-            nodes = None
+            nodes, note = None, ""
             body = doc["content"]
             if len(body) > pageindex.MIN_CHARS:
                 # PageIndex: summarize the section tree in bounded batches, then extract the metadata
-                # from the outline, so no request carries the whole document.
+                # from the outline, so no request carries the whole document. Sections whose summary requests
+                # failed keep the beginning of their text, and the document's error says which (a note).
                 nodes = pageindex.build(body)
-                pageindex.summarize(self.llm, doc["title"], body, nodes)
+                note = pageindex.failure_note(pageindex.summarize(self.llm, doc["title"], body, nodes))
                 body = f"[긴 문서 · 본문 {len(body):,}자 · 목차와 섹션 요약]\n{pageindex.outline(nodes)}"
             result = self.llm.structured(EXTRACT, f"제목: {doc['title']}\n\n{body}")
             summary = result.get("summary")
@@ -888,8 +893,8 @@ class Service:
                 if source in keys and target in keys and source != target:
                     relations.add((doc["id"], source, target, " ".join(r["label"].split())[:100]))
             with self.db.connect() as db:
-                changed = db.execute("UPDATE documents SET summary=?,status='ready',error='',index_mode=? WHERE id=? AND revision=?",
-                                     (summary, "pageindex" if nodes else "wiki", doc["id"], doc["revision"]))
+                changed = db.execute("UPDATE documents SET summary=?,status='ready',error=?,index_mode=? WHERE id=? AND revision=?",
+                                     (summary, note, "pageindex" if nodes else "wiki", doc["id"], doc["revision"]))
                 if not changed.rowcount:
                     raise UserError("분석 중 문서가 수정 또는 삭제되었습니다. 최신 문서를 다시 분석해 주세요.")
                 for table in ("keywords", "relations", "doc_nodes"):
