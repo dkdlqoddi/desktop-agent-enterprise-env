@@ -5,30 +5,74 @@ rectangle, rounded rectangle, oval, line, polyline, curve or arc, a group of the
 and formulas come with it or with the shape type it names. They are painted on the Canvas of drawing.py,
 with their fill, outline, dashes, arrowheads, pictures and text; shadows, 3-D and other effects are left
 out. WordArt keeps its text in the shape's fill color."""
+
 import math
 import re
 from html import escape
 
 from . import images
-from .drawing import (NAMED_COLORS, SYSTEM_COLORS, Color, Line, Matrix, arrowhead, color_css, missing_picture, num,
-                      placed, rgb_hex, text_box)
+from .drawing import (
+    NAMED_COLORS,
+    SYSTEM_COLORS,
+    Color,
+    Line,
+    Matrix,
+    arrowhead,
+    color_css,
+    missing_picture,
+    num,
+    placed,
+    rgb_hex,
+    text_box,
+)
 from .html_document import css, font_family
 
 V = "{urn:schemas-microsoft-com:vml}"
 O = "{urn:schemas-microsoft-com:office:office}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-SHAPES = {V + name for name in ("shape", "rect", "roundrect", "oval", "line", "polyline", "curve", "arc", "image", "group")}
+SHAPES = {
+    V + name for name in ("shape", "rect", "roundrect", "oval", "line", "polyline", "curve", "arc", "image", "group")
+}
 MAX_DEPTH = 32
 UNITS = {"pt": 4 / 3, "px": 1.0, "in": 96.0, "cm": 96 / 2.54, "mm": 96 / 25.4, "pc": 16.0, "pi": 16.0, "emu": 1 / 9525}
-VML_DASHES = {"shortdash": (3, 1), "shortdot": (1, 1), "shortdashdot": (3, 1, 1, 1), "shortdashdotdot": (3, 1, 1, 1, 1, 1),
-              "dot": (1, 3), "dash": (4, 3), "longdash": (8, 3), "dashdot": (4, 3, 1, 3), "longdashdot": (8, 3, 1, 3),
-              "longdashdotdot": (8, 3, 1, 3, 1, 3)}
+VML_DASHES = {
+    "shortdash": (3, 1),
+    "shortdot": (1, 1),
+    "shortdashdot": (3, 1, 1, 1),
+    "shortdashdotdot": (3, 1, 1, 1, 1, 1),
+    "dot": (1, 3),
+    "dash": (4, 3),
+    "longdash": (8, 3),
+    "dashdot": (4, 3, 1, 3),
+    "longdashdot": (8, 3, 1, 3),
+    "longdashdotdot": (8, 3, 1, 3, 1, 3),
+}
 ARROWS = {"block": "triangle", "classic": "stealth", "open": "arrow", "oval": "oval", "diamond": "diamond"}
 ARROW_WIDTHS = {"narrow": "sm", "medium": "med", "wide": "lg"}
 ARROW_LENGTHS = {"short": "sm", "medium": "med", "long": "lg"}
-TWO_LETTER = ("nf", "ns", "ae", "al", "at", "ar", "wa", "wr", "qx", "qy", "qb", "ha", "hb", "hc", "hd", "he", "hf",
-              "hg", "hh", "hi")
+TWO_LETTER = (
+    "nf",
+    "ns",
+    "ae",
+    "al",
+    "at",
+    "ar",
+    "wa",
+    "wr",
+    "qx",
+    "qy",
+    "qb",
+    "ha",
+    "hb",
+    "hc",
+    "hd",
+    "he",
+    "hf",
+    "hg",
+    "hh",
+    "hi",
+)
 PATH_TOKEN = re.compile(r"[a-z]+|[@#]\d+|[-+]?(?:\d+\.?\d*|\.\d+)|,", re.I)
 FD = 65536  # VML angles and fixed-point numbers are in 1/65536
 
@@ -92,8 +136,14 @@ def color_of(text, base=None):
             return Color(base.r * amount, base.g * amount, base.b * amount)
         return Color(*(1 - (1 - value) * amount for value in (base.r, base.g, base.b)))
     text = re.sub(r"\[[^\]]*\]", "", text).strip()
-    rgb = rgb_hex(text) if text.startswith("#") else rgb_hex(
-        NAMED_COLORS.get(text.lower()) or next((value for name, value in SYSTEM_COLORS.items() if name.lower() == text.lower()), None))
+    rgb = (
+        rgb_hex(text)
+        if text.startswith("#")
+        else rgb_hex(
+            NAMED_COLORS.get(text.lower())
+            or next((value for name, value in SYSTEM_COLORS.items() if name.lower() == text.lower()), None)
+        )
+    )
     return None if rgb is None else Color(*rgb)
 
 
@@ -109,7 +159,7 @@ def path_tokens(text):
             while letters:
                 name = letters[:2] if letters[:2] in TWO_LETTER else letters[:1]
                 commands.append([name, [], False])
-                letters = letters[len(name):]
+                letters = letters[len(name) :]
         elif not commands:
             continue
         elif token == ",":
@@ -130,11 +180,24 @@ class Formulas:
     def __init__(self, equations, adjust, size, origin):
         self.adjust = adjust
         width, height = size
-        self.names = {"width": width, "height": height, "xcenter": origin[0] + width / 2,
-                      "ycenter": origin[1] + height / 2, "xlimo": 0.0, "ylimo": 0.0, "hasstroke": 1.0, "hasfill": 1.0,
-                      "pixellinewidth": 1.0, "pixelwidth": width, "pixelheight": height, "emuwidth": width * 9525,
-                      "emuheight": height * 9525, "emuwidth2": width * 9525 / 2, "emuheight2": height * 9525 / 2,
-                      "linedrawn": 1.0}
+        self.names = {
+            "width": width,
+            "height": height,
+            "xcenter": origin[0] + width / 2,
+            "ycenter": origin[1] + height / 2,
+            "xlimo": 0.0,
+            "ylimo": 0.0,
+            "hasstroke": 1.0,
+            "hasfill": 1.0,
+            "pixellinewidth": 1.0,
+            "pixelwidth": width,
+            "pixelheight": height,
+            "emuwidth": width * 9525,
+            "emuheight": height * 9525,
+            "emuwidth2": width * 9525 / 2,
+            "emuheight2": height * 9525 / 2,
+            "linedrawn": 1.0,
+        }
         self.values = []
         for equation in equations:
             try:
@@ -244,8 +307,12 @@ class Trace:
         self.emit(letter + " ".join(f"{num(px)} {num(py)}" for px, py in points))
         first = next((point for point in points if point != start), points[-1])
         last = points[-2] if len(points) > 1 and points[-2] != points[-1] else start
-        self.reached(start, (first[0] - start[0], first[1] - start[1]),
-                     (points[-1][0] - last[0], points[-1][1] - last[1]), points[-1])
+        self.reached(
+            start,
+            (first[0] - start[0], first[1] - start[1]),
+            (points[-1][0] - last[0], points[-1][1] - last[1]),
+            points[-1],
+        )
         self.x, self.y = values[-2], values[-1]
 
     def arc(self, cx, cy, rx, ry, start, sweep, connect):
@@ -340,8 +407,9 @@ class Vml:
         fill_part, stroke_part = part("fill"), part("stroke")
         fill = None
         # Open lines have no area; a polyline, curve or arc is filled only when it says so.
-        if kind not in ("line", "polyline", "curve", "arc") or (kind != "line" and (
-                element.get("filled") or element.get("fillcolor") or fill_part is not None)):
+        if kind not in ("line", "polyline", "curve", "arc") or (
+            kind != "line" and (element.get("filled") or element.get("fillcolor") or fill_part is not None)
+        ):
             fill = self.fill(attr, fill_part)
         line = self.line(attr, stroke_part)
         picture = element if kind == "image" else part("imagedata")
@@ -358,8 +426,10 @@ class Vml:
                 canvas.labels.append(title)
             if isinstance(found, tuple):
                 kind_, data, _ = found
-                canvas.parts.append(f'<image href="{images.data_uri(kind_, data)}" x="0" y="0" width="{num(w)}" '
-                                    f'height="{num(h)}" preserveAspectRatio="none" transform="{local_matrix.svg()}"/>')
+                canvas.parts.append(
+                    f'<image href="{images.data_uri(kind_, data)}" x="0" y="0" width="{num(w)}" '
+                    f'height="{num(h)}" preserveAspectRatio="none" transform="{local_matrix.svg()}"/>'
+                )
             else:
                 missing_picture(canvas, local_matrix, w, h, found)
             fill = None  # the picture is what fills the shape
@@ -370,8 +440,11 @@ class Vml:
             if line is not None:
                 for data in trace.stroked:
                     canvas.parts.append(f'<path d="{data}" fill="none" {line.svg()} transform="{local_matrix.svg()}"/>')
-                heads = [arrowhead(end, line, *place) for end, place in ((line.head, trace.start), (line.tail, trace.end))
-                         if end and place and not trace.closed]
+                heads = [
+                    arrowhead(end, line, *place)
+                    for end, place in ((line.head, trace.start), (line.tail, trace.end))
+                    if end and place and not trace.closed
+                ]
                 if heads:
                     canvas.parts.append(f'<g transform="{local_matrix.svg()}">{"".join(heads)}</g>')
         canvas.cover(local_matrix, 0, 0, w, h, line.reach() if line is not None else 0)
@@ -389,14 +462,22 @@ class Vml:
             style = style_of(item.get("style"))
             left = length(style.get("left"), unit=1.0) + length(style.get("margin-left"), unit=1.0)
             top = length(style.get("top"), unit=1.0) + length(style.get("margin-top"), unit=1.0)
-            frame = ((left - origin[0]) * scale_x, (top - origin[1]) * scale_y,
-                     length(style.get("width"), unit=1.0) * scale_x, length(style.get("height"), unit=1.0) * scale_y)
-            inner = matrix @ Matrix(scale_x, 0, 0, scale_y, -origin[0] * scale_x, -origin[1] * scale_y) \
-                if local(item.tag) in ("line", "polyline", "curve") else matrix
+            frame = (
+                (left - origin[0]) * scale_x,
+                (top - origin[1]) * scale_y,
+                length(style.get("width"), unit=1.0) * scale_x,
+                length(style.get("height"), unit=1.0) * scale_y,
+            )
+            inner = (
+                matrix @ Matrix(scale_x, 0, 0, scale_y, -origin[0] * scale_x, -origin[1] * scale_y)
+                if local(item.tag) in ("line", "polyline", "curve")
+                else matrix
+            )
             self.paint(canvas, item, inner, frame, 1.0, depth + 1)
 
     def points(self, element, kind, matrix, x, y, unit):
         """(transform, width, height, Trace) of a line, curve or polyline, drawn by its own points."""
+
         def at(text):
             parts = [part.strip() for part in str(text or "").split(",")]
             parts += ["0"] * (2 - len(parts))
@@ -405,8 +486,10 @@ class Vml:
         trace = Trace(lambda px, py: (px, py))
         if kind == "polyline":
             values = [part for part in re.split(r"[\s,]+", (element.get("points") or "").strip()) if part]
-            found = [(length(values[index], unit=unit), length(values[index + 1], unit=unit))
-                     for index in range(0, len(values) - 1, 2)]
+            found = [
+                (length(values[index], unit=unit), length(values[index + 1], unit=unit))
+                for index in range(0, len(values) - 1, 2)
+            ]
             found = [(px + x, py + y) for px, py in found]
         elif kind == "curve":
             found = [at(element.get(name)) for name in ("from", "control1", "control2", "to")]
@@ -486,7 +569,9 @@ class Vml:
     def adjust(self, attr, element):
         """Adjust values (#0, #1, …): the shape's own over its type's defaults."""
         shape_type = self.types.get((element.get("type") or "").lstrip("#"))
-        defaults = [part.strip() for part in ((shape_type.get("adj") if shape_type is not None else "") or "").split(",")]
+        defaults = [
+            part.strip() for part in ((shape_type.get("adj") if shape_type is not None else "") or "").split(",")
+        ]
         own = [part.strip() for part in (element.get("adj") or "").split(",")]
         found = []
         for index in range(max(len(defaults), len(own))):
@@ -509,7 +594,7 @@ class Vml:
                     trace.line(found[index], found[index + 1])
             elif name == "c":
                 for index in range(0, len(found) - 5, 6):
-                    trace.curve(*found[index:index + 6])
+                    trace.curve(*found[index : index + 6])
             elif name == "t":
                 trace.move(trace.x + (found[0] if found else 0), trace.y + (found[1] if len(found) > 1 else 0))
             elif name == "r":
@@ -518,7 +603,12 @@ class Vml:
             elif name == "v":
                 for index in range(0, len(found) - 5, 6):
                     x0, y0 = trace.x, trace.y
-                    trace.curve(*(value + (x0 if position % 2 == 0 else y0) for position, value in enumerate(found[index:index + 6])))
+                    trace.curve(
+                        *(
+                            value + (x0 if position % 2 == 0 else y0)
+                            for position, value in enumerate(found[index : index + 6])
+                        )
+                    )
             elif name == "x":
                 trace.close()
             elif name == "e":
@@ -529,13 +619,19 @@ class Vml:
                 trace.stroke = False
             elif name in ("ae", "al"):
                 for index in range(0, len(found) - 5, 6):
-                    cx, cy, rx, ry, start, sweep = found[index:index + 6]
-                    trace.arc(cx, cy, rx, ry, math.radians(start / FD), math.radians(sweep / FD),
-                              name == "ae" or index > 0)
+                    cx, cy, rx, ry, start, sweep = found[index : index + 6]
+                    trace.arc(
+                        cx, cy, rx, ry, math.radians(start / FD), math.radians(sweep / FD), name == "ae" or index > 0
+                    )
             elif name in ("at", "ar", "wa", "wr"):
                 for index in range(0, len(found) - 7, 8):
-                    left, top, right, bottom, x1, y1, x2, y2 = found[index:index + 8]
-                    cx, cy, rx, ry = (left + right) / 2, (top + bottom) / 2, abs(right - left) / 2, abs(bottom - top) / 2
+                    left, top, right, bottom, x1, y1, x2, y2 = found[index : index + 8]
+                    cx, cy, rx, ry = (
+                        (left + right) / 2,
+                        (top + bottom) / 2,
+                        abs(right - left) / 2,
+                        abs(bottom - top) / 2,
+                    )
                     if not rx or not ry:
                         continue
                     start = math.atan2((y1 - cy) / ry, (x1 - cx) / rx)
@@ -603,7 +699,9 @@ class Vml:
             color = color_of(part.get("color"), color) or color
         if part is not None and part.get("opacity"):
             color.alpha = min(max(fraction(part.get("opacity"), 1.0), 0.0), 1.0)
-        weight = (part.get("weight") if part is not None and part.get("weight") else None) or attr("strokeweight", "0.75pt")
+        weight = (part.get("weight") if part is not None and part.get("weight") else None) or attr(
+            "strokeweight", "0.75pt"
+        )
         width = length(weight, 1.0, unit=4 / 3)  # a bare stroke weight is in points
         dash = None
         style = ((part.get("dashstyle") if part is not None else None) or "solid").strip().lower()
@@ -616,10 +714,15 @@ class Vml:
             kind = ARROWS.get(((part.get(f"{which}arrow") if part is not None else None) or "none").lower())
             if not kind:
                 return None
-            return (kind, ARROW_WIDTHS.get((part.get(f"{which}arrowwidth") or "medium").lower(), "med"),
-                    ARROW_LENGTHS.get((part.get(f"{which}arrowlength") or "medium").lower(), "med"))
+            return (
+                kind,
+                ARROW_WIDTHS.get((part.get(f"{which}arrowwidth") or "medium").lower(), "med"),
+                ARROW_LENGTHS.get((part.get(f"{which}arrowlength") or "medium").lower(), "med"),
+            )
 
-        cap = {"round": "round", "square": "square", "flat": "butt"}.get(((part.get("endcap") if part is not None else None) or "").lower())
+        cap = {"round": "round", "square": "square", "flat": "butt"}.get(
+            ((part.get("endcap") if part is not None else None) or "").lower()
+        )
         join = ((part.get("joinstyle") if part is not None else None) or "").lower() or None
         return Line(color, width, dash, cap, join, end("start"), end("end"))
 
@@ -640,22 +743,40 @@ class Vml:
             size = pair(attr("coordsize"), (21600.0, 21600.0))
             origin = pair(attr("coordorigin"), (0.0, 0.0))
             formulas = part("formulas")
-            values = Formulas([item.get("eqn") for item in ([] if formulas is None else formulas.findall(V + "f"))],
-                              self.adjust(attr, element), size, origin)
+            values = Formulas(
+                [item.get("eqn") for item in ([] if formulas is None else formulas.findall(V + "f"))],
+                self.adjust(attr, element),
+                size,
+                origin,
+            )
             found = [values.value(item or "0") for item in rectangle.split(";")[0].split(",")]
             if len(found) == 4 and size[0] and size[1]:
                 left, right = ((found[0] - origin[0]) * w / size[0], (found[2] - origin[0]) * w / size[0])
                 top, bottom = ((found[1] - origin[1]) * h / size[1], (found[3] - origin[1]) * h / size[1])
         insets = [length(value or "0", unit=4 / 3) for value in (box.get("inset") or "").split(",")]
         defaults = (9.6, 4.8, 9.6, 4.8)
-        insets = tuple(insets[index] if index < len(insets) and (box.get("inset") or "").split(",")[index].strip()
-                       else defaults[index] for index in range(4))
+        insets = tuple(
+            insets[index]
+            if index < len(insets) and (box.get("inset") or "").split(",")[index].strip()
+            else defaults[index]
+            for index in range(4)
+        )
         flow = style_of(box.get("style"))
         vertical = "vert" if flow.get("layout-flow") == "vertical" else "horz"
         if flow.get("mso-layout-flow-alt") == "bottom-to-top":
             vertical = "vert270"
-        text_box(canvas, matrix, left, top, right - left, bottom - top, html, insets=insets, vertical=vertical,
-                 base=self.base)
+        text_box(
+            canvas,
+            matrix,
+            left,
+            top,
+            right - left,
+            bottom - top,
+            html,
+            insets=insets,
+            vertical=vertical,
+            base=self.base,
+        )
 
     def wordart(self, canvas, matrix, w, h, textpath, fill, line):
         """WordArt (v:textpath): its text across the shape, in the shape's fill color."""
@@ -668,12 +789,29 @@ class Vml:
         color = re.search(r'fill="([^"]+)"', fill or "")
         lines = max(text.count("\n") + 1, 1)
         size = max(min(h / lines * 0.8, length(style.get("font-size"), h * 0.8)), 1)
-        look = css([("font-family", family or None), ("font-size", f"{num(size)}px"),
-                    ("color", color.group(1) if color else None), ("text-align", "center"), ("white-space", "pre"),
-                    ("font-weight", "bold" if style.get("font-weight") == "bold" else None),
-                    ("font-style", "italic" if style.get("font-style") == "italic" else None)])
-        text_box(canvas, matrix, 0, 0, w, h, escape(text).replace("\n", "<br/>"), anchor="ctr", insets=(0, 0, 0, 0),
-                 base=look)
+        look = css(
+            [
+                ("font-family", family or None),
+                ("font-size", f"{num(size)}px"),
+                ("color", color.group(1) if color else None),
+                ("text-align", "center"),
+                ("white-space", "pre"),
+                ("font-weight", "bold" if style.get("font-weight") == "bold" else None),
+                ("font-style", "italic" if style.get("font-style") == "italic" else None),
+            ]
+        )
+        text_box(
+            canvas,
+            matrix,
+            0,
+            0,
+            w,
+            h,
+            escape(text).replace("\n", "<br/>"),
+            anchor="ctr",
+            insets=(0, 0, 0, 0),
+            base=look,
+        )
 
 
 def on(text, default=True):
@@ -689,8 +827,11 @@ def box_css(element, types, w, h):
     style = style_of(element.get("style"))
     if style.get("rotation", "0").strip() not in ("0", "") or style.get("flip"):
         return None
-    if not (kind in ("rect", "roundrect") or kind == "shape" and (
-            kind_number in ("1", "202") or (not element.get("path") and shape_type is None))):
+    if not (
+        kind in ("rect", "roundrect")
+        or kind == "shape"
+        and (kind_number in ("1", "202") or (not element.get("path") and shape_type is None))
+    ):
         return None
 
     def attr(name, default=None):
@@ -706,26 +847,45 @@ def box_css(element, types, w, h):
     fill, stroke, box = part("fill"), part("stroke"), part("textbox")
     if fill is not None and (fill.get("type") or "solid").lower() != "solid":
         return None
-    if stroke is not None and any((stroke.get(name) or "none").lower() != "none" for name in ("startarrow", "endarrow")):
+    if stroke is not None and any(
+        (stroke.get(name) or "none").lower() != "none" for name in ("startarrow", "endarrow")
+    ):
         return None
     background = None
     if on(attr("filled", "t")) and (fill is None or on(fill.get("on"), True)):
-        background = color_of(fill.get("color") if fill is not None and fill.get("color") else attr("fillcolor", "white"))
+        background = color_of(
+            fill.get("color") if fill is not None and fill.get("color") else attr("fillcolor", "white")
+        )
         if background is not None and fill is not None and fill.get("opacity"):
             background.alpha = min(max(fraction(fill.get("opacity"), 1.0), 0.0), 1.0)
     border = "none"
     if on(attr("stroked", "t")) and (stroke is None or on(stroke.get("on"), True)):
-        color = color_of(stroke.get("color") if stroke is not None and stroke.get("color") else attr("strokecolor", "black"))
-        weight = (stroke.get("weight") if stroke is not None and stroke.get("weight") else None) or attr("strokeweight", "0.75pt")
+        color = color_of(
+            stroke.get("color") if stroke is not None and stroke.get("color") else attr("strokecolor", "black")
+        )
+        weight = (stroke.get("weight") if stroke is not None and stroke.get("weight") else None) or attr(
+            "strokeweight", "0.75pt"
+        )
         dashed = ((stroke.get("dashstyle") if stroke is not None else None) or "solid").lower() != "solid"
         if color is not None:
-            border = f"{num(max(length(weight, 1.0, unit=4 / 3), 0.5))}px {'dashed' if dashed else 'solid'} {color.hex()}"
+            border = (
+                f"{num(max(length(weight, 1.0, unit=4 / 3), 0.5))}px {'dashed' if dashed else 'solid'} {color.hex()}"
+            )
     values = [part_.strip() for part_ in ((box.get("inset") if box is not None else None) or "").split(",")]
-    insets = [length(values[index], default, unit=4 / 3) if index < len(values) and values[index] else default
-              for index, default in enumerate((9.6, 4.8, 9.6, 4.8))]
+    insets = [
+        length(values[index], default, unit=4 / 3) if index < len(values) and values[index] else default
+        for index, default in enumerate((9.6, 4.8, 9.6, 4.8))
+    ]
     radius = min(w, h) * min(max(fraction(element.get("arcsize"), 0.2), 0.0), 0.5) if kind == "roundrect" else 0.0
-    return css([("width", f"{num(w)}px" if w > 0 else None), ("max-width", "100%"),
-                ("min-height", f"{num(h)}px" if h > 0 else None), ("box-sizing", "border-box"),
-                ("padding", " ".join(f"{num(insets[index])}px" for index in (1, 2, 3, 0))),
-                ("background-color", color_css(background)), ("border", border),
-                ("border-radius", f"{num(radius)}px" if radius else None)])
+    return css(
+        [
+            ("width", f"{num(w)}px" if w > 0 else None),
+            ("max-width", "100%"),
+            ("min-height", f"{num(h)}px" if h > 0 else None),
+            ("box-sizing", "border-box"),
+            ("padding", " ".join(f"{num(insets[index])}px" for index in (1, 2, 3, 0))),
+            ("background-color", color_css(background)),
+            ("border", border),
+            ("border-radius", f"{num(radius)}px" if radius else None),
+        ]
+    )

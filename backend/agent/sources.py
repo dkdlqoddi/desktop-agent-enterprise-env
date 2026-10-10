@@ -13,6 +13,7 @@ A file whose size and modification time are the ones its import recorded is not 
 (Confluence's version number, JIRA's updated time) is not read again by a routine while that version stays (fresh). A
 source whose documents were all purged from the trash is left out of automatic imports until the user imports it
 again (purge, ignored_sources)."""
+
 import hashlib
 import os
 import time
@@ -24,16 +25,19 @@ from .db import SOURCE_TABLES, identity, index_text
 from .llm import UserError
 from .parts import imported, insert, joined, part_title, saved_message
 
-EDITED = ("가져온 뒤 본문을 고친 문서라 원본의 내용으로 바꾸지 않았습니다. 바꾸려면 문서 창에서 ‘원본에서 업데이트’를 "
-          "눌러 주세요.")
+EDITED = (
+    "가져온 뒤 본문을 고친 문서라 원본의 내용으로 바꾸지 않았습니다. 바꾸려면 문서 창에서 ‘원본에서 업데이트’를 "
+    "눌러 주세요."
+)
 # An automatic routine never brings back a document the user put in the trash (Plan "skip", reason "trashed").
 TRASHED = "휴지통에 있는 문서라 자동 작업이 가져오지 않았습니다. 휴지통에서 복원하거나 비운 뒤에는 다시 가져옵니다."
 # A file whose bytes changed but not its text (Plan "keep"), by whether its HTML page changed.
-KEPT = {"same": "원본 파일의 글이 그대로라 문서와 AI 분석을 그대로 두었습니다.",
-        "format": "원본 파일의 글이 그대로라 문서와 AI 분석은 그대로 두고, 바뀐 서식·그림만 HTML 문서에 반영했습니다."}
+KEPT = {
+    "same": "원본 파일의 글이 그대로라 문서와 AI 분석을 그대로 두었습니다.",
+    "format": "원본 파일의 글이 그대로라 문서와 AI 분석은 그대로 두고, 바뀐 서식·그림만 HTML 문서에 반영했습니다.",
+}
 # An automatic routine never brings back a source whose documents the user purged from the trash (reason "ignored").
-IGNORED = ("휴지통에서 영구 삭제한 문서의 원본이라 자동 작업이 가져오지 않았습니다. 다시 가져오려면 직접 가져와 "
-           "주세요.")
+IGNORED = "휴지통에서 영구 삭제한 문서의 원본이라 자동 작업이 가져오지 않았습니다. 다시 가져오려면 직접 가져와 주세요."
 # A file whose bytes an earlier import of a path where no file is any more holds (reason "moved").
 MOVED = "옮기거나 이름을 바꾼 파일이라 가져온 문서가 새 경로를 따르게 했습니다. 문서는 그대로입니다."
 # A page or ticket a routine did not read again: the site says it did not change since (fresh).
@@ -68,9 +72,12 @@ def rows(db, table, content):
     they have now, and whether their text is still the one imported. The texts are compared where they are, as a long
     import holds up to 100 documents of them."""
     where = " AND ".join(f"s.{column}=?" for column in content)
-    return db.execute(f"""SELECT s.doc_id, s.part, s.parts, s.title, d.title AS now_title, d.deleted_at,
+    return db.execute(
+        f"""SELECT s.doc_id, s.part, s.parts, s.title, d.title AS now_title, d.deleted_at,
         d.content != s.markdown AS changed FROM {table} s JOIN documents d ON d.id=s.doc_id
-        WHERE {where} ORDER BY s.part""", list(content.values())).fetchall()
+        WHERE {where} ORDER BY s.part""",
+        list(content.values()),
+    ).fetchall()
 
 
 def group(db, table, ident):
@@ -88,8 +95,9 @@ def earlier(db, table, source, target=None):
         row = db.execute(f"SELECT {column} FROM {table} WHERE doc_id=?", (target,)).fetchone()
         if row is not None and row[0] == source:
             return group(db, table, target)
-    row = db.execute(f"SELECT doc_id FROM {table} WHERE {column}=? ORDER BY imported_at DESC, part LIMIT 1",
-                     (source,)).fetchone()
+    row = db.execute(
+        f"SELECT doc_id FROM {table} WHERE {column}=? ORDER BY imported_at DESC, part LIMIT 1", (source,)
+    ).fetchone()
     return group(db, table, row[0]) if row else []
 
 
@@ -101,8 +109,16 @@ def edited(found):
 def texts(db, table, found):
     """The texts the documents `found` (rows by part) were imported with, by part."""
     ids = [row["doc_id"] for row in found]
-    return [row[0] for row in db.execute(
-        f"SELECT markdown FROM {table} WHERE doc_id IN ({','.join('?' * len(ids))}) ORDER BY part", ids)] if ids else []
+    return (
+        [
+            row[0]
+            for row in db.execute(
+                f"SELECT markdown FROM {table} WHERE doc_id IN ({','.join('?' * len(ids))}) ORDER BY part", ids
+            )
+        ]
+        if ids
+        else []
+    )
 
 
 def base(db, table, found, track):
@@ -121,6 +137,7 @@ def change(before, split):
     if before is None:
         return None
     from .changes import compare
+
     return compare(joined(before), joined([text for _, text in split.parts]))
 
 
@@ -194,14 +211,19 @@ def skipped(found, same):
     """The result of an import planned to be skipped, with why (`reason`, as Plan has it); `same` says that its content
     is saved already. An ignored source has no document left to name (doc_id None)."""
     messages = {"edited": EDITED, "trashed": TRASHED, "ignored": IGNORED, "moved": MOVED}
-    return {"status": "skipped", "doc_id": found.rows[0]["doc_id"] if found.rows else None,
-            "message": messages.get(found.reason, same), "reason": found.reason}
+    return {
+        "status": "skipped",
+        "doc_id": found.rows[0]["doc_id"] if found.rows else None,
+        "message": messages.get(found.reason, same),
+        "reason": found.reason,
+    }
 
 
 def ignored(db, table, source):
     """Whether the documents imported from `source` (a path or link) were all purged from the trash (purge)."""
-    return bool(db.execute("SELECT 1 FROM ignored_sources WHERE source_table=? AND source=?",
-                           (table, source)).fetchone())
+    return bool(
+        db.execute("SELECT 1 FROM ignored_sources WHERE source_table=? AND source=?", (table, source)).fetchone()
+    )
 
 
 def purge(db, ids):
@@ -209,22 +231,27 @@ def purge(db, ids):
     file or page they were imported from, goes into ignored_sources: automatic imports (routines) do not bring it back,
     which the purge meant to prevent; the user's own import of it does (plan). The number of documents deleted."""
     from .service import now
+
     ids, found, deleted = list(dict.fromkeys(ids)), set(), 0
-    chunks = [ids[start:start + 500] for start in range(0, len(ids), 500)]
+    chunks = [ids[start : start + 500] for start in range(0, len(ids), 500)]
     for chunk in chunks:
         marks = ",".join("?" * len(chunk))
         for table in SOURCE_TABLES:
             column = identity(table)
-            found.update((table, row[0]) for row in db.execute(
-                f"SELECT DISTINCT {column} FROM {table} WHERE doc_id IN ({marks})", chunk))
+            found.update(
+                (table, row[0])
+                for row in db.execute(f"SELECT DISTINCT {column} FROM {table} WHERE doc_id IN ({marks})", chunk)
+            )
     for chunk in chunks:
         deleted += db.execute(f"DELETE FROM documents WHERE id IN ({','.join('?' * len(chunk))})", chunk).rowcount
     stamp = now()
     for table, source in sorted(found):
         # The source rows went with their documents; another import of the same source may still have its own.
         if not db.execute(f"SELECT 1 FROM {table} WHERE {identity(table)}=? LIMIT 1", (source,)).fetchone():
-            db.execute("INSERT OR REPLACE INTO ignored_sources(source_table,source,ignored_at) VALUES(?,?,?)",
-                       (table, source, stamp))
+            db.execute(
+                "INSERT OR REPLACE INTO ignored_sources(source_table,source,ignored_at) VALUES(?,?,?)",
+                (table, source, stamp),
+            )
     return deleted
 
 
@@ -249,8 +276,11 @@ def relink(db, table, source, found, stat=None):
     if old == source or not gone(old):
         return False
     values = {"source_path": source, **({"source_size": stat[0], "source_mtime": stat[1]} if stat else {})}
-    db.execute(f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} "
-               f"WHERE doc_id IN ({','.join('?' * len(ids))})", [*values.values(), *ids])
+    db.execute(
+        f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} "
+        f"WHERE doc_id IN ({','.join('?' * len(ids))})",
+        [*values.values(), *ids],
+    )
     db.execute("UPDATE writeback_backups SET source_path=? WHERE source_path=?", (source, old))
     return True
 
@@ -261,9 +291,11 @@ def touch(db, table, found, values, source):
     bytes may have been imported from another path."""
     ids = [row["doc_id"] for row in found]
     if ids and values:
-        db.execute(f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} "
-                   f"WHERE doc_id IN ({','.join('?' * len(ids))}) AND {identity(table)}=?",
-                   [*values.values(), *ids, source])
+        db.execute(
+            f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} "
+            f"WHERE doc_id IN ({','.join('?' * len(ids))}) AND {identity(table)}=?",
+            [*values.values(), *ids, source],
+        )
 
 
 def file_stat(file):
@@ -280,8 +312,11 @@ def stored_hash(db, table, path, stat):
     size, modified = stat
     if modified is None:
         return None
-    row = db.execute(f"""SELECT source_hash, source_size, source_mtime FROM {table} WHERE source_path=?
-        ORDER BY imported_at DESC, part LIMIT 1""", (path,)).fetchone()
+    row = db.execute(
+        f"""SELECT source_hash, source_size, source_mtime FROM {table} WHERE source_path=?
+        ORDER BY imported_at DESC, part LIMIT 1""",
+        (path,),
+    ).fetchone()
     return row["source_hash"] if row and (row["source_size"], row["source_mtime"]) == (size, modified) else None
 
 
@@ -319,15 +354,24 @@ def save(db, table, found, split, title, timestamp, values):
     count = len(split.parts)
     if found.action == "keep":
         for row, (page, _) in zip(found.rows, split.parts):
-            db.execute(f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?",
-                       [*values.values(), row["doc_id"]])
+            db.execute(
+                f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?",
+                [*values.values(), row["doc_id"]],
+            )
             if page is not None and found.reason == "format":
                 db.execute("UPDATE document_html SET html=? WHERE doc_id=?", (page, row["doc_id"]))
         return [], 0
 
     def source(ident, number, text):
-        row = {"doc_id": ident, **values, "markdown": text, "imported_at": timestamp, "part": number, "parts": count,
-               "title": part_title(title, number, count)}
+        row = {
+            "doc_id": ident,
+            **values,
+            "markdown": text,
+            "imported_at": timestamp,
+            "part": number,
+            "parts": count,
+            "title": part_title(title, number, count),
+        }
         db.execute(f"INSERT INTO {table}({','.join(row)}) VALUES({','.join('?' * len(row))})", list(row.values()))
 
     previous = found.rows if found.action == "update" else []
@@ -338,16 +382,21 @@ def save(db, table, found, split, title, timestamp, values):
         # gives, as long as the source's title is the same.
         given = row["title"] or part_title(title, row["part"], row["parts"])
         named = row["now_title"] if row["now_title"] != given else part_title(title, number, count)
-        db.execute("""UPDATE documents SET title=?,content=?,format=?,summary='',status='pending',error='',
+        db.execute(
+            """UPDATE documents SET title=?,content=?,format=?,summary='',status='pending',error='',
             index_mode='',revision=revision+1,updated_at=? WHERE id=?""",
-                   (named, text, "markdown" if page is None else "html", timestamp, ident))
+            (named, text, "markdown" if page is None else "html", timestamp, ident),
+        )
         for name in ("keywords", "relations", "doc_nodes"):
             db.execute(f"DELETE FROM {name} WHERE doc_id=?", (ident,))
         if page is None:
             db.execute("DELETE FROM document_html WHERE doc_id=?", (ident,))
         else:
-            db.execute("INSERT INTO document_html(doc_id,html) VALUES(?,?) "
-                       "ON CONFLICT(doc_id) DO UPDATE SET html=excluded.html", (ident, page))
+            db.execute(
+                "INSERT INTO document_html(doc_id,html) VALUES(?,?) "
+                "ON CONFLICT(doc_id) DO UPDATE SET html=excluded.html",
+                (ident, page),
+            )
         db.execute(f"DELETE FROM {table} WHERE doc_id=?", (ident,))
         source(ident, number, text)
         ids.append(ident)
@@ -366,9 +415,10 @@ def outcome(found, split, ids, removed, saved, kind):
         return {"status": "skipped", "doc_id": found.rows[0]["doc_id"], "message": KEPT[found.reason], "reason": "same"}
     if found.action == "insert":
         return imported(split, ids, saved, kind)
-    message = {"restore": "고친 본문 대신 원본의 내용으로 되돌렸습니다.",
-               "page": "Markdown으로 가져왔던 문서를 HTML 문서로 바꿨습니다."}.get(
-        found.reason, "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다.")
+    message = {
+        "restore": "고친 본문 대신 원본의 내용으로 되돌렸습니다.",
+        "page": "Markdown으로 가져왔던 문서를 HTML 문서로 바꿨습니다.",
+    }.get(found.reason, "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다.")
     if len(ids) > 1:
         message += " " + saved_message(split, kind)
     if removed:

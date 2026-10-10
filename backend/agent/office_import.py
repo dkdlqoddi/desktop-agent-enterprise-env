@@ -1,11 +1,14 @@
 """Background Office import jobs that persist Markdown directly to the Wiki."""
+
 from .file_import import FileImporter
 from .office_converter import FORMATS, OfficeConverter, capabilities
 
 # PowerPoint runs one process per user, so a presentation may be read in the PowerPoint the user has open.
-POWERPOINT_NOTICE = ("PowerPoint 파일을 읽습니다. 열려 있는 PowerPoint가 있으면 그 안에서 창 없이 열어 읽고 "
-                     "그 파일만 닫습니다. 가져올 파일을 편집 중이면 먼저 닫고, PowerPoint에 열린 대화 상자가 "
-                     "있으면 닫아 주세요.")
+POWERPOINT_NOTICE = (
+    "PowerPoint 파일을 읽습니다. 열려 있는 PowerPoint가 있으면 그 안에서 창 없이 열어 읽고 "
+    "그 파일만 닫습니다. 가져올 파일을 편집 중이면 먼저 닫고, PowerPoint에 열린 대화 상자가 "
+    "있으면 닫아 주세요."
+)
 
 
 class OfficeImporter(FileImporter):

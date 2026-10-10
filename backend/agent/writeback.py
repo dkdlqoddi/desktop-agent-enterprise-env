@@ -4,6 +4,7 @@ Before a write the file is copied into the Wiki folder's 원본 백업 folder an
 newest KEEP_BACKUPS copies of each file stay, and one of them can be put back in the file's place (restore_backup). A
 write that a crash or a kill cuts short leaves its record unfinished: the next write to the file looks at what the file
 holds now (classify) and tells the user before it writes anything."""
+
 import contextlib
 import hashlib
 import json
@@ -35,10 +36,11 @@ PACKAGES = {".docx", ".docm", ".xlsx", ".xlsm", ".xlsb", ".pptx", ".pptm", ".vsd
 COMPOUND = bytes.fromhex("d0cf11e0a1b11ae1")
 BUSY = "원본에 반영하는 중입니다. 끝난 뒤 다시 시도해 주세요."
 IMPORTING = "Office·RTF 문서 가져오기가 진행 중입니다. 끝난 뒤 원본에 반영해 주세요."
-UNSUPPORTED = ("이 PC의 Office 파일(Word·Excel·PowerPoint·Visio)에서 가져온 문서만 원본에 반영할 수 "
-               "있습니다.")
-EDITED_MEANWHILE = ("반영하는 동안 문서가 바뀌어 문서는 원본 파일에서 다시 읽지 않았습니다(바뀐 내용은 그대로 둠). 그 내용도 "
-                    "원본에 쓰려면 다시 ‘원본에 반영’을 눌러 주세요.")
+UNSUPPORTED = "이 PC의 Office 파일(Word·Excel·PowerPoint·Visio)에서 가져온 문서만 원본에 반영할 수 있습니다."
+EDITED_MEANWHILE = (
+    "반영하는 동안 문서가 바뀌어 문서는 원본 파일에서 다시 읽지 않았습니다(바뀐 내용은 그대로 둠). 그 내용도 "
+    "원본에 쓰려면 다시 ‘원본에 반영’을 눌러 주세요."
+)
 
 
 def checksum(path, limit=MAX_FILE_BYTES):
@@ -91,25 +93,36 @@ def interruption(state, name, phase=""):
     next write; `name` is the copy of the file before it, `phase` how far its save got (OfficeWriter's journal)."""
     copy = f"Wiki 폴더의 ‘{BACKUPS}’에 있는 {name}"
     if state == "intact":
-        return ("지난번 원본 반영이 파일을 저장하기 전에 중단되었습니다(앱이 강제로 종료됨). 원본 파일은 반영 전 그대로입니다. "
-                "다시 ‘원본에 반영’을 누르면 반영합니다.")
+        return (
+            "지난번 원본 반영이 파일을 저장하기 전에 중단되었습니다(앱이 강제로 종료됨). 원본 파일은 반영 전 그대로입니다. "
+            "다시 ‘원본에 반영’을 누르면 반영합니다."
+        )
     if state == "partial":
-        return ("지난번 원본 반영이 파일을 저장하는 도중에 중단되어(앱이 강제로 종료됨) 원본 파일이 없거나 일부만 저장된 것으로 "
-                f"보입니다. 반영 전 파일인 {copy}을(를) 복원한 뒤 다시 반영해 주세요.")
-    done = ("지난번 원본 반영은 파일 저장까지 마쳤지만 그 뒤 앱이 강제로 종료되어 문서를 다시 읽지 못했습니다. "
-            if phase == "saved" else "지난번 원본 반영이 끝나기 전에 앱이 강제로 종료되었습니다. 원본 파일이 반영 전과 "
-            "달라졌지만 반영한 내용을 끝까지 저장했는지는 알 수 없습니다. ")
-    return (f"{done}파일을 열어 확인하고, 반영 전으로 되돌리려면 {copy}을(를) 복원해 주세요. 그대로 두려면 다시 ‘원본에 "
-            "반영’을 누르면 진행합니다.")
+        return (
+            "지난번 원본 반영이 파일을 저장하는 도중에 중단되어(앱이 강제로 종료됨) 원본 파일이 없거나 일부만 저장된 것으로 "
+            f"보입니다. 반영 전 파일인 {copy}을(를) 복원한 뒤 다시 반영해 주세요."
+        )
+    done = (
+        "지난번 원본 반영은 파일 저장까지 마쳤지만 그 뒤 앱이 강제로 종료되어 문서를 다시 읽지 못했습니다. "
+        if phase == "saved"
+        else "지난번 원본 반영이 끝나기 전에 앱이 강제로 종료되었습니다. 원본 파일이 반영 전과 "
+        "달라졌지만 반영한 내용을 끝까지 저장했는지는 알 수 없습니다. "
+    )
+    return (
+        f"{done}파일을 열어 확인하고, 반영 전으로 되돌리려면 {copy}을(를) 복원해 주세요. 그대로 두려면 다시 ‘원본에 "
+        "반영’을 누르면 진행합니다."
+    )
 
 
 def remains(state, name):
     """A sentence on what a write that failed or was stopped left of the file, when it is not as it was ('' when it
     is): `name` is the copy of the file before the write."""
     copy = f"Wiki 폴더의 ‘{BACKUPS}’에 있는 {name}"
-    return {"partial": f" 확인해 보니 원본 파일이 없거나 일부만 저장된 것으로 보입니다. {copy}을(를) 복원해 주세요.",
-            "unknown": f" 확인해 보니 원본 파일이 반영 전과 달라졌습니다. 파일을 열어 확인하고, 되돌리려면 {copy}을(를) 복원해 "
-                       "주세요."}.get(state, "")
+    return {
+        "partial": f" 확인해 보니 원본 파일이 없거나 일부만 저장된 것으로 보입니다. {copy}을(를) 복원해 주세요.",
+        "unknown": f" 확인해 보니 원본 파일이 반영 전과 달라졌습니다. 파일을 열어 확인하고, 되돌리려면 {copy}을(를) 복원해 "
+        "주세요.",
+    }.get(state, "")
 
 
 def bases(parts, written=()):
@@ -137,8 +150,11 @@ def plan_of(application, parts, written=()):
         try:
             choice = against(application, base, now, pages)
         except Unchanged:  # The file may hold the document's text already.
-            choice = {"cells": []} if application == "Excel" else {
-                "units": [list(unit) for unit in units("\n\n".join(base), application)], "edits": []}
+            choice = (
+                {"cells": []}
+                if application == "Excel"
+                else {"units": [list(unit) for unit in units("\n\n".join(base), application)], "edits": []}
+            )
         choice["witness"] = told(application, base, [other for other in texts if other is not base], pages)
         choices.append(choice)
     return {"choices": choices}
@@ -206,19 +222,26 @@ class Writeback:
         """Write the changes of the document `id` (every part of a long one) into the file it came from: a background
         job, whose `status` tells how it went."""
         from .service import text
+
         ident = text(params.get("id"), "문서 ID", 80)
         table, kind, row, rows = self.source(ident)
         name = row["application"]
         if name not in ("Word", "Excel", "PowerPoint", "Visio"):
-            raise UserError("이 파일은 원본에 반영할 수 없습니다. Word·Excel·PowerPoint·Visio 문서만 반영할 수 있습니다.")
+            raise UserError(
+                "이 파일은 원본에 반영할 수 없습니다. Word·Excel·PowerPoint·Visio 문서만 반영할 수 있습니다."
+            )
         parts = [(part["doc_id"], part["markdown"], part["content"], None) for part in rows]
         if name == "Excel":
             parts = self.pages(parts)
         written = writes(rows)
         plan = plan_of(name, parts, written)
         # The texts the file may hold and the one this write makes, for what it puts there to be kept (remember).
-        record = {"table": table, "parts": rows, "bases": bases(parts, written),
-                  "texts": [new for _, _, new, _ in parts]}
+        record = {
+            "table": table,
+            "parts": rows,
+            "bases": bases(parts, written),
+            "texts": [new for _, _, new, _ in parts],
+        }
         with self.lock:
             if self.busy():
                 raise UserError(BUSY)
@@ -234,11 +257,23 @@ class Writeback:
             self.writer.ready(name)
             stop = threading.Event()
             job = {
-                "id": str(uuid.uuid4()), "doc_id": ident, "kind": kind, "application": name,
-                "file": Path(row["source_path"]).name, "status": "running", "changes": count(plan), "notice": "",
-                "waiting": "", "message": "", "error": "", "backup": "", "reread": False}
-            thread = threading.Thread(target=self._write_file, args=(job, row, name, plan, stop, record),
-                                      name="writeback", daemon=True)
+                "id": str(uuid.uuid4()),
+                "doc_id": ident,
+                "kind": kind,
+                "application": name,
+                "file": Path(row["source_path"]).name,
+                "status": "running",
+                "changes": count(plan),
+                "notice": "",
+                "waiting": "",
+                "message": "",
+                "error": "",
+                "backup": "",
+                "reread": False,
+            }
+            thread = threading.Thread(
+                target=self._write_file, args=(job, row, name, plan, stop, record), name="writeback", daemon=True
+            )
             thread.start()
             self.thread = thread
             self.job, self.stop = job, stop
@@ -277,6 +312,7 @@ class Writeback:
         (state) and whether the file holds it now (current). `interrupted` tells what a write a crash or a kill cut
         short left of the file, as the next write will tell it; `keep` is how many copies of a file stay."""
         from .service import text
+
         _, _, row, _ = self.source(text(params.get("doc_id"), "문서 ID", 80))
         path, folder = Path(row["source_path"]), self.folder()
         try:
@@ -284,18 +320,38 @@ class Writeback:
         except OSError:
             current = None
         with self.service.db.connect() as db:
-            found = [dict(item) for item in db.execute("""SELECT * FROM writeback_backups WHERE source_path=?
-                ORDER BY rowid DESC""", (str(path),))]
-        listed = [{"id": item["id"], "name": item["name"], "created_at": item["created_at"], "size": item["size"],
-                   "kind": item["kind"], "state": item["state"], "current": item["checksum"] == current}
-                  for item in found if (folder / item["name"]).is_file()]
+            found = [
+                dict(item)
+                for item in db.execute(
+                    """SELECT * FROM writeback_backups WHERE source_path=?
+                ORDER BY rowid DESC""",
+                    (str(path),),
+                )
+            ]
+        listed = [
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "created_at": item["created_at"],
+                "size": item["size"],
+                "kind": item["kind"],
+                "state": item["state"],
+                "current": item["checksum"] == current,
+            }
+            for item in found
+            if (folder / item["name"]).is_file()
+        ]
         with self.lock:
             pending = [] if self.busy() else self.pending(found)
         cut = None
         if pending:
             state = classify(path, pending[0]["checksum"])
-            cut = {"state": state, "backup": pending[0]["id"], "name": pending[0]["name"],
-                   "message": interruption(state, pending[0]["name"], self.phase(pending[0]))}
+            cut = {
+                "state": state,
+                "backup": pending[0]["id"],
+                "name": pending[0]["name"],
+                "message": interruption(state, pending[0]["name"], self.phase(pending[0])),
+            }
         return {"file": path.name, "keep": self.keep, "backups": listed, "interrupted": cut}
 
     def restore_backup(self, params):
@@ -305,6 +361,7 @@ class Writeback:
         or not there, so a restore can be undone as well. The document stays as it is; ‘원본에서 업데이트’ reads the
         restored file into it."""
         from .service import text
+
         ident = text(params.get("doc_id"), "문서 ID", 80)
         chosen = text(params.get("backup"), "백업", 80)
         _, _, row, _ = self.source(ident)
@@ -315,10 +372,13 @@ class Writeback:
             if self.importing():
                 raise UserError(IMPORTING)
             with self.service.db.connect() as db:
-                record = db.execute("SELECT * FROM writeback_backups WHERE id=? AND source_path=?",
-                                    (chosen, str(path))).fetchone()
+                record = db.execute(
+                    "SELECT * FROM writeback_backups WHERE id=? AND source_path=?", (chosen, str(path))
+                ).fetchone()
             if record is None:
-                raise UserError("이 문서의 원본 파일을 백업한 것이 아닙니다. 백업 목록(writeback.backups)에서 골라 주세요.")
+                raise UserError(
+                    "이 문서의 원본 파일을 백업한 것이 아닙니다. 백업 목록(writeback.backups)에서 골라 주세요."
+                )
             copy = self.folder() / record["name"]
             try:
                 kept = copy.is_file() and checksum(copy, limit=None) == record["checksum"]
@@ -329,30 +389,42 @@ class Writeback:
             try:
                 current = checksum(path, limit=None) if path.is_file() else None
             except OSError:
-                raise UserError("원본 파일을 읽지 못해 복원하지 않았습니다. 다른 프로그램에서 열려 있다면 닫고 다시 시도해 "
-                                "주세요.") from None
+                raise UserError(
+                    "원본 파일을 읽지 못해 복원하지 않았습니다. 다른 프로그램에서 열려 있다면 닫고 다시 시도해 주세요."
+                ) from None
             if current == record["checksum"]:
                 self.resolve(path)
-                return {"restored": False, "backup": "", "message": "원본 파일이 이미 이 백업과 같아 그대로 두었습니다."}
+                return {
+                    "restored": False,
+                    "backup": "",
+                    "message": "원본 파일이 이미 이 백업과 같아 그대로 두었습니다.",
+                }
             before = None
             if current is not None:
                 try:
                     before = self.backup(path, ident, kind="restore")
                 except OSError:
-                    raise UserError(f"지금의 원본 파일을 먼저 ‘{BACKUPS}’에 복사하지 못해 복원하지 않았습니다. 저장 공간과 "
-                                    "권한을 확인해 주세요.") from None
+                    raise UserError(
+                        f"지금의 원본 파일을 먼저 ‘{BACKUPS}’에 복사하지 못해 복원하지 않았습니다. 저장 공간과 "
+                        "권한을 확인해 주세요."
+                    ) from None
             try:
                 self.replace(copy, path)
             except OSError:
-                raise UserError("원본 파일이 다른 프로그램에서 열려 있거나 쓸 수 없어 복원하지 못했습니다. 파일을 닫고 다시 "
-                                "시도해 주세요. 원본 파일은 바뀌지 않았습니다.") from None
+                raise UserError(
+                    "원본 파일이 다른 프로그램에서 열려 있거나 쓸 수 없어 복원하지 못했습니다. 파일을 닫고 다시 "
+                    "시도해 주세요. 원본 파일은 바뀌지 않았습니다."
+                ) from None
             self.resolve(path)
             self.prune(path)
         message = f"백업 {record['name']}을(를) 원본 파일 자리에 복원했습니다."
         if before:
             message += f" 복원하기 전의 파일은 ‘{BACKUPS}’에 {before['name']}(으)로 남겼습니다."
-        return {"restored": True, "backup": before["name"] if before else "",
-                "message": message + " 문서에 반영하려면 문서 창에서 ‘원본에서 업데이트’를 눌러 주세요."}
+        return {
+            "restored": True,
+            "backup": before["name"] if before else "",
+            "message": message + " 문서에 반영하려면 문서 창에서 ‘원본에서 업데이트’를 눌러 주세요.",
+        }
 
     # -- helpers --------------------------------------------------------------
 
@@ -374,9 +446,11 @@ class Writeback:
                 raise UserError(UNSUPPORTED)
             columns = sources.key(table)
             where = " AND ".join(f"s.{column}=?" for column in columns)
-            parts = db.execute(f"""SELECT s.doc_id, s.markdown, s.imported_at, s.written, d.content, d.revision
+            parts = db.execute(
+                f"""SELECT s.doc_id, s.markdown, s.imported_at, s.written, d.content, d.revision
                 FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL WHERE {where} ORDER BY s.part""",
-                               [row[column] for column in columns]).fetchall()
+                [row[column] for column in columns],
+            ).fetchall()
         return table, kind, dict(row), [dict(part) for part in parts]
 
     def pages(self, parts):
@@ -404,6 +478,7 @@ class Writeback:
         that the write began (state "writing") until settle() records how it ended. The record, with the copy's `path`
         and the `journal` file its save notes its progress in (OfficeWriter)."""
         from .service import now
+
         folder = self.folder()
         folder.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -411,19 +486,30 @@ class Writeback:
         number = 1
         # Not a name a record still holds (its copy removed by hand) either, or the record would name the new copy.
         with self.service.db.connect() as db:
-            taken = {row[0] for row in db.execute("SELECT name FROM writeback_backups WHERE name LIKE ?",
-                                                  (f"{stamp}%",))}
+            taken = {
+                row[0] for row in db.execute("SELECT name FROM writeback_backups WHERE name LIKE ?", (f"{stamp}%",))
+            }
         while target.exists() or target.name in taken:
             number += 1
             target = folder / f"{stamp}-{number} {path.name}"
         shutil.copy2(path, target)
         try:
-            record = {"id": str(uuid.uuid4()), "source_path": str(path), "doc_id": doc_id, "name": target.name,
-                      "checksum": checksum(target, limit=None), "size": target.stat().st_size, "kind": kind,
-                      "state": "writing" if kind == "write" else "done", "created_at": now()}
+            record = {
+                "id": str(uuid.uuid4()),
+                "source_path": str(path),
+                "doc_id": doc_id,
+                "name": target.name,
+                "checksum": checksum(target, limit=None),
+                "size": target.stat().st_size,
+                "kind": kind,
+                "state": "writing" if kind == "write" else "done",
+                "created_at": now(),
+            }
             with self.service.db.connect() as db:
-                db.execute(f"INSERT INTO writeback_backups({','.join(record)}) VALUES({','.join('?' * len(record))})",
-                           list(record.values()))
+                db.execute(
+                    f"INSERT INTO writeback_backups({','.join(record)}) VALUES({','.join('?' * len(record))})",
+                    list(record.values()),
+                )
         except BaseException:
             with contextlib.suppress(OSError):
                 target.unlink()
@@ -448,8 +534,11 @@ class Writeback:
         hand) goes. Copies of other files, and files the user put in the folder, stay."""
         folder, removed, kept = self.folder(), [], 0
         with self.service.db.connect() as db:
-            found = db.execute("""SELECT id, name FROM writeback_backups WHERE source_path=?
-                ORDER BY rowid DESC""", (str(path),)).fetchall()
+            found = db.execute(
+                """SELECT id, name FROM writeback_backups WHERE source_path=?
+                ORDER BY rowid DESC""",
+                (str(path),),
+            ).fetchall()
         for record in found:
             copy = folder / record["name"]
             if not copy.is_file():
@@ -474,8 +563,11 @@ class Writeback:
         """Of the copies `found` of a file (records, newest first), those of writes a crash or a kill cut short that
         the next write is still to tell: not told yet ("writing" while no write runs), or told while they left the file
         partly written, which is told until it is whole again."""
-        return [item for item in found if item["state"] == "writing"
-                or (item["state"] == "interrupted" and item["outcome"] == "partial")]
+        return [
+            item
+            for item in found
+            if item["state"] == "writing" or (item["state"] == "interrupted" and item["outcome"] == "partial")
+        ]
 
     def interrupted(self, path):
         """What a write to the file at `path` that a crash or a kill cut short left, to tell before the next write: a
@@ -483,16 +575,27 @@ class Writeback:
         cut short is told once, as the file is now (classify); a file it left partly written is told until it is whole
         again, restored from its copy (restore_backup) or by hand."""
         with self.service.db.connect() as db:
-            found = self.pending([dict(item) for item in db.execute("""SELECT * FROM writeback_backups
-                WHERE source_path=? ORDER BY rowid DESC""", (str(path),))])
+            found = self.pending(
+                [
+                    dict(item)
+                    for item in db.execute(
+                        """SELECT * FROM writeback_backups
+                WHERE source_path=? ORDER BY rowid DESC""",
+                        (str(path),),
+                    )
+                ]
+            )
         if not found:
             return None
         latest = found[0]
         state, phase = classify(path, latest["checksum"]), self.phase(latest)
         news = any(item["state"] == "writing" for item in found)
         with self.service.db.connect() as db:
-            db.execute(f"UPDATE writeback_backups SET state='interrupted', outcome=? "
-                       f"WHERE id IN ({','.join('?' * len(found))})", [state, *(item["id"] for item in found)])
+            db.execute(
+                f"UPDATE writeback_backups SET state='interrupted', outcome=? "
+                f"WHERE id IN ({','.join('?' * len(found))})",
+                [state, *(item["id"] for item in found)],
+            )
         for item in found:
             with contextlib.suppress(OSError):
                 self.journal(item).unlink(missing_ok=True)
@@ -501,8 +604,11 @@ class Writeback:
     def resolve(self, path):
         """The file at `path` was restored from a copy: what writes cut short left of it is told no more."""
         with self.service.db.connect() as db:
-            db.execute("""UPDATE writeback_backups SET state='interrupted', outcome='restored' WHERE source_path=? AND
-                (state='writing' OR (state='interrupted' AND outcome='partial'))""", (str(path),))
+            db.execute(
+                """UPDATE writeback_backups SET state='interrupted', outcome='restored' WHERE source_path=? AND
+                (state='writing' OR (state='interrupted' AND outcome='partial'))""",
+                (str(path),),
+            )
 
     def settle(self, copy, written):
         """Record how the write that made the copy `copy` ended: `written` (it saved the file, whose checksum is kept)
@@ -517,8 +623,10 @@ class Writeback:
             outcome = classify(path, copy["checksum"])
         try:
             with self.service.db.connect() as db:
-                db.execute("UPDATE writeback_backups SET state=?, outcome=?, written=? WHERE id=?",
-                           (state, outcome, digest, copy["id"]))
+                db.execute(
+                    "UPDATE writeback_backups SET state=?, outcome=?, written=? WHERE id=?",
+                    (state, outcome, digest, copy["id"]),
+                )
         except Exception as error:
             diagnostics.report(error, "원본 백업 기록을 고치지 못했습니다.", "원본 반영 기록")
         with contextlib.suppress(OSError):
@@ -548,8 +656,10 @@ class Writeback:
             with self.service.db.connect() as db:
                 for number, part in enumerate(record["parts"]):
                     kept = [record["texts"][number]] + ([base[number]] if base != imported else [])
-                    db.execute(f"UPDATE {record['table']} SET written=? WHERE doc_id=? AND imported_at=?",
-                               (json.dumps(kept, ensure_ascii=False), part["doc_id"], part["imported_at"]))
+                    db.execute(
+                        f"UPDATE {record['table']} SET written=? WHERE doc_id=? AND imported_at=?",
+                        (json.dumps(kept, ensure_ascii=False), part["doc_id"], part["imported_at"]),
+                    )
         except Exception as error:
             diagnostics.report(error, "원본에 반영한 내용을 기록하지 못했습니다.", "원본 반영 기록")
 
@@ -562,11 +672,16 @@ class Writeback:
             try:
                 copy = self.backup(path, job["doc_id"])
             except OSError:
-                raise UserError(f"원본 파일을 고치기 전에 Wiki 폴더의 ‘{BACKUPS}’에 복사하지 못했습니다. 저장 공간과 "
-                                "권한을 확인해 주세요. 원본 파일은 바뀌지 않았습니다.") from None
+                raise UserError(
+                    f"원본 파일을 고치기 전에 Wiki 폴더의 ‘{BACKUPS}’에 복사하지 못했습니다. 저장 공간과 "
+                    "권한을 확인해 주세요. 원본 파일은 바뀌지 않았습니다."
+                ) from None
             self.prune(path)
-            self._set(job, backup=str(copy["path"]), notice=f"{name}{'을' if name == 'Excel' else '를'} 창 없이 열어 "
-                      "고친 내용을 쓰고 저장합니다.")
+            self._set(
+                job,
+                backup=str(copy["path"]),
+                notice=f"{name}{'을' if name == 'Excel' else '를'} 창 없이 열어 고친 내용을 쓰고 저장합니다.",
+            )
             summary = self.writer(path, {"application": name, "plan": plan, "journal": str(copy["journal"])}, stop)
             settled = True
             self.settle(copy, written=True)
@@ -580,8 +695,10 @@ class Writeback:
                 self._set(job, reread=again)
             except Exception as error:
                 reason = diagnostics.report(error, "원본 파일을 다시 읽지 못했습니다.", "원본 반영 뒤 다시 읽기")
-                message += (f" 문서는 원본 파일에서 다시 읽지 못했습니다({reason.rstrip('.')}). 문서 창의 ‘원본에서 "
-                            "업데이트’로 다시 읽어 주세요.")
+                message += (
+                    f" 문서는 원본 파일에서 다시 읽지 못했습니다({reason.rstrip('.')}). 문서 창의 ‘원본에서 "
+                    "업데이트’로 다시 읽어 주세요."
+                )
             with self.lock:
                 job.update(status="completed", message=message, notice="", changes=written)
         except Exception as error:
@@ -589,12 +706,23 @@ class Writeback:
             note = self.settle(copy, written=False) if copy and not settled else ""
             # Stopped by the user: the writer says whether the file was left as it was.
             cancelled = stop.is_set() and isinstance(error, UserError)
-            reason = str(error) if cancelled else diagnostics.report(
-                error, "원본 파일에 반영하지 못했습니다." + ("" if note else " 원본 파일은 바뀌지 않았습니다."), "원본 반영")
+            reason = (
+                str(error)
+                if cancelled
+                else diagnostics.report(
+                    error,
+                    "원본 파일에 반영하지 못했습니다." + ("" if note else " 원본 파일은 바뀌지 않았습니다."),
+                    "원본 반영",
+                )
+            )
             reason += note
             with self.lock:
-                job.update(status="cancelled" if cancelled else "error", error="" if cancelled else reason,
-                           message=reason if cancelled else "", notice="")
+                job.update(
+                    status="cancelled" if cancelled else "error",
+                    error="" if cancelled else reason,
+                    message=reason if cancelled else "",
+                    notice="",
+                )
 
     def reread(self, path, row, name, ident, revisions):
         """Read the written file into the document `ident` (every part), as an update from the file replacing the
@@ -604,9 +732,11 @@ class Writeback:
         from .service import now
 
         def edited(db):
-            found = db.execute(f"SELECT id, revision FROM documents WHERE id IN ({','.join('?' * len(revisions))})",
-                               list(revisions)).fetchall()
+            found = db.execute(
+                f"SELECT id, revision FROM documents WHERE id IN ({','.join('?' * len(revisions))})", list(revisions)
+            ).fetchall()
             return {item["id"]: item["revision"] for item in found} != revisions
+
         with self.service.db.connect() as db:
             if edited(db):
                 return EDITED_MEANWHILE, False
@@ -622,9 +752,21 @@ class Writeback:
             found = sources.plan(db, "office_sources", row["source_path"], {"source_hash": digest}, ident, True)
             if found.action == "skip":
                 return "같은 내용의 문서가 이미 있어 이 문서는 그대로 두었습니다.", False
-            ids, removed = sources.save(db, "office_sources", found, split, path.stem, now(),
-                                        {"source_path": row["source_path"], "source_hash": digest, "application": name,
-                                         "source_size": stat[0], "source_mtime": stat[1]})
+            ids, removed = sources.save(
+                db,
+                "office_sources",
+                found,
+                split,
+                path.stem,
+                now(),
+                {
+                    "source_path": row["source_path"],
+                    "source_hash": digest,
+                    "application": name,
+                    "source_size": stat[0],
+                    "source_mtime": stat[1],
+                },
+            )
         message = "문서는 저장한 파일의 내용으로 다시 읽었습니다."
         if removed:
             message += f" 글이 줄어 남는 부분 문서 {removed}개는 지웠습니다."

@@ -2,6 +2,7 @@
 automatic routines that watch Confluence pages and JIRA tickets (routines.py). Only an excerpt of the changed lines is
 kept, so a job's results stay small however long the documents are. The document window's edit conflict compares
 whole texts with the same line matching (diff)."""
+
 import bisect
 import difflib
 from collections import Counter
@@ -62,8 +63,7 @@ def matches(old, new):
             continue
         before, after = Counter(old[a0:a1]), Counter(new[b0:b1])
         places = {new[j]: j for j in range(b0, b1) if after[new[j]] == 1}
-        anchors = increasing([(i, places[old[i]]) for i in range(a0, a1)
-                              if before[old[i]] == 1 and old[i] in places])
+        anchors = increasing([(i, places[old[i]]) for i in range(a0, a1) if before[old[i]] == 1 and old[i] in places])
         if not anchors:
             stay(old, new, a0, a1, b0, b1, kept)
             continue
@@ -94,9 +94,12 @@ def compare(before, after):
         i, j = kept_i + 1, kept_j + 1
     if not lines:
         return None
-    return {"added": added, "removed": removed,
-            "lines": [{"op": op, "text": text.strip()[:MAX_LINE]} for op, text in lines[:MAX_LINES]],
-            "more": max(0, len(lines) - MAX_LINES)}
+    return {
+        "added": added,
+        "removed": removed,
+        "lines": [{"op": op, "text": text.strip()[:MAX_LINE]} for op, text in lines[:MAX_LINES]],
+        "more": max(0, len(lines) - MAX_LINES),
+    }
 
 
 def excerpt(change, limit=6000):
@@ -142,13 +145,22 @@ def diff(before, after, context=CONTEXT, limit=MAX_DIFF_LINES):
         end = start
         while end + 1 < len(changed) and changed[end + 1] - changed[end] <= 2 * context + 1:
             end += 1
-        part = rows[max(0, changed[start] - context):changed[end] + context + 1][:limit - shown]
+        part = rows[max(0, changed[start] - context) : changed[end] + context + 1][: limit - shown]
         if all(op == " " for op, _, _, _ in part):
             break  # Cut short before its first change: the changes go to `more`.
-        hunks.append({"old_start": part[0][2], "new_start": part[0][3],
-                      "lines": [{"op": op, "text": text} for op, text, _, _ in part]})
+        hunks.append(
+            {
+                "old_start": part[0][2],
+                "new_start": part[0][3],
+                "lines": [{"op": op, "text": text} for op, text, _, _ in part],
+            }
+        )
         shown += len(part)
         told += sum(op != " " for op, _, _, _ in part)
         start = end + 1
-    return {"added": sum(row[0] == "+" for row in rows), "removed": sum(row[0] == "-" for row in rows),
-            "hunks": hunks, "more": len(changed) - told}
+    return {
+        "added": sum(row[0] == "+" for row in rows),
+        "removed": sum(row[0] == "-" for row in rows),
+        "hunks": hunks,
+        "more": len(changed) - told,
+    }

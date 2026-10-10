@@ -10,7 +10,6 @@ from . import diagnostics, pageindex, paging, sources, storage
 from .db import index_text
 from .llm import UserError, shown
 
-
 _clock = threading.Lock()
 _last_now = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -66,6 +65,7 @@ def found_aliases(value, keys):
     answer does not have, a keyword's own name, repeats and names beyond MAX_ALIASES of a keyword are left out. Aliases
     in any other form are no reason to fail an analysis that cost several LLM calls: the keywords are kept without."""
     from .search import fold
+
     found = {}
     for name, given in list(value.items())[:40] if isinstance(value, dict) else []:
         key = found_keyword(name)
@@ -75,8 +75,13 @@ def found_aliases(value, keys):
         for alias in given[:20]:
             alias = " ".join(unicodedata.normalize("NFKC", alias).split()) if isinstance(alias, str) else ""
             normalized = fold(alias)
-            if normalized and len(alias) <= 80 and normalized != key and normalized not in kept \
-                    and len(kept) < MAX_ALIASES:
+            if (
+                normalized
+                and len(alias) <= 80
+                and normalized != key
+                and normalized not in kept
+                and len(kept) < MAX_ALIASES
+            ):
                 kept[normalized] = alias
     return [(key, alias, normalized) for key, kept in found.items() for normalized, alias in kept.items()]
 
@@ -103,13 +108,15 @@ MAX_WIDGETS = 40
 
 # Each document's import source as the screens show it; `part` of `parts` numbers an import saved in parts.
 # imported_at is when the document last took its text from there.
-SOURCES = (("rtf_sources", "rtf", "source_path,imported_at,part,parts"),
-           ("confluence_sources", "confluence", "source_url,page_id,imported_at,part,parts"),
-           ("jira_sources", "jira", "source_url,issue_key,imported_at,part,parts"),
-           ("office_sources", "office", "source_path,application,imported_at,part,parts"),
-           ("image_sources", "image", "source_path,imported_at,part,parts"),
-           ("text_sources", "text", "source_path,imported_at,part,parts"),
-           ("markdown_sources", "markdown", "source_path,imported_at,part,parts"))
+SOURCES = (
+    ("rtf_sources", "rtf", "source_path,imported_at,part,parts"),
+    ("confluence_sources", "confluence", "source_url,page_id,imported_at,part,parts"),
+    ("jira_sources", "jira", "source_url,issue_key,imported_at,part,parts"),
+    ("office_sources", "office", "source_path,application,imported_at,part,parts"),
+    ("image_sources", "image", "source_path,imported_at,part,parts"),
+    ("text_sources", "text", "source_path,imported_at,part,parts"),
+    ("markdown_sources", "markdown", "source_path,imported_at,part,parts"),
+)
 
 # The most documents one request on the document list's selection may name.
 MAX_SELECTED = 10000
@@ -160,25 +167,34 @@ class Service:
         from .office_import import OfficeImporter
         from .rtf_import import RtfImporter
         from .text_import import TextImporter
+
         self.rtf = RtfImporter(self)
         self.office = OfficeImporter(self)
         self.images = ImageImporter(self)
         self.texts = TextImporter(self)
         from .assistant import Assistant
+
         self.assistant = Assistant(self)
         from .schedules import Schedules
+
         self.schedules = Schedules(self)
         from .confluence_import import ConfluenceImporter
+
         self.confluence = ConfluenceImporter(self)
         from .jira_import import JiraImporter
+
         self.jira = JiraImporter(self)
         from .batch_analysis import BatchAnalysis
+
         self.analysis = BatchAnalysis(self)
         from .writeback import Writeback
+
         self.writeback = Writeback(self)
         from .search import Search
+
         self.search = Search(self)
         from .routines import Routines
+
         self.routines = Routines(self)
         self.active, self.active_lock = {}, threading.Lock()
         # One backup, or copy of a backup to restore, at a time: the daily one and those asked for.
@@ -205,8 +221,7 @@ class Service:
         importers = (self.rtf, self.office, self.images, self.texts, self.analysis, self.writeback)
         for importer in importers:
             importer.cancel()
-        browsers = [threading.Thread(target=site.shutdown, daemon=True)
-                    for site in (self.confluence, self.jira)]
+        browsers = [threading.Thread(target=site.shutdown, daemon=True) for site in (self.confluence, self.jira)]
         for thread in browsers:
             thread.start()
         deadline = time.monotonic() + 15
@@ -229,51 +244,98 @@ class Service:
             # The main process alone (never a screen or an AI tool: electron/main.cjs ALLOWED leaves it out).
             "settings.secrets": lambda p: self.llm.secrets(),
             # Answers shown as text say so when the LLM stopped them at its output limit (shown).
-            "settings.test": lambda p: {"message": shown(self.llm.complete([{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}]))},
-            "stats": self.stats, "prompts.list": self.prompts_list, "prompts.save": self.prompts_save,
-            "prompts.delete": self.prompts_delete, "prompts.run": self.prompts_run,
-            "runs.list": self.runs_list, "runs.get": self.runs_get, "runs.delete": self.runs_delete,
-            "runs.stats": self.runs_stats, "runs.active": self.runs_active,
-            "wiki.list": self.wiki_list, "wiki.get": self.wiki_get, "wiki.save": self.wiki_save,
+            "settings.test": lambda p: {
+                "message": shown(
+                    self.llm.complete(
+                        [{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}]
+                    )
+                )
+            },
+            "stats": self.stats,
+            "prompts.list": self.prompts_list,
+            "prompts.save": self.prompts_save,
+            "prompts.delete": self.prompts_delete,
+            "prompts.run": self.prompts_run,
+            "runs.list": self.runs_list,
+            "runs.get": self.runs_get,
+            "runs.delete": self.runs_delete,
+            "runs.stats": self.runs_stats,
+            "runs.active": self.runs_active,
+            "wiki.list": self.wiki_list,
+            "wiki.get": self.wiki_get,
+            "wiki.save": self.wiki_save,
             "wiki.compare": self.wiki_compare,
-            "wiki.delete": self.wiki_delete, "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
-            "wiki.delete_many": self.wiki_delete_many, "wiki.clear_analysis": self.wiki_clear_analysis,
-            "wiki.trash": self.wiki_trash, "wiki.restore": self.wiki_restore, "wiki.purge": self.wiki_purge,
-            "wiki.backup": self.wiki_backup, "wiki.backups": self.wiki_backups,
+            "wiki.delete": self.wiki_delete,
+            "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
+            "wiki.delete_many": self.wiki_delete_many,
+            "wiki.clear_analysis": self.wiki_clear_analysis,
+            "wiki.trash": self.wiki_trash,
+            "wiki.restore": self.wiki_restore,
+            "wiki.purge": self.wiki_purge,
+            "wiki.backup": self.wiki_backup,
+            "wiki.backups": self.wiki_backups,
             "wiki.restore_backup": self.wiki_restore_backup,
-            "wiki.search": self.wiki_search, "wiki.graph": self.wiki_graph,
-            "wiki.source_markdown": self.wiki_source_markdown, "wiki.source_html": self.wiki_source_html,
+            "wiki.search": self.wiki_search,
+            "wiki.graph": self.wiki_graph,
+            "wiki.source_markdown": self.wiki_source_markdown,
+            "wiki.source_html": self.wiki_source_html,
             "wiki.source_status": self.wiki_source_status,
-            "analysis.start": self.analysis.start, "analysis.status": self.analysis.status,
-            "analysis.cancel": self.analysis.cancel, "analysis.dismiss": self.analysis.dismiss,
+            "analysis.start": self.analysis.start,
+            "analysis.status": self.analysis.status,
+            "analysis.cancel": self.analysis.cancel,
+            "analysis.dismiss": self.analysis.dismiss,
             "markdown.import": self.markdown_import,
-            "confluence.start": self.confluence.start, "confluence.status": self.confluence.status,
-            "confluence.cancel": self.confluence.cancel, "confluence.dismiss": self.confluence.dismiss,
-            "confluence.login": self.confluence.login, "confluence.login_close": self.confluence.login_close,
-            "confluence.shutdown": self.confluence.shutdown, "confluence.check": lambda p: self.confluence.check(p),
-            "confluence.check_cancel": self.confluence.check_cancel, "confluence.forget": self.confluence.forget,
-            "jira.start": self.jira.start, "jira.status": self.jira.status,
-            "jira.cancel": self.jira.cancel, "jira.dismiss": self.jira.dismiss, "jira.login": self.jira.login,
-            "jira.login_close": self.jira.login_close, "jira.shutdown": self.jira.shutdown,
-            "jira.check": lambda p: self.jira.check(p), "jira.check_cancel": self.jira.check_cancel,
+            "confluence.start": self.confluence.start,
+            "confluence.status": self.confluence.status,
+            "confluence.cancel": self.confluence.cancel,
+            "confluence.dismiss": self.confluence.dismiss,
+            "confluence.login": self.confluence.login,
+            "confluence.login_close": self.confluence.login_close,
+            "confluence.shutdown": self.confluence.shutdown,
+            "confluence.check": lambda p: self.confluence.check(p),
+            "confluence.check_cancel": self.confluence.check_cancel,
+            "confluence.forget": self.confluence.forget,
+            "jira.start": self.jira.start,
+            "jira.status": self.jira.status,
+            "jira.cancel": self.jira.cancel,
+            "jira.dismiss": self.jira.dismiss,
+            "jira.login": self.jira.login,
+            "jira.login_close": self.jira.login_close,
+            "jira.shutdown": self.jira.shutdown,
+            "jira.check": lambda p: self.jira.check(p),
+            "jira.check_cancel": self.jira.check_cancel,
             "jira.forget": self.jira.forget,
-            "preferences.get": self.preferences_get, "preferences.save": self.preferences_save,
+            "preferences.get": self.preferences_get,
+            "preferences.save": self.preferences_save,
             "rtf.capabilities": lambda p: self.rtf.capability_check(),
-            "rtf.start": self.rtf.start, "rtf.status": self.rtf.status,
-            "rtf.cancel": self.rtf.cancel, "rtf.dismiss": self.rtf.dismiss,
+            "rtf.start": self.rtf.start,
+            "rtf.status": self.rtf.status,
+            "rtf.cancel": self.rtf.cancel,
+            "rtf.dismiss": self.rtf.dismiss,
             "office.capabilities": lambda p: self.office.capability_check(),
-            "office.start": self.office.start, "office.status": self.office.status,
-            "office.cancel": self.office.cancel, "office.dismiss": self.office.dismiss,
+            "office.start": self.office.start,
+            "office.status": self.office.status,
+            "office.cancel": self.office.cancel,
+            "office.dismiss": self.office.dismiss,
             "image.capabilities": lambda p: self.images.capability_check(),
-            "image.start": self.images.start, "image.status": self.images.status,
-            "image.cancel": self.images.cancel, "image.dismiss": self.images.dismiss,
+            "image.start": self.images.start,
+            "image.status": self.images.status,
+            "image.cancel": self.images.cancel,
+            "image.dismiss": self.images.dismiss,
             "text.capabilities": lambda p: self.texts.capability_check(),
-            "text.start": self.texts.start, "text.status": self.texts.status,
-            "text.cancel": self.texts.cancel, "text.dismiss": self.texts.dismiss,
-            "writeback.start": self.writeback.start, "writeback.status": self.writeback.status,
-            "writeback.cancel": self.writeback.cancel, "writeback.dismiss": self.writeback.dismiss,
-            "writeback.backups": self.writeback.backups, "writeback.restore_backup": self.writeback.restore_backup,
-            **self.assistant.methods, **self.schedules.methods, **self.routines.methods,
+            "text.start": self.texts.start,
+            "text.status": self.texts.status,
+            "text.cancel": self.texts.cancel,
+            "text.dismiss": self.texts.dismiss,
+            "writeback.start": self.writeback.start,
+            "writeback.status": self.writeback.status,
+            "writeback.cancel": self.writeback.cancel,
+            "writeback.dismiss": self.writeback.dismiss,
+            "writeback.backups": self.writeback.backups,
+            "writeback.restore_backup": self.writeback.restore_backup,
+            **self.assistant.methods,
+            **self.schedules.methods,
+            **self.routines.methods,
         }
         if method not in methods or not isinstance(params, dict):
             raise UserError("지원하지 않는 요청입니다.")
@@ -285,13 +347,17 @@ class Service:
         back to the defaults; saved values must be exactly right. widgets None means the default layout.
         A widget's type (its content) and view (its format) are names the screen knows; a layout saved
         before formats has neither, and an auto height is left out."""
+
         def fail(message):
             if strict:
                 raise UserError(message)
+
         def valid(value):
             return isinstance(value, str) and WIDGET_ID.fullmatch(value) and value not in WIDGET_RESERVED
+
         def name(item, key):
             return key not in item or valid(item[key])
+
         value = value if isinstance(value, dict) else {}
         widgets = value.get("widgets")
         layout = None
@@ -304,14 +370,25 @@ class Service:
             for item in widgets:
                 item = item if isinstance(item, dict) else {}
                 ident, size, height = item.get("id"), item.get("size"), item.get("height", "auto")
-                if not valid(ident) or ident in seen \
-                        or size not in WIDGET_SIZES or height not in WIDGET_HEIGHTS \
-                        or not name(item, "type") or not name(item, "view"):
+                if (
+                    not valid(ident)
+                    or ident in seen
+                    or size not in WIDGET_SIZES
+                    or height not in WIDGET_HEIGHTS
+                    or not name(item, "type")
+                    or not name(item, "view")
+                ):
                     fail("위젯 배치 형식을 확인해 주세요.")
                     continue
                 seen.add(ident)
-                layout.append({"id": ident, **{k: item[k] for k in ("type", "view") if k in item}, "size": size,
-                               **({"height": height} if height != "auto" else {})})
+                layout.append(
+                    {
+                        "id": ident,
+                        **{k: item[k] for k in ("type", "view") if k in item},
+                        "size": size,
+                        **({"height": height} if height != "auto" else {}),
+                    }
+                )
             layout = layout[:MAX_WIDGETS]
         ai_answer = value.get("ai_answer", True)
         if not isinstance(ai_answer, bool):
@@ -340,18 +417,22 @@ class Service:
         merged = {**current, **{k: p[k] for k in ("widgets", "ai_answer", "web_assist") if k in p}}
         value = self.preferences(merged, strict=True)
         with self.db.connect() as db:
-            db.execute("INSERT INTO metadata VALUES ('preferences', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                       (json.dumps(value, ensure_ascii=False),))
+            db.execute(
+                "INSERT INTO metadata VALUES ('preferences', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (json.dumps(value, ensure_ascii=False),),
+            )
         return value
 
     def stats(self, _):
         with self.db.connect() as db:
-            return {"prompts": db.execute("SELECT count(*) FROM prompts").fetchone()[0],
-                    "documents": db.execute(f"SELECT count(*) FROM documents WHERE {LIVE}").fetchone()[0],
-                    "keywords": db.execute(f"""SELECT count(DISTINCT k.keyword) FROM keywords k
+            return {
+                "prompts": db.execute("SELECT count(*) FROM prompts").fetchone()[0],
+                "documents": db.execute(f"SELECT count(*) FROM documents WHERE {LIVE}").fetchone()[0],
+                "keywords": db.execute(f"""SELECT count(DISTINCT k.keyword) FROM keywords k
                         JOIN documents d ON d.id=k.doc_id AND d.{LIVE}""").fetchone()[0],
-                    "relations": db.execute(f"""SELECT count(*) FROM (SELECT DISTINCT r.source,r.target,r.label
-                        FROM relations r JOIN documents d ON d.id=r.doc_id AND d.{LIVE})""").fetchone()[0]}
+                "relations": db.execute(f"""SELECT count(*) FROM (SELECT DISTINCT r.source,r.target,r.label
+                        FROM relations r JOIN documents d ON d.id=r.doc_id AND d.{LIVE})""").fetchone()[0],
+            }
 
     def prompts_list(self, _):
         with self.db.connect() as db:
@@ -368,12 +449,19 @@ class Service:
             def value(key):
                 return saved.get(key) if p.get(key) is None else p[key]
 
-            values = (text(value("title"), "제목", 120), text(value("description"), "설명", 300, False),
-                      text(value("category"), "분류", 40), text(value("system_prompt"), "시스템 프롬프트", 10000, False),
-                      text(value("template"), "프롬프트", 40000))
-            db.execute("""INSERT INTO prompts VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+            values = (
+                text(value("title"), "제목", 120),
+                text(value("description"), "설명", 300, False),
+                text(value("category"), "분류", 40),
+                text(value("system_prompt"), "시스템 프롬프트", 10000, False),
+                text(value("template"), "프롬프트", 40000),
+            )
+            db.execute(
+                """INSERT INTO prompts VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title, description=excluded.description, category=excluded.category,
-                system_prompt=excluded.system_prompt, template=excluded.template, updated_at=excluded.updated_at""", (ident, *values, now(), now()))
+                system_prompt=excluded.system_prompt, template=excluded.template, updated_at=excluded.updated_at""",
+                (ident, *values, now(), now()),
+            )
             return dict(db.execute("SELECT * FROM prompts WHERE id=?", (ident,)).fetchone())
 
     def prompts_delete(self, p):
@@ -412,18 +500,31 @@ class Service:
     def attempt_prompt(self, row, variables, kind="manual", schedule_id=None, ident=None):
         """A run of a prompt, failures included, for record_run to keep; listed as running (runs.active) while it waits
         for the LLM. `ident` names the run, as the routines' runner names a scheduled run when it queues it."""
-        run = {"id": ident or str(uuid.uuid4()), "prompt_id": row["id"], "title": row["title"], "input": "",
-               "output": "", "status": "success", "error": "", "kind": kind,
-               "schedule_id": schedule_id, "started_at": now()}
+        run = {
+            "id": ident or str(uuid.uuid4()),
+            "prompt_id": row["id"],
+            "title": row["title"],
+            "input": "",
+            "output": "",
+            "status": "success",
+            "error": "",
+            "kind": kind,
+            "schedule_id": schedule_id,
+            "started_at": now(),
+        }
         with self.active_lock:
-            self.active[run["id"]] = {k: run[k] for k in ("id", "prompt_id", "title", "kind", "schedule_id", "started_at")}
+            self.active[run["id"]] = {
+                k: run[k] for k in ("id", "prompt_id", "title", "kind", "schedule_id", "started_at")
+            }
         started = time.monotonic()
         try:
             messages = self.prompt_messages(row, variables)
             run["input"] = messages[-1]["content"]
             run["output"] = shown(self.llm.complete(messages))
         except Exception as exc:
-            error = diagnostics.report(exc, "프롬프트를 실행하지 못했습니다. 설정과 입력을 확인해 주세요.", "프롬프트 실행")
+            error = diagnostics.report(
+                exc, "프롬프트를 실행하지 못했습니다. 설정과 입력을 확인해 주세요.", "프롬프트 실행"
+            )
             if schedule_id and not run["input"] and isinstance(exc, UserError):
                 # A schedule keeps the inputs of its template as it was then: one the template has gained has none.
                 error = f"{error} {SCHEDULE_INPUTS}"
@@ -441,9 +542,12 @@ class Service:
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run["created_at"] = now()
-            db.execute("""INSERT INTO runs (id,prompt_id,title,input,output,created_at,status,error,kind,
+            db.execute(
+                """INSERT INTO runs (id,prompt_id,title,input,output,created_at,status,error,kind,
                 schedule_id,started_at,duration_ms) VALUES (:id,:prompt_id,:title,:input,:output,:created_at,
-                :status,:error,:kind,:schedule_id,:started_at,:duration_ms)""", run)
+                :status,:error,:kind,:schedule_id,:started_at,:duration_ms)""",
+                run,
+            )
         return run
 
     def prompts_run(self, p):
@@ -480,27 +584,41 @@ class Service:
             args.append(text(p["before"], "기준 시각", 64))
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         with self.db.connect() as db:
-            runs = [dict(row) for row in db.execute(f"""SELECT r.id,r.prompt_id,r.title,r.status,r.error,r.kind,
+            runs = [
+                dict(row)
+                for row in db.execute(
+                    f"""SELECT r.id,r.prompt_id,r.title,r.status,r.error,r.kind,
                 r.schedule_id,s.name AS schedule_name,r.started_at,r.duration_ms,r.created_at,
                 substr(CASE WHEN r.status='error' THEN r.error ELSE r.output END,1,240) AS preview
                 {",r.input,r.output" if query else ""}
                 FROM runs r LEFT JOIN schedules s ON s.id=r.schedule_id {where}
-                ORDER BY r.created_at DESC LIMIT ?""", (*args, limit))]
+                ORDER BY r.created_at DESC LIMIT ?""",
+                    (*args, limit),
+                )
+            ]
         if query:
             # A search shows where the words occur, so the list can highlight them.
             from .search import matcher, snippets
+
             pattern = matcher([query.lower()])
             for run in runs:
-                response = snippets(run["error"] if run["status"] == "error" else run["output"], pattern, count=1, width=240)
+                response = snippets(
+                    run["error"] if run["status"] == "error" else run["output"], pattern, count=1, width=240
+                )
                 sent = [] if response else snippets(run["input"], pattern, count=1, width=220)
-                run["preview"] = response[0]["text"] if response else f"입력 · {sent[0]['text']}" if sent else run["preview"]
+                run["preview"] = (
+                    response[0]["text"] if response else f"입력 · {sent[0]['text']}" if sent else run["preview"]
+                )
                 del run["input"], run["output"]
         return runs
 
     def runs_get(self, p):
         with self.db.connect() as db:
-            row = db.execute("""SELECT r.*,s.name AS schedule_name FROM runs r
-                LEFT JOIN schedules s ON s.id=r.schedule_id WHERE r.id=?""", (text(p.get("id"), "ID", 80),)).fetchone()
+            row = db.execute(
+                """SELECT r.*,s.name AS schedule_name FROM runs r
+                LEFT JOIN schedules s ON s.id=r.schedule_id WHERE r.id=?""",
+                (text(p.get("id"), "ID", 80),),
+            ).fetchone()
         if not row:
             raise UserError("실행 기록을 찾을 수 없습니다.")
         return dict(row)
@@ -511,12 +629,15 @@ class Service:
 
     def runs_stats(self, p):
         from .assistant import local_clock
+
         days = p.get("days", 14)
         if type(days) is not int or days not in (7, 14, 30):
             raise UserError("기간은 7일, 14일, 30일 중에서 선택해 주세요.")
         local = local_clock(p)
         first = local.date() - timedelta(days=days - 1)
-        buckets = {(first + timedelta(days=i)).isoformat(): {"success": 0, "error": 0, "scheduled": 0} for i in range(days)}
+        buckets = {
+            (first + timedelta(days=i)).isoformat(): {"success": 0, "error": 0, "scheduled": 0} for i in range(days)
+        }
         since = datetime(first.year, first.month, first.day, tzinfo=local.tzinfo).astimezone(timezone.utc).isoformat()
         # The totals describe the same period and prompt as the daily chart beside them.
         where, args = "created_at>=?", [since]
@@ -525,19 +646,32 @@ class Service:
             args.append(text(p["prompt_id"], "ID", 80))
         with self.db.connect() as db:
             for row in db.execute(f"SELECT created_at,status,kind FROM runs WHERE {where}", args):
-                bucket = buckets.get(datetime.fromisoformat(row["created_at"]).astimezone(local.tzinfo).date().isoformat())
+                bucket = buckets.get(
+                    datetime.fromisoformat(row["created_at"]).astimezone(local.tzinfo).date().isoformat()
+                )
                 if bucket is None or row["status"] not in ("success", "error"):
                     continue
                 bucket[row["status"]] += 1
                 if row["kind"] == "scheduled":
                     bucket["scheduled"] += 1
-            totals = dict(db.execute(f"""SELECT count(*) AS total, coalesce(sum(status='success'),0) AS success,
+            totals = dict(
+                db.execute(
+                    f"""SELECT count(*) AS total, coalesce(sum(status='success'),0) AS success,
                 coalesce(sum(status='error'),0) AS error, coalesce(sum(kind='scheduled'),0) AS scheduled,
-                avg(CASE WHEN status='success' THEN duration_ms END) AS average_ms FROM runs WHERE {where}""", args).fetchone())
+                avg(CASE WHEN status='success' THEN duration_ms END) AS average_ms FROM runs WHERE {where}""",
+                    args,
+                ).fetchone()
+            )
             active = db.execute("SELECT count(*) FROM schedules WHERE enabled=1").fetchone()[0]
-        return {"days": [{"date": day, **counts} for day, counts in buckets.items()],
-                "totals": {**totals, "average_ms": round(totals["average_ms"]) if totals["average_ms"] is not None else None},
-                "active_schedules": active, "running": self.runs_active({})}
+        return {
+            "days": [{"date": day, **counts} for day, counts in buckets.items()],
+            "totals": {
+                **totals,
+                "average_ms": round(totals["average_ms"]) if totals["average_ms"] is not None else None,
+            },
+            "active_schedules": active,
+            "running": self.runs_active({}),
+        }
 
     def runs_delete(self, p):
         with self.db.connect() as db:
@@ -549,13 +683,17 @@ class Service:
         """Add each document's import source and keywords, with a few queries for any number of documents."""
         sources, keywords = {}, {doc["id"]: [] for doc in docs}
         for start in range(0, len(docs), 500):
-            ids = [doc["id"] for doc in docs[start:start + 500]]
+            ids = [doc["id"] for doc in docs[start : start + 500]]
             marks = ",".join("?" * len(ids))
             # A document imported from several sources shows the first, in this order.
             for table, kind, columns in SOURCES:
                 for row in db.execute(f"SELECT doc_id,{columns} FROM {table} WHERE doc_id IN ({marks})", ids):
-                    sources.setdefault(row["doc_id"], {"kind": kind, **{k: row[k] for k in row.keys() if k != "doc_id"}})
-            for row in db.execute(f"SELECT doc_id,keyword FROM keywords WHERE doc_id IN ({marks}) ORDER BY keyword", ids):
+                    sources.setdefault(
+                        row["doc_id"], {"kind": kind, **{k: row[k] for k in row.keys() if k != "doc_id"}}
+                    )
+            for row in db.execute(
+                f"SELECT doc_id,keyword FROM keywords WHERE doc_id IN ({marks}) ORDER BY keyword", ids
+            ):
                 keywords[row["doc_id"]].append(row["keyword"])
         for doc in docs:
             doc["source"], doc["keywords"] = sources.get(doc["id"]), keywords[doc["id"]]
@@ -570,8 +708,17 @@ class Service:
             return self.wiki_page(p, filters, test, args)
         with self.db.connect() as db:
             # List entries carry a short excerpt, never the full text of every document.
-            return self.attach(db, [dict(row) for row in db.execute(f"""SELECT {LISTED} FROM documents d
-                WHERE d.{LIVE} AND {test} ORDER BY d.updated_at DESC""", args)])
+            return self.attach(
+                db,
+                [
+                    dict(row)
+                    for row in db.execute(
+                        f"""SELECT {LISTED} FROM documents d
+                WHERE d.{LIVE} AND {test} ORDER BY d.updated_at DESC""",
+                        args,
+                    )
+                ],
+            )
 
     def wiki_page(self, p, filters, test, args):
         """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. An import
@@ -583,12 +730,20 @@ class Service:
         with self.db.connect() as db:
             while len(entries) <= limit:
                 # Before the cursor's entry: written so the index is searched from it rather than read from the top.
-                keyset, keys = ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]]) \
-                    if after else ("1", [])
+                keyset, keys = (
+                    ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]])
+                    if after
+                    else ("1", [])
+                )
                 # The + keeps the planner from finding the live documents by idx_documents_deleted and sorting them all.
-                rows = [dict(row) for row in db.execute(f"""SELECT {LISTED} FROM documents d
+                rows = [
+                    dict(row)
+                    for row in db.execute(
+                        f"""SELECT {LISTED} FROM documents d
                     WHERE +d.{LIVE} AND {test} AND {keyset} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?""",
-                                                         [*args, *keys, limit + 1])]
+                        [*args, *keys, limit + 1],
+                    )
+                ]
                 if not rows:
                     break
                 docs = self.attach(db, rows)
@@ -621,7 +776,9 @@ class Service:
             result["has_html"] = bool(db.execute("SELECT 1 FROM document_html WHERE doc_id=?", (row["id"],)).fetchone())
             if html and row["format"] == "html" and result["has_html"]:
                 result["html"] = db.execute("SELECT html FROM document_html WHERE doc_id=?", (row["id"],)).fetchone()[0]
-            result["relations"] = [dict(r) for r in db.execute("SELECT source,target,label FROM relations WHERE doc_id=?", (row["id"],))]
+            result["relations"] = [
+                dict(r) for r in db.execute("SELECT source,target,label FROM relations WHERE doc_id=?", (row["id"],))
+            ]
             result["large"] = len(row["content"]) > pageindex.MIN_CHARS
             result["parts"] = []
             if result["source"]:
@@ -635,9 +792,13 @@ class Service:
             if row["index_mode"] == "pageindex":
                 # A section's position among the document's headings, so the screen can scroll to it.
                 ordinal = {offset: i for i, (offset, _, _) in enumerate(pageindex.headings(row["content"]))}
-                result["outline"] = [{**{k: node[k] for k in ("id", "title", "depth", "kind", "summary")},
-                                      "heading": ordinal.get(node["start"]) if node["kind"] == "section" else None}
-                                     for node in pageindex.load(db, row["id"], row["revision"])]
+                result["outline"] = [
+                    {
+                        **{k: node[k] for k in ("id", "title", "depth", "kind", "summary")},
+                        "heading": ordinal.get(node["start"]) if node["kind"] == "section" else None,
+                    }
+                    for node in pageindex.load(db, row["id"], row["revision"])
+                ]
             return result
 
     @staticmethod
@@ -657,17 +818,23 @@ class Service:
             row = db.execute("SELECT title,content,revision,deleted_at FROM documents WHERE id=?", (ident,)).fetchone()
             if row is not None and row["deleted_at"]:
                 if expected is not None:
-                    raise UserError("편집하는 동안 문서가 휴지통으로 옮겨졌습니다. 내용을 복사해 두고 휴지통에서 복원한 뒤 "
-                                    "다시 열어 주세요.")
+                    raise UserError(
+                        "편집하는 동안 문서가 휴지통으로 옮겨졌습니다. 내용을 복사해 두고 휴지통에서 복원한 뒤 "
+                        "다시 열어 주세요."
+                    )
                 raise UserError("휴지통에 있는 문서입니다. 복원한 뒤 고쳐 주세요.")
             if row is None:
                 if expected is not None:
                     raise UserError("편집하는 동안 문서가 삭제되었습니다. 내용을 복사해 새 문서로 저장해 주세요.")
-                db.execute("INSERT INTO documents (id,title,content,created_at,updated_at) VALUES (?,?,?,?,?)",
-                           (ident, title, content, now(), now()))
+                db.execute(
+                    "INSERT INTO documents (id,title,content,created_at,updated_at) VALUES (?,?,?,?,?)",
+                    (ident, title, content, now(), now()),
+                )
             elif expected is not None and row["revision"] != expected:
-                raise UserError("편집하는 동안 다른 곳에서 문서가 바뀌었습니다. 쓴 내용을 복사해 두고 문서를 다시 열어 "
-                                "확인해 주세요.")
+                raise UserError(
+                    "편집하는 동안 다른 곳에서 문서가 바뀌었습니다. 쓴 내용을 복사해 두고 문서를 다시 열어 "
+                    "확인해 주세요."
+                )
             elif row["content"].strip() == content:
                 # The same text: what the AI analysis found still holds, and an imported page keeps showing.
                 if row["title"] != title:
@@ -676,8 +843,11 @@ class Service:
                 # New contents invalidate every previously extracted fact in the same transaction. An imported
                 # HTML page shows until its text is edited; then the document is the Markdown the user wrote,
                 # and the page stays its original.
-                db.execute("""UPDATE documents SET title=?,content=?,summary='',status='pending',error='',index_mode='',
-                    revision=revision+1,updated_at=?,format='markdown' WHERE id=?""", (title, content, now(), ident))
+                db.execute(
+                    """UPDATE documents SET title=?,content=?,summary='',status='pending',error='',index_mode='',
+                    revision=revision+1,updated_at=?,format='markdown' WHERE id=?""",
+                    (title, content, now(), ident),
+                )
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id=?", (ident,))
             if row is None or row["content"].strip() != content or row["title"] != title:
@@ -692,6 +862,7 @@ class Service:
         stored), the editor's text (`content`) and the document's: what changed elsewhere (theirs), what the user
         changed (ours), and what saving the editor's text over the document would change in it (overwrite)."""
         from .changes import diff
+
         base = text(p.get("base", ""), "편집을 시작한 문서", 80000, required=False)
         content = text(p.get("content", ""), "문서", 80000, required=False)
         revision = p.get("base_revision")
@@ -699,10 +870,11 @@ class Service:
             raise UserError("문서 버전(base_revision)을 확인해 주세요.")
         doc = self.document(p.get("id"))
         current = doc["content"]
-        return {"document": doc,
-                "changed": doc["revision"] != revision if revision is not None else current != base,
-                "diffs": {"theirs": diff(base, current), "ours": diff(base, content),
-                          "overwrite": diff(current, content)}}
+        return {
+            "document": doc,
+            "changed": doc["revision"] != revision if revision is not None else current != base,
+            "diffs": {"theirs": diff(base, current), "ours": diff(base, content), "overwrite": diff(current, content)},
+        }
 
     def wiki_delete(self, p):
         """Move a document to the trash, where it waits TRASH_DAYS for the user to restore it (wiki.restore)."""
@@ -714,38 +886,57 @@ class Service:
     def wiki_delete_many(self, p):
         """Move the documents chosen in the list to the trash, all or none of them."""
         from .search import chunks
+
         ids, moved, stamp = document_ids(p.get("ids")), [], now()
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for chunk in chunks(ids):
                 marks = ",".join("?" * len(chunk))
-                moved += [row[0] for row in db.execute(f"SELECT id FROM documents WHERE id IN ({marks}) AND {LIVE}", chunk)]
+                moved += [
+                    row[0] for row in db.execute(f"SELECT id FROM documents WHERE id IN ({marks}) AND {LIVE}", chunk)
+                ]
             for chunk in chunks(moved):
-                db.execute(f"UPDATE documents SET deleted_at=? WHERE id IN ({','.join('?' * len(chunk))})", [stamp, *chunk])
+                db.execute(
+                    f"UPDATE documents SET deleted_at=? WHERE id IN ({','.join('?' * len(chunk))})", [stamp, *chunk]
+                )
         return {"deleted": len(moved), "ids": moved}
 
     def wiki_trash(self, _):
         """The documents in the trash, the last deleted first, with where each came from."""
         with self.db.connect() as db:
             # Documents deleted together (the same instant) in the order of their titles, so a list reads the same twice.
-            docs = self.attach(db, [dict(row) for row in db.execute("""SELECT id,title,substr(content,1,200) AS excerpt,
+            docs = self.attach(
+                db,
+                [
+                    dict(row)
+                    for row in db.execute("""SELECT id,title,substr(content,1,200) AS excerpt,
                 summary,format,index_mode,deleted_at,updated_at FROM documents WHERE deleted_at IS NOT NULL
-                ORDER BY deleted_at DESC, title, id""")])
+                ORDER BY deleted_at DESC, title, id""")
+                ],
+            )
         return {"documents": docs, "days": TRASH_DAYS}
 
     def wiki_restore(self, p):
         """Bring the chosen documents back from the trash, with their analysis, sources and tasks as they were."""
         from .search import chunks
+
         ids = document_ids(p.get("ids"))
         with self.db.connect() as db:
-            restored = sum(db.execute(f"UPDATE documents SET deleted_at=NULL WHERE id IN ({','.join('?' * len(chunk))}) "
-                                      "AND deleted_at IS NOT NULL", chunk).rowcount for chunk in chunks(ids))
+            restored = sum(
+                db.execute(
+                    f"UPDATE documents SET deleted_at=NULL WHERE id IN ({','.join('?' * len(chunk))}) "
+                    "AND deleted_at IS NOT NULL",
+                    chunk,
+                ).rowcount
+                for chunk in chunks(ids)
+            )
         return {"restored": restored}
 
     def wiki_purge(self, p):
         """Delete the chosen documents of the trash for good, or all of them (`all`): nothing brings them back. The
         sources none of whose documents is left are left out of the routines' imports (sources.purge)."""
         from .search import chunks
+
         everything = p.get("all", False)
         if not isinstance(everything, bool):
             raise UserError("휴지통을 모두 비울지(all) 확인해 주세요.")
@@ -755,9 +946,14 @@ class Service:
             if everything:
                 found = [row[0] for row in db.execute("SELECT id FROM documents WHERE deleted_at IS NOT NULL")]
             else:
-                found = [row[0] for chunk in chunks(ids) for row in db.execute(
-                    f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(chunk))}) AND deleted_at IS NOT NULL",
-                    chunk)]
+                found = [
+                    row[0]
+                    for chunk in chunks(ids)
+                    for row in db.execute(
+                        f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(chunk))}) AND deleted_at IS NOT NULL",
+                        chunk,
+                    )
+                ]
             purged = sources.purge(db, found)
         return {"purged": purged}
 
@@ -766,8 +962,10 @@ class Service:
         conversations, messages) are trimmed only while a backup of the Wiki exists, which still holds what goes for
         good: the first start of this version leaves them to the upkeep, which trims them after its first backup. The
         trash is emptied either way, as it always was."""
+
         def cutoff(days):
             return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
         try:
             logs = any(item["kind"] != "before_restore" for item in storage.backups(self.db.path))
         except OSError:  # The backups folder cannot be read: no backup to count on.
@@ -776,21 +974,39 @@ class Service:
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if logs:
-                removed["runs"] = db.execute("""DELETE FROM runs WHERE created_at<? OR id NOT IN
-                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)""", (cutoff(RUNS_DAYS), RUNS_KEPT)).rowcount
+                removed["runs"] = db.execute(
+                    """DELETE FROM runs WHERE created_at<? OR id NOT IN
+                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)""",
+                    (cutoff(RUNS_DAYS), RUNS_KEPT),
+                ).rowcount
                 # A conversation goes with its messages (ON DELETE CASCADE).
-                removed["conversations"] = db.execute("""DELETE FROM conversations WHERE id NOT IN
-                    (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?)""", (CONVERSATIONS_KEPT,)).rowcount
-                removed["messages"] = db.execute("""DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq,
+                removed["conversations"] = db.execute(
+                    """DELETE FROM conversations WHERE id NOT IN
+                    (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?)""",
+                    (CONVERSATIONS_KEPT,),
+                ).rowcount
+                removed["messages"] = db.execute(
+                    """DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq,
                     row_number() OVER (PARTITION BY conversation_id ORDER BY seq DESC) AS position FROM messages)
-                    WHERE position>?)""", (MESSAGES_KEPT,)).rowcount
+                    WHERE position>?)""",
+                    (MESSAGES_KEPT,),
+                ).rowcount
             # The rest of the trash stays for the user to restore. Routines leave out the sources of what goes, as after
             # the user's own purge (sources.purge).
-            removed["documents"] = sources.purge(db, [row[0] for row in db.execute(
-                "SELECT id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?", (cutoff(TRASH_DAYS),))])
+            removed["documents"] = sources.purge(
+                db,
+                [
+                    row[0]
+                    for row in db.execute(
+                        "SELECT id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?", (cutoff(TRASH_DAYS),)
+                    )
+                ],
+            )
         if any(removed.values()):
-            diagnostics.LOG.info("retention policy removed %s",
-                                 ", ".join(f"{count} {table}" for table, count in removed.items() if count))
+            diagnostics.LOG.info(
+                "retention policy removed %s",
+                ", ".join(f"{count} {table}" for table, count in removed.items() if count),
+            )
         return removed
 
     def upkeep(self):
@@ -829,16 +1045,24 @@ class Service:
             with self.db.connect() as db:
                 return storage.snapshot(db, self.db.path, kind)
         except Exception as error:
-            raise UserError(diagnostics.report(
-                error, "백업을 만들지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "백업")) from None
+            raise UserError(
+                diagnostics.report(
+                    error, "백업을 만들지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "백업"
+                )
+            ) from None
         finally:
             self.backup_lock.release()
 
     def wiki_backups(self, _):
         """The Wiki's backups, the newest first, with the restore the next start carries out and how the last went."""
         path = self.db.path
-        return {"folder": str(storage.backup_folder(path)), "keep": storage.KEEP, "backups": storage.backups(path),
-                "pending_restore": storage.pending_restore(path), "last_restore": storage.last_restore(path)}
+        return {
+            "folder": str(storage.backup_folder(path)),
+            "keep": storage.KEEP,
+            "backups": storage.backups(path),
+            "pending_restore": storage.pending_restore(path),
+            "last_restore": storage.last_restore(path),
+        }
 
     def wiki_backup(self, _):
         """Back up the Wiki now. Backups asked for keep their own newest storage.KEEP, beside the daily ones."""
@@ -857,42 +1081,57 @@ class Service:
         try:
             if cancel:
                 cancelled = storage.cancel_restore(self.db.path)
-                return {"restart_required": False, "cancelled": cancelled,
-                        "message": "예약한 복원을 취소했습니다." if cancelled else "예약한 복원이 없습니다."}
+                return {
+                    "restart_required": False,
+                    "cancelled": cancelled,
+                    "message": "예약한 복원을 취소했습니다." if cancelled else "예약한 복원이 없습니다.",
+                }
             request = storage.stage_restore(self.db.path, p.get("file"))
         except UserError:
             raise
         except Exception as error:
-            raise UserError(diagnostics.report(
-                error, "복원을 준비하지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "복원 준비")) from None
+            raise UserError(
+                diagnostics.report(
+                    error, "복원을 준비하지 못했습니다. Wiki 폴더의 저장 공간과 권한을 확인해 주세요.", "복원 준비"
+                )
+            ) from None
         finally:
             self.backup_lock.release()
-        return {"restart_required": True, **request,
-                "message": f"앱을 다시 실행하면 Wiki를 백업 {request['file']}의 내용으로 되돌립니다. 지금의 Wiki는 백업 "
-                           "폴더에 wiki-before-restore-….db로 남깁니다. 되돌리지 않으려면 다시 실행하기 전에 복원을 "
-                           "취소해 주세요."}
+        return {
+            "restart_required": True,
+            **request,
+            "message": f"앱을 다시 실행하면 Wiki를 백업 {request['file']}의 내용으로 되돌립니다. 지금의 Wiki는 백업 "
+            "폴더에 wiki-before-restore-….db로 남깁니다. 되돌리지 않으려면 다시 실행하기 전에 복원을 "
+            "취소해 주세요.",
+        }
 
     def wiki_clear_analysis(self, p):
         """Take back the AI analysis of the chosen documents (summary, keywords, relations, table of contents and a
         failed attempt's error), as before their first analysis. Documents being analyzed are left as they are: the
         analysis would land after the clearing. `cleared` counts only documents that had something to take back."""
         from .search import chunks
+
         ids = document_ids(p.get("ids"))
         cleared, busy = [], 0
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for chunk in chunks(ids):
                 marks = ",".join("?" * len(chunk))
-                for row in db.execute(f"""SELECT id,status FROM documents WHERE id IN ({marks}) AND {LIVE}
-                        AND (status!='pending' OR index_mode!='' OR summary!='')""", chunk):
+                for row in db.execute(
+                    f"""SELECT id,status FROM documents WHERE id IN ({marks}) AND {LIVE}
+                        AND (status!='pending' OR index_mode!='' OR summary!='')""",
+                    chunk,
+                ):
                     if row["status"] == "indexing":
                         busy += 1
                     else:
                         cleared.append(row["id"])
             for chunk in chunks(cleared):
                 marks = ",".join("?" * len(chunk))
-                db.execute(f"UPDATE documents SET summary='',status='pending',error='',index_mode='' WHERE id IN ({marks})",
-                           chunk)
+                db.execute(
+                    f"UPDATE documents SET summary='',status='pending',error='',index_mode='' WHERE id IN ({marks})",
+                    chunk,
+                )
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id IN ({marks})", chunk)
             index_text(db, cleared)
@@ -900,11 +1139,15 @@ class Service:
 
     def wiki_source_markdown(self, p):
         from .markdown_import import markdown_filename
+
         ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
             for table, _, _ in SOURCES:
-                row = db.execute(f"SELECT s.markdown,d.title FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.{LIVE} "
-                                 "WHERE s.doc_id=?", (ident,)).fetchone()
+                row = db.execute(
+                    f"SELECT s.markdown,d.title FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.{LIVE} "
+                    "WHERE s.doc_id=?",
+                    (ident,),
+                ).fetchone()
                 if row:
                     return {"markdown": row["markdown"], "filename": markdown_filename(row["title"])}
         raise UserError("이 문서에는 가져온 Markdown 원문이 없습니다.")
@@ -912,9 +1155,13 @@ class Service:
     def wiki_source_html(self, p):
         """The HTML page a file was imported as, for the raw HTML view and its download."""
         from .html_document import html_filename
+
         with self.db.connect() as db:
-            row = db.execute(f"SELECT h.html,d.title FROM document_html h JOIN documents d ON d.id=h.doc_id AND d.{LIVE} "
-                             "WHERE h.doc_id=?", (text(p.get("id"), "ID", 80),)).fetchone()
+            row = db.execute(
+                f"SELECT h.html,d.title FROM document_html h JOIN documents d ON d.id=h.doc_id AND d.{LIVE} "
+                "WHERE h.doc_id=?",
+                (text(p.get("id"), "ID", 80),),
+            ).fetchone()
         if not row:
             raise UserError("이 문서에는 가져온 HTML 원문이 없습니다.")
         return {"html": row["html"], "filename": html_filename(row["title"])}
@@ -931,14 +1178,17 @@ class Service:
                 raise UserError("가져온 문서가 아닙니다." if found else "문서를 찾을 수 없습니다.")
             if "source_path" not in source:
                 return {"state": "unknown"}
-            row = db.execute(f"SELECT source_hash,source_size,source_mtime FROM {self.source_table(source)} "
-                             "WHERE doc_id=?", (ident,)).fetchone()
-        return sources.file_state(source["source_path"], row["source_hash"],
-                                  stat=(row["source_size"], row["source_mtime"]))
+            row = db.execute(
+                f"SELECT source_hash,source_size,source_mtime FROM {self.source_table(source)} WHERE doc_id=?", (ident,)
+            ).fetchone()
+        return sources.file_state(
+            source["source_path"], row["source_hash"], stat=(row["source_size"], row["source_mtime"])
+        )
 
     def markdown_import(self, p):
         # Only Electron's files.import_text calls this internal RPC, with the path the user gave.
         from .markdown_file import import_file
+
         return import_file(self, p)
 
     def wiki_analyze(self, p, html=False):
@@ -946,7 +1196,10 @@ class Service:
         it returns with `html`; imports and batch analysis, which analyze one document after another, do not load it."""
         doc = self.document(p.get("id"))
         with self.db.connect() as db:
-            updated = db.execute("UPDATE documents SET status='indexing',error='' WHERE id=? AND revision=? AND status!='indexing'", (doc["id"], doc["revision"]))
+            updated = db.execute(
+                "UPDATE documents SET status='indexing',error='' WHERE id=? AND revision=? AND status!='indexing'",
+                (doc["id"], doc["revision"]),
+            )
             if not updated.rowcount:
                 raise UserError("이미 분석 중이거나 문서가 변경되었습니다. 잠시 후 다시 시도해 주세요.")
         try:
@@ -979,16 +1232,20 @@ class Service:
                 if source in keys and target in keys and source != target:
                     relations.add((doc["id"], source, target, " ".join(r["label"].split())[:100]))
             with self.db.connect() as db:
-                changed = db.execute("UPDATE documents SET summary=?,status='ready',error=?,index_mode=? WHERE id=? AND revision=?",
-                                     (summary, note, "pageindex" if nodes else "wiki", doc["id"], doc["revision"]))
+                changed = db.execute(
+                    "UPDATE documents SET summary=?,status='ready',error=?,index_mode=? WHERE id=? AND revision=?",
+                    (summary, note, "pageindex" if nodes else "wiki", doc["id"], doc["revision"]),
+                )
                 if not changed.rowcount:
                     raise UserError("분석 중 문서가 수정 또는 삭제되었습니다. 최신 문서를 다시 분석해 주세요.")
                 # The keywords' old aliases go with them (keyword_aliases cascades from keywords).
                 for table in ("keywords", "relations", "doc_nodes"):
                     db.execute(f"DELETE FROM {table} WHERE doc_id=?", (doc["id"],))
                 db.executemany("INSERT INTO keywords VALUES (?,?)", [(doc["id"], k) for k in keys])
-                db.executemany("INSERT INTO keyword_aliases(doc_id,keyword,alias,normalized) VALUES (?,?,?,?)",
-                               [(doc["id"], *row) for row in aliases])
+                db.executemany(
+                    "INSERT INTO keyword_aliases(doc_id,keyword,alias,normalized) VALUES (?,?,?,?)",
+                    [(doc["id"], *row) for row in aliases],
+                )
                 db.executemany("INSERT INTO relations VALUES (?,?,?,?)", sorted(relations))
                 if nodes:
                     pageindex.save(db, doc["id"], doc["revision"], nodes)
@@ -996,7 +1253,10 @@ class Service:
         except Exception as exc:
             error = diagnostics.report(exc, "문서 분석에 실패했습니다. 다시 시도해 주세요.", "AI 분석")
             with self.db.connect() as db:
-                db.execute("UPDATE documents SET status='error',error=? WHERE id=? AND revision=?", (error, doc["id"], doc["revision"]))
+                db.execute(
+                    "UPDATE documents SET status='error',error=? WHERE id=? AND revision=?",
+                    (error, doc["id"], doc["revision"]),
+                )
             raise UserError(error) from None
         return self.document(doc["id"], html=html)
 
@@ -1007,23 +1267,37 @@ class Service:
         with self.db.connect() as db:
             # Lists show up to 1,000 keywords; the graph views draw the most frequent of them.
             live = f"JOIN documents d ON d.id=k.doc_id AND d.{LIVE}"
-            nodes = {r["keyword"]: {"id": r["keyword"], "label": r["keyword"], "count": r["count"], "docs": []}
-                     for r in db.execute(f"""SELECT k.keyword,count(*) AS count FROM keywords k {live}
-                         GROUP BY k.keyword ORDER BY count DESC,k.keyword LIMIT 1000""")}
+            nodes = {
+                r["keyword"]: {"id": r["keyword"], "label": r["keyword"], "count": r["count"], "docs": []}
+                for r in db.execute(f"""SELECT k.keyword,count(*) AS count FROM keywords k {live}
+                         GROUP BY k.keyword ORDER BY count DESC,k.keyword LIMIT 1000""")
+            }
             for r in db.execute(f"SELECT k.doc_id,k.keyword FROM keywords k {live}"):
                 if r["keyword"] in nodes:
                     nodes[r["keyword"]]["docs"].append(r["doc_id"])
             edges = {}
             for r in db.execute(f"SELECT k.doc_id,k.source,k.target,k.label FROM relations k {live}"):
                 if r["source"] in nodes and r["target"] in nodes:
-                    edges.setdefault((r["source"], r["target"], r["label"]), {"source": r["source"],
-                        "target": r["target"], "label": r["label"], "docs": []})["docs"].append(r["doc_id"])
-            edges = sorted(({**edge, "count": len(edge["docs"])} for edge in edges.values()),
-                           key=lambda edge: (-edge["count"], edge["source"], edge["target"], edge["label"]))
-            documents = [dict(r) for r in db.execute(f"""SELECT id,title FROM documents
-                WHERE id IN (SELECT doc_id FROM keywords) AND {LIVE} ORDER BY updated_at DESC""")]
+                    edges.setdefault(
+                        (r["source"], r["target"], r["label"]),
+                        {"source": r["source"], "target": r["target"], "label": r["label"], "docs": []},
+                    )["docs"].append(r["doc_id"])
+            edges = sorted(
+                ({**edge, "count": len(edge["docs"])} for edge in edges.values()),
+                key=lambda edge: (-edge["count"], edge["source"], edge["target"], edge["label"]),
+            )
+            documents = [
+                dict(r)
+                for r in db.execute(f"""SELECT id,title FROM documents
+                WHERE id IN (SELECT doc_id FROM keywords) AND {LIVE} ORDER BY updated_at DESC""")
+            ]
             total = db.execute(f"SELECT count(DISTINCT k.keyword) FROM keywords k {live}").fetchone()[0]
             relations = db.execute(f"""SELECT count(*) FROM (SELECT DISTINCT k.source,k.target,k.label
                 FROM relations k {live})""").fetchone()[0]
-            return {"nodes": list(nodes.values()), "edges": edges, "documents": documents,
-                    "total_keywords": total, "total_relations": relations}
+            return {
+                "nodes": list(nodes.values()),
+                "edges": edges,
+                "documents": documents,
+                "total_keywords": total,
+                "total_relations": relations,
+            }

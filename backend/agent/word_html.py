@@ -17,6 +17,7 @@ fallback. The answers of legacy form fields (check boxes, drop-down lists) are w
 Pictures go into the page once its text is known, within a budget like that of the pictures Office exports: the
 first use of each picture before a picture shown again, and a marker where one no longer fits, which the top of the
 page explains."""
+
 import base64
 import hashlib
 import json
@@ -31,8 +32,14 @@ from .drawing import Canvas, Matrix, Painter, Palette
 from .html_document import MAX_HTML_BYTES, attribute, chart_table, css, font_family, hex_color, page, points
 from .llm import UserError
 from .office_pictures import FULL, MAX_PICTURE_BYTES
-from .vml import SHAPES as VML_SHAPES, Vml, box_css as vml_box_css, fraction as vml_fraction, length as vml_length, \
-    style_of
+from .vml import (
+    SHAPES as VML_SHAPES,
+    Vml,
+    box_css as vml_box_css,
+    fraction as vml_fraction,
+    length as vml_length,
+    style_of,
+)
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -57,62 +64,199 @@ EMPTY = "Word 문서에서 표시할 내용을 찾지 못했습니다."
 EMU_PX, EMU_PT = 9525, 12700
 # graphicData of the drawings painted as pictures: Word 2010's shapes, groups and drawing canvases. The
 # mc:Choice branches that require them are read rather than their VML fallback.
-SHAPE_DATA = {"http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
-              "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
-              "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"}
+SHAPE_DATA = {
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+    "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas",
+}
 PAINTED = {"wps", "wpg", "wpc"}
 # Where a floating drawing is placed from (wp:positionH/V relativeFrom, VML mso-position-*-relative).
-HORIZONTAL_FRAMES = {"text": "column", "char": "column", "character": "column", "left-margin-area": "leftMargin",
-                     "right-margin-area": "rightMargin", "inner-margin-area": "insideMargin",
-                     "outer-margin-area": "outsideMargin"}
-VERTICAL_FRAMES = {"text": "paragraph", "top-margin-area": "topMargin", "bottom-margin-area": "bottomMargin",
-                   "inner-margin-area": "insideMargin", "outer-margin-area": "outsideMargin"}
+HORIZONTAL_FRAMES = {
+    "text": "column",
+    "char": "column",
+    "character": "column",
+    "left-margin-area": "leftMargin",
+    "right-margin-area": "rightMargin",
+    "inner-margin-area": "insideMargin",
+    "outer-margin-area": "outsideMargin",
+}
+VERTICAL_FRAMES = {
+    "text": "paragraph",
+    "top-margin-area": "topMargin",
+    "bottom-margin-area": "bottomMargin",
+    "inner-margin-area": "insideMargin",
+    "outer-margin-area": "outsideMargin",
+}
 TOGGLES = ("b", "i", "caps", "smallCaps", "strike", "dstrike", "vanish")
 FONT_SLOTS = (("ascii", "asciiTheme"), ("hAnsi", "hAnsiTheme"), ("eastAsia", "eastAsiaTheme"), ("cs", "cstheme"))
-HIGHLIGHTS = {"yellow": "#FFFF00", "green": "#00FF00", "cyan": "#00FFFF", "magenta": "#FF00FF", "blue": "#0000FF",
-              "red": "#FF0000", "darkBlue": "#000080", "darkCyan": "#008080", "darkGreen": "#008000",
-              "darkMagenta": "#800080", "darkRed": "#800000", "darkYellow": "#808000", "darkGray": "#808080",
-              "lightGray": "#C0C0C0", "black": "#000000", "white": "#FFFFFF"}
-ALIGN = {"left": "left", "start": "left", "center": "center", "right": "right", "end": "right", "both": "justify",
-         "distribute": "justify", "lowKashida": "justify", "mediumKashida": "justify", "highKashida": "justify",
-         "thaiDistribute": "justify"}
-UNDERLINES = {"double": "double", "dotted": "dotted", "dottedHeavy": "dotted", "dash": "dashed", "dashedHeavy": "dashed",
-              "dashLong": "dashed", "dashLongHeavy": "dashed", "dotDash": "dashed", "dotDotDash": "dashed",
-              "wave": "wavy", "wavyHeavy": "wavy", "wavyDouble": "wavy"}
-BORDERS = {"single": "solid", "thick": "solid", "double": "double", "triple": "double", "dotted": "dotted",
-           "dashed": "dashed", "dashSmallGap": "dashed", "dotDash": "dashed", "dotDotDash": "dashed",
-           "thinThickSmallGap": "double", "thickThinSmallGap": "double", "thinThickMediumGap": "double",
-           "thickThinMediumGap": "double", "thinThickLargeGap": "double", "thickThinLargeGap": "double",
-           "thinThickThinSmallGap": "double", "thinThickThinMediumGap": "double", "thinThickThinLargeGap": "double",
-           "wave": "solid", "doubleWave": "double", "dashDotStroked": "dashed", "threeDEmboss": "ridge",
-           "threeDEngrave": "groove", "outset": "outset", "inset": "inset"}
+HIGHLIGHTS = {
+    "yellow": "#FFFF00",
+    "green": "#00FF00",
+    "cyan": "#00FFFF",
+    "magenta": "#FF00FF",
+    "blue": "#0000FF",
+    "red": "#FF0000",
+    "darkBlue": "#000080",
+    "darkCyan": "#008080",
+    "darkGreen": "#008000",
+    "darkMagenta": "#800080",
+    "darkRed": "#800000",
+    "darkYellow": "#808000",
+    "darkGray": "#808080",
+    "lightGray": "#C0C0C0",
+    "black": "#000000",
+    "white": "#FFFFFF",
+}
+ALIGN = {
+    "left": "left",
+    "start": "left",
+    "center": "center",
+    "right": "right",
+    "end": "right",
+    "both": "justify",
+    "distribute": "justify",
+    "lowKashida": "justify",
+    "mediumKashida": "justify",
+    "highKashida": "justify",
+    "thaiDistribute": "justify",
+}
+UNDERLINES = {
+    "double": "double",
+    "dotted": "dotted",
+    "dottedHeavy": "dotted",
+    "dash": "dashed",
+    "dashedHeavy": "dashed",
+    "dashLong": "dashed",
+    "dashLongHeavy": "dashed",
+    "dotDash": "dashed",
+    "dotDotDash": "dashed",
+    "wave": "wavy",
+    "wavyHeavy": "wavy",
+    "wavyDouble": "wavy",
+}
+BORDERS = {
+    "single": "solid",
+    "thick": "solid",
+    "double": "double",
+    "triple": "double",
+    "dotted": "dotted",
+    "dashed": "dashed",
+    "dashSmallGap": "dashed",
+    "dotDash": "dashed",
+    "dotDotDash": "dashed",
+    "thinThickSmallGap": "double",
+    "thickThinSmallGap": "double",
+    "thinThickMediumGap": "double",
+    "thickThinMediumGap": "double",
+    "thinThickLargeGap": "double",
+    "thickThinLargeGap": "double",
+    "thinThickThinSmallGap": "double",
+    "thinThickThinMediumGap": "double",
+    "thinThickThinLargeGap": "double",
+    "wave": "solid",
+    "doubleWave": "double",
+    "dashDotStroked": "dashed",
+    "threeDEmboss": "ridge",
+    "threeDEngrave": "groove",
+    "outset": "outset",
+    "inset": "inset",
+}
 # Symbol-font characters Word uses for bullets and inserted symbols, as Unicode. Others keep their font,
 # which Windows draws.
 SYMBOLS = {
-    **{("symbol", ord(latin)): greek for latin, greek in zip(
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        "αβχδεφγηιϕκλμνοπθρστυϖωξψζΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ")},
-    **{("symbol", code): text for code, text in (
-        (0xB7, "•"), (0xB0, "°"), (0xB1, "±"), (0xB4, "×"), (0xB8, "÷"), (0xA3, "≤"), (0xB3, "≥"), (0xB9, "≠"),
-        (0xBB, "≈"), (0xA5, "∞"), (0xB6, "∂"), (0xD6, "√"), (0xE5, "∑"), (0xF2, "∫"), (0xA2, "′"), (0xB2, "″"),
-        (0xBC, "…"), (0xD7, "⋅"), (0xD8, "¬"), (0xAC, "←"), (0xAD, "↑"), (0xAE, "→"), (0xAF, "↓"), (0xAB, "↔"),
-        (0xDB, "⇔"), (0xDC, "⇐"), (0xDE, "⇒"), (0xC5, "⊕"), (0xC4, "⊗"), (0xCE, "∈"), (0xC7, "∩"), (0xC8, "∪"))},
-    **{("wingdings", code): text for code, text in (
-        (0x4A, "☺"), (0x4C, "☹"), (0x6C, "●"), (0x6E, "■"), (0x6F, "□"), (0x71, "❑"), (0x75, "◆"), (0x76, "❖"),
-        (0xA7, "▪"), (0xD8, "➢"), (0xE8, "➔"), (0xF0, "⇨"), (0xFB, "✗"), (0xFC, "✓"), (0xFD, "☒"), (0xFE, "☑"))},
+    **{
+        ("symbol", ord(latin)): greek
+        for latin, greek in zip(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "αβχδεφγηιϕκλμνοπθρστυϖωξψζΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ",
+        )
+    },
+    **{
+        ("symbol", code): text
+        for code, text in (
+            (0xB7, "•"),
+            (0xB0, "°"),
+            (0xB1, "±"),
+            (0xB4, "×"),
+            (0xB8, "÷"),
+            (0xA3, "≤"),
+            (0xB3, "≥"),
+            (0xB9, "≠"),
+            (0xBB, "≈"),
+            (0xA5, "∞"),
+            (0xB6, "∂"),
+            (0xD6, "√"),
+            (0xE5, "∑"),
+            (0xF2, "∫"),
+            (0xA2, "′"),
+            (0xB2, "″"),
+            (0xBC, "…"),
+            (0xD7, "⋅"),
+            (0xD8, "¬"),
+            (0xAC, "←"),
+            (0xAD, "↑"),
+            (0xAE, "→"),
+            (0xAF, "↓"),
+            (0xAB, "↔"),
+            (0xDB, "⇔"),
+            (0xDC, "⇐"),
+            (0xDE, "⇒"),
+            (0xC5, "⊕"),
+            (0xC4, "⊗"),
+            (0xCE, "∈"),
+            (0xC7, "∩"),
+            (0xC8, "∪"),
+        )
+    },
+    **{
+        ("wingdings", code): text
+        for code, text in (
+            (0x4A, "☺"),
+            (0x4C, "☹"),
+            (0x6C, "●"),
+            (0x6E, "■"),
+            (0x6F, "□"),
+            (0x71, "❑"),
+            (0x75, "◆"),
+            (0x76, "❖"),
+            (0xA7, "▪"),
+            (0xD8, "➢"),
+            (0xE8, "➔"),
+            (0xF0, "⇨"),
+            (0xFB, "✗"),
+            (0xFC, "✓"),
+            (0xFD, "☒"),
+            (0xFE, "☑"),
+        )
+    },
 }
 LOOK = {"firstRow": 0x20, "lastRow": 0x40, "firstColumn": 0x80, "lastColumn": 0x100, "noHBand": 0x200, "noVBand": 0x400}
-CHART_KINDS = {"barChart": "막대형", "bar3DChart": "3차원 막대형", "lineChart": "꺾은선형", "line3DChart": "3차원 꺾은선형",
-               "pieChart": "원형", "pie3DChart": "3차원 원형", "ofPieChart": "원형", "doughnutChart": "도넛형",
-               "areaChart": "영역형", "area3DChart": "3차원 영역형", "scatterChart": "분산형", "bubbleChart": "거품형",
-               "radarChart": "방사형", "stockChart": "주식형", "surfaceChart": "표면형", "surface3DChart": "표면형"}
+CHART_KINDS = {
+    "barChart": "막대형",
+    "bar3DChart": "3차원 막대형",
+    "lineChart": "꺾은선형",
+    "line3DChart": "3차원 꺾은선형",
+    "pieChart": "원형",
+    "pie3DChart": "3차원 원형",
+    "ofPieChart": "원형",
+    "doughnutChart": "도넛형",
+    "areaChart": "영역형",
+    "area3DChart": "3차원 영역형",
+    "scatterChart": "분산형",
+    "bubbleChart": "거품형",
+    "radarChart": "방사형",
+    "stockChart": "주식형",
+    "surfaceChart": "표면형",
+    "surface3DChart": "표면형",
+}
 # Where a picture goes in the page, until the page's text is known (Reader.embedded).
 PICTURE = re.compile(r'<img data-picture="(\d+)">')
 # The page around its body and the notices at its top, which the pictures leave room for.
 PAGE_SLACK = 64 * 1024
 CROWDED = "문서의 글이 많아 HTML 문서(80MB)에 담기지 않는 나머지 그림은 넣지 않았습니다."
-LONG_ALT = (f"도형 속 글이 길어 그림의 대체 텍스트(검색·AI가 읽는 글)에는 그림마다 앞 {drawing.MAX_TEXT:,}자만 "
-            "넣었습니다.")
+LONG_ALT = (
+    f"도형 속 글이 길어 그림의 대체 텍스트(검색·AI가 읽는 글)에는 그림마다 앞 {drawing.MAX_TEXT:,}자만 넣었습니다."
+)
 
 
 def local(tag):
@@ -170,7 +314,11 @@ def twips(text):
         return None
     size = number(match.group(1), 0)
     unit = match.group(2)
-    return size / 20 if not unit else size * {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "pc": 12, "pi": 12}[unit]
+    return (
+        size / 20
+        if not unit
+        else size * {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "pc": 12, "pi": 12}[unit]
+    )
 
 
 def count(text, default):
@@ -207,7 +355,7 @@ def link(content, target, tip=""):
 
 def field_link(instruction):
     """(target, tip) of a HYPERLINK field, or None for any other field."""
-    match = re.match(r'\s*HYPERLINK\b(.*)', instruction, re.I | re.S)
+    match = re.match(r"\s*HYPERLINK\b(.*)", instruction, re.I | re.S)
     if not match:
         return None
     rest = match.group(1)
@@ -231,10 +379,24 @@ def symbol(font, code):
 
 # --- Numbers of lists -----------------------------------------------------------------------------
 
+
 def roman(value):
     result = ""
-    for size, letters in ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"), (50, "L"),
-                          (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")):
+    for size, letters in (
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ):
         while value >= size:
             result += letters
             value -= size
@@ -296,9 +458,18 @@ def list_number(value, kind):
         return sino_korean(value)
     if kind == "koreanCounting":
         return NATIVE_KOREAN[value - 1] if 1 <= value <= 10 else sino_korean(value)
-    if kind in ("koreanDigital2", "chineseCounting", "chineseCountingThousand", "chineseLegalSimplified",
-                "ideographDigital", "japaneseCounting", "japaneseDigitalTenThousand", "taiwaneseCounting",
-                "taiwaneseCountingThousand", "ideographLegalTraditional"):
+    if kind in (
+        "koreanDigital2",
+        "chineseCounting",
+        "chineseCountingThousand",
+        "chineseLegalSimplified",
+        "ideographDigital",
+        "japaneseCounting",
+        "japaneseDigitalTenThousand",
+        "taiwaneseCounting",
+        "taiwaneseCountingThousand",
+        "ideographLegalTraditional",
+    ):
         return hanja(value)
     if kind == "ideographTraditional" and value > 0:
         return "甲乙丙丁戊己庚辛壬癸"[(value - 1) % 10]
@@ -310,6 +481,7 @@ def list_number(value, kind):
 
 
 # --- The package ----------------------------------------------------------------------------------
+
 
 class Package:
     """The parts of a Flat OPC package: XML parts as elements, binary parts (pictures) as base64."""
@@ -353,8 +525,14 @@ class Package:
 
     def related(self, name, kind):
         """The target of the first relationship of `name` whose type ends with /kind."""
-        return next((target for target, external, rel in self.relations(name).values()
-                     if not external and rel.endswith("/" + kind)), None)
+        return next(
+            (
+                target
+                for target, external, rel in self.relations(name).values()
+                if not external and rel.endswith("/" + kind)
+            ),
+            None,
+        )
 
 
 class Styles:
@@ -399,11 +577,19 @@ class Theme:
             fonts = None if scheme is None else scheme.find(f"{A}{kind}Font")
             if fonts is None:
                 continue
-            face = lambda tag: (fonts.find(A + tag).get("typeface", "") if fonts.find(A + tag) is not None else "")
+            face = lambda tag: fonts.find(A + tag).get("typeface", "") if fonts.find(A + tag) is not None else ""
             # Korean documents name their East Asian font by script (Hang) rather than as ea.
-            hangul = next((font.get("typeface", "") for font in fonts.findall(A + "font") if font.get("script") == "Hang"), "")
-            self.fonts.update({kind + "Ascii": face("latin"), kind + "HAnsi": face("latin"),
-                               kind + "EastAsia": face("ea") or hangul, kind + "Bidi": face("cs")})
+            hangul = next(
+                (font.get("typeface", "") for font in fonts.findall(A + "font") if font.get("script") == "Hang"), ""
+            )
+            self.fonts.update(
+                {
+                    kind + "Ascii": face("latin"),
+                    kind + "HAnsi": face("latin"),
+                    kind + "EastAsia": face("ea") or hangul,
+                    kind + "Bidi": face("cs"),
+                }
+            )
 
     def font(self, name):
         return self.fonts.get(name, "")
@@ -444,8 +630,12 @@ def read_paragraph(ppr, props):
         elif name == "spacing":
             props["spacing"] = {**props.get("spacing", {}), **attrs(child)}
         elif name == "ind":
-            new = {{"start": "left", "end": "right", "startChars": "leftChars", "endChars": "rightChars"}.get(key, key): text
-                   for key, text in attrs(child).items()}
+            new = {
+                {"start": "left", "end": "right", "startChars": "leftChars", "endChars": "rightChars"}.get(
+                    key, key
+                ): text
+                for key, text in attrs(child).items()
+            }
             ind = dict(props.get("ind", {}))
             # A first-line indent replaces an inherited hanging one, and the other way round.
             if new.keys() & {"firstLine", "firstLineChars"}:
@@ -518,8 +708,11 @@ class Numbering:
         found = None if override is None else override.find(W + "lvl")
         if found is None:
             node = self.abstract(ident)[1]
-            found = None if node is None else next(
-                (item for item in node.findall(W + "lvl") if item.get(W + "ilvl") == str(level)), None)
+            found = (
+                None
+                if node is None
+                else next((item for item in node.findall(W + "lvl") if item.get(W + "ilvl") == str(level)), None)
+            )
         return found
 
     def level_of_style(self, ident, style):
@@ -571,10 +764,12 @@ class Numbering:
 
 # --- The reader -----------------------------------------------------------------------------------
 
+
 class Context:
     """Where inline content is rendered: the paragraph's style and the objects anchored in it. A paragraph
     that anchors shapes collects its floating drawings (`pieces`) to paint them together, and marks its
     inline pictures (`inline`), which join them when the paragraph shows nothing else."""
+
     __slots__ = ("style", "base", "floats", "props", "composing", "pieces", "inline")
 
     def __init__(self, style, base, props=None, composing=False):
@@ -587,6 +782,7 @@ class Piece:
     or "page"), how it is painted where Word placed it, and the HTML a text box without a drawn outline
     keeps instead. Such a text box that holds more than a label is `kept` on the page rather than painted
     with the drawings beside it."""
+
     __slots__ = ("z", "frame", "paint", "html", "kept")
 
     def __init__(self, z, frame, paint, html=None, kept=False):
@@ -595,8 +791,9 @@ class Piece:
 
 def wordy(content):
     """Whether a text box holds more than a label: a table, or more than 300 characters."""
-    return content is not None and (content.find(f".//{W}tbl") is not None
-                                    or len("".join(item.text or "" for item in content.iter(W + "t"))) > 300)
+    return content is not None and (
+        content.find(f".//{W}tbl") is not None or len("".join(item.text or "" for item in content.iter(W + "t"))) > 300
+    )
 
 
 class Reader:
@@ -624,8 +821,11 @@ class Reader:
         normal = self.styles.defaults.get("paragraph")
         self.root_paragraph = self.paragraph_base(normal)
         self.root_run = self.run_base(normal)
-        fonts = {(kind, script): self.theme.font(kind + slot) for kind in ("minor", "major")
-                 for script, slot in (("latin", "Ascii"), ("ea", "EastAsia"))}
+        fonts = {
+            (kind, script): self.theme.font(kind + slot)
+            for kind in ("minor", "major")
+            for script, slot in (("latin", "Ascii"), ("ea", "EastAsia"))
+        }
         self.palette = Palette(self.theme.root, fonts)
         self.painter = Painter(self.palette, self.picture_source, self.box_text, self.text_css())
         # VML shape types are written once, where Word first used them, and named by later shapes.
@@ -747,7 +947,10 @@ class Reader:
         if align != ALIGN.get(self.root_paragraph.get("jc")):
             pairs.append(("text-align", align or "left"))
         spacing = props.get("spacing", {})
-        for side, auto, lines in (("before", "beforeAutospacing", "beforeLines"), ("after", "afterAutospacing", "afterLines")):
+        for side, auto, lines in (
+            ("before", "beforeAutospacing", "beforeLines"),
+            ("after", "afterAutospacing", "afterLines"),
+        ):
             if spacing.get(auto, "0").lower() in ("1", "true", "on"):
                 size = 14  # Word's automatic spacing, as for paragraphs of a web page
             elif number(spacing.get(lines)):
@@ -775,8 +978,14 @@ class Reader:
         shade = hex_color(props.get("shd"))
         if shade:
             pairs.append(("background-color", shade))
-        for side, edge in (("top", "top"), ("bottom", "bottom"), ("left", "left"), ("right", "right"),
-                           ("start", "left"), ("end", "right")):
+        for side, edge in (
+            ("top", "top"),
+            ("bottom", "bottom"),
+            ("left", "left"),
+            ("right", "right"),
+            ("start", "left"),
+            ("end", "right"),
+        ):
             if side in props.get("pBdr", {}) and border(props["pBdr"][side]) != "none":
                 pairs.append((f"border-{edge}", border(props["pBdr"][side])))
                 pairs.append((f"padding-{edge}", points(number(props["pBdr"][side].get("space"), 0) or 1)))
@@ -821,7 +1030,11 @@ class Reader:
             pairs.append(("line-height", self.line_height(self.root_paragraph["spacing"])))
         # The page's text width, so lines and tables wrap where they do in Word.
         section = body.find(W + "sectPr")
-        width = twips(section.find(W + "pgSz").get(W + "w")) if section is not None and section.find(W + "pgSz") is not None else None
+        width = (
+            twips(section.find(W + "pgSz").get(W + "w"))
+            if section is not None and section.find(W + "pgSz") is not None
+            else None
+        )
         margins = section.find(W + "pgMar") if section is not None else None
         if width and margins is not None:
             text = width - (twips(margins.get(W + "left")) or 0) - (twips(margins.get(W + "right")) or 0)
@@ -832,18 +1045,28 @@ class Reader:
     def text_css(self):
         """The CSS of the document's default text, for the text inside painted shapes."""
         size = number(self.root_run.get("sz"))
-        return css([("font-family", self.family(self.root_run) or None), ("font-size", points(size / 2 if size else 10)),
-                     ("color", hex_color(self.root_run.get("color"))),
-                     ("line-height", self.line_height(self.root_paragraph.get("spacing", {})) or "1.2")])
+        return css(
+            [
+                ("font-family", self.family(self.root_run) or None),
+                ("font-size", points(size / 2 if size else 10)),
+                ("color", hex_color(self.root_run.get("color"))),
+                ("line-height", self.line_height(self.root_paragraph.get("spacing", {})) or "1.2"),
+            ]
+        )
 
     def measure(self, body):
         """The page size and margins of the document's last section, in px."""
         section = body.find(W + "sectPr")
         size = None if section is None else section.find(W + "pgSz")
         margins = None if section is None else section.find(W + "pgMar")
-        for name, element, attribute_ in (("width", size, "w"), ("height", size, "h"), ("left", margins, "left"),
-                                          ("right", margins, "right"), ("top", margins, "top"),
-                                          ("bottom", margins, "bottom")):
+        for name, element, attribute_ in (
+            ("width", size, "w"),
+            ("height", size, "h"),
+            ("left", margins, "left"),
+            ("right", margins, "right"),
+            ("top", margins, "top"),
+            ("bottom", margins, "bottom"),
+        ):
             found = twips(None if element is None else element.get(W + attribute_))
             if found is not None:
                 self.sheet[name] = abs(found) * 4 / 3
@@ -858,9 +1081,13 @@ class Reader:
             elif node.tag == W + "altChunk":
                 html.append(f"<p>{images.missing('[외부 삽입 콘텐츠]')}</p>")
             else:
-                neighbours = [self.paragraph_style(other) if other is not None and other.tag == W + "p" else None
-                              for other in (nodes[index - 1] if index else None,
-                                            nodes[index + 1] if index + 1 < len(nodes) else None)]
+                neighbours = [
+                    self.paragraph_style(other) if other is not None and other.tag == W + "p" else None
+                    for other in (
+                        nodes[index - 1] if index else None,
+                        nodes[index + 1] if index + 1 < len(nodes) else None,
+                    )
+                ]
                 html.append(self.paragraph(node, *neighbours))
         return "".join(html)
 
@@ -905,8 +1132,10 @@ class Reader:
             return ""
         text, suffix, rpr = found
         own = read_run(rpr, dict(context.base))
-        face = next((name for kind, name in (own.get(slot, (None, None)) for slot, _ in FONT_SLOTS)
-                     if kind == "font" and name), "")
+        face = next(
+            (name for kind, name in (own.get(slot, (None, None)) for slot, _ in FONT_SLOTS) if kind == "font" and name),
+            "",
+        )
         if face.lower().startswith(("symbol", "wingdings")) or any(0xF000 <= ord(char) <= 0xF0FF for char in text):
             # Bullets of symbol fonts become Unicode; symbol() keeps the font only for unknown ones.
             rendered = "".join(symbol(face, ord(char)) for char in text)
@@ -935,11 +1164,19 @@ class Reader:
         table = {"borders": {}, "margins": {}, "shading": None, "conditions": {}}
         for item in self.styles.chain(style):
             self.read_table(item.find(W + "tblPr"), table)
-            self.read_cell_style(item.find(W + "tcPr"), item.find(W + "rPr"), item.find(W + "pPr"),
-                                 table["conditions"].setdefault("wholeTable", {}))
+            self.read_cell_style(
+                item.find(W + "tcPr"),
+                item.find(W + "rPr"),
+                item.find(W + "pPr"),
+                table["conditions"].setdefault("wholeTable", {}),
+            )
             for condition in item.findall(W + "tblStylePr"):
-                self.read_cell_style(condition.find(W + "tcPr"), condition.find(W + "rPr"), condition.find(W + "pPr"),
-                                     table["conditions"].setdefault(condition.get(W + "type"), {}))
+                self.read_cell_style(
+                    condition.find(W + "tcPr"),
+                    condition.find(W + "rPr"),
+                    condition.find(W + "pPr"),
+                    table["conditions"].setdefault(condition.get(W + "type"), {}),
+                )
                 self.read_table(condition.find(W + "tblPr"), table["conditions"][condition.get(W + "type")])
         self.read_table(props, table)
         look = self.look(props)
@@ -958,17 +1195,22 @@ class Reader:
                     cells[-1]["span"] += span  # a cell merged into the one before it (older Word)
                     column += span
                     continue
-                cells.append({"start": column, "span": span, "merge": state, "node": item, "props": cell_props, "rows": 1})
+                cells.append(
+                    {"start": column, "span": span, "merge": state, "node": item, "props": cell_props, "rows": 1}
+                )
                 column += span
             rows.append((row, cells))
-        columns = max([len(grid)] + [cell["start"] + cell["span"] for _, cells in rows for cell in cells]
-                      + [count(value(row, "trPr/gridBefore"), 0) for row, _ in rows])
+        columns = max(
+            [len(grid)]
+            + [cell["start"] + cell["span"] for _, cells in rows for cell in cells]
+            + [count(value(row, "trPr/gridBefore"), 0) for row, _ in rows]
+        )
         # Vertically merged cells: a restart spans the continuing cells below it, which are left out.
         for index, (_, cells) in enumerate(rows):
             for cell in cells:
                 if cell["merge"] != "restart":
                     continue
-                for _, below in rows[index + 1:]:
+                for _, below in rows[index + 1 :]:
                     match = next((other for other in below if other["start"] == cell["start"]), None)
                     if match is None or match["merge"] != "continue":
                         break
@@ -984,7 +1226,9 @@ class Reader:
         look_css = self.table_css(table, props, grid)
         html = [f'<table style="{attribute(look_css)}">' if look_css else "<table>"]
         if grid:
-            html.append("<colgroup>" + "".join(f'<col style="width:{points(width)}">' for width in grid) + "</colgroup>")
+            html.append(
+                "<colgroup>" + "".join(f'<col style="width:{points(width)}">' for width in grid) + "</colgroup>"
+            )
         for index, (row, cells) in enumerate(rows):
             if index == 0 and header_rows:
                 html.append("<thead>")
@@ -994,8 +1238,10 @@ class Reader:
             # The grid columns a row leaves empty before and after its cells (w:gridBefore, w:gridAfter) keep their
             # place, so each cell stays under the columns it spans.
             before = count(value(row, "trPr/gridBefore"), 0)
-            after = min(count(value(row, "trPr/gridAfter"), 0),
-                        columns - max([before] + [cell["start"] + cell["span"] for cell in cells]))
+            after = min(
+                count(value(row, "trPr/gridAfter"), 0),
+                columns - max([before] + [cell["start"] + cell["span"] for cell in cells]),
+            )
             html.append(empty_cells(before))
             for cell in cells:
                 if cell.get("covered"):
@@ -1016,8 +1262,14 @@ class Reader:
             if name == "tblBorders":
                 table["borders"] = {**table.get("borders", {}), **{local(side.tag): attrs(side) for side in child}}
             elif name == "tblCellMar":
-                table["margins"] = {**table.get("margins", {}),
-                                    **{local(side.tag): twips(side.get(W + "w")) for side in child if side.get(W + "type", "dxa") == "dxa"}}
+                table["margins"] = {
+                    **table.get("margins", {}),
+                    **{
+                        local(side.tag): twips(side.get(W + "w"))
+                        for side in child
+                        if side.get(W + "type", "dxa") == "dxa"
+                    },
+                }
             elif name == "shd":
                 table["shading"] = hex_color(child.get(W + "fill"))
             elif name in ("tblW", "jc", "tblInd", "tblLayout"):
@@ -1108,15 +1360,26 @@ class Reader:
         own = {"borders": {}, "shading": None}
         self.read_cell_style(cell["props"], None, None, own)
         pairs = []
-        for side, outer, inner, first in (("top", "top", "insideH", row == 0), ("bottom", "bottom", "insideH", last_row),
-                                          ("left", "left", "insideV", cell["start"] == 0),
-                                          ("right", "right", "insideV", cell["start"] + cell["span"] == columns)):
+        for side, outer, inner, first in (
+            ("top", "top", "insideH", row == 0),
+            ("bottom", "bottom", "insideH", last_row),
+            ("left", "left", "insideV", cell["start"] == 0),
+            ("right", "right", "insideV", cell["start"] + cell["span"] == columns),
+        ):
             alias = {"left": "start", "right": "end"}.get(side)
-            chosen = (own["borders"].get(side) or own["borders"].get(alias) or applied["borders"].get(side)
-                      or applied["borders"].get(alias))
+            chosen = (
+                own["borders"].get(side)
+                or own["borders"].get(alias)
+                or applied["borders"].get(side)
+                or applied["borders"].get(alias)
+            )
             if chosen is None:
                 borders = table["borders"]
-                chosen = borders.get(outer) or borders.get({"left": "start", "right": "end"}.get(outer)) if first else borders.get(inner)
+                chosen = (
+                    borders.get(outer) or borders.get({"left": "start", "right": "end"}.get(outer))
+                    if first
+                    else borders.get(inner)
+                )
             if chosen is not None:
                 pairs.append((f"border-{side}", border(chosen)))
         shade = own["shading"] or applied["shading"]
@@ -1126,7 +1389,12 @@ class Reader:
         own_margins = cell["props"].find(W + "tcMar") if cell["props"] is not None else None
         for side in [] if own_margins is None else own_margins:
             margins[local(side.tag)] = twips(side.get(W + "w"))
-        for side, alias, default in (("top", None, 0), ("bottom", None, 0), ("left", "start", 5.4), ("right", "end", 5.4)):
+        for side, alias, default in (
+            ("top", None, 0),
+            ("bottom", None, 0),
+            ("left", "start", 5.4),
+            ("right", "end", 5.4),
+        ):
             size = margins.get(side, margins.get(alias, default))
             pairs.append((f"padding-{side}", points(size or 0)))
         align = value(cell["props"], "vAlign")
@@ -1143,7 +1411,9 @@ class Reader:
         if cell["props"] is not None and cell["props"].find(W + "noWrap") is not None:
             pairs.append(("white-space", "nowrap"))
         run = self.run_css({**self.root_run, **applied["run"]}, self.root_run) if applied["run"] else ""
-        spans = (f' colspan="{cell["span"]}"' if cell["span"] > 1 else "") + (f' rowspan="{cell["rows"]}"' if cell["rows"] > 1 else "")
+        spans = (f' colspan="{cell["span"]}"' if cell["span"] > 1 else "") + (
+            f' rowspan="{cell["rows"]}"' if cell["rows"] > 1 else ""
+        )
         style = css(pairs) + (";" + run if run else "")
         # The table style's paragraph properties (its spacing, alignment) apply to the cell's paragraphs.
         outer, self.table_paragraph = self.table_paragraph, applied["paragraph"]
@@ -1184,7 +1454,11 @@ class Reader:
             content = self.linked(node, context)
             if not content:
                 return ""
-            target = self.package.relations(self.part).get(node.get(R + "id"), ("", True, ""))[0] if node.get(R + "id") else ""
+            target = (
+                self.package.relations(self.part).get(node.get(R + "id"), ("", True, ""))[0]
+                if node.get(R + "id")
+                else ""
+            )
             if node.get(W + "anchor"):
                 target += "#" + node.get(W + "anchor")
             return link(content, target, node.get(W + "tooltip", ""))
@@ -1289,7 +1563,9 @@ class Reader:
         if tag == W + "noBreakHyphen":
             return "\u2011"
         if tag == W + "sym":
-            code = int(node.get(W + "char", "0"), 16) if re.fullmatch(r"[0-9A-Fa-f]{1,4}", node.get(W + "char", "")) else 0
+            code = (
+                int(node.get(W + "char", "0"), 16) if re.fullmatch(r"[0-9A-Fa-f]{1,4}", node.get(W + "char", "")) else 0
+            )
             return symbol(node.get(W + "font", ""), code) if code else ""
         if tag == W + "ruby":
             base, text = node.find(W + "rubyBase"), node.find(W + "rt")
@@ -1317,8 +1593,11 @@ class Reader:
         index = notes.index(ident) + 1
         if kind == "comment":
             mark = f"[메모 {index}]"
-            return f'<sup class="comment">{mark}</sup>' if self.in_link() else \
-                f'<sup class="comment"><a href="#comment-{index}">{mark}</a></sup>'
+            return (
+                f'<sup class="comment">{mark}</sup>'
+                if self.in_link()
+                else f'<sup class="comment"><a href="#comment-{index}">{mark}</a></sup>'
+            )
         marks = self.marks[kind]
         if node.get(W + "customMarkFollows", "0").lower() in ("1", "true", "on"):
             # The mark is the text that follows in the run, such as *: run() links it to the note.
@@ -1386,14 +1665,17 @@ class Reader:
                     context.floats.append(f'<div class="textbox">{self.blocks(child)}</div>')
                 elif tag in (PIC + "pic", A + "blipFill"):
                     extent = child.find(f"{PIC}spPr/{A}xfrm/{A}ext")
-                    found = (number(extent.get("cx"), 0), number(extent.get("cy"), 0)) if extent is not None else own_size
+                    found = (
+                        (number(extent.get("cx"), 0), number(extent.get("cy"), 0)) if extent is not None else own_size
+                    )
                     html.append(self.picture(child, found, label or name))
                 elif tag == C + "chart":
                     context.floats.append(self.chart(child.get(R + "id"), label or name))
                 elif tag == DGM + "relIds":
                     picture = self.smartart_picture(child, own_size[0] / EMU_PX, own_size[1] / EMU_PX, label)
-                    context.floats.append(f"<figure>{picture}</figure>" if picture
-                                          else self.smartart(child.get(R + "dm"), label or name))
+                    context.floats.append(
+                        f"<figure>{picture}</figure>" if picture else self.smartart(child.get(R + "dm"), label or name)
+                    )
                 elif tag == MC + "AlternateContent":
                     chosen = branch(child)
                     if chosen is not None:
@@ -1402,7 +1684,11 @@ class Reader:
                     walk(child, own_size)
 
         walk(data, size)
-        if not html and len(context.floats) == floats and data.get("uri", "").endswith(("/picture", "/chart", "/diagram")):
+        if (
+            not html
+            and len(context.floats) == floats
+            and data.get("uri", "").endswith(("/picture", "/chart", "/diagram"))
+        ):
             html.append(images.missing(f"[개체: {label or name or '그림'}]"))
         return "".join(html)
 
@@ -1506,6 +1792,7 @@ class Reader:
             if index not in kept:
                 return images.missing(f"[그림: {alt}]")
             return images.img(kind, data, alt, width, height, style)
+
         return PICTURE.sub(picture, html)
 
     def picture_source(self, ident):
@@ -1513,7 +1800,9 @@ class Reader:
         found, reason, detail = self.fetch(ident)
         if found is not None:
             return found
-        return {"linked": f"[연결된 그림: {detail}]", "format": f"[그림 ({detail}, 표시할 수 없는 형식)]"}.get(reason, "[그림]")
+        return {"linked": f"[연결된 그림: {detail}]", "format": f"[그림 ({detail}, 표시할 수 없는 형식)]"}.get(
+            reason, "[그림]"
+        )
 
     def box_text(self, content):
         """(XHTML, plain text) of a text box's content (w:txbxContent), for the text inside a painted shape: its
@@ -1523,7 +1812,9 @@ class Reader:
             html = self.blocks(content)
         finally:
             self.direct -= 1
-        plain = " ".join("".join(item.text or "" for item in paragraph.iter(W + "t")) for paragraph in content.iter(W + "p"))
+        plain = " ".join(
+            "".join(item.text or "" for item in paragraph.iter(W + "t")) for paragraph in content.iter(W + "p")
+        )
         return drawing.xhtml(html), plain
 
     # Painted drawings -------------------------------------------------------------------------
@@ -1536,8 +1827,11 @@ class Reader:
                 data = item.find(f"{A}graphic/{A}graphicData")
                 if data is not None and data.get("uri") in SHAPE_DATA:
                     return True
-            elif item.tag in VML_SHAPES and style_of(item.get("style")).get("position") == "absolute" \
-                    and (item.find(V + "imagedata") is None or item.find(V + "textbox") is not None):
+            elif (
+                item.tag in VML_SHAPES
+                and style_of(item.get("style")).get("position") == "absolute"
+                and (item.find(V + "imagedata") is None or item.find(V + "textbox") is not None)
+            ):
                 return True
         return False
 
@@ -1547,19 +1841,26 @@ class Reader:
         sheet = self.sheet
         column = sheet["width"] - sheet["left"] - sheet["right"]
         horizontal = HORIZONTAL_FRAMES.get(horizontal, horizontal) or "column"
-        start, span = {"page": (-sheet["left"], sheet["width"]), "leftMargin": (-sheet["left"], sheet["left"]),
-                       "insideMargin": (-sheet["left"], sheet["left"]), "rightMargin": (column, sheet["right"]),
-                       "outsideMargin": (column, sheet["right"])}.get(horizontal, (0.0, column))
+        start, span = {
+            "page": (-sheet["left"], sheet["width"]),
+            "leftMargin": (-sheet["left"], sheet["left"]),
+            "insideMargin": (-sheet["left"], sheet["left"]),
+            "rightMargin": (column, sheet["right"]),
+            "outsideMargin": (column, sheet["right"]),
+        }.get(horizontal, (0.0, column))
         aligned = {"left": 0.0, "inside": 0.0, "center": (span - w) / 2, "right": span - w, "outside": span - w}
         x = start + (aligned.get(x_align, 0.0) if x_align else (x_offset or 0.0))
         vertical = VERTICAL_FRAMES.get(vertical, vertical) or "paragraph"
         if vertical in ("paragraph", "line"):
             return x, y_offset or 0.0, "paragraph"
         height = sheet["height"]
-        start, span = {"page": (0.0, height), "topMargin": (0.0, sheet["top"]), "insideMargin": (0.0, sheet["top"]),
-                       "bottomMargin": (height - sheet["bottom"], sheet["bottom"]),
-                       "outsideMargin": (height - sheet["bottom"], sheet["bottom"])}.get(
-            vertical, (sheet["top"], height - sheet["top"] - sheet["bottom"]))
+        start, span = {
+            "page": (0.0, height),
+            "topMargin": (0.0, sheet["top"]),
+            "insideMargin": (0.0, sheet["top"]),
+            "bottomMargin": (height - sheet["bottom"], sheet["bottom"]),
+            "outsideMargin": (height - sheet["bottom"], sheet["bottom"]),
+        }.get(vertical, (sheet["top"], height - sheet["top"] - sheet["bottom"]))
         aligned = {"top": 0.0, "inside": 0.0, "center": (span - h) / 2, "bottom": span - h, "outside": span - h}
         return x, start + (aligned.get(y_align, 0.0) if y_align else (y_offset or 0.0)), "page"
 
@@ -1567,23 +1868,34 @@ class Reader:
         """The Piece of a floating drawing (wp:anchor), placed as Word places it."""
         spot = anchor.find(WP + "simplePos")
         if anchor.get("simplePos", "0").lower() in ("1", "true") and spot is not None:
-            x, y, frame = number(spot.get("x"), 0) / EMU_PX - self.sheet["left"], number(spot.get("y"), 0) / EMU_PX, "page"
+            x, y, frame = (
+                number(spot.get("x"), 0) / EMU_PX - self.sheet["left"],
+                number(spot.get("y"), 0) / EMU_PX,
+                "page",
+            )
         else:
+
             def position(name):
                 found = anchor.find(WP + name)
                 offset = None if found is None else found.find(WP + "posOffset")
                 align = None if found is None else found.find(WP + "align")
-                return (None if found is None else found.get("relativeFrom"),
-                        None if offset is None else number(offset.text, 0) / EMU_PX,
-                        None if align is None else (align.text or "").strip() or None)
+                return (
+                    None if found is None else found.get("relativeFrom"),
+                    None if offset is None else number(offset.text, 0) / EMU_PX,
+                    None if align is None else (align.text or "").strip() or None,
+                )
+
             x, y, frame = self.place(*position("positionH"), *position("positionV"), w, h)
         # Paint order: behind the text first, then by Word's own order.
-        z = number(anchor.get("relativeHeight"), 0) - (2 ** 32 if anchor.get("behindDoc", "0").lower() in ("1", "true") else 0)
+        z = number(anchor.get("relativeHeight"), 0) - (
+            2**32 if anchor.get("behindDoc", "0").lower() in ("1", "true") else 0
+        )
 
         def paint(canvas):
             if label:
                 canvas.labels.append(label)
             self.painter.top(canvas, element, x, y, w, h)
+
         box = self.plain_box(element, w, h)
         return Piece(z, frame, paint, box, box is not None and wordy(element.find(f"{WPS}txbx/{W}txbxContent")))
 
@@ -1606,6 +1918,7 @@ class Reader:
             if label:
                 canvas.labels.append(label)
             self.painter.top(canvas, element, 0.0, 0.0, w, h)
+
         return self.painted([Piece(0.0, "paragraph", paint)])
 
     def painted(self, pieces, placed=False):
@@ -1635,7 +1948,11 @@ class Reader:
             token, _, element, w, h = context.inline[0]
             if not visible(content.replace(token, "")):
                 x = self.aligned(context.props, w)
-                pieces.append(Piece(0.0, "paragraph", lambda canvas: self.painter.picture(canvas, element, Matrix(), (x, 0.0, w, h))))
+                pieces.append(
+                    Piece(
+                        0.0, "paragraph", lambda canvas: self.painter.picture(canvas, element, Matrix(), (x, 0.0, w, h))
+                    )
+                )
                 content = content.replace(token, "")
         for token, html, *_ in context.inline:
             content = content.replace(token, html)
@@ -1681,6 +1998,7 @@ class Reader:
         def paint():
             for item in tree:
                 self.painter.item(canvas, item, Matrix(), (0.0, 0.0, 1.0, 1.0, 0.0, 0.0), None, 0)
+
         try:
             # Pictures in SmartArt belong to its drawing part.
             self.in_part(target, paint)
@@ -1716,30 +2034,47 @@ class Reader:
         picture, content = shape.find(V + "imagedata"), shape.find(f"{V}textbox/{W}txbxContent")
         w, h = Vml.size(shape)
         look = None if content is None else vml_box_css(shape, self.vml_painter.types, w, h)
-        box = None if look is None else (lambda: f'<div class="textbox" style="{attribute(look)}">{self.blocks(content)}</div>')
+        box = (
+            None
+            if look is None
+            else (lambda: f'<div class="textbox" style="{attribute(look)}">{self.blocks(content)}</div>')
+        )
         floating = style.get("position") == "absolute"
         if floating and context.composing:
+
             def position(axis, edge):
                 align = (style.get(f"mso-position-{axis}") or "").strip()
-                return (style.get(f"mso-position-{axis}-relative", "text"),
-                        vml_length(style.get(f"margin-{edge}")) + vml_length(style.get(edge)),
-                        None if align in ("", "absolute") else align)
+                return (
+                    style.get(f"mso-position-{axis}-relative", "text"),
+                    vml_length(style.get(f"margin-{edge}")) + vml_length(style.get(edge)),
+                    None if align in ("", "absolute") else align,
+                )
+
             x, y, frame = self.place(*position("horizontal", "left"), *position("vertical", "top"), w, h)
-            context.pieces.append(Piece(number(style.get("z-index"), 0), frame,
-                                        lambda canvas: self.vml_painter.top(canvas, shape, x, y), box,
-                                        box is not None and wordy(content)))
+            context.pieces.append(
+                Piece(
+                    number(style.get("z-index"), 0),
+                    frame,
+                    lambda canvas: self.vml_painter.top(canvas, shape, x, y),
+                    box,
+                    box is not None and wordy(content),
+                )
+            )
             return ""
         if picture is not None and content is None:
             label = picture.get(O + "title") or (f"삽입된 개체: {program}" if program else "")
             width, height = vml_size(shape.get("style"))
             # VML crops a picture by shares of its sides, as fixed-point (5243f) or plain fractions.
-            crop = images.crop_css(*(vml_fraction(picture.get(f"crop{side}"))
-                                     for side in ("top", "right", "bottom", "left")))
+            crop = images.crop_css(
+                *(vml_fraction(picture.get(f"crop{side}")) for side in ("top", "right", "bottom", "left"))
+            )
             return self.image(picture.get(R + "id") or picture.get(O + "relid"), label, width, height, crop)
         if box is not None:
             context.floats.append(box())
             return ""
-        found = self.painted([Piece(0.0, "paragraph", lambda canvas: self.vml_painter.top(canvas, shape, 0.0, 0.0), box)])
+        found = self.painted(
+            [Piece(0.0, "paragraph", lambda canvas: self.vml_painter.top(canvas, shape, 0.0, 0.0), box)]
+        )
         if floating:
             context.floats.append(found)
             return ""
@@ -1752,14 +2087,20 @@ class Reader:
         if chart is None:
             return f"<p>{images.missing(f'[차트: {label}]' if label else '[차트]')}</p>"
         caption = chart.find(C + "title")
-        title = " ".join("".join(item.text or "" for item in caption.iter(A + "t")).split()) if caption is not None else ""
+        title = (
+            " ".join("".join(item.text or "" for item in caption.iter(A + "t")).split()) if caption is not None else ""
+        )
         plot = chart.find(C + "plotArea")
         groups = [group for group in ([] if plot is None else plot) if local(group.tag) in CHART_KINDS]
         series, labels = [], {}
         for group in groups:
             for item in group.findall(C + "ser"):
                 caption = item.find(C + "tx")
-                name = " ".join("".join(point.text or "" for point in caption.iter(C + "v")).split()) if caption is not None else ""
+                name = (
+                    " ".join("".join(point.text or "" for point in caption.iter(C + "v")).split())
+                    if caption is not None
+                    else ""
+                )
                 categories = item.find(C + "cat") if item.find(C + "cat") is not None else item.find(C + "xVal")
                 amounts = item.find(C + "val") if item.find(C + "val") is not None else item.find(C + "yVal")
                 for index, text in chart_points(categories).items():
@@ -1778,7 +2119,9 @@ class Reader:
         children = {}
         for link_ in root.iter(DGM + "cxn"):
             if link_.get("type", "parOf") == "parOf":
-                children.setdefault(link_.get("srcId"), []).append((number(link_.get("srcOrd"), 0), link_.get("destId")))
+                children.setdefault(link_.get("srcId"), []).append(
+                    (number(link_.get("srcOrd"), 0), link_.get("destId"))
+                )
         top = next((ident_ for ident_, item in points_.items() if item.get("type") == "doc"), None)
 
         def text(item):
@@ -1815,8 +2158,11 @@ class Reader:
 
     def notes_html(self):
         html = []
-        for kind, part_kind, title, tag in (("footnote", "footnotes", "각주", "footnote"),
-                                            ("endnote", "endnotes", "미주", "endnote"), ("comment", "comments", "메모", "comment")):
+        for kind, part_kind, title, tag in (
+            ("footnote", "footnotes", "각주", "footnote"),
+            ("endnote", "endnotes", "미주", "endnote"),
+            ("comment", "comments", "메모", "comment"),
+        ):
             name = self.package.related("/word/document.xml", part_kind) or f"/word/{part_kind}.xml"
             root = self.package.xml(name)
             if root is None or not self.notes[kind]:
@@ -1833,13 +2179,18 @@ class Reader:
                     continue
                 content = self.in_part(name, lambda: self.blocks(item))
                 if kind == "comment":
-                    author = " · ".join(part for part in (item.get(W + "author", ""), (item.get(W + "date") or "")[:10]) if part)
+                    author = " · ".join(
+                        part for part in (item.get(W + "author", ""), (item.get(W + "date") or "")[:10]) if part
+                    )
                     content = (f'<p class="caption">{escape(author)}</p>' if author else "") + content
-                entries.append(f'<li id="{kind}-{index}"{note_mark(self.marks.get(kind, {}).get(ident), index)}>'
-                               f"{content}</li>")
+                entries.append(
+                    f'<li id="{kind}-{index}"{note_mark(self.marks.get(kind, {}).get(ident), index)}>{content}</li>'
+                )
             if entries:
                 kind_attribute = ' type="i"' if kind == "endnote" else ""
-                html.append(f'<div class="notes"><p class="caption">{title}</p><ol{kind_attribute}>{"".join(entries)}</ol></div>')
+                html.append(
+                    f'<div class="notes"><p class="caption">{title}</p><ol{kind_attribute}>{"".join(entries)}</ol></div>'
+                )
         return "".join(html)
 
     def headers_footers(self, body):
@@ -1862,8 +2213,10 @@ class Reader:
                 content = self.in_part(target, lambda: self.blocks(root))
                 if visible(content):
                     found[kind].append(content)
-        return ("".join(f'<div class="header">{item}</div>' for item in found["header"]),
-                "".join(f'<div class="footer">{item}</div>' for item in found["footer"]))
+        return (
+            "".join(f'<div class="header">{item}</div>' for item in found["header"]),
+            "".join(f'<div class="footer">{item}</div>' for item in found["footer"]),
+        )
 
 
 def empty_cells(span):
@@ -1900,11 +2253,14 @@ def vml_size(style):
     """(width, height) in pixels of a VML shape's style, or (None, None)."""
     sizes = {}
     for name, amount, unit in re.findall(r"(width|height)\s*:\s*([\d.]+)\s*(pt|px|in|cm|mm)?", style or ""):
-        sizes[name] = number(amount, 0) * {"pt": 4 / 3, "px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4, "": 1}[unit]
+        sizes[name] = (
+            number(amount, 0) * {"pt": 4 / 3, "px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4, "": 1}[unit]
+        )
     return sizes.get("width"), sizes.get("height")
 
 
 # --- Equations ------------------------------------------------------------------------------------
+
 
 def math(node):
     """An Office equation as MathML, with its linear form as alttext for search."""
@@ -1929,7 +2285,9 @@ def equation(node, depth=0):
         return default if item is None else item.get(M + "val", default)
 
     if tag == "r":
-        text = "".join(item.text or "" for item in node.iter(M + "t")) or "".join(item.text or "" for item in node.iter(W + "t"))
+        text = "".join(item.text or "" for item in node.iter(M + "t")) or "".join(
+            item.text or "" for item in node.iter(W + "t")
+        )
         normal = node.find(f"{M}rPr/{M}nor") is not None
         return tokens(text, normal), text
     if tag == "f":
@@ -1943,7 +2301,10 @@ def equation(node, depth=0):
         if tag == "sSub":
             return f"<msub>{base}{low}</msub>", f"{base_text}_({low_text})"
         if tag == "sPre":
-            return f"<mmultiscripts>{base}<mprescripts></mprescripts>{low}{high}</mmultiscripts>", f"_({low_text})^({high_text}){base_text}"
+            return (
+                f"<mmultiscripts>{base}<mprescripts></mprescripts>{low}{high}</mmultiscripts>",
+                f"_({low_text})^({high_text}){base_text}",
+            )
         return f"<msubsup>{base}{low}{high}</msubsup>", f"{base_text}_({low_text})^({high_text})"
     if tag == "rad":
         (base, base_text), (degree, degree_text) = part("e"), part("deg")
@@ -1955,14 +2316,18 @@ def equation(node, depth=0):
         (base, base_text), (low, low_text), (high, high_text) = part("e"), part("sub"), part("sup")
         operator = f"<mo>{escape(char)}</mo>"
         limits = "munderover" if prop("limLoc") == "undOvr" or char in "∑∏∐⋃⋂⋁⋀" else "msubsup"
-        return (f"<mrow><{limits}>{operator}{low}{high}</{limits}>{base}</mrow>",
-                f"{char}_({low_text})^({high_text}) {base_text}")
+        return (
+            f"<mrow><{limits}>{operator}{low}{high}</{limits}>{base}</mrow>",
+            f"{char}_({low_text})^({high_text}) {base_text}",
+        )
     if tag == "d":
         opening, closing, separator = prop("begChr", "("), prop("endChr", ")"), prop("sepChr", "|")
         found = [equation(child, depth + 1) for child in node.findall(M + "e")]
         middle = f"<mo>{escape(separator)}</mo>".join(markup for markup, _ in found)
-        return (f"<mrow><mo>{escape(opening)}</mo>{middle}<mo>{escape(closing)}</mo></mrow>",
-                opening + separator.join(text for _, text in found) + closing)
+        return (
+            f"<mrow><mo>{escape(opening)}</mo>{middle}<mo>{escape(closing)}</mo></mrow>",
+            opening + separator.join(text for _, text in found) + closing,
+        )
     if tag == "func":
         (name, name_text), (base, base_text) = part("fName"), part("e")
         return f"<mrow>{name}<mo>&#x2061;</mo>{base}</mrow>", f"{name_text} {base_text}"
@@ -1987,8 +2352,10 @@ def equation(node, depth=0):
         return f"<mtable>{''.join(rows)}</mtable>", "[" + "; ".join(texts) + "]"
     if tag == "eqArr":
         cells = [equation(child, depth + 1) for child in node.findall(M + "e")]
-        return ("<mtable>" + "".join(f"<mtr><mtd>{markup}</mtd></mtr>" for markup, _ in cells) + "</mtable>",
-                "; ".join(text for _, text in cells))
+        return (
+            "<mtable>" + "".join(f"<mtr><mtd>{markup}</mtd></mtr>" for markup, _ in cells) + "</mtable>",
+            "; ".join(text for _, text in cells),
+        )
     if tag in ("phant", "t"):
         return "", ""
     # e, num, den, sub, sup, deg, lim, fName, box, borderBox, oMath and the like: a row of their children.
@@ -2008,7 +2375,11 @@ def tokens(text, normal=False):
         if token[0].isdigit():
             markup.append(f"<mn>{escape(token)}</mn>")
         elif token[0].isalpha():
-            markup.append("".join(f"<mi>{escape(char)}</mi>" for char in token) if len(token) <= 3 else f"<mi>{escape(token)}</mi>")
+            markup.append(
+                "".join(f"<mi>{escape(char)}</mi>" for char in token)
+                if len(token) <= 3
+                else f"<mi>{escape(token)}</mi>"
+            )
         else:
             markup.append(f"<mo>{escape(token)}</mo>")
     return "".join(markup)

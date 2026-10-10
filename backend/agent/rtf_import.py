@@ -1,4 +1,5 @@
 """RTF files as Wiki documents: one HTML page per file, read by a hidden Word (word_converter.py)."""
+
 from .file_import import FileImporter
 from .word_converter import WordConverter, capabilities
 

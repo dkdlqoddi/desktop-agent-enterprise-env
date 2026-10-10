@@ -7,6 +7,7 @@ entry nor drops one. Without `limit` and `cursor` each answers as it always did.
 
 On a page an import too long for one document (parts.py) is one entry: the first of its documents in the order of the
 page, with the import's live documents in `parts`, as a document window gets them (Service.document)."""
+
 import base64
 import binascii
 import json
@@ -70,8 +71,11 @@ def period(p):
     """The update time range a request filters by: updated_from (included) and updated_to (left out), as the UTC
     times the Wiki keeps (service.now), or None for an end it leaves open."""
     from .assistant import timestamp
-    return (timestamp(p.get("updated_from"), "수정 시각 시작(updated_from)"),
-            timestamp(p.get("updated_to"), "수정 시각 끝(updated_to)"))
+
+    return (
+        timestamp(p.get("updated_from"), "수정 시각 시작(updated_from)"),
+        timestamp(p.get("updated_to"), "수정 시각 끝(updated_to)"),
+    )
 
 
 class Filters:
@@ -95,6 +99,7 @@ class Filters:
     def sql(self, d="d"):
         """An SQL condition on the documents aliased `d`, with its arguments."""
         from .service import SOURCES
+
         clauses, args = [], []
         if self.source:
             # The source a document shows is the first it has, in the order of service.SOURCES (Service.attach).
@@ -119,12 +124,15 @@ def imports(db, ids):
     """The imports saved in parts that the documents `ids` belong to: {id: (source table, the values of its key)}."""
     from .search import chunks
     from .service import SOURCES
+
     found = {}
     for table, _, _ in SOURCES:
         columns = SOURCE_TABLES[table][1]
         for chunk in chunks(ids):
-            for row in db.execute(f"SELECT doc_id,{columns} FROM {table} WHERE doc_id IN ({','.join('?' * len(chunk))}) "
-                                  "AND parts>1", chunk):
+            for row in db.execute(
+                f"SELECT doc_id,{columns} FROM {table} WHERE doc_id IN ({','.join('?' * len(chunk))}) AND parts>1",
+                chunk,
+            ):
                 found.setdefault(row[0], (table, tuple(row)[1:]))
     return found
 
@@ -134,9 +142,11 @@ def members(db, table, key, filters=None):
     are found by the import's key; the + keeps SQLite from finding the live documents first (search.LIVE_ROW)."""
     where = " AND ".join(f"s.{column.strip()}=?" for column in SOURCE_TABLES[table][1].split(","))
     test, args = filters.sql("d") if filters else ("1", [])
-    return db.execute(f"""SELECT s.doc_id AS id, s.part, d.title, d.updated_at, ({test}) AS passes FROM {table} s
+    return db.execute(
+        f"""SELECT s.doc_id AS id, s.part, d.title, d.updated_at, ({test}) AS passes FROM {table} s
         JOIN documents d ON d.id=s.doc_id WHERE {where} AND +d.deleted_at IS NULL ORDER BY s.part""",
-                      [*args, *key]).fetchall()
+        [*args, *key],
+    ).fetchall()
 
 
 def parts(found):

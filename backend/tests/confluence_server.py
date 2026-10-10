@@ -12,6 +12,7 @@ Each page has a version number (version), which changes with what the page holds
 API gives it (/rest/api/content/N), and so does the subpage list asked to (expand=version) and the content search by
 space and title (page N is titled "Page N"). The next `throttled` REST requests and the next `page_throttled` page
 requests are answered 429 Too Many Requests with a Retry-After of `retry_after` seconds."""
+
 import json
 import re
 import threading
@@ -34,9 +35,11 @@ FORM_PAGE = """<!doctype html><html><head><title>Confluence 로그인</title></h
 </form></div></body></html>"""
 
 # The site's start page names the signed-in user, as Confluence pages do.
-DASHBOARD = ('<!doctype html><html><head><meta name="ajs-context-path" content="/confluence">'
-             '<meta name="ajs-remote-user" content="{user}"><title>대시보드</title></head>'
-             '<body><h1>Confluence 대시보드</h1></body></html>')
+DASHBOARD = (
+    '<!doctype html><html><head><meta name="ajs-context-path" content="/confluence">'
+    '<meta name="ajs-remote-user" content="{user}"><title>대시보드</title></head>'
+    "<body><h1>Confluence 대시보드</h1></body></html>"
+)
 
 BODY = """<p>본문 ID 한국어 &amp; Confluence 지식</p><table><tr><th>기준</th><td>내용</td></tr></table><pre>if (x &lt; 3) {
   return x;
@@ -65,7 +68,9 @@ def page(ident, rendered):
     # Server/Data Center ships #main-content in the HTML; Cloud-like pages only render it with scripts.
     if rendered:
         inner = '<div class="ak-renderer-document">' + body.replace("본문", "렌더링된 본문", 1) + "</div>"
-        content = f"<div id=\"root\"></div><script>document.getElementById('root').innerHTML = {json.dumps(inner)};</script>"
+        content = (
+            f"<div id=\"root\"></div><script>document.getElementById('root').innerHTML = {json.dumps(inner)};</script>"
+        )
     else:
         content = f'<div id="main-content">{body}</div>'
     return PAGE.replace("ID", ident).replace("CONTENT", content)
@@ -137,12 +142,16 @@ class ConfluenceServer:
             return self.send(handler, 200, "<h1>로그인 완료</h1>", headers={"Set-Cookie": SESSION_COOKIE})
         if url.path == "/confluence/sso/callback" and query.get("ticket") == "ok":
             target = urljoin(self.origin + "/", query.get("return") or "/")
-            return self.redirect(handler, target if target.startswith(self.origin + "/") else self.origin, SESSION_COOKIE)
+            return self.redirect(
+                handler, target if target.startswith(self.origin + "/") else self.origin, SESSION_COOKIE
+            )
         if url.path == "/confluence/login.action":
             return self.handle_form(handler, method, query)
         signed_in = "session=valid" in (handler.headers.get("Cookie") or "")
         if self.sso and not signed_in:
-            return self.redirect(handler, f"{self.sso_origin}/sso/login?return={quote(self.origin + handler.path, safe='')}")
+            return self.redirect(
+                handler, f"{self.sso_origin}/sso/login?return={quote(self.origin + handler.path, safe='')}"
+            )
         if self.form and not signed_in:
             return self.redirect(handler, f"/confluence/login.action?os_destination={quote(handler.path, safe='')}")
         if self.auth and not signed_in:
@@ -161,21 +170,29 @@ class ConfluenceServer:
             start = query.get("start", "0")
             ids = (["2"] if start == "0" else ["4"]) if api[1] == "1" else ["3", "1"] if api[1] == "2" else []
             links = {"next": "/rest/api/content/1/child/page?start=1&limit=1"} if api[1] == "1" and start == "0" else {}
-            results = [{"id": ident, **({"version": {"number": self.version(ident)}} if versioned else {})}
-                       for ident in ids]
+            results = [
+                {"id": ident, **({"version": {"number": self.version(ident)}} if versioned else {})} for ident in ids
+            ]
             return self.send(handler, 200, json.dumps({"results": results, "_links": links}), "application/json")
         content = re.fullmatch(r"/confluence/rest/api/content/(\d+)", url.path)
         if content:
             if self.forbidden and content[1] == "2":
                 return self.send(handler, 403, "Forbidden")
-            return self.send(handler, 200, json.dumps({"id": content[1], "type": "page",
-                                                       "version": {"number": self.version(content[1])}}),
-                             "application/json")
+            return self.send(
+                handler,
+                200,
+                json.dumps({"id": content[1], "type": "page", "version": {"number": self.version(content[1])}}),
+                "application/json",
+            )
         if url.path == "/confluence/rest/api/content":  # The content search by space and title.
             titled = re.fullmatch(r"Page (\d+)", query.get("title", ""))
             found = [titled[1]] if titled and query.get("spaceKey") == "SPACE" else []
-            return self.send(handler, 200, json.dumps({"results": [
-                {"id": ident, "version": {"number": self.version(ident)}} for ident in found]}), "application/json")
+            return self.send(
+                handler,
+                200,
+                json.dumps({"results": [{"id": ident, "version": {"number": self.version(ident)}} for ident in found]}),
+                "application/json",
+            )
         ident = query.get("pageId") or ("1" if url.path.startswith("/confluence/display/") else None)
         if not ident:
             return self.send(handler, 404, "Not found")
@@ -198,8 +215,12 @@ class ConfluenceServer:
         attempt = {"id": form.get("id"), "password": form.get("pw")}
         self.logins.append(attempt)
         if attempt != self.credentials:
-            return self.send(handler, 200, SSO_PAGE.format(action=action, message="ID 또는 비밀번호가 올바르지 않습니다."))
-        self.redirect(handler, f"{self.origin}/confluence/sso/callback?ticket=ok&return={quote(query.get('return', ''), safe='')}")
+            return self.send(
+                handler, 200, SSO_PAGE.format(action=action, message="ID 또는 비밀번호가 올바르지 않습니다.")
+            )
+        self.redirect(
+            handler, f"{self.origin}/confluence/sso/callback?ticket=ok&return={quote(query.get('return', ''), safe='')}"
+        )
 
     def handle_form(self, handler, method, query):
         destination = query.get("os_destination") or "/confluence/"
@@ -210,6 +231,8 @@ class ConfluenceServer:
         attempt = {"id": form.get("os_username"), "password": form.get("os_password")}
         self.logins.append(attempt)
         if attempt != self.credentials:
-            return self.send(handler, 200, FORM_PAGE.format(action=action, message="사용자 이름 또는 비밀번호가 올바르지 않습니다."))
+            return self.send(
+                handler, 200, FORM_PAGE.format(action=action, message="사용자 이름 또는 비밀번호가 올바르지 않습니다.")
+            )
         local = destination.startswith("/") and not destination.startswith("//")
         self.redirect(handler, self.origin + destination if local else f"{self.origin}/confluence/", SESSION_COOKIE)

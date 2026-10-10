@@ -24,6 +24,7 @@ Extracted keywords are canonical lowercase English, and the analysis keeps other
 within one, matches as the keyword itself would, so a Korean query finds a document whose keyword is English and the
 other way round. The literal word search (strict) leaves keywords and their aliases out, as it does all AI metadata.
 """
+
 import itertools
 import json
 import math
@@ -69,15 +70,82 @@ SNIPPET_CHARS = 180
 EVIDENCE_CHARS = 4_500  # The assistant reads this much of a document without an outline...
 SECTION_CHARS = 6_000  # ...this much of the chosen sections of a long one...
 EVIDENCE_TOTAL = 30_000  # ...and this much in all.
-SOURCE_LABELS = {"rtf": "RTF 문서", "office": "Office", "image": "이미지", "text": "텍스트", "confluence": "Confluence",
-                 "jira": "JIRA", "markdown": "Markdown"}
-PARTICLES = ("에서는", "으로는", "에게서", "에서", "에게", "한테", "으로", "까지", "부터", "보다", "처럼",
-             "이랑", "하고", "은", "는", "이", "가", "을", "를", "의", "에", "로", "와", "과", "도", "만")
+SOURCE_LABELS = {
+    "rtf": "RTF 문서",
+    "office": "Office",
+    "image": "이미지",
+    "text": "텍스트",
+    "confluence": "Confluence",
+    "jira": "JIRA",
+    "markdown": "Markdown",
+}
+PARTICLES = (
+    "에서는",
+    "으로는",
+    "에게서",
+    "에서",
+    "에게",
+    "한테",
+    "으로",
+    "까지",
+    "부터",
+    "보다",
+    "처럼",
+    "이랑",
+    "하고",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "의",
+    "에",
+    "로",
+    "와",
+    "과",
+    "도",
+    "만",
+)
 # Particles that also end many nouns (평가, 민주주의, 정확도, 회로): a word ending in one is searched as it is as well.
 AMBIGUOUS = {"이", "가", "의", "에", "로", "와", "과", "도", "만"}
-FILLER = {"무엇", "뭐야", "어떤", "어떻게", "언제", "어디", "누구", "관련", "관련된", "내용", "문서", "자료",
-          "찾아줘", "찾아", "알려줘", "알려", "정리해줘", "보여줘", "있는", "있어", "있나요", "했던", "하는",
-          "해줘", "주세요", "대한", "대해", "그리고", "the", "and", "for", "what", "how", "about", "with"}
+FILLER = {
+    "무엇",
+    "뭐야",
+    "어떤",
+    "어떻게",
+    "언제",
+    "어디",
+    "누구",
+    "관련",
+    "관련된",
+    "내용",
+    "문서",
+    "자료",
+    "찾아줘",
+    "찾아",
+    "알려줘",
+    "알려",
+    "정리해줘",
+    "보여줘",
+    "있는",
+    "있어",
+    "있나요",
+    "했던",
+    "하는",
+    "해줘",
+    "주세요",
+    "대한",
+    "대해",
+    "그리고",
+    "the",
+    "and",
+    "for",
+    "what",
+    "how",
+    "about",
+    "with",
+}
 # ASCII punctuation, which the Markdown of an imported page may escape (R\&D).
 PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 # Terms at least this long are looked up in the trigram index; shorter ones have no trigram to look up.
@@ -107,15 +175,32 @@ def words(sentence):
         forms = [token]
         for particle in PARTICLES:
             if token.endswith(particle) and len(token) > len(particle) + 1 and re.search("[가-힣]", token):
-                forms = [token, token[:-len(particle)]] if particle in AMBIGUOUS else [token[:-len(particle)]]
+                forms = [token, token[: -len(particle)]] if particle in AMBIGUOUS else [token[: -len(particle)]]
                 break
         found += [form for form in forms if len(form) >= 2 and form not in FILLER]
     return list(dict.fromkeys(found))
 
 
 # Korean verb endings of search words (도입한 → 도입); the stem is searched besides the word itself.
-ENDINGS = ("했습니다", "합니다", "했던", "하는", "하기", "했다", "해서", "하고", "하여", "되는", "됐던",
-           "한", "할", "함", "된", "될", "됨")
+ENDINGS = (
+    "했습니다",
+    "합니다",
+    "했던",
+    "하는",
+    "하기",
+    "했다",
+    "해서",
+    "하고",
+    "하여",
+    "되는",
+    "됐던",
+    "한",
+    "할",
+    "함",
+    "된",
+    "될",
+    "됨",
+)
 
 
 def stem(term):
@@ -123,7 +208,7 @@ def stem(term):
     if re.fullmatch(r"[가-힣]+", term):
         for ending in ENDINGS:
             if term.endswith(ending) and len(term) - len(ending) >= 2:
-                return term[:-len(ending)]
+                return term[: -len(ending)]
     return None
 
 
@@ -159,14 +244,14 @@ def matcher(terms):
 
 def chunks(values, size=500):
     values = list(values)
-    return (values[i:i + size] for i in range(0, len(values), size))
+    return (values[i : i + size] for i in range(0, len(values), size))
 
 
 def lookup(term):
     """An FTS5 query of the trigram index for a term of TRIGRAM or more characters: up to LOOKUP of its trigrams, all of
     which every document holding the term has. The index keeps no positions, so it also finds documents that have the
     trigrams apart; the search counts the term in what it finds."""
-    grams = list(dict.fromkeys(term[i:i + 3] for i in range(len(term) - 2)))
+    grams = list(dict.fromkeys(term[i : i + 3] for i in range(len(term) - 2)))
     if len(grams) > LOOKUP:
         grams = [grams[round(i * (len(grams) - 1) / (LOOKUP - 1))] for i in range(LOOKUP)]
     return " AND ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
@@ -198,8 +283,10 @@ def snippets(content, pattern, nodes=None, count=3, width=SNIPPET_CHARS):
             start = space + 1 if 0 <= space < start + 20 else start
         end = min(len(content), start + width)
         # A word found again and again is folded once.
-        found = [folded[word] if word in folded else folded.setdefault(word, fold(word))
-                 for word in (hit.group(0) for hit in pattern.finditer(content, start, end))]
+        found = [
+            folded[word] if word in folded else folded.setdefault(word, fold(word))
+            for word in (hit.group(0) for hit in pattern.finditer(content, start, end))
+        ]
         spots.append((len(set(found)), len(found), -start, start, end, match.start()))
     chosen = []
     for *_, start, end, position in sorted(spots, reverse=True):
@@ -209,7 +296,9 @@ def snippets(content, pattern, nodes=None, count=3, width=SNIPPET_CHARS):
                 break
     result = []
     for start, end, position in sorted(chosen):
-        item = {"text": ("…" if start else "") + pageindex.plain(content[start:end]) + ("…" if end < len(content) else "")}
+        item = {
+            "text": ("…" if start else "") + pageindex.plain(content[start:end]) + ("…" if end < len(content) else "")
+        }
         section = pageindex.locate(nodes, position) if nodes else None
         if section:
             item["section"] = pageindex.path(nodes, section)
@@ -241,7 +330,7 @@ def passages(content, pattern, budget):
         found = [fold(hit.group(0)) for hit in pattern.finditer(content, start, end)] if pattern else []
         scores.append(3 * len(set(found)) + min(len(found), 10))
     if not any(scores):
-        return content[:budget - 1].rstrip() + "…"
+        return content[: budget - 1].rstrip() + "…"
     chosen, used = set(), 0
     for index in sorted(range(len(blocks)), key=lambda i: (-scores[i], i)):
         if not scores[index] and chosen:
@@ -349,15 +438,18 @@ class Search:
         maybe = defaultdict(list)
         try:
             for i in long:
-                for (rid,) in db.execute("SELECT rowid FROM document_fts WHERE document_fts MATCH ?",
-                                         (lookup(terms[i]),)):
+                for (rid,) in db.execute(
+                    "SELECT rowid FROM document_fts WHERE document_fts MATCH ?", (lookup(terms[i]),)
+                ):
                     maybe[rid].append(i)
         except sqlite3.DatabaseError:
             # An index this SQLite cannot read after all, or a damaged one: the terms are compared over the search text,
             # as without an index.
             covered, long, maybe = None, [], defaultdict(list)
         short = [i for i in range(len(terms)) if i not in long]
-        many = maybe and len(maybe) * SCAN_SHARE > (db.execute("SELECT max(id) FROM document_search").fetchone()[0] or 0)
+        many = maybe and len(maybe) * SCAN_SHARE > (
+            db.execute("SELECT max(id) FROM document_search").fetchone()[0] or 0
+        )
         if short or many or covered is None or covered < FTS_DONE:
             found = self.scanned(db, terms, strict, covered, maybe, short)
             return [found[order] for order in sorted(found)]
@@ -365,12 +457,16 @@ class Search:
         # Every term was looked up, and the index covers every row: the rows it found...
         for chunk in chunks(maybe):
             for order, ident, updated, _, rid, title, summary, length, body, *_ in tuples(
-                    db, f"""SELECT {FIELDS} FROM document_search s JOIN documents d ON d.id=s.doc_id
-                    WHERE s.id IN ({','.join('?' * len(chunk))}) AND {LIVE_ROW} AND {FRESH}""", chunk):
+                db,
+                f"""SELECT {FIELDS} FROM document_search s JOIN documents d ON d.id=s.doc_id
+                    WHERE s.id IN ({",".join("?" * len(chunk))}) AND {LIVE_ROW} AND {FRESH}""",
+                chunk,
+            ):
                 found[order] = (ident, updated, title, summary, body, length, maybe[rid])
         # ...and the documents whose search text is not fresh, made so to be counted as they are now.
         for order, ident, updated, *_, title, summary, content in tuples(
-                db, f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE} AND NOT {FRESH}"):
+            db, f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE} AND NOT {FRESH}"
+        ):
             body = search_text(content)
             found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
         return [found[order] for order in sorted(found)]
@@ -382,21 +478,27 @@ class Search:
         covers that hold a short term, and the rows it does not cover (yet) that hold any term. Python finds a word in a
         row's text as LIKE does, twice as fast, and what it finds is all measure() then counts. A live document without
         a fresh row is read itself and made so. Returns {documents.rowid: text}."""
-        live = {ident: (order, updated, revision) for order, ident, updated, revision in tuples(
-            db, f"SELECT d.rowid, d.id, d.updated_at, d.revision FROM documents d WHERE {LIVE}")}
+        live = {
+            ident: (order, updated, revision)
+            for order, ident, updated, revision in tuples(
+                db, f"SELECT d.rowid, d.id, d.updated_at, d.revision FROM documents d WHERE {LIVE}"
+            )
+        }
         some = [(i, terms[i], terms[i].encode("utf-8")) for i in short]
         every = [(i, t, t.encode("utf-8")) for i, t in enumerate(terms)]
         found, fresh = {}, set()
         for rid, ident, revision, title, summary, length, body in tuples(
-                db, "SELECT id,doc_id,revision,title,summary,length,CAST(content AS BLOB) FROM document_search"):
+            db, "SELECT id,doc_id,revision,title,summary,length,CAST(content AS BLOB) FROM document_search"
+        ):
             known = live.get(ident)
             if known is None or revision != known[2] or title is None:
                 continue  # In the trash, or not fresh: read below.
             fresh.add(ident)
             summary = "" if strict else summary or ""
             indexed = covered is not None and rid <= covered
-            look = [i for i, t, encoded in (some if indexed else every)
-                    if t in title or t in summary or encoded in body]
+            look = [
+                i for i, t, encoded in (some if indexed else every) if t in title or t in summary or encoded in body
+            ]
             if indexed and rid in maybe:
                 look = sorted(maybe[rid] + look) if look else maybe[rid]
             if look:
@@ -404,8 +506,11 @@ class Search:
         stale = [ident for ident in live if ident not in fresh]
         for chunk in chunks(stale):
             for order, ident, updated, title, summary, content in tuples(
-                    db, f"SELECT d.rowid,d.id,d.updated_at,d.title,d.summary,d.content FROM documents d WHERE {LIVE_ROW} "
-                        f"AND d.id IN ({','.join('?' * len(chunk))})", chunk):
+                db,
+                f"SELECT d.rowid,d.id,d.updated_at,d.title,d.summary,d.content FROM documents d WHERE {LIVE_ROW} "
+                f"AND d.id IN ({','.join('?' * len(chunk))})",
+                chunk,
+            ):
                 body = search_text(content)
                 found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
         return found
@@ -420,12 +525,19 @@ class Search:
         terms = [t for t in terms if t]
         if terms:
             pattern = re.compile("|".join(map(re.escape, terms)))
-            wanted.update(name for name, in tuples(db, "SELECT DISTINCT normalized FROM keyword_aliases")
-                          if pattern.search(name))
+            wanted.update(
+                name
+                for (name,) in tuples(db, "SELECT DISTINCT normalized FROM keyword_aliases")
+                if pattern.search(name)
+            )
         found = []
         for chunk in chunks(sorted(wanted)):
-            found += tuples(db, f"SELECT a.doc_id,a.keyword,a.alias,a.normalized FROM {ALIASES} "
-                                f"WHERE a.normalized IN ({','.join('?' * len(chunk))})", chunk)
+            found += tuples(
+                db,
+                f"SELECT a.doc_id,a.keyword,a.alias,a.normalized FROM {ALIASES} "
+                f"WHERE a.normalized IN ({','.join('?' * len(chunk))})",
+                chunk,
+            )
         return found
 
     def lexical(self, terms=(), keywords=(), *, strict=False, phrase=""):
@@ -448,11 +560,14 @@ class Search:
             if not strict and (terms or keywords):
                 clauses = [f"keyword IN ({','.join('?' * len(terms + keywords))})"]
                 clauses += ["keyword LIKE ? ESCAPE '\\'"] * len(terms)
-                for row in db.execute(f"SELECT k.doc_id,k.keyword FROM {KEYWORDS} WHERE " + " OR ".join(clauses),
-                                      terms + keywords + [like(t) for t in terms]):
+                for row in db.execute(
+                    f"SELECT k.doc_id,k.keyword FROM {KEYWORDS} WHERE " + " OR ".join(clauses),
+                    terms + keywords + [like(t) for t in terms],
+                ):
                     hits[row["doc_id"]].update(("keyword", k) for k in keywords if k == row["keyword"])
-                    hits[row["doc_id"]].update(("exact" if t == row["keyword"] else "partial", t)
-                                               for t in terms if t in row["keyword"])
+                    hits[row["doc_id"]].update(
+                        ("exact" if t == row["keyword"] else "partial", t) for t in terms if t in row["keyword"]
+                    )
                 # An alias matches as its keyword would: equal to a term or keyword of the search, or holding a term, it
                 # marks the document as the keyword does, under the search's own word, so the document ranks as it
                 # would had the keyword itself been typed. Its documents join the ranking below (`rest`) whatever the
@@ -470,9 +585,12 @@ class Search:
                         by_alias[ident][key] = (place, alias)
             if not strict and terms:
                 where = " OR ".join("n.summary LIKE ? ESCAPE '\\'" for _ in terms)
-                for row in db.execute(f"""SELECT n.doc_id, group_concat(n.summary, ' ') AS text FROM doc_nodes n
+                for row in db.execute(
+                    f"""SELECT n.doc_id, group_concat(n.summary, ' ') AS text FROM doc_nodes n
                         JOIN documents d ON d.id=n.doc_id AND d.revision=n.revision AND {LIVE} WHERE {where}
-                        GROUP BY n.doc_id""", [like(t) for t in terms]):
+                        GROUP BY n.doc_id""",
+                    [like(t) for t in terms],
+                ):
                     nodes[row["doc_id"]] = search_text(row["text"])
 
             encoded = {t: t.encode("utf-8") for t in terms}
@@ -493,8 +611,12 @@ class Search:
                 tf, counted, holding = [ABSENT] * len(terms), [], []
                 for i in look:
                     t = terms[i]
-                    counts = (title.count(t), summary.count(t), sections.count(t) if sections else 0,
-                              body.count(encoded[t] if binary else t))
+                    counts = (
+                        title.count(t),
+                        summary.count(t),
+                        sections.count(t) if sections else 0,
+                        body.count(encoded[t] if binary else t),
+                    )
                     if counts != ABSENT:
                         tf[i] = counts
                         counted.append(i)
@@ -506,9 +628,14 @@ class Search:
                 if check and not (len(holding) == len(terms) if strict else holding):
                     return
                 # `counted` keeps the terms counted somewhere, in order: the only ones that weigh unless a keyword matches.
-                stats[ident] = {"updated_at": updated, "length": length, "tf": tf, "counted": counted,
-                                "phrase": bool(phrase) and (phrase in title or all(tf[i][3] for i in within)
-                                                            and whole[binary] in body)}
+                stats[ident] = {
+                    "updated_at": updated,
+                    "length": length,
+                    "tf": tf,
+                    "counted": counted,
+                    "phrase": bool(phrase)
+                    and (phrase in title or all(tf[i][3] for i in within) and whole[binary] in body),
+                }
 
             if terms:
                 for item in self.texts(db, terms, strict):
@@ -516,8 +643,11 @@ class Search:
             rest = [i for i in set(hits) | set(nodes) if i not in stats]
             for chunk in chunks(rest):
                 own = {}
-                for row in tuples(db, f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE_ROW} AND d.id IN "
-                                      f"({','.join('?' * len(chunk))})", chunk):
+                for row in tuples(
+                    db,
+                    f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE_ROW} AND d.id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                ):
                     order, ident, updated, fresh, _, title, summary, length, body, *values = row
                     if not fresh:
                         title, summary, body = (search_text(value) for value in values)
@@ -537,8 +667,11 @@ class Search:
                     if s["tf"][i] != ABSENT or ("exact", terms[i]) in marks or ("partial", terms[i]) in marks:
                         found[i] += 1
         idf = [math.log(1 + (total - df + 0.5) / (df + 0.5)) for df in found]
-        keyword_idf = {k: math.log(1 + (total - n + 0.5) / (n + 0.5))
-                       for k in keywords for n in [sum(("keyword", k) in hits.get(i, ()) for i in stats)]}
+        keyword_idf = {
+            k: math.log(1 + (total - n + 0.5) / (n + 0.5))
+            for k in keywords
+            for n in [sum(("keyword", k) in hits.get(i, ()) for i in stats)]
+        }
         ranked = []
         for ident, s in stats.items():
             score, matched, marks = 0.0, [], hits.get(ident, ())
@@ -546,8 +679,9 @@ class Search:
             for i in s["counted"] if not marks else range(len(terms)):
                 term, counts = terms[i], s["tf"][i]
                 title, summary, sections, body = counts
-                weight = 2.0 * min(title, 2) + min(summary, 2) + 0.8 * min(sections, 2) + \
-                    bm25(body, s["length"], average)
+                weight = (
+                    2.0 * min(title, 2) + min(summary, 2) + 0.8 * min(sections, 2) + bm25(body, s["length"], average)
+                )
                 weight += 2.5 if ("exact", term) in marks else 1.0 if ("partial", term) in marks else 0
                 if weight:
                     score += idf[i] * weight
@@ -558,7 +692,12 @@ class Search:
                     matched.append(key)
             # Documents matching more of the search words rank higher, whole phrases higher still.
             score *= (0.5 + len(set(matched)) / len(terms + keywords)) * (1.5 if s["phrase"] else 1)
-            entry = {"id": ident, "score": score, "matched": list(dict.fromkeys(matched)), "updated_at": s["updated_at"]}
+            entry = {
+                "id": ident,
+                "score": score,
+                "matched": list(dict.fromkeys(matched)),
+                "updated_at": s["updated_at"],
+            }
             if by_alias.get(ident):
                 # A keyword named by its alias is one the document matched, which the screen marks among its keywords.
                 # It joins `matched` after the score, which counts the search's own words.
@@ -575,8 +714,9 @@ class Search:
         with self.db.connect() as db:
             rows = {}
             for chunk in chunks(ranked):
-                for row in db.execute(f"SELECT * FROM documents d WHERE {LIVE_ROW} AND id IN ({','.join('?' * len(chunk))})",
-                                      chunk):
+                for row in db.execute(
+                    f"SELECT * FROM documents d WHERE {LIVE_ROW} AND id IN ({','.join('?' * len(chunk))})", chunk
+                ):
                     rows[row["id"]] = dict(row)
             docs = self.service.attach(db, [rows[ident] for ident in ranked if ident in rows])
             for doc in docs:
@@ -585,9 +725,14 @@ class Search:
                 doc["_focus"] = focus(content, doc["_tree"], pattern)
                 doc["excerpt"] = content[:200]
                 doc["size"] = len(content)
-                doc["match"] = {"score": round(ranked[doc["id"]]["score"], 3), "matched": ranked[doc["id"]]["matched"],
-                                "snippets": snippets(content, pattern, doc["_tree"]), "sections": [],
-                                "reason": "", "selected": False}
+                doc["match"] = {
+                    "score": round(ranked[doc["id"]]["score"], 3),
+                    "matched": ranked[doc["id"]]["matched"],
+                    "snippets": snippets(content, pattern, doc["_tree"]),
+                    "sections": [],
+                    "reason": "",
+                    "selected": False,
+                }
                 if ranked[doc["id"]].get("aliases"):
                     doc["match"]["aliases"] = ranked[doc["id"]]["aliases"]
         return docs
@@ -598,12 +743,17 @@ class Search:
         query = text(p.get("query"), "검색어", 2000)
         mode = p.get("mode", "word")
         filters = paging.Filters.of(p)
-        page = (paging.size(p, "검색 결과는", PAGE_LIMIT),
-                paging.decode(p, "search", ((int, float), str, str))) if paging.wanted(p) else None
+        page = (
+            (paging.size(p, "검색 결과는", PAGE_LIMIT), paging.decode(p, "search", ((int, float), str, str)))
+            if paging.wanted(p)
+            else None
+        )
         if mode == "prompt":
             if filters or page:
-                raise UserError("AI 검색(prompt)은 거르거나 나누어 받을 수 없습니다. 출처·AI 분석·수정 시각과 "
-                                "limit·cursor 없이 요청해 주세요.")
+                raise UserError(
+                    "AI 검색(prompt)은 거르거나 나누어 받을 수 없습니다. 출처·AI 분석·수정 시각과 "
+                    "limit·cursor 없이 요청해 주세요."
+                )
             return self.prompt(query)
         if mode == "auto":
             return self.auto(query, page, filters)
@@ -648,9 +798,13 @@ class Search:
         allowed = set()
         with self.db.connect() as db:
             for chunk in chunks([r["id"] for r in ranked]):
-                allowed.update(row[0] for row in db.execute(
-                    f"SELECT d.id FROM documents d WHERE d.id IN ({','.join('?' * len(chunk))}) AND {test}",
-                    [*chunk, *args]))
+                allowed.update(
+                    row[0]
+                    for row in db.execute(
+                        f"SELECT d.id FROM documents d WHERE d.id IN ({','.join('?' * len(chunk))}) AND {test}",
+                        [*chunk, *args],
+                    )
+                )
         return [r for r in ranked if r["id"] in allowed]
 
     def page(self, ranked, size, after):
@@ -662,12 +816,13 @@ class Search:
         rank = {r["id"]: i for i, r in enumerate(order)}
         position = 0
         if after:
-            position = next((i for i, r in enumerate(order) if (r["score"], r["updated_at"], r["id"]) < tuple(after)),
-                            len(order))
+            position = next(
+                (i for i, r in enumerate(order) if (r["score"], r["updated_at"], r["id"]) < tuple(after)), len(order)
+            )
         entries = []
         with self.db.connect() as db:
             while position < len(order) and len(entries) <= size:
-                window = order[position:position + size + 1]
+                window = order[position : position + size + 1]
                 position += len(window)
                 groups = paging.imports(db, [r["id"] for r in window])
                 for entry in window:
@@ -686,7 +841,7 @@ class Search:
 
     @staticmethod
     def phrases(query):
-        """"Quoted phrases" of a query and the rest of it; an unclosed quote is ignored."""
+        """ "Quoted phrases" of a query and the rest of it; an unclosed quote is ignored."""
         found = [fold(q) for q in re.findall(r'"([^"]+)"', query) if fold(q)]
         return found, re.sub(r'"[^"]*"', " ", query).replace('"', " ")
 
@@ -703,17 +858,34 @@ class Search:
         proposed = [k for k in dict.fromkeys(map(canonical, terms + [query.replace('"', " ")])) if k]
         with self.db.connect() as db:
             marks = ",".join("?" * len(proposed))
-            keys = [row[0] for row in db.execute(
-                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({marks})", proposed)] if proposed else []
+            keys = (
+                [
+                    row[0]
+                    for row in db.execute(
+                        f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({marks})", proposed
+                    )
+                ]
+                if proposed
+                else []
+            )
             # A word that is the alias of a keyword is a keyword of the search as well, which matches the documents of
             # every keyword it names (lexical): 데이터베이스 is to them what database is.
             if proposed:
-                named = {row[0] for row in db.execute(
-                    f"SELECT DISTINCT a.normalized FROM {ALIASES} WHERE a.normalized IN ({marks})", proposed)}
+                named = {
+                    row[0]
+                    for row in db.execute(
+                        f"SELECT DISTINCT a.normalized FROM {ALIASES} WHERE a.normalized IN ({marks})", proposed
+                    )
+                }
                 keys += [k for k in proposed if k in named and k not in keys]
         ranked = self.lexical(terms, keys, phrase=fold(query.replace('"', "")) if len(terms) > 1 else "")
-        return self.results(ranked, list(dict.fromkeys(terms + keys)),
-                            {"terms": terms, "keywords": keys, "explanation": "", "intent": ""}, page, filters)
+        return self.results(
+            ranked,
+            list(dict.fromkeys(terms + keys)),
+            {"terms": terms, "keywords": keys, "explanation": "", "intent": ""},
+            page,
+            filters,
+        )
 
     # -- Prompt search -------------------------------------------------------------------------------
 
@@ -722,13 +894,28 @@ class Search:
         alias shares one (a Korean question meets the English keyword), then the most frequent ones."""
         question = words(sentence)[:8]
         with self.db.connect() as db:
-            near = [row[0] for word in question for row in db.execute(
-                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword LIKE ? ESCAPE '\\' LIMIT 20", (like(word),))]
+            near = [
+                row[0]
+                for word in question
+                for row in db.execute(
+                    f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword LIKE ? ESCAPE '\\' LIMIT 20",
+                    (like(word),),
+                )
+            ]
             rows = self.aliases(db, question)
-            near += [key for word in question
-                     for key in list(dict.fromkeys(key for _, key, _, name in rows if word in name))[:20]]
-            common = [row[0] for row in db.execute(f"""SELECT k.keyword FROM {KEYWORDS} GROUP BY k.keyword
-                ORDER BY count(*) DESC, k.keyword LIMIT ?""", (limit,))]
+            near += [
+                key
+                for word in question
+                for key in list(dict.fromkeys(key for _, key, _, name in rows if word in name))[:20]
+            ]
+            common = [
+                row[0]
+                for row in db.execute(
+                    f"""SELECT k.keyword FROM {KEYWORDS} GROUP BY k.keyword
+                ORDER BY count(*) DESC, k.keyword LIMIT ?""",
+                    (limit,),
+                )
+            ]
         return list(dict.fromkeys(near + common))[:limit]
 
     def analyze(self, question, previous=""):
@@ -739,20 +926,33 @@ class Search:
         payload["wiki_keywords"] = self.vocabulary(f"{question} {previous}")
         result = self.llm.structured(ANALYZE, json.dumps(payload, ensure_ascii=False))
         terms = clean_terms(result.get("terms"))
-        proposed = [k for k in map(canonical, result.get("keywords") if isinstance(result.get("keywords"), list) else [])
-                    if k][:MAX_TERMS]
+        proposed = [
+            k for k in map(canonical, result.get("keywords") if isinstance(result.get("keywords"), list) else []) if k
+        ][:MAX_TERMS]
         with self.db.connect() as db:
-            known = {row[0] for row in db.execute(
-                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({','.join('?' * len(proposed))})", proposed)
-            } if proposed else set()
+            known = (
+                {
+                    row[0]
+                    for row in db.execute(
+                        f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({','.join('?' * len(proposed))})",
+                        proposed,
+                    )
+                }
+                if proposed
+                else set()
+            )
         keys = [k for k in dict.fromkeys(proposed) if k in known]
         # A keyword the Wiki does not have may still occur in the text.
         terms += [k for k in proposed if k not in known and len(k) >= 2 and k not in terms]
         terms = terms[:MAX_TERMS] or ([] if keys else words(question)[:MAX_TERMS])
         if not terms and not keys:
             raise UserError("검색어를 추출하지 못했습니다. 더 구체적으로 입력해 주세요.")
-        return {"intent": normalize(result.get("intent"))[:300], "terms": terms, "keywords": keys,
-                "explanation": normalize(result.get("explanation"))[:1000]}
+        return {
+            "intent": normalize(result.get("intent"))[:300],
+            "terms": terms,
+            "keywords": keys,
+            "explanation": normalize(result.get("explanation"))[:1000],
+        }
 
     def candidates(self, plan, pattern, exclude=(), limit=POOL):
         """Stage 2: the documents of a keyword search, ranked, with their passages and sections."""
@@ -790,8 +990,11 @@ class Search:
 
         picks = []
         for item in items:
-            if not isinstance(item, dict) or ref(item.get("ref")) not in shown or \
-                    any(p["ref"] == ref(item.get("ref")) for p in picks):
+            if (
+                not isinstance(item, dict)
+                or ref(item.get("ref")) not in shown
+                or any(p["ref"] == ref(item.get("ref")) for p in picks)
+            ):
                 continue
             doc = shown[ref(item.get("ref"))]
             ids = {node["id"] for node in doc["_tree"] or []}
@@ -814,8 +1017,7 @@ class Search:
                 step = {"outline": target}
         return picks, step, normalize(result.get("thinking"))[:300]
 
-    def agent(self, question, plan, pool, trace, *, can_search=True, expanded=(), steps=AGENT_STEPS,
-              label="AI 검색"):
+    def agent(self, question, plan, pool, trace, *, can_search=True, expanded=(), steps=AGENT_STEPS, label="AI 검색"):
         """Stage 3: the AI search. The LLM picks the relevant candidates and, for long documents, their
         sections; it may first search again or open an outline. Returns picks [{ref, reason, sections}] in
         order of relevance, or None when the LLM could not be used. New candidates join `pool`."""
@@ -824,9 +1026,15 @@ class Search:
             left = steps - step - 1
             # Earlier picks first, then the newest search's documents, then by keyword rank.
             chosen = [p["ref"] for p in picks]
-            order = sorted(pool, key=lambda d: (d["_ref"] not in chosen,
-                                                chosen.index(d["_ref"]) if d["_ref"] in chosen else 0,
-                                                -d["_round"], d["_rank"]))
+            order = sorted(
+                pool,
+                key=lambda d: (
+                    d["_ref"] not in chosen,
+                    chosen.index(d["_ref"]) if d["_ref"] in chosen else 0,
+                    -d["_round"],
+                    d["_rank"],
+                ),
+            )
             # Full outlines share the request, so several opened documents all fit.
             opened = sum(1 for doc in order[:AGENT_CANDIDATES] if doc["_ref"] in expanded and doc["_tree"])
             full = max(800, min(FULL_OUTLINE, AGENT_CHARS // max(1, opened) - 1_800))
@@ -839,8 +1047,12 @@ class Search:
                 cards.append(card)
             if not cards and not (can_search and left):
                 break
-            payload = {"question": question, "search_terms": plan["terms"] + plan["keywords"],
-                       "steps_left": left, "candidates": cards}
+            payload = {
+                "question": question,
+                "search_terms": plan["terms"] + plan["keywords"],
+                "steps_left": left,
+                "candidates": cards,
+            }
             if not cards:
                 payload["note"] = "키워드 검색 결과가 없습니다. next.search로 다른 검색어를 제안하세요."
             shown = {card["ref"]: next(d for d in pool if d["_ref"] == card["ref"]) for card in cards}
@@ -850,18 +1062,32 @@ class Search:
             except UserError as error:
                 trace.append({"kind": "fallback", "label": f"{label} 실패", "detail": str(error)})
                 return picks if step else None
-            trace.append({"kind": "agent", "label": label, "detail": thinking, "count": len(picks),
-                          "reviewed": len(cards), "documents": [shown[p["ref"]]["title"] for p in picks]})
+            trace.append(
+                {
+                    "kind": "agent",
+                    "label": label,
+                    "detail": thinking,
+                    "count": len(picks),
+                    "reviewed": len(cards),
+                    "documents": [shown[p["ref"]]["title"] for p in picks],
+                }
+            )
             if not following:
                 break
             if "outline" in following:
                 expanded.add(following["outline"])
-                trace.append({"kind": "outline", "label": "목차 펼치기", "detail": shown[following["outline"]]["title"]})
+                trace.append(
+                    {"kind": "outline", "label": "목차 펼치기", "detail": shown[following["outline"]]["title"]}
+                )
                 continue
             terms = [t for t in following["search"] if t not in plan["terms"]] or following["search"]
             plan["terms"] = list(dict.fromkeys(plan["terms"] + terms))
-            new, total = self.candidates({"terms": terms, "keywords": []}, matcher(plan["terms"] + plan["keywords"]),
-                                         {doc["id"] for doc in pool}, AGENT_CANDIDATES)
+            new, total = self.candidates(
+                {"terms": terms, "keywords": []},
+                matcher(plan["terms"] + plan["keywords"]),
+                {doc["id"] for doc in pool},
+                AGENT_CANDIDATES,
+            )
             self.enlist(pool, new, step + 1)
             trace.append({"kind": "search", "label": "추가 검색", "terms": terms, "count": total})
             if not new:
@@ -877,8 +1103,14 @@ class Search:
     def begin(self, question, previous="", limit=RESULT_LIMIT):
         """Stages 1 and 2: the analysis, then the keyword search's best documents as refs D1, D2, …"""
         plan = self.analyze(question, previous)
-        trace = [{"kind": "analyze", "label": "질문 분석", "detail": plan["intent"] or plan["explanation"],
-                  "terms": plan["terms"] + plan["keywords"]}]
+        trace = [
+            {
+                "kind": "analyze",
+                "label": "질문 분석",
+                "detail": plan["intent"] or plan["explanation"],
+                "terms": plan["terms"] + plan["keywords"],
+            }
+        ]
         found, total = self.candidates(plan, matcher(plan["terms"] + plan["keywords"]), limit=limit)
         pool = []
         self.enlist(pool, found)
@@ -891,9 +1123,14 @@ class Search:
         plan, pool, total, trace = self.begin(query)
         found = len(pool)
         picks = self.agent(plan["intent"] or query, plan, pool, trace)
-        return {"documents": [public(doc) for doc in self.present(pool, picks)[:RESULT_LIMIT]], "plan": plan,
-                "highlights": plan["terms"] + plan["keywords"], "steps": trace,
-                "total": total + len(pool) - found, "ai": picks is not None}
+        return {
+            "documents": [public(doc) for doc in self.present(pool, picks)[:RESULT_LIMIT]],
+            "plan": plan,
+            "highlights": plan["terms"] + plan["keywords"],
+            "steps": trace,
+            "total": total + len(pool) - found,
+            "ai": picks is not None,
+        }
 
     @staticmethod
     def present(pool, picks):
@@ -902,8 +1139,11 @@ class Search:
         chosen = []
         for pick in picks or []:
             doc = refs[pick["ref"]]
-            doc["match"].update(selected=True, reason=pick["reason"], sections=[
-                {"id": ident, "title": pageindex.path(doc["_tree"], ident)} for ident in pick["sections"]])
+            doc["match"].update(
+                selected=True,
+                reason=pick["reason"],
+                sections=[{"id": ident, "title": pageindex.path(doc["_tree"], ident)} for ident in pick["sections"]],
+            )
             chosen.append(doc)
         return chosen + [doc for doc in pool if doc not in chosen]
 
@@ -916,7 +1156,9 @@ class Search:
         plan, pool, _, trace = self.begin(question, previous, POOL)
         pattern = matcher(plan["terms"] + plan["keywords"])
         cited = [ident for ident in dict.fromkeys(prior) if all(doc["id"] != ident for doc in pool)]
-        for doc in self.hydrate([{"id": ident, "score": 0, "matched": [], "updated_at": ""} for ident in cited], pattern):
+        for doc in self.hydrate(
+            [{"id": ident, "score": 0, "matched": [], "updated_at": ""} for ident in cited], pattern
+        ):
             doc["_cited"] = True
             self.enlist(pool, [doc])
             doc["_rank"] = -1  # Shown to the agent before other candidates.
@@ -926,30 +1168,52 @@ class Search:
         # The search box lists what the search found: the AI's picks first, then the other matches. Documents
         # offered only because the previous answer cited them are left out unless picked again.
         listed = [doc for doc in self.present(pool, picks) if doc["match"]["selected"] or not doc.get("_cited")]
-        results = {"documents": [public(doc) for doc in listed[:RESULT_LIMIT]], "plan": plan, "highlights": terms,
-                   "steps": trace, "total": len(listed), "ai": not fallback}
+        results = {
+            "documents": [public(doc) for doc in listed[:RESULT_LIMIT]],
+            "plan": plan,
+            "highlights": terms,
+            "steps": trace,
+            "total": len(listed),
+            "ai": not fallback,
+        }
         if fallback:  # Without the AI search: the best keyword matches and cited documents, as before.
             picks = [{"ref": doc["_ref"], "sections": []} for doc in pool if not doc.get("_cited")][:4]
         refs = {doc["_ref"]: doc for doc in pool}
         chosen = [(refs[pick["ref"]], pick["sections"]) for pick in picks]
         if fallback or not chosen:
             chosen += [(doc, []) for doc in pool if doc.get("_cited") and all(doc is not c for c, _ in chosen)]
-        return {"documents": chosen[:6], "terms": terms, "pattern": matcher(terms), "steps": trace,
-                "results": results}
+        return {"documents": chosen[:6], "terms": terms, "pattern": matcher(terms), "steps": trace, "results": results}
 
     def picked(self, question, ids, previous=""):
         """Evidence from documents the user picked. For a long one the LLM picks the sections for the
         question from its outline (PageIndex tree search)."""
         terms = words(f"{question} {previous}")[:MAX_TERMS]
         pattern = matcher(terms)
-        docs = self.hydrate([{"id": ident, "score": 0, "matched": [], "updated_at": ""} for ident in dict.fromkeys(ids)],
-                            pattern)
+        docs = self.hydrate(
+            [{"id": ident, "score": 0, "matched": [], "updated_at": ""} for ident in dict.fromkeys(ids)], pattern
+        )
         if len(docs) < len(set(ids)):
             raise UserError("문서를 찾을 수 없습니다.")
         trace, pool = [], []
         self.enlist(pool, [doc for doc in docs if doc["_tree"]])
-        picks = self.agent(question, {"terms": terms, "keywords": []}, pool, trace, can_search=False,
-                           expanded={doc["_ref"] for doc in pool}, steps=1, label="목차 탐색") if pool else []
+        picks = (
+            self.agent(
+                question,
+                {"terms": terms, "keywords": []},
+                pool,
+                trace,
+                can_search=False,
+                expanded={doc["_ref"] for doc in pool},
+                steps=1,
+                label="목차 탐색",
+            )
+            if pool
+            else []
+        )
         sections = {pick["ref"]: pick["sections"] for pick in picks or []}
-        return {"documents": [(doc, sections.get(doc.get("_ref"), [])) for doc in docs], "terms": terms,
-                "pattern": pattern, "steps": trace}
+        return {
+            "documents": [(doc, sections.get(doc.get("_ref"), [])) for doc in docs],
+            "terms": terms,
+            "pattern": pattern,
+            "steps": trace,
+        }

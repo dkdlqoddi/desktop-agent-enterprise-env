@@ -35,16 +35,19 @@ def index_text(db, ids):
     document_search change the index with it: INSERT OR REPLACE would delete the row without them."""
     ids = list(ids)
     for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
+        chunk = ids[start : start + 500]
         rows = []
         for ident, revision, title, summary, content in db.execute(
-                f"SELECT id,revision,title,summary,content FROM documents WHERE id IN ({','.join('?' * len(chunk))})",
-                chunk):
+            f"SELECT id,revision,title,summary,content FROM documents WHERE id IN ({','.join('?' * len(chunk))})", chunk
+        ):
             body = search_text(content)
             rows.append((ident, revision, search_text(title), search_text(summary), len(body), body))
-        db.executemany("""INSERT INTO document_search(doc_id,revision,title,summary,length,content) VALUES (?,?,?,?,?,?)
+        db.executemany(
+            """INSERT INTO document_search(doc_id,revision,title,summary,length,content) VALUES (?,?,?,?,?,?)
             ON CONFLICT(doc_id) DO UPDATE SET revision=excluded.revision,title=excluded.title,
-            summary=excluded.summary,length=excluded.length,content=excluded.content""", rows)
+            summary=excluded.summary,length=excluded.length,content=excluded.content""",
+            rows,
+        )
 
 
 def fts_supported():
@@ -94,23 +97,32 @@ LOG = logging.getLogger("private_agent")
 # own, numbered `part` of `parts`, so the same file or page content is held once per part.
 SOURCE_TABLES = {
     "rtf_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash"),
-    "office_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL, application TEXT NOT NULL", "source_hash"),
+    "office_sources": (
+        "source_path TEXT NOT NULL, source_hash TEXT NOT NULL, application TEXT NOT NULL",
+        "source_hash",
+    ),
     "image_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash"),
     "text_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash"),
     # A Markdown (.md) file, saved as the text it holds.
     "markdown_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash"),
-    "confluence_sources": ("source_url TEXT NOT NULL, page_id TEXT NOT NULL, source_hash TEXT NOT NULL",
-                           "source_url, source_hash"),
-    "jira_sources": ("source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL",
-                     "source_url, source_hash"),
+    "confluence_sources": (
+        "source_url TEXT NOT NULL, page_id TEXT NOT NULL, source_hash TEXT NOT NULL",
+        "source_url, source_hash",
+    ),
+    "jira_sources": (
+        "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL",
+        "source_url, source_hash",
+    ),
 }
 
 
 def source_table(name, columns, key):
     # title: the title the import gave the document, which tells a title the user changed apart ('' before it was kept).
-    return (f"CREATE TABLE IF NOT EXISTS {name} (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
-            f"{columns}, markdown TEXT NOT NULL, imported_at TEXT NOT NULL, part INTEGER NOT NULL DEFAULT 1, "
-            f"parts INTEGER NOT NULL DEFAULT 1, title TEXT NOT NULL DEFAULT '', UNIQUE({key}, part))")
+    return (
+        f"CREATE TABLE IF NOT EXISTS {name} (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
+        f"{columns}, markdown TEXT NOT NULL, imported_at TEXT NOT NULL, part INTEGER NOT NULL DEFAULT 1, "
+        f"parts INTEGER NOT NULL DEFAULT 1, title TEXT NOT NULL DEFAULT '', UNIQUE({key}, part))"
+    )
 
 
 def identity(name):
@@ -303,8 +315,11 @@ class Database:
             # A page's version number (Confluence) and a ticket's updated time (JIRA) as the site gave them with the
             # text imported, and when the source was last read in full (read_at): a routine's import compares them
             # before it reads a page again (sources.fresh).
-            added = {name: [("source_size", "INTEGER"), ("source_mtime", "INTEGER")]
-                     for name in SOURCE_TABLES if identity(name) == "source_path"}
+            added = {
+                name: [("source_size", "INTEGER"), ("source_mtime", "INTEGER")]
+                for name in SOURCE_TABLES
+                if identity(name) == "source_path"
+            }
             remote = "TEXT NOT NULL DEFAULT ''"
             added["confluence_sources"] = [("version", remote), ("read_at", remote)]
             added["jira_sources"] = [("updated", remote), ("read_at", remote)]
@@ -315,11 +330,14 @@ class Database:
                         db.execute(f"ALTER TABLE {name} ADD COLUMN {column} {definition}")
             # Runs recorded before scheduling carry no outcome or timing; they were successful manual runs.
             columns = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
-            for column, definition in (("status", "TEXT NOT NULL DEFAULT 'success'"),
-                                       ("error", "TEXT NOT NULL DEFAULT ''"),
-                                       ("kind", "TEXT NOT NULL DEFAULT 'manual'"),
-                                       ("schedule_id", "TEXT"), ("started_at", "TEXT"),
-                                       ("duration_ms", "INTEGER")):
+            for column, definition in (
+                ("status", "TEXT NOT NULL DEFAULT 'success'"),
+                ("error", "TEXT NOT NULL DEFAULT ''"),
+                ("kind", "TEXT NOT NULL DEFAULT 'manual'"),
+                ("schedule_id", "TEXT"),
+                ("started_at", "TEXT"),
+                ("duration_ms", "INTEGER"),
+            ):
                 if column not in columns:
                     db.execute(f"ALTER TABLE runs ADD COLUMN {column} {definition}")
             db.execute("CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at)")
@@ -348,8 +366,11 @@ class Database:
             self.fts = self._full_text(db)
             if not db.execute("SELECT 1 FROM metadata WHERE key='seeded'").fetchone():
                 from .service import now
+
                 for index, prompt in enumerate(SEEDS):
-                    db.execute("INSERT INTO prompts VALUES (?,?,?,?,?,?,?,?)", (f"starter-{index}", *prompt, now(), now()))
+                    db.execute(
+                        "INSERT INTO prompts VALUES (?,?,?,?,?,?,?,?)", (f"starter-{index}", *prompt, now(), now())
+                    )
                 db.execute("INSERT INTO metadata VALUES ('seeded', '1')")
         # What the block above cannot do, numbered by the schema version the Wiki keeps (migrations.py).
         with self.connect() as db:
@@ -403,9 +424,12 @@ class Database:
                 last = 0
                 while True:
                     db.execute("BEGIN IMMEDIATE")
-                    rows = db.execute("""SELECT d.rowid, d.id FROM documents d LEFT JOIN document_search s
+                    rows = db.execute(
+                        """SELECT d.rowid, d.id FROM documents d LEFT JOIN document_search s
                         ON s.doc_id=d.id WHERE d.rowid>? AND (s.revision IS NOT d.revision OR s.title IS NULL)
-                        ORDER BY d.rowid LIMIT ?""", (last, chunk)).fetchall()
+                        ORDER BY d.rowid LIMIT ?""",
+                        (last, chunk),
+                    ).fetchall()
                     if rows:
                         index_text(db, [row[1] for row in rows])
                         last = rows[-1][0]
@@ -420,13 +444,17 @@ class Database:
                     if covered is None or covered >= FTS_DONE:
                         db.commit()
                         break
-                    rows = db.execute("SELECT id FROM document_search WHERE id>? ORDER BY id LIMIT ?",
-                                      (covered, chunk)).fetchall()
+                    rows = db.execute(
+                        "SELECT id FROM document_search WHERE id>? ORDER BY id LIMIT ?", (covered, chunk)
+                    ).fetchall()
                     # A short chunk is the last: within this transaction no row comes after it, so the index covers
                     # every row from here on, those to come included.
                     upto = rows[-1][0] if len(rows) == chunk else FTS_DONE
-                    db.execute("""INSERT INTO document_fts(rowid,title,summary,content)
-                        SELECT id,title,summary,content FROM document_search WHERE id>? AND id<=?""", (covered, upto))
+                    db.execute(
+                        """INSERT INTO document_fts(rowid,title,summary,content)
+                        SELECT id,title,summary,content FROM document_search WHERE id>? AND id<=?""",
+                        (covered, upto),
+                    )
                     db.execute("UPDATE metadata SET value=? WHERE key='search_fts'", (str(upto),))
                     db.commit()
                     if upto >= FTS_DONE:
@@ -457,6 +485,7 @@ class Database:
         """Upgrade legacy snapshots atomically, preserving user edits and source metadata."""
         import hashlib
         import re
+
         from .markdown_import import html_to_markdown
 
         db.execute("BEGIN IMMEDIATE")
@@ -483,11 +512,15 @@ class Database:
                     if key not in hashes:
                         values["source_hash"] = checksum
                         hashes.add(key)
-                db.execute(f"INSERT INTO {table}_markdown ({','.join(new_columns)}) VALUES ({','.join('?' for _ in new_columns)})",
-                           [values[c] for c in new_columns])
+                db.execute(
+                    f"INSERT INTO {table}_markdown ({','.join(new_columns)}) VALUES ({','.join('?' for _ in new_columns)})",
+                    [values[c] for c in new_columns],
+                )
                 if markdown:
-                    db.execute("UPDATE documents SET content=?, revision=revision+1 WHERE id=? AND revision=1",
-                               (markdown, row["doc_id"]))
+                    db.execute(
+                        "UPDATE documents SET content=?, revision=revision+1 WHERE id=? AND revision=1",
+                        (markdown, row["doc_id"]),
+                    )
             db.execute(f"DROP TABLE {table}")
             db.execute(f"ALTER TABLE {table}_markdown RENAME TO {table}")
 
@@ -519,8 +552,32 @@ class Database:
 
 
 SEEDS = [
-    ("회의록 정리", "복잡한 논의를 명확한 결정과 다음 할 일로", "업무", "당신은 꼼꼼한 업무 비서입니다. 한국어로 답하고, 제공되지 않은 내용을 만들어내지 마세요.", "다음 회의 내용을 핵심 요약, 결정 사항, 할 일(담당자·기한), 미결 사항으로 정리해 주세요.\n\n{{회의 내용}}"),
-    ("코드 리뷰", "놓치기 쉬운 버그부터 더 나은 설계까지", "개발", "당신은 시니어 소프트웨어 엔지니어입니다. 근거와 구체적인 개선 코드를 제시하세요.", "다음 코드를 정확성, 보안, 성능, 유지보수성 관점에서 검토해 주세요. 심각도 순으로 설명해 주세요.\n\n{{코드}}"),
-    ("업무 메일 작성", "의도를 정확히 전하는 간결한 비즈니스 메일", "업무", "당신은 한국어 비즈니스 커뮤니케이션 전문가입니다. 정중하고 간결하게 작성하세요.", "다음 내용을 바탕으로 제목과 본문이 있는 업무 메일을 작성해 주세요.\n\n{{전달할 내용}}"),
-    ("아이디어 구체화", "떠오른 생각을 실행 가능한 계획으로", "기획", "당신은 실용적인 제품 기획 파트너입니다. 가정과 확인된 사실을 구분하세요.", "다음 아이디어를 문제 정의, 대상 사용자, 핵심 기능, 첫 실행 단계, 검증 지표로 구체화해 주세요.\n\n{{아이디어}}"),
+    (
+        "회의록 정리",
+        "복잡한 논의를 명확한 결정과 다음 할 일로",
+        "업무",
+        "당신은 꼼꼼한 업무 비서입니다. 한국어로 답하고, 제공되지 않은 내용을 만들어내지 마세요.",
+        "다음 회의 내용을 핵심 요약, 결정 사항, 할 일(담당자·기한), 미결 사항으로 정리해 주세요.\n\n{{회의 내용}}",
+    ),
+    (
+        "코드 리뷰",
+        "놓치기 쉬운 버그부터 더 나은 설계까지",
+        "개발",
+        "당신은 시니어 소프트웨어 엔지니어입니다. 근거와 구체적인 개선 코드를 제시하세요.",
+        "다음 코드를 정확성, 보안, 성능, 유지보수성 관점에서 검토해 주세요. 심각도 순으로 설명해 주세요.\n\n{{코드}}",
+    ),
+    (
+        "업무 메일 작성",
+        "의도를 정확히 전하는 간결한 비즈니스 메일",
+        "업무",
+        "당신은 한국어 비즈니스 커뮤니케이션 전문가입니다. 정중하고 간결하게 작성하세요.",
+        "다음 내용을 바탕으로 제목과 본문이 있는 업무 메일을 작성해 주세요.\n\n{{전달할 내용}}",
+    ),
+    (
+        "아이디어 구체화",
+        "떠오른 생각을 실행 가능한 계획으로",
+        "기획",
+        "당신은 실용적인 제품 기획 파트너입니다. 가정과 확인된 사실을 구분하세요.",
+        "다음 아이디어를 문제 정의, 대상 사용자, 핵심 기능, 첫 실행 단계, 검증 지표로 구체화해 주세요.\n\n{{아이디어}}",
+    ),
 ]

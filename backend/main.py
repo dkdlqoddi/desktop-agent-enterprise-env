@@ -1,4 +1,5 @@
 """Private JSON-lines RPC over stdin/stdout. No HTTP listener or exposed local port."""
+
 import importlib
 import json
 import multiprocessing
@@ -21,14 +22,38 @@ from agent.storage import Refused
 
 # Requests that wait on the LLM or a browser can take minutes. They get their own lane, so the quick
 # reads a screen makes all at once (lists, statuses) are never refused behind them.
-SLOW = frozenset({"settings.test", "prompts.run", "wiki.analyze", "assistant.ask", "briefing.generate",
-                  "tasks.extract", "schedules.run", "confluence.check", "jira.check",
-                  # A backup and the copy of one to restore read and write the whole Wiki.
-                  "wiki.backup", "wiki.restore_backup"})
+SLOW = frozenset(
+    {
+        "settings.test",
+        "prompts.run",
+        "wiki.analyze",
+        "assistant.ask",
+        "briefing.generate",
+        "tasks.extract",
+        "schedules.run",
+        "confluence.check",
+        "jira.check",
+        # A backup and the copy of one to restore read and write the whole Wiki.
+        "wiki.backup",
+        "wiki.restore_backup",
+    }
+)
 # Requests a user waits for on the screen (or an AI tool for its answer): their LLM requests go before those of batch
 # work (analyses, imports, routines, scheduled runs), which also leaves them a slot of their own (llm.Slots).
-INTERACTIVE_METHODS = frozenset({"assistant.ask", "settings.test", "prompts.run", "briefing.generate", "tasks.extract",
-                                 "wiki.search", "wiki.analyze", "schedules.run", "confluence.check", "jira.check"})
+INTERACTIVE_METHODS = frozenset(
+    {
+        "assistant.ask",
+        "settings.test",
+        "prompts.run",
+        "briefing.generate",
+        "tasks.extract",
+        "wiki.search",
+        "wiki.analyze",
+        "schedules.run",
+        "confluence.check",
+        "jira.check",
+    }
+)
 SLOW_SLOTS = 4
 QUICK_SLOTS = 24
 # Electron sends a request's parameters as at most 900,000 characters of JSON.
@@ -47,7 +72,8 @@ def request_id(line):
 def slow(request):
     params = request.get("params")
     return request.get("method") in SLOW or (
-        request.get("method") == "wiki.search" and isinstance(params, dict) and params.get("mode") == "prompt")
+        request.get("method") == "wiki.search" and isinstance(params, dict) and params.get("mode") == "prompt"
+    )
 
 
 def priority_of(request):
@@ -70,6 +96,7 @@ def detach_standard_input():
         return
     import ctypes
     import msvcrt
+
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.SetStdHandle.argtypes = (ctypes.c_uint32, ctypes.c_void_p)
     nul = os.open(os.devnull, os.O_RDONLY)  # Open for as long as the process runs.
@@ -89,8 +116,12 @@ def wait_for_debugger():
         port = int(value)
         import debugpy
     except (ValueError, ImportError) as exc:
-        print(f"PRIVATE_AGENT_DEBUGPY를 쓰지 못했습니다({exc}). npm run setup:python으로 debugpy를 설치하고 포트 번호를 "
-              "확인하세요.", file=sys.stderr, flush=True)
+        print(
+            f"PRIVATE_AGENT_DEBUGPY를 쓰지 못했습니다({exc}). npm run setup:python으로 debugpy를 설치하고 포트 번호를 "
+            "확인하세요.",
+            file=sys.stderr,
+            flush=True,
+        )
         return
     debugpy.listen(("127.0.0.1", port))
     print(f"debugpy: 127.0.0.1:{port}에서 디버거 연결을 기다립니다.", file=sys.stderr, flush=True)
@@ -109,8 +140,9 @@ def main():
     # Electron names its settings folder's logs/; a backend started by hand writes no log.
     diagnostics.start(os.environ.get("PRIVATE_AGENT_LOG_DIR"))
     wait_for_debugger()
-    diagnostics.LOG.info("backend started · Python %s%s", sys.version.split()[0],
-                         " · packaged" if getattr(sys, "frozen", False) else "")
+    diagnostics.LOG.info(
+        "backend started · Python %s%s", sys.version.split()[0], " · packaged" if getattr(sys, "frozen", False) else ""
+    )
     threading.Thread(target=sweep_leftovers, name="sweep-scratch", daemon=True).start()
     database = data_dir / "wiki.db"
     try:
@@ -119,8 +151,14 @@ def main():
         diagnostics.LOG.error("the Wiki was not opened: %s", refused)
         return refuse(str(refused))
     except Exception as exc:  # Locked by another program, a drive gone, a migration that failed: logged with its ID.
-        return refuse(diagnostics.report(exc, f"Wiki 데이터베이스({database})를 열지 못했습니다. 앱을 다시 실행해 보고, "
-                                              "계속되면 ‘진단 정보 복사’로 문제를 알려 주세요.", "Wiki 열기"))
+        return refuse(
+            diagnostics.report(
+                exc,
+                f"Wiki 데이터베이스({database})를 열지 못했습니다. 앱을 다시 실행해 보고, "
+                "계속되면 ‘진단 정보 복사’로 문제를 알려 주세요.",
+                "Wiki 열기",
+            )
+        )
     service = Service(wiki, LLM())
     write_lock = threading.Lock()
     lanes = {True: threading.BoundedSemaphore(SLOW_SLOTS), False: threading.BoundedSemaphore(QUICK_SLOTS)}
@@ -147,8 +185,16 @@ def main():
         except Exception as exc:
             # Never send traces, credentials, or endpoint details to the renderer: they go to the local log,
             # under the ID the message ends with.
-            write({"id": ident, "error": diagnostics.report(
-                exc, "요청을 처리하지 못했습니다. 입력을 확인하고 다시 시도해 주세요.", f"요청 {request.get('method')}")})
+            write(
+                {
+                    "id": ident,
+                    "error": diagnostics.report(
+                        exc,
+                        "요청을 처리하지 못했습니다. 입력을 확인하고 다시 시도해 주세요.",
+                        f"요청 {request.get('method')}",
+                    ),
+                }
+            )
         finally:
             slots.release()
 
@@ -198,6 +244,7 @@ def read_text(path):
     bytes are no text it can read: JSON {"text": …} on the standard output, or the reason on the error output and exit
     status 1."""
     from agent.notepad import read_with_notepad
+
     try:
         text = read_with_notepad(path)
         # Notepad's text is UTF-16 and may end in half of a surrogate pair where its length cut it, which UTF-8 cannot
@@ -220,6 +267,7 @@ def migrate_storage(source, destination):
     progress for a minute: a line on the standard output says it is going on, at most once a second. The reason of a
     failure goes to the error output, with exit status 1."""
     from agent.storage import migrate_database
+
     last = 0.0
 
     def progress():
@@ -233,7 +281,10 @@ def migrate_storage(source, destination):
         progress()
         migrate_database(source, destination, progress)
     except Exception:
-        print("기존 저장소를 복사하지 못했습니다. 대상 폴더, 기존 파일, 권한과 디스크 공간을 확인해 주세요.", file=sys.stderr)
+        print(
+            "기존 저장소를 복사하지 못했습니다. 대상 폴더, 기존 파일, 권한과 디스크 공간을 확인해 주세요.",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

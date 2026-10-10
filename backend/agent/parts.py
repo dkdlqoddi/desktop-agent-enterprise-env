@@ -7,6 +7,7 @@ follows it; a block too long for one part is cut between its lines or rows, a ta
 block its fence in the next part. Confluence and JIRA pages are cut as Markdown text. The HTML page of a file is cut
 between its elements, so each part is a page of its own whose text is that of its share. At most MAX_PARTS parts are
 saved; the last one then says that the rest was left out."""
+
 import re
 import uuid
 from html import escape, unescape
@@ -36,7 +37,7 @@ def part_title(title, number, count):
     if count == 1:
         return title[:200]
     suffix = f" ({number}/{count})"
-    return title[:200 - len(suffix)].rstrip() + suffix
+    return title[: 200 - len(suffix)].rstrip() + suffix
 
 
 def saved_message(split, kind):
@@ -49,19 +50,31 @@ def saved_message(split, kind):
 
 def imported(split, ids, message, kind):
     """The result of an import saved as the documents `ids`: `message` for one, how it was cut for several."""
-    return {"status": "imported", "doc_id": ids[0], "doc_ids": ids,
-            "message": message if len(ids) == 1 else saved_message(split, kind)}
+    return {
+        "status": "imported",
+        "doc_id": ids[0],
+        "doc_ids": ids,
+        "message": message if len(ids) == 1 else saved_message(split, kind),
+    }
 
 
 def insert(db, split, title, timestamp, source, first=1):
     """Add the parts from number `first` on as new documents and return their ids; `source(ident, number, text)` adds
     each one's source."""
     ids = []
-    for number, (page, text) in enumerate(split.parts[first - 1:], first):
+    for number, (page, text) in enumerate(split.parts[first - 1 :], first):
         ident = str(uuid.uuid4())
-        db.execute("INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                   (ident, part_title(title, number, len(split.parts)), text, "markdown" if page is None else "html",
-                    timestamp, timestamp))
+        db.execute(
+            "INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (
+                ident,
+                part_title(title, number, len(split.parts)),
+                text,
+                "markdown" if page is None else "html",
+                timestamp,
+                timestamp,
+            ),
+        )
         source(ident, number, text)
         if page is not None:
             db.execute("INSERT INTO document_html(doc_id,html) VALUES(?,?)", (ident, page))
@@ -160,8 +173,11 @@ def split_markdown(text, limit, most):
     for unit in units:
         if current and size + len(unit[1]) > room:
             # A heading goes on to the next part with the text it introduces.
-            carried = [current.pop()] if len(current) > 1 and current[-1][0] == "heading" \
-                and len(current[-1][1]) + len(unit[1]) <= room else []
+            carried = (
+                [current.pop()]
+                if len(current) > 1 and current[-1][0] == "heading" and len(current[-1][1]) + len(unit[1]) <= room
+                else []
+            )
             parts.append(current)
             current, size = carried, sum(len(block) for _, block in carried)
         current.append(unit)
@@ -190,8 +206,13 @@ def joined(texts):
                 block.pop()
             if kind == "table" and len(block) > 2 and RULE.fullmatch(block[1]) and own[:2] == block[:2]:
                 own = own[2:]
-            elif kind == "code" and len(block) > 1 and own[:1] == block[:1] and lines[-1:] == block[-1:] \
-                    and FENCE.fullmatch(block[-1].rstrip(" \t")):
+            elif (
+                kind == "code"
+                and len(block) > 1
+                and own[:1] == block[:1]
+                and lines[-1:] == block[-1:]
+                and FENCE.fullmatch(block[-1].rstrip(" \t"))
+            ):
                 lines.pop()
                 own = own[1:]
         lines += own
@@ -219,8 +240,26 @@ HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 SECTIONS = {"section", "div", "article"}
 # For the size estimate: characters Markdown escapes, and the Markdown elements add around their text.
 ESCAPED = re.compile(r"[\\*_`\[\]&<>~=+|#]")
-MARKUP = {"td": 3, "th": 3, "tr": 2, "li": 4, "p": 2, "div": 2, "section": 2, "figure": 2, "table": 2, "pre": 10,
-          "br": 3, "blockquote": 4, "strong": 4, "b": 4, "em": 2, "i": 2, "code": 2, **dict.fromkeys(HEADINGS, 9)}
+MARKUP = {
+    "td": 3,
+    "th": 3,
+    "tr": 2,
+    "li": 4,
+    "p": 2,
+    "div": 2,
+    "section": 2,
+    "figure": 2,
+    "table": 2,
+    "pre": 10,
+    "br": 3,
+    "blockquote": 4,
+    "strong": 4,
+    "b": 4,
+    "em": 2,
+    "i": 2,
+    "code": 2,
+    **dict.fromkeys(HEADINGS, 9),
+}
 
 
 def estimate(node):
@@ -246,6 +285,7 @@ def estimate(node):
 
 class Unit:
     """A share of a page that goes to one part: an element, a text or a piece of one, below the elements in `path`."""
+
     __slots__ = ("path", "node", "size")
 
     def __init__(self, path, node):
@@ -272,15 +312,23 @@ def leads(node):
     """Whether a node introduces what follows it, so that a part does not end with it."""
     if not isinstance(node, Tag):
         return False
-    return node.name in HEADINGS or node.name in ("colgroup", "caption", "thead") or (
-        node.name == "tr" and header_row(node))
+    return (
+        node.name in HEADINGS
+        or node.name in ("colgroup", "caption", "thead")
+        or (node.name == "tr" and header_row(node))
+    )
 
 
 def start_tag(tag, **extra):
     attributes = {**tag.attrs, **extra}
-    return f"<{tag.name}" + "".join(
-        f' {name}="{escape(" ".join(value) if isinstance(value, list) else str(value))}"'
-        for name, value in attributes.items()) + ">"
+    return (
+        f"<{tag.name}"
+        + "".join(
+            f' {name}="{escape(" ".join(value) if isinstance(value, list) else str(value))}"'
+            for name, value in attributes.items()
+        )
+        + ">"
+    )
 
 
 def repeated(tag):
@@ -319,8 +367,14 @@ def render(units, opened):
             tag = unit.path[depth]
             extra = {}
             if id(tag) in opened and tag.name == "ol":
-                item = next((outer for outer in (*unit.path[depth + 1:], unit.node)
-                             if isinstance(outer, Tag) and outer.name == "li"), None)
+                item = next(
+                    (
+                        outer
+                        for outer in (*unit.path[depth + 1 :], unit.node)
+                        if isinstance(outer, Tag) and outer.name == "li"
+                    ),
+                    None,
+                )
                 if item is not None:
                     start = int(tag["start"]) if str(tag.get("start", "")).isdigit() else 1
                     extra["start"] = str(start + len(item.find_previous_siblings("li")))
@@ -348,9 +402,12 @@ def split_page(html, limit, most):
     root, end = ROOT.search(html), html.rfind(END)
     if root is None or end < root.end():
         raise UserError("변환된 HTML 문서를 나누지 못했습니다.")
-    head, tail = html[:root.end()], html[end:]
-    units = [Unit((), node) for node in BeautifulSoup(html[root.end():end], "html.parser").contents
-             if not (type(node) is NavigableString and not node.strip())]
+    head, tail = html[: root.end()], html[end:]
+    units = [
+        Unit((), node)
+        for node in BeautifulSoup(html[root.end() : end], "html.parser").contents
+        if not (type(node) is NavigableString and not node.strip())
+    ]
     room = limit - NOTE_ROOM
     # Characters of text per estimated one: a cautious guess at first, then what the part measured last had. Every
     # part is measured before it is kept, so a guess that runs short only costs another try.
@@ -367,7 +424,7 @@ def split_page(html, limit, most):
             if unit.size > budget:  # too long for any part: its first pieces fill this one
                 smaller = divide(unit)
                 if smaller:
-                    units[stop:stop + 1] = smaller
+                    units[stop : stop + 1] = smaller
                     continue
             if stop > index and size + unit.size > budget:
                 break
@@ -389,7 +446,7 @@ def split_page(html, limit, most):
             smaller = divide(units[index])
             if not smaller:
                 raise UserError(f"한 문서에 담을 수 있는 {limit:,}자보다 긴 항목이 있어 문서를 나누지 못했습니다.")
-            units[index:index + 1] = smaller
+            units[index : index + 1] = smaller
             continue
         if text or not parts:
             parts.append([body, text])
@@ -403,7 +460,7 @@ def split_page(html, limit, most):
         named = head
         if title:
             name = escape(part_title(unescape(title.group(1)), number, len(parts)))
-            named = head[:title.start(1)] + name + head[title.end(1):]
+            named = head[: title.start(1)] + name + head[title.end(1) :]
         if cut and number == len(parts):
             body += f'<p class="caption">{escape(CUT)}</p>'
             text = page_text(named + body + tail)

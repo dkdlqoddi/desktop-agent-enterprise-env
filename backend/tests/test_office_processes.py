@@ -59,13 +59,15 @@ def test_only_the_hidden_office_app_the_worker_started_is_ended():
     clock = iter([1000.0, 1010.0]).__next__
     watch = Watch(["Word"], windows=windows, clock=clock)
     assert watch.before == {10: 100.0, 11: 200.0}
-    windows.table.update({
-        20: process("WINWORD.EXE", 1001.0),  # The worker's: new, for automation, no window.
-        21: process("WINWORD.EXE", 1002.0, r'"WINWORD.EXE" /n "C:\보고서.docx"'),  # Started by hand meanwhile.
-        22: process("WINWORD.EXE", 1003.0),  # Shows a document the user opened in it.
-        30: process("EXCEL.EXE", 1001.0, '"EXCEL.EXE" /automation -Embedding'),  # Not the app this worker used.
-        40: process("winword.exe", 900.0),  # Started before the import, though missed by the first look.
-    })
+    windows.table.update(
+        {
+            20: process("WINWORD.EXE", 1001.0),  # The worker's: new, for automation, no window.
+            21: process("WINWORD.EXE", 1002.0, r'"WINWORD.EXE" /n "C:\보고서.docx"'),  # Started by hand meanwhile.
+            22: process("WINWORD.EXE", 1003.0),  # Shows a document the user opened in it.
+            30: process("EXCEL.EXE", 1001.0, '"EXCEL.EXE" /automation -Embedding'),  # Not the app this worker used.
+            40: process("winword.exe", 900.0),  # Started before the import, though missed by the first look.
+        }
+    )
     windows.windows.append((22, 22, "보고서 - Word", "OpusApp"))
     ended = watch.end_leftovers()
     assert [found.pid for found in ended] == [20]
@@ -92,12 +94,17 @@ def test_nothing_is_looked_at_without_an_office_app_or_off_windows():
 
 
 def test_a_hidden_office_that_shows_only_a_dialog_box_is_still_ended():
-    windows = FakeWindows({}, windows=[
-        (1, 20, "Microsoft Word", "#32770"),  # A message box of the worker's Word (a DRM add-in's notice).
-        (2, 21, "암호", "bosa_sdm_msword"),  # Word's own dialog.
-        (3, 22, "보고서 - Word", "OpusApp"), (4, 22, "Microsoft Word", "#32770"),  # A document is shown too.
-        (5, 23, "알림", "WindowsForms10.Window.8.app.0.1"),  # A window nobody knows: it may be someone's.
-        (6, 24, "옵션", "NUIDialog")])
+    windows = FakeWindows(
+        {},
+        windows=[
+            (1, 20, "Microsoft Word", "#32770"),  # A message box of the worker's Word (a DRM add-in's notice).
+            (2, 21, "암호", "bosa_sdm_msword"),  # Word's own dialog.
+            (3, 22, "보고서 - Word", "OpusApp"),
+            (4, 22, "Microsoft Word", "#32770"),  # A document is shown too.
+            (5, 23, "알림", "WindowsForms10.Window.8.app.0.1"),  # A window nobody knows: it may be someone's.
+            (6, 24, "옵션", "NUIDialog"),
+        ],
+    )
     watch = Watch(["Word"], windows=windows, clock=iter([1000.0, 1010.0]).__next__)
     windows.table.update({pid: process("WINWORD.EXE", 1001.0 + pid / 100) for pid in (20, 21, 22, 23, 24)})
     assert sorted(found.pid for found in watch.end_leftovers()) == [20, 21, 24]
@@ -105,12 +112,16 @@ def test_a_hidden_office_that_shows_only_a_dialog_box_is_still_ended():
 
 
 def test_password_prompts_powerpoint_shows_for_the_worker_are_cancelled(monkeypatch):
-    windows = FakeWindows({10: process("POWERPNT.EXE", 100.0), 30: process("EXCEL.EXE", 100.0)},
-                          windows=[(100, 10, "암호", "#32770")])  # The user was asked before the import began.
+    windows = FakeWindows(
+        {10: process("POWERPNT.EXE", 100.0), 30: process("EXCEL.EXE", 100.0)}, windows=[(100, 10, "암호", "#32770")]
+    )  # The user was asked before the import began.
     watch = Watch(["PowerPoint"], windows=windows, clock=iter([1000.0, 1010.0]).__next__)
     assert watch.prompting and watch.refuse_prompts() is False and windows.closed == []
-    windows.windows += [(101, 10, "Password", "#32770"), (102, 30, "암호", "#32770"),
-                        (103, 10, "발표.pptx - PowerPoint", "PPTFrameClass")]
+    windows.windows += [
+        (101, 10, "Password", "#32770"),
+        (102, 30, "암호", "#32770"),
+        (103, 10, "발표.pptx - PowerPoint", "PPTFrameClass"),
+    ]
     assert watch.refuse_prompts() is True and windows.closed == [101]
     assert watch.refuse_prompts() is False and windows.closed == [101]
     # Only PowerPoint asks: Word and Excel are given an empty password and fail at once. Where Windows lists no windows
@@ -190,8 +201,11 @@ def answering_worker(source, sender, stop, folder):
 def left_worker(source, sender, stop, folder):
     """A worker whose Excel could not close the file or quit: a dialog rejected every call."""
     ok = source.endswith("read.xlsx")
-    sender.send({"ok": ok, "html": "<p>읽음</p>", "left": ["Excel"]} if ok else
-                {"ok": False, "error": "Excel 파일 열기 실패: 대화 상자.", "trace": "", "left": ["Excel"]})
+    sender.send(
+        {"ok": ok, "html": "<p>읽음</p>", "left": ["Excel"]}
+        if ok
+        else {"ok": False, "error": "Excel 파일 열기 실패: 대화 상자.", "trace": "", "left": ["Excel"]}
+    )
     sender.close()
 
 
@@ -234,12 +248,14 @@ def test_the_office_app_a_worker_could_not_close_or_quit_is_ended_once_it_answer
 
 def test_a_worker_that_cannot_be_closed_keeps_the_outcome_and_its_office_is_still_ended(tmp_path, monkeypatch):
     import multiprocessing.context
+
     monkeypatch.setattr(OfficeConverter, "check", lambda *args: None)
     monkeypatch.setattr("agent.word_converter.Watch", RecordingWatch)
     RecordingWatch.made.clear()
 
     def refuse(self):
         raise ValueError("Cannot close a process while it is still running.")
+
     monkeypatch.setattr(multiprocessing.context.SpawnProcess, "close", refuse)
     monkeypatch.setattr(OfficeConverter, "worker", staticmethod(answering_worker))
     with pytest.raises(UserError, match="암호가 걸린 파일"):
@@ -282,7 +298,9 @@ def prompting_worker(source, sender, stop, folder):
     while not cancelled.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     if not source.endswith("silent.pptx"):
-        sender.send({"ok": False, "error": "PowerPoint 파일 열기 실패: PowerPoint에서 파일을 열 수 없습니다.", "trace": ""})
+        sender.send(
+            {"ok": False, "error": "PowerPoint 파일 열기 실패: PowerPoint에서 파일을 열 수 없습니다.", "trace": ""}
+        )
     else:
         time.sleep(30)
     sender.close()
@@ -316,6 +334,7 @@ def test_a_presentation_with_a_password_fails_once_its_prompt_is_cancelled(tmp_p
             found.end_leftovers = lambda: setattr(found, "ended", found.ended + 1) or []
             made.append(found)
             return found
+
         monkeypatch.setattr("agent.word_converter.Watch", watch)
         monkeypatch.setattr("agent.word_converter.PROMPT_SECONDS", 1)
         started = time.monotonic()
@@ -330,11 +349,21 @@ def test_a_presentation_with_a_password_fails_once_its_prompt_is_cancelled(tmp_p
 @pytest.mark.office
 def test_real_hidden_word_left_by_a_killed_client_is_ended():
     import subprocess
+
     watch = Watch(["Word"])
     # A client that starts a hidden Word the way the worker does, then is killed before it can quit it.
-    client = subprocess.Popen([sys.executable, "-c", (
-        "import time, win32com.client; word = win32com.client.DispatchEx('Word.Application'); "
-        "word.Visible = False; print('ready', flush=True); time.sleep(120)")], stdout=subprocess.PIPE, text=True)
+    client = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import time, win32com.client; word = win32com.client.DispatchEx('Word.Application'); "
+                "word.Visible = False; print('ready', flush=True); time.sleep(120)"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     try:
         assert client.stdout.readline().strip() == "ready"
     finally:

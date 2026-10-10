@@ -1,6 +1,7 @@
 """Automatic routines (routines.py): the catalog and the forms' checks, schedules and the queue, the runs of each recipe
 on files and documents in the Wiki, and the JIRA and Confluence routines in a real browser against the local
 sites (jira_server.py, confluence_server.py)."""
+
 import asyncio
 import json
 import threading
@@ -16,7 +17,6 @@ import jira_server
 from agent import jira_import, routines
 from agent.changes import compare
 from agent.db import Database
-from agent.html_document import page
 from agent.jira import import_issue
 from agent.llm import UserError
 from agent.routines import MAX_ACTIVE, RECIPES, Cancelled, Run, upcoming
@@ -24,10 +24,14 @@ from agent.service import Service, now
 from confluence_server import ConfluenceServer
 from jira_server import JiraServer
 
-CATALOG = json.loads((Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8"))["methods"]
+CATALOG = json.loads(
+    (Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8")
+)["methods"]
 # A PNG of one pixel, for an image file the image importer reads without Office.
-PIXEL = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
-                      "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
+PIXEL = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082"
+)
 
 
 class FakeLLM:
@@ -53,8 +57,13 @@ class FakeLLM:
 
 
 def plan(credentials, site_id="site-1"):
-    return {"site_id": site_id, "site_name": "JIRA", "mode": "auto", "methods": CATALOG,
-            "credentials": dict(credentials)}
+    return {
+        "site_id": site_id,
+        "site_name": "JIRA",
+        "mode": "auto",
+        "methods": CATALOG,
+        "credentials": dict(credentials),
+    }
 
 
 @pytest.fixture
@@ -78,9 +87,11 @@ def save(service, kind, **values):
 
 def forget_session(importer, server):
     """The session the last run left in the site's profile is gone, as after the site signed the user out."""
+
     async def clear():
         async with importer._browser(server.origin, headless=True) as context:
             await context.clear_cookies()
+
     asyncio.run(clear())
 
 
@@ -90,21 +101,29 @@ def finish(service, ident, logins=()):
     before = {run["id"] for run in service.dispatch("routines.runs", {"id": ident, "limit": routines.MAX_RUNS})}
     service.dispatch("routines.run", {"id": ident, "logins": list(logins), "allow_files": True})
     wait(lambda: not service.routines.pending(ident))
-    return next(run for run in service.dispatch("routines.runs", {"id": ident, "limit": routines.MAX_RUNS})
-                if run["id"] not in before)
+    return next(
+        run
+        for run in service.dispatch("routines.runs", {"id": ident, "limit": routines.MAX_RUNS})
+        if run["id"] not in before
+    )
 
 
 # --- Catalog, forms and schedules -----------------------------------------------------------------------------------
 
 
 def test_a_link_typed_without_its_scheme_is_saved_as_the_https_link_it_opens(service):
-    watch = save(service, "jira_watch", config={"urls": "jira.test/browse/TEAM-3\nhttps://jira.test/browse/TEAM-3\n"
-                                                        "//jira.test/browse/TEAM-4"})
+    watch = save(
+        service,
+        "jira_watch",
+        config={"urls": "jira.test/browse/TEAM-3\nhttps://jira.test/browse/TEAM-3\n//jira.test/browse/TEAM-4"},
+    )
     assert watch["config"]["urls"] == ["https://jira.test/browse/TEAM-3", "https://jira.test/browse/TEAM-4"]
     page = save(service, "confluence_watch", config={"url": "wiki.test/confluence/pages/viewpage.action?pageId=1"})
     assert page["config"]["url"] == "https://wiki.test/confluence/pages/viewpage.action?pageId=1"
     # The account of the https link signs the run in.
-    assert service.dispatch("routines.needs", {"id": page["id"]}) == [{"kind": "confluence", "url": page["config"]["url"]}]
+    assert service.dispatch("routines.needs", {"id": page["id"]}) == [
+        {"kind": "confluence", "url": page["config"]["url"]}
+    ]
     for config in ({"url": "wiki test/confluence/display/S/P"}, {"url": "C:\\wiki\\display\\S\\P"}):
         with pytest.raises(UserError, match="웹 주소"):
             save(service, "confluence_watch", config=config)
@@ -115,8 +134,13 @@ def test_paths_and_links_are_read_one_a_line_as_electron_checks_them():
     entry another reading could split or unquote differently, into a network path, is refused."""
     assert routines.lines_of('C:\\docs\r\n \t"D:\\팀 자료" \n\n', "경로", 20) == ["C:\\docs", "D:\\팀 자료"]
     assert routines.lines_of(['"C:\\docs"', "C:\\docs"], "경로", 20) == ["C:\\docs"]
-    for value in ("C:\\ok\r\\\\evil\\share\\x", "C:\\ok\u2028\\\\evil\\share\\x", ['"\\\\evil\\share\\x'],
-                  ["C:\\a\x1c"], ["C:\\a\x85b"]):
+    for value in (
+        "C:\\ok\r\\\\evil\\share\\x",
+        "C:\\ok\u2028\\\\evil\\share\\x",
+        ['"\\\\evil\\share\\x'],
+        ["C:\\a\x1c"],
+        ["C:\\a\x85b"],
+    ):
         with pytest.raises(UserError, match="따옴표나 보이지 않는 문자"):
             routines.lines_of(value, "경로", 20)
 
@@ -186,8 +210,9 @@ def test_events_tell_electron_about_runs_that_ended(service):
     routine = save(service, "analyze_new", notify=True)
     finish(service, routine["id"])
     events = service.dispatch("routines.events", {"after": cursor})
-    assert [(run["routine_id"], run["status"], run["notify"], run["logins"]) for run in events["runs"]] == \
-        [(routine["id"], "success", True, [])]
+    assert [(run["routine_id"], run["status"], run["notify"], run["logins"]) for run in events["runs"]] == [
+        (routine["id"], "success", True, [])
+    ]
     assert events["active"] == 0
     assert service.dispatch("routines.events", {"after": events["cursor"]})["runs"] == []
 
@@ -222,14 +247,22 @@ def test_source_refresh_updates_changed_files_takes_new_ones_and_tells_missing_o
     counts = {item["title"]: item["status"] for item in run["items"]}
     assert counts == {"회의.md": "changed", "새 메모.md": "new", "설계.md": "edited", "지난": "missing"}
     assert run["summary"] == "업데이트 1 · 새 문서 1 · 그대로 1 · 고친 문서라 건너뜀 1 · 원본 없음 1"
-    assert "결정 B" in service.wiki_get({"id": next(i["doc_id"] for i in run["items"] if i["title"] == "회의.md")})["content"]
+    assert (
+        "결정 B"
+        in service.wiki_get({"id": next(i["doc_id"] for i in run["items"] if i["title"] == "회의.md")})["content"]
+    )
     assert service.wiki_get({"id": edited["id"]})["content"] == "내가 고친 설계"
 
     # A path that is gone fails alone; this PC's files without Office or Notepad are left out with the reason.
     other = save(service, "source_refresh", config={"paths": f"{tmp_path / '없는 폴더'}\n{folder}"})
     run = finish(service, other["id"])
-    assert run["items"][0] == {"title": str(tmp_path / "없는 폴더"), "status": "failed", "doc_id": None,
-                               "url": str(tmp_path / "없는 폴더"), "message": "파일이나 폴더를 찾을 수 없습니다."}
+    assert run["items"][0] == {
+        "title": str(tmp_path / "없는 폴더"),
+        "status": "failed",
+        "doc_id": None,
+        "url": str(tmp_path / "없는 폴더"),
+        "message": "파일이나 폴더를 찾을 수 없습니다.",
+    }
 
 
 def test_source_refresh_leaves_out_the_files_whose_documents_were_purged(service, tmp_path):
@@ -442,9 +475,13 @@ def test_runs_go_side_by_side_and_those_that_share_a_lane_take_turns(service, mo
 
     for kind in ("confluence_watch", "jira_watch", "jira_filter", "analyze_new"):
         monkeypatch.setattr(RECIPES[kind], "run", fake)
-    tree = save(service, "confluence_watch", name="긴 페이지 트리", config={"url": "https://wiki.test/display/SPACE/Page"})
+    tree = save(
+        service, "confluence_watch", name="긴 페이지 트리", config={"url": "https://wiki.test/display/SPACE/Page"}
+    )
     watch = save(service, "jira_watch", name="긴 티켓 감시", config={"urls": "https://jira.test/browse/TEAM-1"})
-    search = save(service, "jira_filter", name="검색", config={"url": "https://jira.example.com", "jql": "project = TEAM"})
+    search = save(
+        service, "jira_filter", name="검색", config={"url": "https://jira.example.com", "jql": "project = TEAM"}
+    )
     analysis, again = save(service, "analyze_new", name="분석"), save(service, "analyze_new", name="분석 또 하나")
     for routine in (tree, watch, search, analysis, again):
         service.dispatch("routines.run", {"id": routine["id"], "logins": []})
@@ -457,14 +494,17 @@ def test_runs_go_side_by_side_and_those_that_share_a_lane_take_turns(service, mo
     for routine in (tree, watch, search):
         wait(lambda: not service.routines.pending(routine["id"]))
     assert spans["검색"][0] >= spans["긴 티켓 감시"][1]
-    assert all(service.dispatch("routines.runs", {"id": routine["id"]})[0]["summary"] == "끝"
-               for routine in (tree, watch, search, analysis, again))
+    assert all(
+        service.dispatch("routines.runs", {"id": routine["id"]})[0]["summary"] == "끝"
+        for routine in (tree, watch, search, analysis, again)
+    )
 
 
 def test_a_report_the_llm_cut_short_says_so_as_a_prompt_runs_answer_does(service, monkeypatch):
     """A text an LLM answer stopped at its output limit (truncated) makes ends with the note that prompt runs add
     (llm.shown), in the run's text and its document alike, and no cut of the text takes the note away (clip)."""
     from agent.llm import TRUNCATED_NOTE, reply
+
     service.wiki_save({"title": "문서", "content": "내용"})
     monkeypatch.setattr(service.llm, "complete", lambda messages, **_: reply("## 한 일\n\n- 문서 정리", truncated=True))
     report = save(service, "work_report")
@@ -500,15 +540,21 @@ def test_a_routine_job_gives_back_the_users_import_and_stops_with_it(service, mo
 
 def test_an_import_tells_what_changed_in_the_text_imported_before(service):
     assert compare("a\nb\nc", "a\nb\nc") is None
-    assert compare("a\n\nb", "a\nB\n\nc") == {"added": 2, "removed": 1, "more": 0,
-                                               "lines": [{"op": "+", "text": "B"}, {"op": "-", "text": "b"},
-                                                         {"op": "+", "text": "c"}]}
+    assert compare("a\n\nb", "a\nB\n\nc") == {
+        "added": 2,
+        "removed": 1,
+        "more": 0,
+        "lines": [{"op": "+", "text": "B"}, {"op": "-", "text": "b"}, {"op": "+", "text": "c"}],
+    }
     long = compare("\n".join(map(str, range(200))), "\n".join(f"x{n}" for n in range(200)))
     assert (len(long["lines"]), long["more"]) == (60, 340)
 
-    capture = lambda body: {"source_url": "https://jira.test/browse/TEAM-1", "issue_key": "TEAM-1",
-                            "html": f"<html><head><title>[TEAM-1] 제목</title></head><body>{body}</body></html>",
-                            "track_changes": True}
+    capture = lambda body: {
+        "source_url": "https://jira.test/browse/TEAM-1",
+        "issue_key": "TEAM-1",
+        "html": f"<html><head><title>[TEAM-1] 제목</title></head><body>{body}</body></html>",
+        "track_changes": True,
+    }
     first = import_issue(service, capture("<p>상태 Open</p>"))
     assert first["status"] == "imported" and "change" not in first
     assert "change" not in import_issue(service, capture("<p>상태 Open</p>"))
@@ -547,16 +593,36 @@ def test_real_browser_jira_watch_search_and_project_report(jira, monkeypatch):
     watch = save(service, "jira_watch", config={"urls": [server.url, ticket3]})
     assert service.dispatch("routines.needs", {"id": watch["id"]}) == [{"kind": "jira", "url": server.url}]
     run = finish(service, watch["id"], login)
-    assert (run["status"], run["summary"], run["changed"]) == ("success", "티켓 2개를 기준으로 가져왔습니다", False), run
+    assert (run["status"], run["summary"], run["changed"]) == ("success", "티켓 2개를 기준으로 가져왔습니다", False), (
+        run
+    )
     assert len(service.wiki_list({})) == 2 and service.jira.status()["job"]["dismissed"]
     assert service.jira.status()["job"]["routine"] == "JIRA 티켓 변경 확인"
     # The login method it found is told to Electron with the run.
     events = service.dispatch("routines.events", {"after": ""})
-    assert events["runs"][0]["logins"] == [{"site_id": "site-1", "ok": True, "method": "sso-link", "detected": True,
-                                            "learned": None, "hosts": ["localhost"], "error": "", "diagnosis": None}]
+    assert events["runs"][0]["logins"] == [
+        {
+            "site_id": "site-1",
+            "ok": True,
+            "method": "sso-link",
+            "detected": True,
+            "learned": None,
+            "hosts": ["localhost"],
+            "error": "",
+            "diagnosis": None,
+        }
+    ]
 
-    monkeypatch.setitem(jira_server.ISSUES, "TEAM-1", {**jira_server.ISSUES["TEAM-1"], "status": "In Progress",
-                                                       "category": "indeterminate", "updated": "2026-10-06T10:00:00.000+0900"})
+    monkeypatch.setitem(
+        jira_server.ISSUES,
+        "TEAM-1",
+        {
+            **jira_server.ISSUES["TEAM-1"],
+            "status": "In Progress",
+            "category": "indeterminate",
+            "updated": "2026-10-06T10:00:00.000+0900",
+        },
+    )
     run = finish(service, watch["id"], login)
     assert (run["summary"], run["changed"]) == ("바뀐 티켓 1개 · 티켓 2개 확인", True), run
     item = run["items"][0]
@@ -568,39 +634,69 @@ def test_real_browser_jira_watch_search_and_project_report(jira, monkeypatch):
     assert "+ | 상태 | In Progress |" in service.llm.calls[-1][-1]["content"]
 
     # A saved search: new, changed and dropped tickets after the first run, which sets the baseline.
-    search = save(service, "jira_filter", config={"url": f"{server.origin}/jira", "jql": "project = TEAM\nAND resolution = Unresolved"})
+    search = save(
+        service,
+        "jira_filter",
+        config={"url": f"{server.origin}/jira", "jql": "project = TEAM\nAND resolution = Unresolved"},
+    )
     assert search["config"]["jql"] == "project = TEAM AND resolution = Unresolved"
     site = [{"kind": "jira", "url": f"{server.origin}/jira", "login": plan(server.credentials)}]
     run = finish(service, search["id"], site)
     assert (run["summary"], run["changed"]) == ("티켓 2개를 기준으로 삼았습니다", False), run
     assert server.jql[-1] == "project = TEAM AND resolution = Unresolved ORDER BY updated DESC"
-    monkeypatch.setitem(jira_server.ISSUES, "TEAM-3", {**jira_server.ISSUES["TEAM-3"], "updated": "2026-10-06T11:00:00.000+0900",
-                                                       "text": "세션이 60분 뒤 만료됩니다"})
-    monkeypatch.setitem(jira_server.ISSUES, "TEAM-1", {**jira_server.ISSUES["TEAM-1"], "category": "done", "status": "Done"})
+    monkeypatch.setitem(
+        jira_server.ISSUES,
+        "TEAM-3",
+        {
+            **jira_server.ISSUES["TEAM-3"],
+            "updated": "2026-10-06T11:00:00.000+0900",
+            "text": "세션이 60분 뒤 만료됩니다",
+        },
+    )
+    monkeypatch.setitem(
+        jira_server.ISSUES, "TEAM-1", {**jira_server.ISSUES["TEAM-1"], "category": "done", "status": "Done"}
+    )
     run = finish(service, search["id"], site)
     assert (run["summary"], run["changed"]) == ("수정 1개 · 빠짐 1개 · 모두 1개", True), run
     assert [(item["title"], item["status"]) for item in run["items"]] == [
-        ("[TEAM-3] 로그인 세션 만료", "changed"), ("TEAM-1", "removed")]
+        ("[TEAM-3] 로그인 세션 만료", "changed"),
+        ("TEAM-1", "removed"),
+    ]
     changed = run["items"][0]
     assert {"op": "+", "text": "세션이 60분 뒤 만료됩니다"} in changed["change"]["lines"]
     doc = service.wiki_get({"id": run["documents"][0]["id"]})
     assert doc["title"] == "JIRA 검색 결과 · JIRA 검색 결과 알림" and "- 결과에서 빠짐: TEAM-1" in doc["content"]
 
     # A project's progress, with the in-progress tickets imported.
-    monkeypatch.setitem(jira_server.ISSUES, "TEAM-3", {**jira_server.ISSUES["TEAM-3"], "status": "In Progress",
-                                                       "category": "indeterminate", "due": "2026-01-01"})
+    monkeypatch.setitem(
+        jira_server.ISSUES,
+        "TEAM-3",
+        {**jira_server.ISSUES["TEAM-3"], "status": "In Progress", "category": "indeterminate", "due": "2026-01-01"},
+    )
     project = save(service, "jira_project", config={"url": f"{server.origin}/jira/projects/TEAM", "import": True})
     board = [{"kind": "jira", "url": f"{server.origin}/jira/projects/TEAM", "login": plan(server.credentials)}]
     run = finish(service, project["id"], board)
     assert (run["status"], run["changed"]) == ("success", True), run
     assert run["summary"] == "진행 중 1 · 미해결 1 · 7일 완료 2 · 기한 지남 1"
     assert [(metric["label"], metric["value"]) for metric in run["metrics"]] == [
-        ("전체", 3), ("미해결", 1), ("진행 중", 1), ("7일 새로", 3), ("7일 완료", 2), ("기한 지남", 1)]
+        ("전체", 3),
+        ("미해결", 1),
+        ("진행 중", 1),
+        ("7일 새로", 3),
+        ("7일 완료", 2),
+        ("기한 지남", 1),
+    ]
     report = service.wiki_get({"id": run["documents"][0]["id"]})
     assert report["title"] == "JIRA 진행 현황 · TEAM"
-    for expected in ("# JIRA 진행 현황 · TEAM · 팀 프로젝트", "## AI 진행 요약", "## 진행 중인 티켓 1개",
-                     "| TEAM-3 | 로그인 세션 만료 | In Progress | 김개발 |", "## 기한 지난 티켓 1개", "## 최근 7일 완료한 티켓 2개",
-                     "| 김개발 | 1 | 1 |"):
+    for expected in (
+        "# JIRA 진행 현황 · TEAM · 팀 프로젝트",
+        "## AI 진행 요약",
+        "## 진행 중인 티켓 1개",
+        "| TEAM-3 | 로그인 세션 만료 | In Progress | 김개발 |",
+        "## 기한 지난 티켓 1개",
+        "## 최근 7일 완료한 티켓 2개",
+        "| 김개발 | 1 | 1 |",
+    ):
         assert expected in report["content"], expected
     assert any('project = "TEAM" AND resolution = Unresolved ORDER BY updated DESC' == jql for jql in server.jql)
     assert service.jira.status()["job"]["results"][0]["key"] == "TEAM-3"
@@ -611,10 +707,17 @@ def test_real_browser_jira_watch_search_and_project_report(jira, monkeypatch):
     # The user changed the ticket's Wiki document: the ticket's next change is told once, not at every run.
     team1 = next(doc for doc in service.wiki_list({}) if doc["title"].startswith("[TEAM-1]"))
     service.wiki_save({"id": team1["id"], "title": team1["title"], "content": "내 메모"})
-    monkeypatch.setitem(jira_server.ISSUES, "TEAM-1", {**jira_server.ISSUES["TEAM-1"], "text": "다시 바뀐 설명",
-                                                       "updated": "2026-10-06T12:00:00.000+0900"})
+    monkeypatch.setitem(
+        jira_server.ISSUES,
+        "TEAM-1",
+        {**jira_server.ISSUES["TEAM-1"], "text": "다시 바뀐 설명", "updated": "2026-10-06T12:00:00.000+0900"},
+    )
     run = finish(service, watch["id"], login)
-    assert (run["summary"], run["changed"], run["items"][0]["status"]) == ("바뀐 티켓 1개 · 티켓 2개 확인", True, "edited")
+    assert (run["summary"], run["changed"], run["items"][0]["status"]) == (
+        "바뀐 티켓 1개 · 티켓 2개 확인",
+        True,
+        "edited",
+    )
     run = finish(service, watch["id"], login)
     assert (run["summary"], run["changed"]) == ("바뀐 티켓 없음 · 티켓 2개 확인", False)
     assert run["items"][0]["repeat"] and "지난번에 알린 변경과 같습니다" in run["items"][0]["message"]
@@ -623,8 +726,11 @@ def test_real_browser_jira_watch_search_and_project_report(jira, monkeypatch):
     # A search imports at most MAX_IMPORTS tickets a run; the others follow, told only once.
     monkeypatch.setattr(routines, "MAX_IMPORTS", 1)
     for key, stamp in (("TEAM-1", "2026-10-07T09:00:00.000+0900"), ("TEAM-3", "2026-10-07T10:00:00.000+0900")):
-        monkeypatch.setitem(jira_server.ISSUES, key, {**jira_server.ISSUES[key], "category": "indeterminate",
-                                                      "status": "In Progress", "updated": stamp})
+        monkeypatch.setitem(
+            jira_server.ISSUES,
+            key,
+            {**jira_server.ISSUES[key], "category": "indeterminate", "status": "In Progress", "updated": stamp},
+        )
     run = finish(service, search["id"], site)
     assert run["summary"].startswith("새 티켓 1개 · 수정 1개"), run
     assert len(service.jira.status()["job"]["results"]) == 1
@@ -655,7 +761,11 @@ def test_real_browser_confluence_watch_tells_what_changed(tmp_path, monkeypatch)
     try:
         routine = save(service, "confluence_watch", config={"url": server.url})
         run = finish(service, routine["id"])
-        assert (run["status"], run["summary"], run["changed"]) == ("success", "페이지 1개를 기준으로 가져왔습니다", False), run
+        assert (run["status"], run["summary"], run["changed"]) == (
+            "success",
+            "페이지 1개를 기준으로 가져왔습니다",
+            False,
+        ), run
         run = finish(service, routine["id"])
         assert (run["summary"], run["items"]) == ("바뀐 곳 없음 · 페이지 1개 확인", [])
         monkeypatch.setattr(confluence_server, "BODY", confluence_server.BODY + "<h2>새 결정</h2><p>배포는 금요일</p>")

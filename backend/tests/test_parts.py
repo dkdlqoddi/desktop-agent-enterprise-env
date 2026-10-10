@@ -1,5 +1,6 @@
 """Imports too long for one Wiki document are saved as several: where the text is cut, what a part repeats, and how
 the sources of an earlier version become part 1 of 1."""
+
 import re
 import sqlite3
 import threading
@@ -46,8 +47,12 @@ def test_a_code_block_a_table_and_a_line_too_long_for_one_part_are_cut_inside():
 
 
 def test_a_page_is_cut_between_its_elements_and_each_part_is_a_page_of_its_own():
-    body = "".join(f"<h1>장 {i}</h1>" + "".join(f"<p>문단 {i}-{j} {'설명 ' * 40}</p>" for j in range(4))
-                   + f'<p><img src="{PNG}" alt="그림 {i}"></p>' for i in range(12))
+    body = "".join(
+        f"<h1>장 {i}</h1>"
+        + "".join(f"<p>문단 {i}-{j} {'설명 ' * 40}</p>" for j in range(4))
+        + f'<p><img src="{PNG}" alt="그림 {i}"></p>'
+        for i in range(12)
+    )
     pages, cut = split_page(page("보고서 & 계획", body, "word", "font-size:10pt"), 3000, 50)
     assert not cut and len(pages) == 3
     for number, (part, text) in enumerate(pages, 1):
@@ -60,17 +65,24 @@ def test_a_page_is_cut_between_its_elements_and_each_part_is_a_page_of_its_own()
     assert re.findall(r"문단 (\d+-\d+)", texts) == [f"{i}-{j}" for i in range(12) for j in range(4)]
     # Each picture comes back in the part that shows it.
     assert "".join(part for part, _ in pages).count(PNG) == 12 and "private-agent-picture" not in "".join(
-        part for part, _ in pages)
+        part for part, _ in pages
+    )
 
 
 def test_a_long_table_goes_on_with_its_section_heading_columns_and_header_row():
-    rows = "".join(f'<tr><th>{r}</th><td>값 {r}</td><td data-formula="=B{r}*2">{r * 2}</td></tr>' for r in range(1, 301))
-    body = ('<section class="sheet"><h2>매출</h2><table class="cells"><colgroup><col><col style="width:40pt"><col>'
-            f'</colgroup><tr><th></th><th>B</th><th>C</th></tr>{rows}</table></section>')
+    rows = "".join(
+        f'<tr><th>{r}</th><td>값 {r}</td><td data-formula="=B{r}*2">{r * 2}</td></tr>' for r in range(1, 301)
+    )
+    body = (
+        '<section class="sheet"><h2>매출</h2><table class="cells"><colgroup><col><col style="width:40pt"><col>'
+        f"</colgroup><tr><th></th><th>B</th><th>C</th></tr>{rows}</table></section>"
+    )
     pages, cut = split_page(page("매출", body, "excel"), 4000, 50)
     assert not cut and len(pages) > 2
     for number, (part, text) in enumerate(pages, 1):
-        assert text.startswith("## 매출" + (" (계속)" if number > 1 else "") + "\n\n|  | B | C |\n| --- | --- | --- |\n")
+        assert text.startswith(
+            "## 매출" + (" (계속)" if number > 1 else "") + "\n\n|  | B | C |\n| --- | --- | --- |\n"
+        )
         assert part.count("width:40pt") == 1 and part.count('<section class="sheet">') == 1
     assert re.findall(r"^\| (\d+) \|", "\n".join(text for _, text in pages), re.M) == [str(r) for r in range(1, 301)]
 
@@ -119,8 +131,9 @@ def test_code_blocks_end_at_their_closing_fence_whatever_the_line_breaks():
 def test_a_page_of_elements_without_text_is_still_cut_into_parts():
     """Elements estimated at nothing (<hr> becomes ---) once let a part take all of them; the cutting never ended."""
     finished = []
-    worker = threading.Thread(target=lambda: finished.append(split_page(page("선", "<hr>" * 3000, "word"), 2000, 50)),
-                              daemon=True)
+    worker = threading.Thread(
+        target=lambda: finished.append(split_page(page("선", "<hr>" * 3000, "word"), 2000, 50)), daemon=True
+    )
     worker.start()
     worker.join(30)
     assert finished and not worker.is_alive()
@@ -146,29 +159,47 @@ def test_sources_of_an_earlier_version_become_part_1_of_1(tmp_path):
     with service.db.connect() as db:
         db.execute("DROP TABLE rtf_sources")
         db.execute("DROP TABLE jira_sources")
-        db.execute("CREATE TABLE rtf_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
-                   "source_path TEXT NOT NULL, source_hash TEXT NOT NULL UNIQUE, markdown TEXT NOT NULL, "
-                   "imported_at TEXT NOT NULL)")
-        db.execute("CREATE TABLE jira_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
-                   "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL, markdown TEXT NOT NULL, "
-                   "imported_at TEXT NOT NULL, UNIQUE(source_url, source_hash))")
+        db.execute(
+            "CREATE TABLE rtf_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
+            "source_path TEXT NOT NULL, source_hash TEXT NOT NULL UNIQUE, markdown TEXT NOT NULL, "
+            "imported_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "CREATE TABLE jira_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
+            "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL, markdown TEXT NOT NULL, "
+            "imported_at TEXT NOT NULL, UNIQUE(source_url, source_hash))"
+        )
         db.execute("INSERT INTO rtf_sources VALUES (?,?,?,?,?)", (rtf["id"], "/a.rtf", "hash", "본문", "2026-09-01"))
-        db.execute("INSERT INTO jira_sources VALUES (?,?,?,?,?,?)",
-                   (ticket["id"], "https://jira.test/browse/A-1", "A-1", "hash", "본문", "2026-09-01"))
+        db.execute(
+            "INSERT INTO jira_sources VALUES (?,?,?,?,?,?)",
+            (ticket["id"], "https://jira.test/browse/A-1", "A-1", "hash", "본문", "2026-09-01"),
+        )
     upgraded = Service(Database(path), None)
     doc = upgraded.wiki_get({"id": rtf["id"]})
-    assert doc["source"] == {"kind": "rtf", "source_path": "/a.rtf", "imported_at": "2026-09-01",
-                             "part": 1, "parts": 1, "edited": False}
+    assert doc["source"] == {
+        "kind": "rtf",
+        "source_path": "/a.rtf",
+        "imported_at": "2026-09-01",
+        "part": 1,
+        "parts": 1,
+        "edited": False,
+    }
     assert doc["parts"] == []
     assert upgraded.wiki_get({"id": ticket["id"]})["source"]["issue_key"] == "A-1"
     other = upgraded.wiki_save({"title": "둘째", "content": "본문"})
     with upgraded.db.connect() as db:
         # The same file may now have a row for each of its parts, but only one for each.
-        db.execute("INSERT INTO rtf_sources(doc_id,source_path,source_hash,markdown,imported_at,part,parts) "
-                   "VALUES (?,?,?,?,?,2,2)", (other["id"], "/a.rtf", "hash", "본문", "2026-09-01"))
+        db.execute(
+            "INSERT INTO rtf_sources(doc_id,source_path,source_hash,markdown,imported_at,part,parts) "
+            "VALUES (?,?,?,?,?,2,2)",
+            (other["id"], "/a.rtf", "hash", "본문", "2026-09-01"),
+        )
     with pytest.raises(sqlite3.IntegrityError), upgraded.db.connect() as db:
-        db.execute("INSERT INTO rtf_sources(doc_id,source_path,source_hash,markdown,imported_at,part,parts) "
-                   "VALUES (?,?,?,?,?,2,2)", (ticket["id"], "/a.rtf", "hash", "본문", "2026-09-01"))
+        db.execute(
+            "INSERT INTO rtf_sources(doc_id,source_path,source_hash,markdown,imported_at,part,parts) "
+            "VALUES (?,?,?,?,?,2,2)",
+            (ticket["id"], "/a.rtf", "hash", "본문", "2026-09-01"),
+        )
     # Opening the upgraded database again changes nothing.
     again = Service(Database(path), None)
     assert [part["id"] for part in again.wiki_get({"id": other["id"]})["parts"]] == [rtf["id"], other["id"]]

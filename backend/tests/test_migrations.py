@@ -1,5 +1,6 @@
 """The Wiki's schema version (agent/migrations.py): PRAGMA user_version, numbered migrations run in order after db.py's
 CREATE TABLE IF NOT EXISTS block, and a Wiki of a later version refused before anything is written to it."""
+
 import contextlib
 import sqlite3
 
@@ -37,7 +38,9 @@ def test_a_new_wiki_and_one_from_before_versions_are_at_version_1(tmp_path):
         db.execute("""CREATE TABLE documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
             summary TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
             revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
-        db.execute("INSERT INTO documents (id,title,content,created_at,updated_at) VALUES ('d1','예전 문서','글','t','t')")
+        db.execute(
+            "INSERT INTO documents (id,title,content,created_at,updated_at) VALUES ('d1','예전 문서','글','t','t')"
+        )
         db.commit()
     service = Service(Database(old), None)
     assert user_version(old) == 1
@@ -53,8 +56,13 @@ def test_migrations_run_once_each_in_order_after_the_block(tmp_path, monkeypatch
 
     def second(db):
         # The block has run: its tables are there, and the version is still the one before.
-        ran.append(("second", migrations.version(db), "documents" in {r[0] for r in db.execute(
-            "SELECT name FROM sqlite_master")}))
+        ran.append(
+            (
+                "second",
+                migrations.version(db),
+                "documents" in {r[0] for r in db.execute("SELECT name FROM sqlite_master")},
+            )
+        )
         db.execute("CREATE TABLE labels (name TEXT PRIMARY KEY)")
         db.execute("INSERT INTO labels VALUES ('중요')")
 

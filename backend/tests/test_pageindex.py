@@ -21,16 +21,22 @@ def service(tmp_path):
 
 
 def test_tree_follows_headings_and_ignores_code_fences():
-    content = ("출처: https://wiki/page\n\n# 개요\n\n소개 문단\n\n## 배경\n\n배경 문단\n\n"
-               "```md\n# 코드 안의 제목\n```\n\n## 설계 ##\n\n설계 문단\n\n# 3\\. **결론** [링크](https://x)\n\n끝")
+    content = (
+        "출처: https://wiki/page\n\n# 개요\n\n소개 문단\n\n## 배경\n\n배경 문단\n\n"
+        "```md\n# 코드 안의 제목\n```\n\n## 설계 ##\n\n설계 문단\n\n# 3\\. **결론** [링크](https://x)\n\n끝"
+    )
     nodes = pageindex.build(content)
     assert [(n["id"], n["parent"], n["title"]) for n in nodes] == [
-        ("1", None, "문서 앞부분"), ("2", None, "개요"), ("2.1", "2", "배경"), ("2.2", "2", "설계"),
-        ("3", None, "3. 결론 링크")]
+        ("1", None, "문서 앞부분"),
+        ("2", None, "개요"),
+        ("2.1", "2", "배경"),
+        ("2.2", "2", "설계"),
+        ("3", None, "3. 결론 링크"),
+    ]
     # A section spans its subsections and ends where the next section of its level starts.
-    assert content[nodes[1]["start"]:nodes[1]["end"]].startswith("# 개요")
+    assert content[nodes[1]["start"] : nodes[1]["end"]].startswith("# 개요")
     assert nodes[1]["end"] == nodes[4]["start"] and nodes[2]["end"] == nodes[3]["start"]
-    assert "코드 안의 제목" in content[nodes[2]["start"]:nodes[2]["end"]]
+    assert "코드 안의 제목" in content[nodes[2]["start"] : nodes[2]["end"]]
     assert nodes[-1]["end"] == len(content)
     assert pageindex.own_text(content, nodes, 1).strip() == "소개 문단"
     assert pageindex.path(nodes, "2.2") == "개요 › 설계"
@@ -44,7 +50,7 @@ def test_long_text_is_split_into_pages_at_paragraphs():
     assert nodes[0]["start"] == 0 and nodes[-1]["end"] == len(content)
     assert all(a["end"] == b["start"] for a, b in zip(nodes, nodes[1:]))
     assert all(n["end"] - n["start"] <= pageindex.PAGE_CHARS for n in nodes)
-    assert all(content[n["start"]:n["end"]].startswith("보고 문단") for n in nodes)
+    assert all(content[n["start"] : n["end"]].startswith("보고 문단") for n in nodes)
     assert nodes[0]["title"].startswith(f"1/{len(nodes)}쪽 · 보고 문단 0")
     # A long section keeps its heading and gets pages as its first children.
     content = "# 회의록\n\n" + paragraphs(40, "안건") + "\n\n## 결정\n\n결정 문단"
@@ -57,19 +63,38 @@ def test_a_heading_line_of_many_spaces_is_read_at_once():
     """Headings are read without the regular expression that took seconds on a line of many spaces, and as it did."""
     import re
     import time
+
     started = time.monotonic()
     found = pageindex.headings("#" + " " * 20000 + "제목" + " " * 20000 + "끝\n" + "## " + " \t" * 20000 + "\n본문")
     assert time.monotonic() - started < 1 and found == [(0, 1, "제목 끝")]
     before = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*")
-    for line in ("# 제목", "  ## 제목 ##  ", "### 제목#", "#### #", "# ##", "# 제목 # 끝", "#\t제목\t#\t", "#", "#5",
-                 "####### 일곱", "    # 코드", "# 3\\. **결론**", "## 제목 \\#", "# 제목 ###x", "   ###### 여섯 #"):
+    for line in (
+        "# 제목",
+        "  ## 제목 ##  ",
+        "### 제목#",
+        "#### #",
+        "# ##",
+        "# 제목 # 끝",
+        "#\t제목\t#\t",
+        "#",
+        "#5",
+        "####### 일곱",
+        "    # 코드",
+        "# 3\\. **결론**",
+        "## 제목 \\#",
+        "# 제목 ###x",
+        "   ###### 여섯 #",
+    ):
         match = before.fullmatch(line)
         assert pageindex.heading(line) == ((len(match.group(1)), match.group(2) or "") if match else None), line
 
 
 def test_many_headings_are_folded_and_grouped():
-    nested = "".join(f"# 장 {a}\n\n" + "".join(f"## 절 {a}.{b}\n\n" + "".join(
-        f"### 항 {a}.{b}.{c}\n\n내용\n\n" for c in range(4)) for b in range(4)) for a in range(4))
+    nested = "".join(
+        f"# 장 {a}\n\n"
+        + "".join(f"## 절 {a}.{b}\n\n" + "".join(f"### 항 {a}.{b}.{c}\n\n내용\n\n" for c in range(4)) for b in range(4))
+        for a in range(4)
+    )
     nodes = pageindex.build(nested)
     assert len(nodes) == 20 and max(n["depth"] for n in nodes) == 2
     flat = "".join(f"## 항목 {i}\n\n" + "짧은 내용 " * 30 + "\n\n" for i in range(200))
@@ -90,7 +115,11 @@ def test_outline_keeps_focus_within_budget():
     assert lines[2:] == ["1.2 캐시 전략", "1.3 운영", "2 부록"]
     # The focused section and its parents come first; omitted sections are counted.
     assert pageindex.outline(nodes, 25, focus=["1.3"]).splitlines() == [
-        "1 플랫폼 설계", "1.3 운영", "2 부록", "(목차 2개 항목 생략)"]
+        "1 플랫폼 설계",
+        "1.3 운영",
+        "2 부록",
+        "(목차 2개 항목 생략)",
+    ]
 
 
 def test_section_text_orders_bounds_and_prefers_specific_sections():
@@ -118,8 +147,9 @@ def test_long_document_analysis_uses_bounded_requests(service):
     assert analyzed["keywords"] == ["cache", "platform"]
     outline = analyzed["outline"]
     assert [(o["id"], o["heading"]) for o in outline] == [("1", 0), ("1.1", 1), ("1.2", 2), ("1.3", 3), ("2", 4)]
-    summarized = {s["id"] for _, payload, _ in service.llm.calls if isinstance(payload, dict)
-                  for s in payload.get("sections", [])}
+    summarized = {
+        s["id"] for _, payload, _ in service.llm.calls if isinstance(payload, dict) for s in payload.get("sections", [])
+    }
     assert all(o["summary"] == f"요약 {o['id']}" for o in outline if o["id"] in summarized)
     assert all(len(o["summary"]) <= pageindex.SHORT_CHARS for o in outline if o["id"] not in summarized)
     # Editing the document drops the tree; a short document is analyzed in one request.
@@ -151,6 +181,7 @@ def test_summary_batches_fail_cleanly_or_fall_back(service):
 
     def unreachable(payload):
         raise UserError("LLM API에 연결할 수 없습니다.")
+
     service.llm.summarize = unreachable
     with pytest.raises(UserError, match="연결할 수 없습니다"):
         service.wiki_analyze({"id": doc["id"]})
@@ -171,8 +202,9 @@ def test_summary_batches_fail_cleanly_or_fall_back(service):
 
 def asked(llm):
     """The section ids of each summary request the LLM got, in no particular order."""
-    return sorted(tuple(s["id"] for s in payload["sections"])
-                  for stage, payload, _ in llm.calls if stage == "summarize")
+    return sorted(
+        tuple(s["id"] for s in payload["sections"]) for stage, payload, _ in llm.calls if stage == "summarize"
+    )
 
 
 def test_a_summary_batch_that_fails_is_asked_again_in_halves():
@@ -188,8 +220,9 @@ def test_a_summary_batch_that_fails_is_asked_again_in_halves():
     llm.summarize = busy_once
     assert pageindex.summarize(llm, "문서", content, nodes)["failed"] == []
     # The other batches were not asked again; the failed one was, in halves.
-    assert asked(llm) == sorted([("1", "3"), ("5", "7"), ("9", "11"), ("2", "4", "6", "8", "10", "12", "13", "14"),
-                                 ("1",), ("3",)])
+    assert asked(llm) == sorted(
+        [("1", "3"), ("5", "7"), ("9", "11"), ("2", "4", "6", "8", "10", "12", "13", "14"), ("1",), ("3",)]
+    )
     assert all(n["summary"] == f"요약 {n['id']}" for n in nodes)
 
 
@@ -224,8 +257,10 @@ def test_a_batch_that_fails_again_keeps_what_succeeded_and_says_which_sections_l
     assert analyzed["status"] == "ready" and analyzed["index_mode"] == "pageindex" and analyzed["keywords"]
     summaries = {o["id"]: o["summary"] for o in analyzed["outline"]}
     assert summaries["1"] == "가" * 159 + "…" and all(summaries[i] == f"요약 {i}" for i in summaries if i != "1")
-    assert analyzed["error"] == (f"섹션 1개(1 긴 0)는 LLM 요약에 실패해 본문 앞부분으로 요약을 대신했습니다: {BUSY} "
-                                 "다시 분석하면 이 섹션들도 다시 요약합니다.")
+    assert analyzed["error"] == (
+        f"섹션 1개(1 긴 0)는 LLM 요약에 실패해 본문 앞부분으로 요약을 대신했습니다: {BUSY} "
+        "다시 분석하면 이 섹션들도 다시 요약합니다."
+    )
     # Analyzed again once the LLM answers, the note goes.
     service.llm.summarize = answer
     assert service.wiki_analyze({"id": doc["id"]})["error"] == ""
@@ -260,7 +295,8 @@ def test_answers_cut_short_are_asked_again_in_halves_and_their_sections_counted(
     # one by one, the halves of the large batch still too many at once.
     assert len(asked(service.llm)) == 4 + 8
     assert analyzed["status"] == "ready" and analyzed["error"].startswith(
-        "섹션 8개(2 짧은 0, 4 짧은 1, 6 짧은 2, 8 짧은 3, 10 짧은 4 외 3개)는 LLM 요약에 실패해")
+        "섹션 8개(2 짧은 0, 4 짧은 1, 6 짧은 2, 8 짧은 3, 10 짧은 4 외 3개)는 LLM 요약에 실패해"
+    )
 
 
 def test_stored_tree_is_ignored_after_content_changes_elsewhere(service):

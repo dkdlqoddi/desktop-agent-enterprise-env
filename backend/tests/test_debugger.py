@@ -1,5 +1,6 @@
 """main.py's PRIVATE_AGENT_DEBUGPY: a backend run from source waits for a debugger on 127.0.0.1 before it reads a
 request; without the variable, with a port that is no number, or packaged, it never listens."""
+
 import sys
 import types
 
@@ -8,8 +9,9 @@ import main
 
 def fake_debugpy(monkeypatch):
     calls = []
-    module = types.SimpleNamespace(listen=lambda address: calls.append(("listen", address)),
-                                   wait_for_client=lambda: calls.append(("wait",)))
+    module = types.SimpleNamespace(
+        listen=lambda address: calls.append(("listen", address)), wait_for_client=lambda: calls.append(("wait",))
+    )
     monkeypatch.setitem(sys.modules, "debugpy", module)
     return calls
 

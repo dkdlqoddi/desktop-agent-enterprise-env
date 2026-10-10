@@ -1,4 +1,5 @@
 """Local personal assistant: grounded conversations, tasks, reminders and daily briefings."""
+
 import contextvars
 import json
 import re
@@ -9,8 +10,18 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from . import pageindex, search
-from .llm import (DECODER, TRUNCATED_JSON, TRUNCATED_NOTE, Cancel, Cancelled, UserError, answer as without_thinking,
-                  cancellable, json_object, repaired)
+from .llm import (
+    DECODER,
+    TRUNCATED_JSON,
+    TRUNCATED_NOTE,
+    Cancel,
+    Cancelled,
+    UserError,
+    answer as without_thinking,
+    cancellable,
+    json_object,
+    repaired,
+)
 from .service import now, text
 
 ANSWER = """Answer questions about the user's private work documents in Korean.
@@ -60,7 +71,7 @@ REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}")
 # cut off at its end, which waits for the rest of it.
 ANSWER_FIELD = re.compile(r'"answer"\s*:\s*"')
 STRING_BODY = re.compile(r'(?:[^"\\]|\\.)*', re.S)
-OPEN_ESCAPE = re.compile(r'(?<!\\)((?:\\\\)*)\\u[0-9a-fA-F]{0,3}\Z')
+OPEN_ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)\\u[0-9a-fA-F]{0,3}\Z")
 
 
 def partial_answer(reply):
@@ -111,7 +122,7 @@ class Request:
         answer = partial_answer(self.raw)
         if answer == self.sent:
             return
-        part = {"text": answer[len(self.sent):]} if answer.startswith(self.sent) else {"text": answer, "reset": True}
+        part = {"text": answer[len(self.sent) :]} if answer.startswith(self.sent) else {"text": answer, "reset": True}
         self.sent = answer
         self.emit("assistant.delta", {"request_id": self.request_id, "conversation_id": self.conversation_id, **part})
 
@@ -146,22 +157,32 @@ class Assistant:
         self.lock = threading.Lock()
         self.running = {}
         self.methods = {
-            "tasks.list": self.tasks_list, "tasks.save": self.tasks_save,
-            "tasks.save_many": self.tasks_save_many, "tasks.delete": self.tasks_delete,
-            "tasks.extract": self.tasks_extract, "tasks.snooze": self.tasks_snooze,
-            "reminders.due": self.reminders_due, "reminders.ack": self.reminders_ack,
-            "assistant.conversations": self.conversations, "assistant.history": self.history,
-            "assistant.delete": self.delete_conversation, "assistant.ask": self.ask,
+            "tasks.list": self.tasks_list,
+            "tasks.save": self.tasks_save,
+            "tasks.save_many": self.tasks_save_many,
+            "tasks.delete": self.tasks_delete,
+            "tasks.extract": self.tasks_extract,
+            "tasks.snooze": self.tasks_snooze,
+            "reminders.due": self.reminders_due,
+            "reminders.ack": self.reminders_ack,
+            "assistant.conversations": self.conversations,
+            "assistant.history": self.history,
+            "assistant.delete": self.delete_conversation,
+            "assistant.ask": self.ask,
             "assistant.cancel": self.cancel,
-            "briefing.get": self.briefing, "briefing.generate": self.generate_briefing,
+            "briefing.get": self.briefing,
+            "briefing.generate": self.generate_briefing,
         }
 
     def tasks_list(self, _):
         with self.db.connect() as db:
-            return [dict(r) for r in db.execute("""SELECT t.*, d.title AS source_title FROM tasks t
+            return [
+                dict(r)
+                for r in db.execute("""SELECT t.*, d.title AS source_title FROM tasks t
                 LEFT JOIN documents d ON d.id=t.source_id AND d.deleted_at IS NULL
                 ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
-                t.due_at IS NULL, t.due_at, t.created_at DESC""")]
+                t.due_at IS NULL, t.due_at, t.created_at DESC""")
+            ]
 
     def _save(self, db, p):
         ident = text(p.get("id") or str(uuid.uuid4()), "ID", 80)
@@ -188,7 +209,8 @@ class Assistant:
         if not old or remind_at != old["remind_at"] or repeat != old["repeat"] or status != old["status"]:
             notified = snoozed = None
         completed_at = (old["completed_at"] if old and old["status"] == "done" else now()) if status == "done" else None
-        db.execute("""INSERT INTO tasks
+        db.execute(
+            """INSERT INTO tasks
             (id,title,notes,assignee,status,due_at,remind_at,notified_at,snoozed_until,repeat,source_id,created_at,
              updated_at,completed_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,
@@ -196,8 +218,23 @@ class Assistant:
             remind_at=excluded.remind_at,notified_at=excluded.notified_at,snoozed_until=excluded.snoozed_until,
             repeat=excluded.repeat,source_id=excluded.source_id,updated_at=excluded.updated_at,
             completed_at=excluded.completed_at""",
-            (ident, title, notes, assignee, status, due_at, remind_at, notified, snoozed, repeat, source_id,
-             old["created_at"] if old else now(), now(), completed_at))
+            (
+                ident,
+                title,
+                notes,
+                assignee,
+                status,
+                due_at,
+                remind_at,
+                notified,
+                snoozed,
+                repeat,
+                source_id,
+                old["created_at"] if old else now(),
+                now(),
+                completed_at,
+            ),
+        )
         return dict(db.execute("SELECT * FROM tasks WHERE id=?", (ident,)).fetchone())
 
     def tasks_save(self, p):
@@ -227,10 +264,13 @@ class Assistant:
         with self.db.connect() as db:
             # A repeating reminder keeps the time its repeats count from and is due again at snoozed_until; a single
             # one simply moves.
-            changed = db.execute("""UPDATE tasks SET
+            changed = db.execute(
+                """UPDATE tasks SET
                 remind_at=CASE WHEN repeat='none' OR remind_at IS NULL THEN ? ELSE remind_at END,
                 snoozed_until=CASE WHEN repeat='none' OR remind_at IS NULL THEN NULL ELSE ? END,
-                notified_at=NULL,updated_at=? WHERE id=? AND status='open'""", (later, later, now(), ident))
+                notified_at=NULL,updated_at=? WHERE id=? AND status='open'""",
+                (later, later, now(), ident),
+            )
             if not changed.rowcount:
                 raise UserError("진행 중인 할 일만 알림을 미룰 수 있습니다.")
         return {"ok": True}
@@ -255,8 +295,11 @@ class Assistant:
 
         def ask(number):
             """The candidates the LLM found in part `number`, or the UserError that kept it from answering."""
-            payload = {"local_now": local, "source_title": source["title"] if source else "직접 입력",
-                       "text": parts[number]}
+            payload = {
+                "local_now": local,
+                "source_title": source["title"] if source else "직접 입력",
+                "text": parts[number],
+            }
             if len(parts) > 1:
                 payload["text_part"] = f"{number + 1}/{len(parts)}"
             try:
@@ -322,16 +365,30 @@ class Assistant:
         if not title:
             raise UserError("할 일 제목이 없습니다.")
         notes = item.get("notes")
-        return {"id": str(uuid.uuid4()), "title": title,
-                "notes": notes.strip()[:8000] if isinstance(notes, str) else "", "assignee": field("assignee", 120),
-                "due_at": timestamp(item.get("due_at"), "마감"), "remind_at": remind_at, "repeat": repeat,
-                "source_id": source_id, "status": "open", "evidence": evidence.strip()[:4000]}
+        return {
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "notes": notes.strip()[:8000] if isinstance(notes, str) else "",
+            "assignee": field("assignee", 120),
+            "due_at": timestamp(item.get("due_at"), "마감"),
+            "remind_at": remind_at,
+            "repeat": repeat,
+            "source_id": source_id,
+            "status": "open",
+            "evidence": evidence.strip()[:4000],
+        }
 
     def reminders_due(self, _):
         with self.db.connect() as db:
-            return [dict(r) for r in db.execute("""SELECT * FROM tasks WHERE status='open'
+            return [
+                dict(r)
+                for r in db.execute(
+                    """SELECT * FROM tasks WHERE status='open'
                 AND coalesce(snoozed_until,remind_at)<=? AND notified_at IS NULL
-                ORDER BY coalesce(snoozed_until,remind_at) LIMIT 50""", (now(),))]
+                ORDER BY coalesce(snoozed_until,remind_at) LIMIT 50""",
+                    (now(),),
+                )
+            ]
 
     def reminders_ack(self, p):
         ident = text(p.get("id"), "ID", 80)
@@ -339,9 +396,11 @@ class Assistant:
         with self.db.connect() as db:
             # Serialize read/advance, including notifications and manual acknowledgement racing.
             db.execute("BEGIN IMMEDIATE")
-            task = db.execute("""SELECT * FROM tasks WHERE id=? AND remind_at=?
+            task = db.execute(
+                """SELECT * FROM tasks WHERE id=? AND remind_at=?
                 AND coalesce(snoozed_until,remind_at)<=? AND notified_at IS NULL AND status='open'""",
-                (ident, expected, now())).fetchone()
+                (ident, expected, now()),
+            ).fetchone()
             if not task:
                 return {"ok": True, "acknowledged": False}
             current = datetime.now(timezone.utc)
@@ -353,14 +412,17 @@ class Assistant:
                 interval = timedelta(days=1 if task["repeat"] == "daily" else 7)
                 next_at = (previous + interval * ((current - previous) // interval + 1)).isoformat()
                 notified_at = None
-            db.execute("UPDATE tasks SET remind_at=?,notified_at=?,snoozed_until=NULL,updated_at=? WHERE id=?",
-                       (next_at, notified_at, now(), ident))
+            db.execute(
+                "UPDATE tasks SET remind_at=?,notified_at=?,snoozed_until=NULL,updated_at=? WHERE id=?",
+                (next_at, notified_at, now(), ident),
+            )
         return {"ok": True, "acknowledged": True}
 
     def conversations(self, p):
         """The latest 50 conversations, or with `limit` or `cursor` a page of them after the cursor's (updated_at, id)
         (paging): {conversations, next_cursor}. updated_from and updated_to keep those updated within the range."""
         from . import paging
+
         since, until = paging.period(p)
         clauses, args = [], []
         if since:
@@ -371,30 +433,52 @@ class Assistant:
             args.append(until)
         if not paging.wanted(p):
             with self.db.connect() as db:
-                return [dict(r) for r in db.execute(f"""SELECT * FROM conversations
-                    {'WHERE ' + ' AND '.join(clauses) if clauses else ''} ORDER BY updated_at DESC LIMIT 50""", args)]
+                return [
+                    dict(r)
+                    for r in db.execute(
+                        f"""SELECT * FROM conversations
+                    {"WHERE " + " AND ".join(clauses) if clauses else ""} ORDER BY updated_at DESC LIMIT 50""",
+                        args,
+                    )
+                ]
         limit = paging.size(p, "대화 목록은", 200)
         after = paging.decode(p, "conversations", (str, str))
         if after:
             clauses.append("updated_at<=? AND (updated_at<? OR id<?)")
             args += [after[0], after[0], after[1]]
         with self.db.connect() as db:
-            found = [dict(r) for r in db.execute(f"""SELECT * FROM conversations
-                {'WHERE ' + ' AND '.join(clauses) if clauses else ''} ORDER BY updated_at DESC, id DESC LIMIT ?""",
-                                                 [*args, limit + 1])]
+            found = [
+                dict(r)
+                for r in db.execute(
+                    f"""SELECT * FROM conversations
+                {"WHERE " + " AND ".join(clauses) if clauses else ""} ORDER BY updated_at DESC, id DESC LIMIT ?""",
+                    [*args, limit + 1],
+                )
+            ]
         if len(found) <= limit:
             return {"conversations": found, "next_cursor": None}
         last = found[limit - 1]
-        return {"conversations": found[:limit],
-                "next_cursor": paging.encode("conversations", last["updated_at"], last["id"])}
+        return {
+            "conversations": found[:limit],
+            "next_cursor": paging.encode("conversations", last["updated_at"], last["id"]),
+        }
 
     def history(self, p):
         ident = text(p.get("id"), "대화 ID", 80)
         with self.db.connect() as db:
-            rows = db.execute("""SELECT * FROM (SELECT * FROM messages WHERE conversation_id=?
-                ORDER BY seq DESC LIMIT 100) ORDER BY seq""", (ident,))
-            return [{**dict(r), "citations": json.loads(r["citations"]),
-                     "trace": json.loads(r["trace"]) if r["trace"] else None} for r in rows]
+            rows = db.execute(
+                """SELECT * FROM (SELECT * FROM messages WHERE conversation_id=?
+                ORDER BY seq DESC LIMIT 100) ORDER BY seq""",
+                (ident,),
+            )
+            return [
+                {
+                    **dict(r),
+                    "citations": json.loads(r["citations"]),
+                    "trace": json.loads(r["trace"]) if r["trace"] else None,
+                }
+                for r in rows
+            ]
 
     def delete_conversation(self, p):
         ident = text(p.get("id"), "대화 ID", 80)
@@ -438,9 +522,16 @@ class Assistant:
                 self.running.pop(ident, None)
             if request.stream:
                 request.flush()
-                self.service.emit("assistant.done", {"request_id": request_id, "conversation_id": ident,
-                                                     "status": status, "truncated": request.truncated,
-                                                     **({"error": error} if error else {})})
+                self.service.emit(
+                    "assistant.done",
+                    {
+                        "request_id": request_id,
+                        "conversation_id": ident,
+                        "status": status,
+                        "truncated": request.truncated,
+                        **({"error": error} if error else {}),
+                    },
+                )
 
     def cancel(self, p):
         """Stop the answer in progress of conversation `conversation_id`, or of request `request_id` (a new
@@ -453,9 +544,12 @@ class Assistant:
         ident = text(ident, "대화 ID", 80) if ident else None
         request_id = text(request_id, "요청 ID", 80) if request_id else None
         with self.lock:
-            found = [request for request in self.running.values()
-                     if (ident is None or request.conversation_id == ident)
-                     and (request_id is None or request.request_id == request_id)]
+            found = [
+                request
+                for request in self.running.values()
+                if (ident is None or request.conversation_id == ident)
+                and (request_id is None or request.request_id == request_id)
+            ]
         for request in found:
             request.cancel.set()
         return {"ok": True, "cancelled": bool(found)}
@@ -506,9 +600,19 @@ class Assistant:
                 break
             excerpt, labels, partial = search.evidence(doc, sections, found["pattern"], budget)
             remaining -= len(excerpt)
-            sources.append({"id": doc["id"], "title": doc["title"], "updated_at": doc["updated_at"],
-                "revision": doc["revision"], "source": doc["source"], "sections": labels,
-                "excerpt": excerpt, "partial": partial, "number": len(sources) + 1})
+            sources.append(
+                {
+                    "id": doc["id"],
+                    "title": doc["title"],
+                    "updated_at": doc["updated_at"],
+                    "revision": doc["revision"],
+                    "source": doc["source"],
+                    "sections": labels,
+                    "excerpt": excerpt,
+                    "partial": partial,
+                    "number": len(sources) + 1,
+                }
+            )
         citations, outcome, listed = [], None, set()
         if request.cancel.is_set():
             # Stopped while the documents were searched: no answer is asked for.
@@ -520,32 +624,63 @@ class Assistant:
             # link for the screen, which this PC's folders never leave by.
             documents = [{**s, "source": search.source_label(s["source"]) if s["source"] else None} for s in sources]
             limit = max(200, int(HISTORY_CHARS * scale))
-            answer, listed, outcome = self._answer(json.dumps({"question": question,
-                "history": [{"role": m["role"], "content": m["content"][:limit]} for m in history],
-                "documents": documents}, ensure_ascii=False), request)
+            answer, listed, outcome = self._answer(
+                json.dumps(
+                    {
+                        "question": question,
+                        "history": [{"role": m["role"], "content": m["content"][:limit]} for m in history],
+                        "documents": documents,
+                    },
+                    ensure_ascii=False,
+                ),
+                request,
+            )
             # The sources are the documents the answer marks ([1], [1, 2] or [1][2]) and those the LLM listed; a
             # number no document has, such as a year in brackets, is no source.
-            marked = {int(n) for group in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", answer) for n in re.split(r"\s*,\s*", group)}
+            marked = {
+                int(n) for group in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", answer) for n in re.split(r"\s*,\s*", group)
+            }
             numbers = sorted(n for n in marked | listed if 1 <= n <= len(sources))
             # Citations keep the search words so the screen can highlight them in the excerpt.
             citations = [{**s, "terms": found["terms"]} for s in sources if s["number"] in numbers]
         stamp = now()
-        trace = {"terms": found["terms"], "steps": found["steps"],
-                 "sources": [{"title": s["title"], "sections": s["sections"]} for s in sources]}
+        trace = {
+            "terms": found["terms"],
+            "steps": found["steps"],
+            "sources": [{"title": s["title"], "sections": s["sections"]} for s in sources],
+        }
         if outcome:
             trace["outcome"] = outcome  # The answer did not end by itself: the user stopped it, or the output limit.
         with self.db.connect() as db:
-            db.execute("""INSERT INTO conversations VALUES (?,?,?,?) ON CONFLICT(id)
-                DO UPDATE SET updated_at=excluded.updated_at""", (ident, question[:100], stamp, stamp))
-            db.execute("INSERT INTO messages(conversation_id,role,content,created_at) VALUES (?,'user',?,?)",
-                       (ident, question, stamp))
-            db.execute("""INSERT INTO messages(conversation_id,role,content,citations,trace,created_at)
+            db.execute(
+                """INSERT INTO conversations VALUES (?,?,?,?) ON CONFLICT(id)
+                DO UPDATE SET updated_at=excluded.updated_at""",
+                (ident, question[:100], stamp, stamp),
+            )
+            db.execute(
+                "INSERT INTO messages(conversation_id,role,content,created_at) VALUES (?,'user',?,?)",
+                (ident, question, stamp),
+            )
+            db.execute(
+                """INSERT INTO messages(conversation_id,role,content,citations,trace,created_at)
                 VALUES (?,'assistant',?,?,?,?)""",
-                       (ident, answer, json.dumps(citations, ensure_ascii=False), json.dumps(trace, ensure_ascii=False), stamp))
+                (
+                    ident,
+                    answer,
+                    json.dumps(citations, ensure_ascii=False),
+                    json.dumps(trace, ensure_ascii=False),
+                    stamp,
+                ),
+            )
         # An automatic search also lists every document it found, for the search box's result list.
-        return {"conversation_id": ident, "messages": self.history({"id": ident}), "search": found.get("results"),
-                "request_id": request.request_id, "cancelled": outcome == "cancelled",
-                "truncated": outcome == "truncated"}
+        return {
+            "conversation_id": ident,
+            "messages": self.history({"id": ident}),
+            "search": found.get("results"),
+            "request_id": request.request_id,
+            "cancelled": outcome == "cancelled",
+            "truncated": outcome == "truncated",
+        }
 
     def _answer(self, payload, request):
         """The LLM's answer to the question in `payload`, as (answer, the citation numbers it listed, outcome). The
@@ -574,34 +709,54 @@ class Assistant:
     def briefing(self, p):
         local = local_clock(p)
         start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
-        end = (local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).astimezone(timezone.utc).isoformat()
+        end = (
+            (local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1))
+            .astimezone(timezone.utc)
+            .isoformat()
+        )
         stamp = now()
         tasks = self.tasks_list({})
         active = [t for t in tasks if t["status"] == "open"]
         with self.db.connect() as db:
-            recent = [dict(r) for r in db.execute("""SELECT id,title,summary,updated_at FROM documents
-                WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 5""")]
-        return {"generated_at": stamp, "local_date": local.date().isoformat(),
-            "counts": {"open": len(active), "done": sum(t["status"] == "done" for t in tasks),
-                       "paused": sum(t["status"] == "paused" for t in tasks)},
+            recent = [
+                dict(r)
+                for r in db.execute("""SELECT id,title,summary,updated_at FROM documents
+                WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 5""")
+            ]
+        return {
+            "generated_at": stamp,
+            "local_date": local.date().isoformat(),
+            "counts": {
+                "open": len(active),
+                "done": sum(t["status"] == "done" for t in tasks),
+                "paused": sum(t["status"] == "paused" for t in tasks),
+            },
             "overdue": [t for t in active if t["due_at"] and t["due_at"] < stamp],
             "today": [t for t in active if t["due_at"] and stamp <= t["due_at"] < end],
             "upcoming": [t for t in active if t["due_at"] and end <= t["due_at"]],
             "unscheduled": [t for t in active if not t["due_at"]],
-            "completed_today": [t for t in tasks if t["status"] == "done" and t["completed_at"] and start <= t["completed_at"] < end],
-            "reminders": self.reminders_due({}), "recent_documents": recent}
+            "completed_today": [
+                t for t in tasks if t["status"] == "done" and t["completed_at"] and start <= t["completed_at"] < end
+            ],
+            "reminders": self.reminders_due({}),
+            "recent_documents": recent,
+        }
 
     def generate_briefing(self, p):
         snapshot = self.briefing(p)
         # Bound the model payload while retaining complete counts and surfacing omitted records.
         context = {**snapshot}
         for key in ("overdue", "today", "upcoming", "unscheduled", "completed_today", "reminders"):
-            context[key] = [{k: t[k] for k in ("title", "assignee", "due_at", "remind_at", "status")}
-                            for t in snapshot[key][:20]]
-        context["omitted_tasks"] = sum(max(0, len(snapshot[key]) - 20) for key in
-            ("overdue", "today", "upcoming", "unscheduled", "completed_today", "reminders"))
-        output = self.llm.complete([{"role": "system", "content": BRIEF},
-            {"role": "user", "content": json.dumps(context, ensure_ascii=False)}])
+            context[key] = [
+                {k: t[k] for k in ("title", "assignee", "due_at", "remind_at", "status")} for t in snapshot[key][:20]
+            ]
+        context["omitted_tasks"] = sum(
+            max(0, len(snapshot[key]) - 20)
+            for key in ("overdue", "today", "upcoming", "unscheduled", "completed_today", "reminders")
+        )
+        output = self.llm.complete(
+            [{"role": "system", "content": BRIEF}, {"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
+        )
         if not isinstance(output, str) or not output.strip():
             raise UserError("LLM이 브리핑을 돌려주지 않았습니다. 다시 생성해 주세요.")
         # A briefing longer than the widget keeps is cut, not refused after the LLM has written it; one the LLM
@@ -610,8 +765,12 @@ class Assistant:
         room = BRIEF_CHARS - (len(TRUNCATED_NOTE) + 2 if truncated else 0)
         content = output.strip()
         if len(content) > room:
-            content = content[:room - 1].rstrip() + "…"
+            content = content[: room - 1].rstrip() + "…"
         if truncated:
             content = f"{content}\n\n{TRUNCATED_NOTE}"
-        return {"content": content, "generated_at": snapshot["generated_at"], "omitted_tasks": context["omitted_tasks"],
-                "truncated": truncated}
+        return {
+            "content": content,
+            "generated_at": snapshot["generated_at"],
+            "omitted_tasks": context["omitted_tasks"],
+            "truncated": truncated,
+        }

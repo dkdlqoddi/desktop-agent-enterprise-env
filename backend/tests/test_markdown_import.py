@@ -17,27 +17,43 @@ from test_rtf_import import PAGE, FakeLLM, wait
 
 
 def test_markdown_preserves_structure_code_whitespace_links_and_literal_syntax():
-    _, result = html_to_markdown('''<h1>업무 안내</h1><h2>상세</h2>
+    _, result = html_to_markdown(
+        """<h1>업무 안내</h1><h2>상세</h2>
     <p><strong>중요</strong> <em>강조</em> <a href="/guide?q=a%20b">문서</a></p>
     <ul><li>첫 항목<ul><li>하위 항목</li></ul></li></ul>
     <blockquote>인용문</blockquote><pre>if x &lt; 3:\n  print("```")\n\n\n  done()</pre>
     <table><tr><th>키</th><th>값</th></tr><tr><td>a | b</td><td>&lt;tag&gt;</td></tr></table>
     <script>secret</script><style>secret</style><iframe>secret</iframe>
     <a href="javascript:alert(1)">안전한 텍스트</a><img src="https://test/track" alt="그림 설명">
-    ''', "https://wiki.test/page")
-    for value in ("# 업무 안내", "## 상세", "**중요**", "*강조*", "[문서](https://wiki.test/guide?q=a%20b)",
-                  "- 첫 항목", "  - 하위 항목", "> 인용문", "````\nif x < 3:", '\n\n\n  done()',
-                  r"| a \| b | \<tag\> |", "그림 설명"):
+    """,
+        "https://wiki.test/page",
+    )
+    for value in (
+        "# 업무 안내",
+        "## 상세",
+        "**중요**",
+        "*강조*",
+        "[문서](https://wiki.test/guide?q=a%20b)",
+        "- 첫 항목",
+        "  - 하위 항목",
+        "> 인용문",
+        "````\nif x < 3:",
+        "\n\n\n  done()",
+        r"| a \| b | \<tag\> |",
+        "그림 설명",
+    ):
         assert value in result
     assert all(value not in result for value in ("<table>", "secret", "javascript:", "https://test/track"))
 
 
 def test_inline_code_in_tables_and_malformed_links():
-    _, result = html_to_markdown('<table><tr><th>표</th></tr><tr><td><code>a | b</code></td></tr></table>'
-                                '<p><a href="http://[invalid">주소 오류</a><a href="#section">목차</a></p>')
-    assert r'`a \| b`' in result
-    assert '주소 오류' in result and 'http://[invalid' not in result
-    assert '[목차](#section)' in result
+    _, result = html_to_markdown(
+        "<table><tr><th>표</th></tr><tr><td><code>a | b</code></td></tr></table>"
+        '<p><a href="http://[invalid">주소 오류</a><a href="#section">목차</a></p>'
+    )
+    assert r"`a \| b`" in result
+    assert "주소 오류" in result and "http://[invalid" not in result
+    assert "[목차](#section)" in result
 
 
 @pytest.mark.parametrize("kind", ["rtf", "office", "confluence", "jira"])
@@ -50,19 +66,27 @@ def test_legacy_html_upgrade_preserves_edits_and_metadata_and_removes_html_colum
     html = "<h1>제목</h1><table><tr><td>원문</td></tr></table>"
     with service.db.connect() as db:
         db.execute(f"DROP TABLE {kind}_sources")
-        metadata = {"rtf": "source_path TEXT NOT NULL, source_hash TEXT NOT NULL UNIQUE",
-                    "office": "source_path TEXT NOT NULL, source_hash TEXT NOT NULL UNIQUE, application TEXT NOT NULL",
-                    "confluence": "source_url TEXT NOT NULL, page_id TEXT NOT NULL, source_hash TEXT NOT NULL",
-                    "jira": "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL"}[kind]
-        db.execute(f"CREATE TABLE {kind}_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, {metadata}, html TEXT NOT NULL, "
-                   + ("html_path TEXT NOT NULL, " if kind != "rtf" else "") + "imported_at TEXT NOT NULL"
-                   + (", UNIQUE(source_url, source_hash)" if kind in {"confluence", "jira"} else "") + ")")
+        metadata = {
+            "rtf": "source_path TEXT NOT NULL, source_hash TEXT NOT NULL UNIQUE",
+            "office": "source_path TEXT NOT NULL, source_hash TEXT NOT NULL UNIQUE, application TEXT NOT NULL",
+            "confluence": "source_url TEXT NOT NULL, page_id TEXT NOT NULL, source_hash TEXT NOT NULL",
+            "jira": "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL",
+        }[kind]
+        db.execute(
+            f"CREATE TABLE {kind}_sources (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, {metadata}, html TEXT NOT NULL, "
+            + ("html_path TEXT NOT NULL, " if kind != "rtf" else "")
+            + "imported_at TEXT NOT NULL"
+            + (", UNIQUE(source_url, source_hash)" if kind in {"confluence", "jira"} else "")
+            + ")"
+        )
         for index, doc in enumerate((original, edited)):
             values = [doc["id"]]
-            values += {"rtf": ["/source.rtf", f"hash-{index}"],
-                       "office": ["/source.docx", f"hash-{index}", "Word"],
-                       "confluence": ["https://wiki.test/page", "123", f"hash-{index}"],
-                       "jira": ["https://jira.test/TEAM-1", "TEAM-1", f"hash-{index}"]}[kind]
+            values += {
+                "rtf": ["/source.rtf", f"hash-{index}"],
+                "office": ["/source.docx", f"hash-{index}", "Word"],
+                "confluence": ["https://wiki.test/page", "123", f"hash-{index}"],
+                "jira": ["https://jira.test/TEAM-1", "TEAM-1", f"hash-{index}"],
+            }[kind]
             values += [html] + (["/legacy.html"] if kind != "rtf" else []) + ["2026-09-01"]
             db.execute(f"INSERT INTO {kind}_sources VALUES ({','.join('?' for _ in values)})", values)
     upgraded = Service(Database(path), FakeLLM())
@@ -77,7 +101,10 @@ def test_legacy_html_upgrade_preserves_edits_and_metadata_and_removes_html_colum
         assert "markdown" in columns and "html" not in columns and "html_path" not in columns
         assert db.execute(f"SELECT count(*) FROM {kind}_sources").fetchone()[0] == 2
         if kind in {"confluence", "jira"}:
-            assert db.execute(f"SELECT source_hash FROM {kind}_sources WHERE doc_id=?", (original["id"],)).fetchone()[0] == hashlib.sha256(markdown.encode()).hexdigest()
+            assert (
+                db.execute(f"SELECT source_hash FROM {kind}_sources WHERE doc_id=?", (original["id"],)).fetchone()[0]
+                == hashlib.sha256(markdown.encode()).hexdigest()
+            )
     # Opening an upgraded database again is idempotent.
     again = Service(Database(path), FakeLLM())
     assert again.wiki_get({"id": original["id"]})["revision"] == 2
@@ -88,7 +115,9 @@ def test_legacy_html_upgrade_preserves_edits_and_metadata_and_removes_html_colum
 
 
 @pytest.mark.parametrize("kind,extension", [("rtf", ".rtf"), ("office", ".docx")])
-def test_local_import_never_creates_intermediate_files_and_rejects_changed_source(tmp_path, monkeypatch, kind, extension):
+def test_local_import_never_creates_intermediate_files_and_rejects_changed_source(
+    tmp_path, monkeypatch, kind, extension
+):
     service = Service(Database(tmp_path / "data" / "wiki.db"), FakeLLM())
     importer = getattr(service, kind)
     importer.capability_check = lambda: {"available": True}
@@ -137,6 +166,7 @@ def large_worker(source, sender, stop):
 
 def test_memory_worker_drains_large_result_without_deadlock(tmp_path, monkeypatch):
     from agent.word_converter import WordConverter
+
     monkeypatch.setattr(WordConverter, "check", lambda *args: None)
     monkeypatch.setattr(WordConverter, "worker", staticmethod(large_worker))
     assert WordConverter(timeout=10)(tmp_path / "source.rtf", threading.Event()) == LARGE
@@ -152,6 +182,7 @@ def finished_anyway_worker(source, sender, stop):
 
 def test_a_stopped_worker_that_finished_anyway_ends_without_waiting_out_the_grace(tmp_path, monkeypatch):
     from agent.word_converter import WordConverter
+
     monkeypatch.setattr(WordConverter, "check", lambda *args: None)
     monkeypatch.setattr(WordConverter, "worker", staticmethod(finished_anyway_worker))
     cancel = threading.Event()
@@ -170,10 +201,18 @@ def test_a_request_over_one_megabyte_is_refused_and_the_next_one_answered(tmp_pa
     lines = json.dumps(large, ensure_ascii=False) + "\n" + json.dumps({"id": "small", "method": "health"}) + "\n"
     # The backend speaks UTF-8, and PYTHONUTF8 makes its errors UTF-8 too, as Electron starts it; text=True alone
     # would read both in the Windows code page (cp949).
-    result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "main.py")], input=lines,
-                            capture_output=True, text=True, encoding="utf-8", timeout=20,
-                            env={**os.environ, "PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1"})
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).parents[1] / "main.py")],
+        input=lines,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+        env={**os.environ, "PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1"},
+    )
     assert result.returncode == 0, result.stderr
     assert [json.loads(line) for line in result.stdout.splitlines()] == [
-        {"id": "large", "error": "요청이 너무 큽니다."}, {"id": "small", "result": {"ok": True}}]
+        {"id": "large", "error": "요청이 너무 큽니다."},
+        {"id": "small", "result": {"ok": True}},
+    ]
     assert Service(Database(tmp_path / "wiki.db"), None).wiki_list({}) == []

@@ -7,6 +7,7 @@ security software keeps encrypted is no picture: it is left out, and so are the 
 than storing what cannot be shown; an export that fails stops the rest too, as the next ones would fail
 for the same reason. A large PNG is kept as JPEG when that is smaller, and one page stops taking pictures
 at a size and a time limit, so its text still arrives."""
+
 import io
 import re
 import tempfile
@@ -54,6 +55,7 @@ def compact(data, kind):
         return data, kind
     try:
         from PIL import Image
+
         with Image.open(io.BytesIO(data)) as picture:
             picture.load()
             rgba = picture.convert("RGBA")

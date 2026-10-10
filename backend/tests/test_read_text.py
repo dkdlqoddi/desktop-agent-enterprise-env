@@ -1,5 +1,6 @@
 """main.py --read-text: a text file the user wrote, read for Electron through a hidden Notepad, as a demo recording's
 list or captions whose bytes are no text Electron can read."""
+
 import json
 import os
 import subprocess
@@ -45,8 +46,12 @@ def test_a_failure_says_why_on_the_error_output(monkeypatch, capsys):
 def test_the_command_line_as_electron_runs_it(tmp_path):
     file = tmp_path / "목록.txt"
     file.write_text("D:\\자료", encoding="utf-8")
-    result = subprocess.run([sys.executable, str(BACKEND / "main.py"), "--read-text", str(file)], cwd=BACKEND,
-                            capture_output=True, env={**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": ""})
+    result = subprocess.run(
+        [sys.executable, str(BACKEND / "main.py"), "--read-text", str(file)],
+        cwd=BACKEND,
+        capture_output=True,
+        env={**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": ""},
+    )
     assert result.returncode == 1
     assert result.stdout == b""
     assert result.stderr.decode("utf-8").strip() == "텍스트 파일은 메모장이 있는 Windows에서 가져올 수 있습니다."

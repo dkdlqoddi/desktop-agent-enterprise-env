@@ -7,6 +7,7 @@ them; pictures from the package; and the text of each shape as XHTML in a foreig
 bevels, 3-D and other effects are left out. A drawing becomes one <img> of an SVG whose alternative text
 carries the text of its shapes, so search and the LLM still read it. vml.py paints the VML shapes of older
 documents on the same canvas."""
+
 import colorsys
 import math
 import re
@@ -27,58 +28,155 @@ EMU_PX = 9525
 MAX_DEPTH = 32
 MAX_TEXT = 4000  # characters of shape text in a picture's alternative text
 # The default theme of Office 2013 and later, for documents without one.
-OFFICE_COLORS = {"dk1": "000000", "lt1": "FFFFFF", "dk2": "44546A", "lt2": "E7E6E6", "accent1": "4472C4",
-                 "accent2": "ED7D31", "accent3": "A5A5A5", "accent4": "FFC000", "accent5": "5B9BD5",
-                 "accent6": "70AD47", "hlink": "0563C1", "folHlink": "954F72"}
+OFFICE_COLORS = {
+    "dk1": "000000",
+    "lt1": "FFFFFF",
+    "dk2": "44546A",
+    "lt2": "E7E6E6",
+    "accent1": "4472C4",
+    "accent2": "ED7D31",
+    "accent3": "A5A5A5",
+    "accent4": "FFC000",
+    "accent5": "5B9BD5",
+    "accent6": "70AD47",
+    "hlink": "0563C1",
+    "folHlink": "954F72",
+}
 _SOLID = f'<a:solidFill xmlns:a="{A[1:-1]}"><a:schemeClr val="phClr"/></a:solidFill>'
 # The fill and line styles of that theme, which shapes refer to by index, flattened to solid colors.
-OFFICE_STYLES = {"fillStyleLst": [ET.fromstring(_SOLID) for _ in range(3)],
-                 "bgFillStyleLst": [ET.fromstring(_SOLID) for _ in range(3)],
-                 "lnStyleLst": [ET.fromstring(f'<a:ln xmlns:a="{A[1:-1]}" w="{width}">{_SOLID}</a:ln>')
-                                for width in (6350, 12700, 19050)]}
+OFFICE_STYLES = {
+    "fillStyleLst": [ET.fromstring(_SOLID) for _ in range(3)],
+    "bgFillStyleLst": [ET.fromstring(_SOLID) for _ in range(3)],
+    "lnStyleLst": [
+        ET.fromstring(f'<a:ln xmlns:a="{A[1:-1]}" w="{width}">{_SOLID}</a:ln>') for width in (6350, 12700, 19050)
+    ],
+}
 SCHEME_NAMES = {"bg1": "lt1", "tx1": "dk1", "bg2": "lt2", "tx2": "dk2"}
-SYSTEM_COLORS = {"windowText": "000000", "window": "FFFFFF", "btnFace": "F0F0F0", "btnText": "000000",
-                 "highlight": "0078D7", "highlightText": "FFFFFF", "grayText": "6D6D6D", "menu": "F0F0F0",
-                 "menuText": "000000", "windowFrame": "646464", "infoBk": "FFFFE1", "infoText": "000000"}
+SYSTEM_COLORS = {
+    "windowText": "000000",
+    "window": "FFFFFF",
+    "btnFace": "F0F0F0",
+    "btnText": "000000",
+    "highlight": "0078D7",
+    "highlightText": "FFFFFF",
+    "grayText": "6D6D6D",
+    "menu": "F0F0F0",
+    "menuText": "000000",
+    "windowFrame": "646464",
+    "infoBk": "FFFFE1",
+    "infoText": "000000",
+}
 # Named colors of DrawingML (a:prstClr) and VML; names are compared in lower case.
 NAMED_COLORS = {
-    "black": "000000", "white": "FFFFFF", "red": "FF0000", "green": "008000", "lime": "00FF00", "blue": "0000FF",
-    "yellow": "FFFF00", "cyan": "00FFFF", "aqua": "00FFFF", "magenta": "FF00FF", "fuchsia": "FF00FF",
-    "gray": "808080", "grey": "808080", "silver": "C0C0C0", "maroon": "800000", "olive": "808000",
-    "navy": "000080", "purple": "800080", "teal": "008080", "orange": "FFA500", "brown": "A52A2A",
-    "pink": "FFC0CB", "gold": "FFD700", "violet": "EE82EE", "indigo": "4B0082", "beige": "F5F5DC",
-    "darkblue": "00008B", "dkblue": "00008B", "darkred": "8B0000", "dkred": "8B0000", "darkgreen": "006400",
-    "dkgreen": "006400", "darkgray": "A9A9A9", "dkgray": "A9A9A9", "darkgrey": "A9A9A9", "lightgray": "D3D3D3",
-    "ltgray": "D3D3D3", "lightgrey": "D3D3D3", "lightblue": "ADD8E6", "ltblue": "ADD8E6", "lightgreen": "90EE90",
-    "ltgreen": "90EE90", "lightyellow": "FFFFE0", "ltyellow": "FFFFE0", "darkorange": "FF8C00",
-    "dkorange": "FF8C00", "skyblue": "87CEEB", "royalblue": "4169E1", "steelblue": "4682B4", "tan": "D2B48C",
-    "crimson": "DC143C", "coral": "FF7F50", "salmon": "FA8072", "khaki": "F0E68C", "lavender": "E6E6FA",
-    "turquoise": "40E0D0", "dimgray": "696969", "slategray": "708090", "whitesmoke": "F5F5F5",
-    "darkcyan": "008B8B", "dkcyan": "008B8B", "darkmagenta": "8B008B", "dkmagenta": "8B008B",
-    "darkviolet": "9400D3", "dkviolet": "9400D3", "forestgreen": "228B22", "seagreen": "2E8B57",
-    "midnightblue": "191970", "firebrick": "B22222", "chocolate": "D2691E", "sienna": "A0522D",
+    "black": "000000",
+    "white": "FFFFFF",
+    "red": "FF0000",
+    "green": "008000",
+    "lime": "00FF00",
+    "blue": "0000FF",
+    "yellow": "FFFF00",
+    "cyan": "00FFFF",
+    "aqua": "00FFFF",
+    "magenta": "FF00FF",
+    "fuchsia": "FF00FF",
+    "gray": "808080",
+    "grey": "808080",
+    "silver": "C0C0C0",
+    "maroon": "800000",
+    "olive": "808000",
+    "navy": "000080",
+    "purple": "800080",
+    "teal": "008080",
+    "orange": "FFA500",
+    "brown": "A52A2A",
+    "pink": "FFC0CB",
+    "gold": "FFD700",
+    "violet": "EE82EE",
+    "indigo": "4B0082",
+    "beige": "F5F5DC",
+    "darkblue": "00008B",
+    "dkblue": "00008B",
+    "darkred": "8B0000",
+    "dkred": "8B0000",
+    "darkgreen": "006400",
+    "dkgreen": "006400",
+    "darkgray": "A9A9A9",
+    "dkgray": "A9A9A9",
+    "darkgrey": "A9A9A9",
+    "lightgray": "D3D3D3",
+    "ltgray": "D3D3D3",
+    "lightgrey": "D3D3D3",
+    "lightblue": "ADD8E6",
+    "ltblue": "ADD8E6",
+    "lightgreen": "90EE90",
+    "ltgreen": "90EE90",
+    "lightyellow": "FFFFE0",
+    "ltyellow": "FFFFE0",
+    "darkorange": "FF8C00",
+    "dkorange": "FF8C00",
+    "skyblue": "87CEEB",
+    "royalblue": "4169E1",
+    "steelblue": "4682B4",
+    "tan": "D2B48C",
+    "crimson": "DC143C",
+    "coral": "FF7F50",
+    "salmon": "FA8072",
+    "khaki": "F0E68C",
+    "lavender": "E6E6FA",
+    "turquoise": "40E0D0",
+    "dimgray": "696969",
+    "slategray": "708090",
+    "whitesmoke": "F5F5F5",
+    "darkcyan": "008B8B",
+    "dkcyan": "008B8B",
+    "darkmagenta": "8B008B",
+    "dkmagenta": "8B008B",
+    "darkviolet": "9400D3",
+    "dkviolet": "9400D3",
+    "forestgreen": "228B22",
+    "seagreen": "2E8B57",
+    "midnightblue": "191970",
+    "firebrick": "B22222",
+    "chocolate": "D2691E",
+    "sienna": "A0522D",
 }
 FILL_TAGS = {"noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"}
 COLOR_TAGS = {"srgbClr", "schemeClr", "sysClr", "prstClr", "scrgbClr", "hslClr"}
 # Preset dashes as lengths of dash and gap in line widths.
-DASHES = {"dot": (1, 1), "dash": (4, 3), "lgDash": (8, 3), "dashDot": (4, 3, 1, 3), "lgDashDot": (8, 3, 1, 3),
-          "lgDashDotDot": (8, 3, 1, 3, 1, 3), "sysDash": (3, 1), "sysDot": (1, 1), "sysDashDot": (3, 1, 1, 1),
-          "sysDashDotDot": (3, 1, 1, 1, 1, 1)}
+DASHES = {
+    "dot": (1, 1),
+    "dash": (4, 3),
+    "lgDash": (8, 3),
+    "dashDot": (4, 3, 1, 3),
+    "lgDashDot": (8, 3, 1, 3),
+    "lgDashDotDot": (8, 3, 1, 3, 1, 3),
+    "sysDash": (3, 1),
+    "sysDot": (1, 1),
+    "sysDashDot": (3, 1, 1, 1),
+    "sysDashDotDot": (3, 1, 1, 1, 1, 1),
+}
 CAPS = {"rnd": "round", "sq": "square", "flat": "butt"}
 ARROW_SIZES = {"sm": 2.0, "med": 3.0, "lg": 5.0}
 # The fill modes of preset paths, such as the lit top of a can, as a tint or shade of the fill.
-MODES = {"lighten": ("tint", 0.6), "lightenLess": ("tint", 0.8), "darken": ("shade", 0.6),
-         "darkenLess": ("shade", 0.8)}
+MODES = {"lighten": ("tint", 0.6), "lightenLess": ("tint", 0.8), "darken": ("shade", 0.6), "darkenLess": ("shade", 0.8)}
 ANCHORS = {"ctr": "center", "b": "flex-end", "just": "center", "dist": "center"}
-WRITING = {"vert": "vertical-rl", "eaVert": "vertical-rl", "wordArtVert": "vertical-rl", "vert270": "vertical-lr",
-           "mongolianVert": "vertical-lr", "wordArtVertRtl": "vertical-rl"}
+WRITING = {
+    "vert": "vertical-rl",
+    "eaVert": "vertical-rl",
+    "wordArtVert": "vertical-rl",
+    "vert270": "vertical-lr",
+    "mongolianVert": "vertical-lr",
+    "wordArtVertRtl": "vertical-rl",
+}
 ALIGNS = {"ctr": "center", "r": "right", "just": "justify", "dist": "justify"}
 # Stylesheet of the text inside a picture, which the page's stylesheet does not reach.
-TEXT_STYLE = (".t p,.t h1,.t h2,.t h3,.t h4,.t h5,.t h6{margin:0;font-size:inherit;font-weight:inherit;"
-              "white-space:pre-wrap}.t.nowrap p{white-space:pre}.t table{border-collapse:collapse}"
-              ".t td,.t th{vertical-align:top}.t img{max-width:100%;height:auto}.t ul,.t ol{margin:0;"
-              "padding-left:1.5em}.t sup,.t sub{line-height:0}.t a{color:#0563c1;text-decoration:underline}"
-              ".t .missing{border:1px dashed #b4b4b4;color:#595959;font-size:9pt}")
+TEXT_STYLE = (
+    ".t p,.t h1,.t h2,.t h3,.t h4,.t h5,.t h6{margin:0;font-size:inherit;font-weight:inherit;"
+    "white-space:pre-wrap}.t.nowrap p{white-space:pre}.t table{border-collapse:collapse}"
+    ".t td,.t th{vertical-align:top}.t img{max-width:100%;height:auto}.t ul,.t ol{margin:0;"
+    "padding-left:1.5em}.t sup,.t sub{line-height:0}.t a{color:#0563c1;text-decoration:underline}"
+    ".t .missing{border:1px dashed #b4b4b4;color:#595959;font-size:9pt}"
+)
 
 
 def local(tag):
@@ -116,8 +214,10 @@ def on(text, default=False):
 
 # --- Transforms -----------------------------------------------------------------------------------
 
+
 class Matrix:
     """An affine transform of the plane, as SVG's matrix(a b c d e f)."""
+
     __slots__ = ("a", "b", "c", "d", "e", "f")
 
     def __init__(self, a=1.0, b=0.0, c=0.0, d=1.0, e=0.0, f=0.0):
@@ -125,9 +225,14 @@ class Matrix:
 
     def __matmul__(self, other):
         """This transform after `other`."""
-        return Matrix(self.a * other.a + self.c * other.b, self.b * other.a + self.d * other.b,
-                      self.a * other.c + self.c * other.d, self.b * other.c + self.d * other.d,
-                      self.a * other.e + self.c * other.f + self.e, self.b * other.e + self.d * other.f + self.f)
+        return Matrix(
+            self.a * other.a + self.c * other.b,
+            self.b * other.a + self.d * other.b,
+            self.a * other.c + self.c * other.d,
+            self.b * other.c + self.d * other.d,
+            self.a * other.e + self.c * other.f + self.e,
+            self.b * other.e + self.d * other.f + self.f,
+        )
 
     def apply(self, x, y):
         return self.a * x + self.c * y + self.e, self.b * x + self.d * y + self.f
@@ -162,6 +267,7 @@ def placed(matrix, x, y, w, h, rotation=0.0, flip_h=False, flip_v=False):
 
 # --- The picture ----------------------------------------------------------------------------------
 
+
 class Canvas:
     """One SVG picture: shapes in paint order, their definitions, the area they cover and their text."""
 
@@ -182,8 +288,12 @@ class Canvas:
         if self.area is None:
             self.area = box
         else:
-            self.area = (min(self.area[0], box[0]), min(self.area[1], box[1]),
-                         max(self.area[2], box[2]), max(self.area[3], box[3]))
+            self.area = (
+                min(self.area[0], box[0]),
+                min(self.area[1], box[1]),
+                max(self.area[2], box[2]),
+                max(self.area[3], box[3]),
+            )
 
     def text(self, value):
         value = " ".join(str(value or "").split())
@@ -211,8 +321,14 @@ class Canvas:
             return None
         x0, y0, width, height = self.bounds()
         defs = f"<defs>{''.join(self.defs)}</defs>" if self.defs else ""
-        return (f'<svg xmlns="{SVG}" width="{width}" height="{height}" viewBox="{x0} {y0} {width} {height}">'
-                f"<style>{TEXT_STYLE}</style>{defs}{''.join(self.parts)}</svg>"), width, height
+        return (
+            (
+                f'<svg xmlns="{SVG}" width="{width}" height="{height}" viewBox="{x0} {y0} {width} {height}">'
+                f"<style>{TEXT_STYLE}</style>{defs}{''.join(self.parts)}</svg>"
+            ),
+            width,
+            height,
+        )
 
     def img(self, label):
         """An <img> of the picture, or "" when nothing was painted."""
@@ -229,31 +345,53 @@ def xhtml(html):
     return markup.replace("<math", '<math xmlns="http://www.w3.org/1998/Math/MathML"')
 
 
-def text_box(canvas, matrix, x, y, w, h, content, *, insets=(9.6, 4.8, 9.6, 4.8), anchor="t", vertical="horz",
-             wrap=True, base=""):
+def text_box(
+    canvas, matrix, x, y, w, h, content, *, insets=(9.6, 4.8, 9.6, 4.8), anchor="t", vertical="horz", wrap=True, base=""
+):
     """XHTML `content` laid out in the rectangle (x, y, w, h) of a shape's own coordinates."""
     left, top, right, bottom = insets
-    pairs = [("width", f"{num(max(w, 1))}px"), ("height", f"{num(max(h, 1))}px"), ("display", "flex"),
-             ("flex-direction", "column"), ("justify-content", ANCHORS.get(anchor, "flex-start")),
-             ("box-sizing", "border-box"),
-             ("padding", " ".join(f"{num(max(side, 0))}px" for side in (top, right, bottom, left))),
-             ("writing-mode", WRITING.get(vertical)), ("overflow-wrap", "break-word")]
+    pairs = [
+        ("width", f"{num(max(w, 1))}px"),
+        ("height", f"{num(max(h, 1))}px"),
+        ("display", "flex"),
+        ("flex-direction", "column"),
+        ("justify-content", ANCHORS.get(anchor, "flex-start")),
+        ("box-sizing", "border-box"),
+        ("padding", " ".join(f"{num(max(side, 0))}px" for side in (top, right, bottom, left))),
+        ("writing-mode", WRITING.get(vertical)),
+        ("overflow-wrap", "break-word"),
+    ]
     style = css(pairs) + (";" + base if base else "")
     kind = "t" if wrap else "t nowrap"
-    canvas.parts.append(f'<foreignObject x="{num(x)}" y="{num(y)}" width="{num(max(w, 1))}" height="{num(max(h, 1))}" '
-                        f'overflow="visible" transform="{matrix.svg()}"><div xmlns="{XHTML}" class="{kind}" '
-                        f'style="{attribute(style)}">{content}</div></foreignObject>')
+    canvas.parts.append(
+        f'<foreignObject x="{num(x)}" y="{num(y)}" width="{num(max(w, 1))}" height="{num(max(h, 1))}" '
+        f'overflow="visible" transform="{matrix.svg()}"><div xmlns="{XHTML}" class="{kind}" '
+        f'style="{attribute(style)}">{content}</div></foreignObject>'
+    )
 
 
 def missing_picture(canvas, matrix, w, h, label):
     """Where a picture cannot be shown: a dashed frame with what it was."""
-    canvas.parts.append(f'<rect x="0" y="0" width="{num(w)}" height="{num(h)}" fill="#F2F2F2" stroke="#B4B4B4" '
-                        f'stroke-dasharray="4 3" transform="{matrix.svg()}"/>')
-    text_box(canvas, matrix, 0, 0, w, h, escape(label), anchor="ctr", insets=(2, 2, 2, 2),
-             base="text-align:center;color:#595959;font-size:9pt")
+    canvas.parts.append(
+        f'<rect x="0" y="0" width="{num(w)}" height="{num(h)}" fill="#F2F2F2" stroke="#B4B4B4" '
+        f'stroke-dasharray="4 3" transform="{matrix.svg()}"/>'
+    )
+    text_box(
+        canvas,
+        matrix,
+        0,
+        0,
+        w,
+        h,
+        escape(label),
+        anchor="ctr",
+        insets=(2, 2, 2, 2),
+        base="text-align:center;color:#595959;font-size:9pt",
+    )
 
 
 # --- Colors ---------------------------------------------------------------------------------------
+
 
 def rgb_hex(text):
     """(r, g, b) in 0..1 of RRGGBB or RGB, or None."""
@@ -262,7 +400,7 @@ def rgb_hex(text):
         text = "".join(char * 2 for char in text)
     if not re.fullmatch(r"[0-9A-Fa-f]{6}", text):
         return None
-    return tuple(int(text[index:index + 2], 16) / 255 for index in (0, 2, 4))
+    return tuple(int(text[index : index + 2], 16) / 255 for index in (0, 2, 4))
 
 
 def linear(value):
@@ -276,6 +414,7 @@ def gamma(value):
 
 class Color:
     """A color with its opacity, all in 0..1."""
+
     __slots__ = ("r", "g", "b", "alpha")
 
     def __init__(self, r, g, b, alpha=1.0):
@@ -294,8 +433,13 @@ class Color:
 
     def mixed(self, other, share):
         """`share` of `other` mixed into this color."""
-        return Color(*(mine + (theirs - mine) * share for mine, theirs in
-                       ((self.r, other.r), (self.g, other.g), (self.b, other.b))), self.alpha)
+        return Color(
+            *(
+                mine + (theirs - mine) * share
+                for mine, theirs in ((self.r, other.r), (self.g, other.g), (self.b, other.b))
+            ),
+            self.alpha,
+        )
 
     def fill(self, name="fill"):
         """SVG attributes painting with this color."""
@@ -360,13 +504,19 @@ class Palette:
             found = next(iter(item), None)
             if found is None:
                 continue
-            value = ((found.get("lastClr") or SYSTEM_COLORS.get(found.get("val"))) if local(found.tag) == "sysClr"
-                     else found.get("val"))
+            value = (
+                (found.get("lastClr") or SYSTEM_COLORS.get(found.get("val")))
+                if local(found.tag) == "sysClr"
+                else found.get("val")
+            )
             if rgb_hex(value):
                 self.colors[local(item.tag)] = value
         formats = None if elements is None else elements.find(A + "fmtScheme")
-        for name, target in (("fillStyleLst", self.fills), ("bgFillStyleLst", self.backgrounds),
-                             ("lnStyleLst", self.lines)):
+        for name, target in (
+            ("fillStyleLst", self.fills),
+            ("bgFillStyleLst", self.backgrounds),
+            ("lnStyleLst", self.lines),
+        ):
             found = None if formats is None else formats.find(A + name)
             target.extend(list(found) if found is not None and len(found) else OFFICE_STYLES[name])
 
@@ -402,9 +552,11 @@ class Palette:
         elif kind == "scrgbClr":
             rgb = tuple(gamma(number(element.get(name), 0) / 100000) for name in ("r", "g", "b"))
         else:
-            rgb = colorsys.hls_to_rgb(number(element.get("hue"), 0) / 60000 / 360 % 1.0,
-                                      min(max(number(element.get("lum"), 0) / 100000, 0.0), 1.0),
-                                      min(max(number(element.get("sat"), 0) / 100000, 0.0), 1.0))
+            rgb = colorsys.hls_to_rgb(
+                number(element.get("hue"), 0) / 60000 / 360 % 1.0,
+                min(max(number(element.get("lum"), 0) / 100000, 0.0), 1.0),
+                min(max(number(element.get("sat"), 0) / 100000, 0.0), 1.0),
+            )
         return None if rgb is None else modified(Color(*rgb), element)
 
     def fill(self, properties, style, group=None):
@@ -447,20 +599,32 @@ class Palette:
             found = self.color(paint.find(A + "fgClr"), color)
         if found is None:
             return None
-        width = next((emu(element.get("w")) for element in (own, base) if element is not None and element.get("w")), 0.75 * 4 / 3)
+        width = next(
+            (emu(element.get("w")) for element in (own, base) if element is not None and element.get("w")), 0.75 * 4 / 3
+        )
         dash, _ = pick({"prstDash", "custDash"})
         pattern = None
         if dash is not None and local(dash.tag) == "prstDash":
             pattern = DASHES.get(dash.get("val"))
         elif dash is not None:
-            pattern = tuple(value for item in dash.findall(A + "ds")
-                            for value in (number(item.get("d"), 100000) / 100000, number(item.get("sp"), 100000) / 100000))
+            pattern = tuple(
+                value
+                for item in dash.findall(A + "ds")
+                for value in (number(item.get("d"), 100000) / 100000, number(item.get("sp"), 100000) / 100000)
+            )
         cap = next((element.get("cap") for element in (own, base) if element is not None and element.get("cap")), None)
         join, _ = pick({"round", "bevel", "miter"})
         head, _ = pick({"headEnd"})
         tail, _ = pick({"tailEnd"})
-        return Line(found, max(width, 0.0), pattern, CAPS.get(cap), None if join is None else local(join.tag),
-                    ends(head), ends(tail))
+        return Line(
+            found,
+            max(width, 0.0),
+            pattern,
+            CAPS.get(cap),
+            None if join is None else local(join.tag),
+            ends(head),
+            ends(tail),
+        )
 
 
 def ends(element):
@@ -472,6 +636,7 @@ def ends(element):
 
 class Line:
     """An outline: its color, width in px, dash pattern in widths, cap, join and arrowheads."""
+
     __slots__ = ("color", "width", "dash", "cap", "join", "head", "tail")
 
     def __init__(self, color, width, dash=None, cap=None, join=None, head=None, tail=None):
@@ -497,12 +662,29 @@ class Line:
 
 # --- Geometry -------------------------------------------------------------------------------------
 
+
 def builtins(w, h):
     """The guides every geometry may use, for a shape of w by h; angles in 60000ths of a degree."""
     ss, ls = min(w, h), max(w, h)
-    values = {"l": 0.0, "t": 0.0, "r": w, "b": h, "w": w, "h": h, "hc": w / 2, "vc": h / 2, "ss": ss, "ls": ls,
-              "cd2": 10800000.0, "cd4": 5400000.0, "cd8": 2700000.0, "3cd4": 16200000.0, "3cd8": 8100000.0,
-              "5cd8": 13500000.0, "7cd8": 18900000.0}
+    values = {
+        "l": 0.0,
+        "t": 0.0,
+        "r": w,
+        "b": h,
+        "w": w,
+        "h": h,
+        "hc": w / 2,
+        "vc": h / 2,
+        "ss": ss,
+        "ls": ls,
+        "cd2": 10800000.0,
+        "cd4": 5400000.0,
+        "cd8": 2700000.0,
+        "3cd4": 16200000.0,
+        "3cd8": 8100000.0,
+        "5cd8": 13500000.0,
+        "7cd8": 18900000.0,
+    }
     for divisor in (2, 3, 4, 5, 6, 8, 10, 12, 32):
         values[f"wd{divisor}"] = w / divisor
         values[f"hd{divisor}"] = h / divisor
@@ -557,9 +739,12 @@ def formula(text, values):
 
 def custom(geometry):
     """A custGeom element as the preset definitions write their shapes."""
+
     def guides(name):
         found = geometry.find(A + name)
-        return tuple((item.get("name"), item.get("fmla")) for item in ([] if found is None else found.findall(A + "gd")))
+        return tuple(
+            (item.get("name"), item.get("fmla")) for item in ([] if found is None else found.findall(A + "gd"))
+        )
 
     def point(item):
         found = item.find(A + "pt")
@@ -577,12 +762,21 @@ def custom(geometry):
             elif kind == "arcTo":
                 commands.append(("A", item.get("wR"), item.get("hR"), item.get("stAng"), item.get("swAng")))
             elif kind in ("cubicBezTo", "quadBezTo"):
-                commands.append(("C" if kind == "cubicBezTo" else "Q",)
-                                + tuple(value for found in item.findall(A + "pt") for value in (found.get("x"), found.get("y"))))
+                commands.append(
+                    ("C" if kind == "cubicBezTo" else "Q",)
+                    + tuple(value for found in item.findall(A + "pt") for value in (found.get("x"), found.get("y")))
+                )
             elif kind == "close":
                 commands.append(("Z",))
-        paths.append((int(number(path.get("w"))) or None, int(number(path.get("h"))) or None, path.get("fill", "norm"),
-                      on(path.get("stroke"), True), tuple(commands)))
+        paths.append(
+            (
+                int(number(path.get("w"))) or None,
+                int(number(path.get("h"))) or None,
+                path.get("fill", "norm"),
+                on(path.get("stroke"), True),
+                tuple(commands),
+            )
+        )
     rect = geometry.find(A + "rect")
     text = (rect.get("l"), rect.get("t"), rect.get("r"), rect.get("b")) if rect is not None else None
     return guides("avLst"), guides("gdLst"), text, tuple(paths)
@@ -591,6 +785,7 @@ def custom(geometry):
 class Outline:
     """One path of a geometry in a shape's own coordinates: SVG path data, how it is filled and stroked,
     and the direction of its ends for arrowheads."""
+
     __slots__ = ("data", "mode", "stroked", "closed", "start", "end")
 
     def __init__(self, data, mode, stroked, closed, start, end):
@@ -606,15 +801,20 @@ def geometry(properties, w, h):
     else:
         name = preset.get("prst", "rect") if preset is not None else "rect"
         definition = PRESETS.get(name) or PRESETS["rect"]
-        overrides = {item.get("name"): item.get("fmla") for item in ([] if preset is None else preset.iterfind(f"{A}avLst/{A}gd"))}
+        overrides = {
+            item.get("name"): item.get("fmla")
+            for item in ([] if preset is None else preset.iterfind(f"{A}avLst/{A}gd"))
+        }
     adjust, guides, text, paths = definition
     values = builtins(w, h)
     for name, value in adjust:
         values[name] = formula(overrides.get(name, value), values)
     for name, value in guides:
         values[name] = formula(value, values)
-    outlines = [trace(commands, values, (w / width) if width else 1.0, (h / height) if height else 1.0, mode, stroked)
-                for width, height, mode, stroked, commands in paths]
+    outlines = [
+        trace(commands, values, (w / width) if width else 1.0, (h / height) if height else 1.0, mode, stroked)
+        for width, height, mode, stroked, commands in paths
+    ]
     box = (0.0, 0.0, w, h)
     if text:
         box = tuple(values[item] if item in values else number(item) for item in text)
@@ -623,6 +823,7 @@ def geometry(properties, w, h):
 
 def trace(commands, values, sx, sy, mode, stroked):
     """The Outline of one path's commands, scaled from the path's coordinate space by (sx, sy)."""
+
     def at(item):
         return values[item] if item in values else number(item)
 
@@ -678,8 +879,11 @@ def trace(commands, values, sx, sy, mode, stroked):
             data.append(kind + " ".join(f"{num(px)} {num(py)}" for px, py in points_))
             first_control = next((point for point in points_ if point != (x, y)), points_[-1])
             last_control = points_[-2] if len(points_) > 1 and points_[-2] != points_[-1] else (x, y)
-            segment((first_control[0] - x, first_control[1] - y),
-                    (points_[-1][0] - last_control[0], points_[-1][1] - last_control[1]), points_[-1])
+            segment(
+                (first_control[0] - x, first_control[1] - y),
+                (points_[-1][0] - last_control[0], points_[-1][1] - last_control[1]),
+                points_[-1],
+            )
         elif kind == "Z":
             data.append("Z")
             x, y = begin
@@ -704,20 +908,27 @@ def arrowhead(end, line, point, direction):
 
     color = line.color.fill("fill")
     if kind == "arrow":
-        return (f'<polyline points="{at(-size, width / 2)} {at(0, 0)} {at(-size, -width / 2)}" fill="none" '
-                f'{line.color.fill("stroke")} stroke-width="{num(max(line.width, 0.5))}" stroke-linejoin="miter"/>')
+        return (
+            f'<polyline points="{at(-size, width / 2)} {at(0, 0)} {at(-size, -width / 2)}" fill="none" '
+            f'{line.color.fill("stroke")} stroke-width="{num(max(line.width, 0.5))}" stroke-linejoin="miter"/>'
+        )
     if kind == "stealth":
         return f'<polygon points="{at(0, 0)} {at(-size, width / 2)} {at(-size * 0.6, 0)} {at(-size, -width / 2)}" {color}/>'
     if kind == "diamond":
-        return f'<polygon points="{at(size / 2, 0)} {at(0, width / 2)} {at(-size / 2, 0)} {at(0, -width / 2)}" {color}/>'
+        return (
+            f'<polygon points="{at(size / 2, 0)} {at(0, width / 2)} {at(-size / 2, 0)} {at(0, -width / 2)}" {color}/>'
+        )
     if kind == "oval":
         angle = math.degrees(math.atan2(uy, ux))
-        return (f'<ellipse cx="{num(px)}" cy="{num(py)}" rx="{num(size / 2)}" ry="{num(width / 2)}" '
-                f'transform="rotate({num(angle)} {num(px)} {num(py)})" {color}/>')
+        return (
+            f'<ellipse cx="{num(px)}" cy="{num(py)}" rx="{num(size / 2)}" ry="{num(width / 2)}" '
+            f'transform="rotate({num(angle)} {num(px)} {num(py)})" {color}/>'
+        )
     return f'<polygon points="{at(0, 0)} {at(-size, width / 2)} {at(-size, -width / 2)}" {color}/>'
 
 
 # --- DrawingML shapes -----------------------------------------------------------------------------
+
 
 class Painter:
     """Paints DrawingML shapes, pictures, groups and canvases on a Canvas.
@@ -783,8 +994,16 @@ class Painter:
         child_h = emu(size.get("cy")) if size is not None else emu(None if extent is None else extent.get("cy"))
         rotation = number(None if transform is None else transform.get("rot")) / 60000
         cx, cy = x + w / 2, y + h / 2
-        inner = matrix @ turned(rotation, cx, cy) @ flipped(on(transform.get("flipH")) if transform is not None else False,
-                                                           on(transform.get("flipV")) if transform is not None else False, cx, cy)
+        inner = (
+            matrix
+            @ turned(rotation, cx, cy)
+            @ flipped(
+                on(transform.get("flipH")) if transform is not None else False,
+                on(transform.get("flipV")) if transform is not None else False,
+                cx,
+                cy,
+            )
+        )
         fill = self.palette.fill(properties, None, group)
         mapping = (child_x, child_y, w / child_w if child_w else 1.0, h / child_h if child_h else 1.0, x, y)
         for item in element:
@@ -799,8 +1018,10 @@ class Painter:
         local_matrix = placed(matrix, x, y, w, h)
         if fill is not None or line is not None:
             stroke = line.svg() if line is not None else 'stroke="none"'
-            canvas.parts.append(f'<rect x="0" y="0" width="{num(w)}" height="{num(h)}" {self.paint(canvas, fill)} '
-                                f'{stroke} transform="{local_matrix.svg()}"/>')
+            canvas.parts.append(
+                f'<rect x="0" y="0" width="{num(w)}" height="{num(h)}" {self.paint(canvas, fill)} '
+                f'{stroke} transform="{local_matrix.svg()}"/>'
+            )
         canvas.cover(local_matrix, 0, 0, w, h)
         for item in element:
             self.item(canvas, item, matrix, (0.0, 0.0, 1.0, 1.0, x, y), None, 0)
@@ -856,20 +1077,35 @@ class Painter:
                 offset, extent = child(place, "off"), child(place, "ext")
                 tx = emu(None if offset is None else offset.get("x"))
                 ty = emu(None if offset is None else offset.get("y"))
-                tw, th = emu(None if extent is None else extent.get("cx")), emu(None if extent is None else extent.get("cy"))
+                tw, th = (
+                    emu(None if extent is None else extent.get("cx")),
+                    emu(None if extent is None else extent.get("cy")),
+                )
                 turn = number(place.get("rot")) / 60000
                 text_matrix = placed(matrix, tx, ty, tw, th, turn)
                 box_x, box_y, box_w, box_h = 0.0, 0.0, tw, th
         if not content:
             return
         canvas.text(plain)
-        insets = tuple(emu(None if body is None else body.get(name), default) for name, default in
-                       (("lIns", 9.6), ("tIns", 4.8), ("rIns", 9.6), ("bIns", 4.8)))
+        insets = tuple(
+            emu(None if body is None else body.get(name), default)
+            for name, default in (("lIns", 9.6), ("tIns", 4.8), ("rIns", 9.6), ("bIns", 4.8))
+        )
         base = self.base + (f";color:{color.hex()}" if color is not None else "")
-        text_box(canvas, text_matrix, box_x, box_y, box_w, box_h, content, insets=insets,
-                 anchor=(body.get("anchor", "t") if body is not None else "t"),
-                 vertical=(body.get("vert", "horz") if body is not None else "horz"),
-                 wrap=(body is None or body.get("wrap") != "none"), base=base.lstrip(";"))
+        text_box(
+            canvas,
+            text_matrix,
+            box_x,
+            box_y,
+            box_w,
+            box_h,
+            content,
+            insets=insets,
+            anchor=(body.get("anchor", "t") if body is not None else "t"),
+            vertical=(body.get("vert", "horz") if body is not None else "horz"),
+            wrap=(body is None or body.get("wrap") != "none"),
+            base=base.lstrip(";"),
+        )
 
     def picture(self, canvas, element, matrix, frame):
         """A picture (pic:pic), cropped, in its geometry, with its outline."""
@@ -877,9 +1113,16 @@ class Painter:
         properties = child(element, "spPr")
         transform = child(properties, "xfrm")
         rotation = number(None if transform is None else transform.get("rot")) / 60000
-        local_matrix = placed(matrix, x, y, w, h, rotation,
-                              transform is not None and on(transform.get("flipH")),
-                              transform is not None and on(transform.get("flipV")))
+        local_matrix = placed(
+            matrix,
+            x,
+            y,
+            w,
+            h,
+            rotation,
+            transform is not None and on(transform.get("flipH")),
+            transform is not None and on(transform.get("flipV")),
+        )
         fill = child(element, "blipFill")
         blip = None if fill is None else fill.find(A + "blip")
         ident = None if blip is None else (blip.get(R + "embed") or blip.get(R + "link"))
@@ -891,35 +1134,50 @@ class Painter:
             outlines, _ = geometry(properties, w, h)
             clip = ""
             preset = child(properties, "prstGeom")
-            if child(properties, "custGeom") is not None or (preset is not None and preset.get("prst", "rect") != "rect"):
+            if child(properties, "custGeom") is not None or (
+                preset is not None and preset.get("prst", "rect") != "rect"
+            ):
                 ident_ = canvas.ident()
-                canvas.defs.append(f'<clipPath id="{ident_}">' + "".join(f'<path d="{outline.data}"/>' for outline in outlines)
-                                   + "</clipPath>")
+                canvas.defs.append(
+                    f'<clipPath id="{ident_}">'
+                    + "".join(f'<path d="{outline.data}"/>' for outline in outlines)
+                    + "</clipPath>"
+                )
                 clip = f' clip-path="url(#{ident_})"'
-            canvas.parts.append(f'<g transform="{local_matrix.svg()}"{clip}>{self.image(canvas, found, fill, w, h)}</g>')
+            canvas.parts.append(
+                f'<g transform="{local_matrix.svg()}"{clip}>{self.image(canvas, found, fill, w, h)}</g>'
+            )
         else:
             missing_picture(canvas, local_matrix, w, h, found)
         line = self.palette.line(properties, child(element, "style"))
         if line is not None:
             outlines, _ = geometry(properties, w, h)
-            canvas.parts.extend(f'<path d="{outline.data}" fill="none" {line.svg()} transform="{local_matrix.svg()}"/>'
-                                for outline in outlines)
+            canvas.parts.extend(
+                f'<path d="{outline.data}" fill="none" {line.svg()} transform="{local_matrix.svg()}"/>'
+                for outline in outlines
+            )
         canvas.cover(local_matrix, 0, 0, w, h, line.reach() if line is not None else 0)
 
     def image(self, canvas, found, fill, w, h):
         """An <image> of a picture stretched over w by h px, cropped as the blipFill says."""
         kind, data, _ = found
         crop = None if fill is None else fill.find(A + "srcRect")
-        left, top, right, bottom = (number(None if crop is None else crop.get(name)) / 100000 for name in ("l", "t", "r", "b"))
+        left, top, right, bottom = (
+            number(None if crop is None else crop.get(name)) / 100000 for name in ("l", "t", "r", "b")
+        )
         shown_w, shown_h = max(1 - left - right, 0.01), max(1 - top - bottom, 0.01)
         width, height = w / shown_w, h / shown_h
         clip = ""
         if left > 0 or top > 0 or right > 0 or bottom > 0:
             ident = canvas.ident()
-            canvas.defs.append(f'<clipPath id="{ident}"><rect x="0" y="0" width="{num(w)}" height="{num(h)}"/></clipPath>')
+            canvas.defs.append(
+                f'<clipPath id="{ident}"><rect x="0" y="0" width="{num(w)}" height="{num(h)}"/></clipPath>'
+            )
             clip = f' clip-path="url(#{ident})"'
-        return (f'<image href="{images.data_uri(kind, data)}" x="{num(-left * width)}" y="{num(-top * height)}" '
-                f'width="{num(width)}" height="{num(height)}" preserveAspectRatio="none"{clip}/>')
+        return (
+            f'<image href="{images.data_uri(kind, data)}" x="{num(-left * width)}" y="{num(-top * height)}" '
+            f'width="{num(width)}" height="{num(height)}" preserveAspectRatio="none"{clip}/>'
+        )
 
     # Paint -----------------------------------------------------------------------------------
 
@@ -945,31 +1203,49 @@ class Painter:
             share = number((re.findall(r"\d+", element.get("prst", "pct50")) or ["50"])[0], 50) / 100
             return adjusted(back.mixed(front, min(max(share, 0.05), 0.95))).fill()
         if kind == "gradFill":
-            stops = sorted(((number(stop.get("pos")) / 100000, adjusted(self.palette.color(stop, placeholder)))
-                            for stop in element.iterfind(f"{A}gsLst/{A}gs")), key=lambda item: item[0])
+            stops = sorted(
+                (
+                    (number(stop.get("pos")) / 100000, adjusted(self.palette.color(stop, placeholder)))
+                    for stop in element.iterfind(f"{A}gsLst/{A}gs")
+                ),
+                key=lambda item: item[0],
+            )
             stops = [(offset, color) for offset, color in stops if color is not None]
             if not stops:
                 return 'fill="none"'
             if len(stops) == 1:
                 return stops[0][1].fill()
             ident = canvas.ident()
-            marks = "".join(f'<stop offset="{num(min(max(offset, 0), 1))}" stop-color="{color.hex()}"'
-                            + (f' stop-opacity="{num(color.alpha)}"' if color.alpha < 0.999 else "") + "/>"
-                            for offset, color in stops)
+            marks = "".join(
+                f'<stop offset="{num(min(max(offset, 0), 1))}" stop-color="{color.hex()}"'
+                + (f' stop-opacity="{num(color.alpha)}"' if color.alpha < 0.999 else "")
+                + "/>"
+                for offset, color in stops
+            )
             path = element.find(A + "path")
             if path is not None:
                 focus = path.find(A + "fillToRect")
-                fx = (number(None if focus is None else focus.get("l"), 50000)
-                      + 100000 - number(None if focus is None else focus.get("r"), 50000)) / 200000
-                fy = (number(None if focus is None else focus.get("t"), 50000)
-                      + 100000 - number(None if focus is None else focus.get("b"), 50000)) / 200000
-                canvas.defs.append(f'<radialGradient id="{ident}" cx="{num(fx)}" cy="{num(fy)}" r="0.71">{marks}</radialGradient>')
+                fx = (
+                    number(None if focus is None else focus.get("l"), 50000)
+                    + 100000
+                    - number(None if focus is None else focus.get("r"), 50000)
+                ) / 200000
+                fy = (
+                    number(None if focus is None else focus.get("t"), 50000)
+                    + 100000
+                    - number(None if focus is None else focus.get("b"), 50000)
+                ) / 200000
+                canvas.defs.append(
+                    f'<radialGradient id="{ident}" cx="{num(fx)}" cy="{num(fy)}" r="0.71">{marks}</radialGradient>'
+                )
             else:
                 lin = element.find(A + "lin")
                 angle = math.radians(number(None if lin is None else lin.get("ang")) / 60000)
                 dx, dy = math.cos(angle) / 2, math.sin(angle) / 2
-                canvas.defs.append(f'<linearGradient id="{ident}" x1="{num(0.5 - dx)}" y1="{num(0.5 - dy)}" '
-                                   f'x2="{num(0.5 + dx)}" y2="{num(0.5 + dy)}">{marks}</linearGradient>')
+                canvas.defs.append(
+                    f'<linearGradient id="{ident}" x1="{num(0.5 - dx)}" y1="{num(0.5 - dy)}" '
+                    f'x2="{num(0.5 + dx)}" y2="{num(0.5 + dy)}">{marks}</linearGradient>'
+                )
             return f'fill="url(#{ident})"'
         if kind == "blipFill":
             blip = element.find(A + "blip")
@@ -979,8 +1255,10 @@ class Painter:
                 return 'fill="#F2F2F2"'
             pattern = canvas.ident()
             # The picture fills the shape's bounding box: a pattern of one tile in its units.
-            canvas.defs.append(f'<pattern id="{pattern}" patternContentUnits="objectBoundingBox" width="1" height="1">'
-                               f'{self.image(canvas, found, element, 1, 1)}</pattern>')
+            canvas.defs.append(
+                f'<pattern id="{pattern}" patternContentUnits="objectBoundingBox" width="1" height="1">'
+                f"{self.image(canvas, found, element, 1, 1)}</pattern>"
+            )
             return f'fill="url(#{pattern})"'
         return 'fill="none"'
 
@@ -995,9 +1273,14 @@ class Painter:
         for paragraph in body.findall(A + "p"):
             properties = paragraph.find(A + "pPr")
             level = int(number(None if properties is None else properties.get("lvl"), 0))
-            defaults = [found for found in (
-                None if styles is None else styles.find(f"{A}lvl{level + 1}pPr/{A}defRPr"),
-                None if properties is None else properties.find(A + "defRPr")) if found is not None]
+            defaults = [
+                found
+                for found in (
+                    None if styles is None else styles.find(f"{A}lvl{level + 1}pPr/{A}defRPr"),
+                    None if properties is None else properties.find(A + "defRPr"),
+                )
+                if found is not None
+            ]
             runs, words = [], []
             for item in paragraph:
                 kind = local(item.tag)
@@ -1008,17 +1291,31 @@ class Painter:
                     text = "".join(found.text or "" for found in item.iter(A + "t"))
                     if not text:
                         continue
-                    style = self.run_css(defaults + [found for found in (item.find(A + "rPr"),) if found is not None],
-                                         scale)
+                    style = self.run_css(
+                        defaults + [found for found in (item.find(A + "rPr"),) if found is not None], scale
+                    )
                     runs.append(f'<span style="{attribute(style)}">{escape(text)}</span>' if style else escape(text))
                     words.append(text)
             bullet = "" if properties is None else self.bullet(properties)
             align = ALIGNS.get(None if properties is None else properties.get("algn"))
-            look = css([("text-align", align), ("margin-left", points(emu(properties.get("marL")) * 0.75)
-                                                 if properties is not None and properties.get("marL") else None)])
-            size = self.run_css(defaults + [found for found in (paragraph.find(A + "endParaRPr"),) if found is not None], scale)
+            look = css(
+                [
+                    ("text-align", align),
+                    (
+                        "margin-left",
+                        points(emu(properties.get("marL")) * 0.75)
+                        if properties is not None and properties.get("marL")
+                        else None,
+                    ),
+                ]
+            )
+            size = self.run_css(
+                defaults + [found for found in (paragraph.find(A + "endParaRPr"),) if found is not None], scale
+            )
             content = "".join(runs) or "<br/>"
-            html.append(f'<p style="{attribute(";".join(part for part in (look, size) if part))}">{bullet}{content}</p>')
+            html.append(
+                f'<p style="{attribute(";".join(part for part in (look, size) if part))}">{bullet}{content}</p>'
+            )
             plain.append("".join(words))
         return "".join(html), " ".join(" ".join(plain).split())
 
@@ -1037,16 +1334,35 @@ class Painter:
                 if face is not None and face.get("typeface"):
                     found[script] = self.palette.font(face.get("typeface"))
         size = number(found.get("sz"), 0) / 100 * scale
-        return css([("font-family", font_family([found.get("latin"), found.get("ea")]) or None),
-                    ("font-size", points(size) if size > 0 else None),
-                    ("font-weight", "bold" if on(found.get("b")) else None),
-                    ("font-style", "italic" if on(found.get("i")) else None),
-                    ("text-decoration", " ".join(part for part, yes in (
-                        ("underline", found.get("u") not in (None, "none")),
-                        ("line-through", found.get("strike") not in (None, "noStrike"))) if yes) or None),
-                    ("vertical-align", "super" if number(found.get("baseline")) > 0
-                     else "sub" if number(found.get("baseline")) < 0 else None),
-                    ("color", found["color"].hex() if found.get("color") is not None else None)])
+        return css(
+            [
+                ("font-family", font_family([found.get("latin"), found.get("ea")]) or None),
+                ("font-size", points(size) if size > 0 else None),
+                ("font-weight", "bold" if on(found.get("b")) else None),
+                ("font-style", "italic" if on(found.get("i")) else None),
+                (
+                    "text-decoration",
+                    " ".join(
+                        part
+                        for part, yes in (
+                            ("underline", found.get("u") not in (None, "none")),
+                            ("line-through", found.get("strike") not in (None, "noStrike")),
+                        )
+                        if yes
+                    )
+                    or None,
+                ),
+                (
+                    "vertical-align",
+                    "super"
+                    if number(found.get("baseline")) > 0
+                    else "sub"
+                    if number(found.get("baseline")) < 0
+                    else None,
+                ),
+                ("color", found["color"].hex() if found.get("color") is not None else None),
+            ]
+        )
 
     @staticmethod
     def bullet(properties):
@@ -1060,14 +1376,18 @@ class Painter:
 
 # --- Text boxes the page draws itself -------------------------------------------------------------
 
+
 def color_css(color):
     """A CSS color of a Color, with its opacity."""
     if color is None:
         return None
     if color.alpha >= 0.999:
         return color.hex()
-    return "rgba(" + ",".join(str(round(min(max(value, 0.0), 1.0) * 255)) for value in (color.r, color.g, color.b)) \
+    return (
+        "rgba("
+        + ",".join(str(round(min(max(value, 0.0), 1.0) * 255)) for value in (color.r, color.g, color.b))
         + f",{num(color.alpha)})"
+    )
 
 
 def box_css(element, palette, w, h):
@@ -1075,7 +1395,9 @@ def box_css(element, palette, w, h):
     rectangle filled and outlined in plain colors or not at all. None for a shape to paint."""
     properties, style = child(element, "spPr"), child(element, "style")
     transform = child(properties, "xfrm")
-    if transform is not None and (number(transform.get("rot")) or on(transform.get("flipH")) or on(transform.get("flipV"))):
+    if transform is not None and (
+        number(transform.get("rot")) or on(transform.get("flipH")) or on(transform.get("flipV"))
+    ):
         return None
     preset = child(properties, "prstGeom")
     shape = preset.get("prst", "rect") if preset is not None else "rect"
@@ -1089,20 +1411,35 @@ def box_css(element, palette, w, h):
         return None
     background = palette.color(fill[0], fill[1]) if fill is not None and local(fill[0].tag) == "solidFill" else None
     body = child(element, "bodyPr")
-    insets = [emu(None if body is None else body.get(name), default)
-              for name, default in (("tIns", 4.8), ("rIns", 9.6), ("bIns", 4.8), ("lIns", 9.6))]
+    insets = [
+        emu(None if body is None else body.get(name), default)
+        for name, default in (("tIns", 4.8), ("rIns", 9.6), ("bIns", 4.8), ("lIns", 9.6))
+    ]
     text = palette.color(child(style, "fontRef"))
     radius = 0.0
     if shape == "roundRect":
-        adjust = next((number(item.get("fmla", "").split()[-1], 16667) for item in preset.iterfind(f"{A}avLst/{A}gd")), 16667)
+        adjust = next(
+            (number(item.get("fmla", "").split()[-1], 16667) for item in preset.iterfind(f"{A}avLst/{A}gd")), 16667
+        )
         radius = min(w, h) * min(max(adjust, 0), 50000) / 100000
-    border = (f"{num(max(line.width, 0.5))}px {'dashed' if line.dash else 'solid'} {color_css(line.color)}"
-              if line is not None else "none")
-    return css([("width", f"{num(w)}px" if w > 0 else None), ("max-width", "100%"),
-                ("min-height", f"{num(h)}px" if h > 0 else None), ("box-sizing", "border-box"), ("display", "flex"),
-                ("flex-direction", "column"),
-                ("justify-content", ANCHORS.get(body.get("anchor") if body is not None else "t", "flex-start")),
-                ("padding", " ".join(f"{num(max(value, 0))}px" for value in insets)),
-                ("background-color", color_css(background)), ("border", border),
-                ("border-radius", f"{num(radius)}px" if radius else None),
-                ("color", text.hex() if text is not None else None)])
+    border = (
+        f"{num(max(line.width, 0.5))}px {'dashed' if line.dash else 'solid'} {color_css(line.color)}"
+        if line is not None
+        else "none"
+    )
+    return css(
+        [
+            ("width", f"{num(w)}px" if w > 0 else None),
+            ("max-width", "100%"),
+            ("min-height", f"{num(h)}px" if h > 0 else None),
+            ("box-sizing", "border-box"),
+            ("display", "flex"),
+            ("flex-direction", "column"),
+            ("justify-content", ANCHORS.get(body.get("anchor") if body is not None else "t", "flex-start")),
+            ("padding", " ".join(f"{num(max(value, 0))}px" for value in insets)),
+            ("background-color", color_css(background)),
+            ("border", border),
+            ("border-radius", f"{num(radius)}px" if radius else None),
+            ("color", text.hex() if text is not None else None),
+        ]
+    )

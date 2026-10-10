@@ -12,6 +12,7 @@ hand, or showing a document the user opened in it) never matches. Workers of one
 
 While a PowerPoint worker runs, a password prompt PowerPoint shows for its file is cancelled, as Word and Excel refuse
 such a file at once instead of asking (Watch.refuse_prompts)."""
+
 import sys
 import time
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ class Found:
 class Windows:
     """The kernel32, ntdll and user32 calls, through ctypes. Libraries of their own keep these signatures from
     changing ctypes.windll for other code."""
+
     PROCESS_TERMINATE = 0x0001
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     SYNCHRONIZE = 0x00100000
@@ -59,43 +61,53 @@ class Windows:
     def __init__(self):
         import ctypes
         from ctypes import wintypes
+
         self.ctypes, self.wintypes = ctypes, wintypes
 
         class Entry(ctypes.Structure):  # PROCESSENTRY32W
-            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
-                        ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
-                        ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
-                        ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
-                        ("szExeFile", ctypes.c_wchar * 260)]
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260),
+            ]
 
         class Text(ctypes.Structure):  # UNICODE_STRING
-            _fields_ = [("Length", ctypes.c_ushort), ("MaximumLength", ctypes.c_ushort),
-                        ("Buffer", ctypes.c_void_p)]
+            _fields_ = [("Length", ctypes.c_ushort), ("MaximumLength", ctypes.c_ushort), ("Buffer", ctypes.c_void_p)]
+
         self.Entry, self.Text = Entry, Text
         self.callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         ntdll = ctypes.WinDLL("ntdll")
         for library, name, arguments, result in (
-                (kernel32, "CreateToolhelp32Snapshot", [wintypes.DWORD, wintypes.DWORD], wintypes.HANDLE),
-                (kernel32, "Process32FirstW", [wintypes.HANDLE, ctypes.POINTER(Entry)], wintypes.BOOL),
-                (kernel32, "Process32NextW", [wintypes.HANDLE, ctypes.POINTER(Entry)], wintypes.BOOL),
-                (kernel32, "OpenProcess", [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
-                (kernel32, "CloseHandle", [wintypes.HANDLE], wintypes.BOOL),
-                (kernel32, "GetProcessTimes", [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4,
-                 wintypes.BOOL),
-                (kernel32, "TerminateProcess", [wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
-                (kernel32, "WaitForSingleObject", [wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
-                (ntdll, "NtQueryInformationProcess",
-                 [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)],
-                 ctypes.c_long),
-                (user32, "EnumWindows", [self.callback, wintypes.LPARAM], wintypes.BOOL),
-                (user32, "GetWindowThreadProcessId", [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD),
-                (user32, "IsWindowVisible", [wintypes.HWND], wintypes.BOOL),
-                (user32, "GetClassNameW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
-                (user32, "GetWindowTextW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
-                (user32, "PostMessageW", [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM],
-                 wintypes.BOOL)):
+            (kernel32, "CreateToolhelp32Snapshot", [wintypes.DWORD, wintypes.DWORD], wintypes.HANDLE),
+            (kernel32, "Process32FirstW", [wintypes.HANDLE, ctypes.POINTER(Entry)], wintypes.BOOL),
+            (kernel32, "Process32NextW", [wintypes.HANDLE, ctypes.POINTER(Entry)], wintypes.BOOL),
+            (kernel32, "OpenProcess", [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
+            (kernel32, "CloseHandle", [wintypes.HANDLE], wintypes.BOOL),
+            (kernel32, "GetProcessTimes", [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4, wintypes.BOOL),
+            (kernel32, "TerminateProcess", [wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
+            (kernel32, "WaitForSingleObject", [wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
+            (
+                ntdll,
+                "NtQueryInformationProcess",
+                [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)],
+                ctypes.c_long,
+            ),
+            (user32, "EnumWindows", [self.callback, wintypes.LPARAM], wintypes.BOOL),
+            (user32, "GetWindowThreadProcessId", [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD),
+            (user32, "IsWindowVisible", [wintypes.HWND], wintypes.BOOL),
+            (user32, "GetClassNameW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+            (user32, "GetWindowTextW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+            (user32, "PostMessageW", [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL),
+        ):
             function = getattr(library, name)
             function.argtypes, function.restype = arguments, result
         self.kernel32, self.user32, self.ntdll = kernel32, user32, ntdll
@@ -136,8 +148,9 @@ class Windows:
         size = self.wintypes.ULONG(4096)
         for _ in range(3):
             buffer = self.ctypes.create_string_buffer(size.value)
-            status = self.ntdll.NtQueryInformationProcess(handle, self.PROCESS_COMMAND_LINE_INFORMATION, buffer,
-                                                         size.value, self.ctypes.byref(size))
+            status = self.ntdll.NtQueryInformationProcess(
+                handle, self.PROCESS_COMMAND_LINE_INFORMATION, buffer, size.value, self.ctypes.byref(size)
+            )
             if status & 0xFFFFFFFF in self.TOO_SMALL:
                 continue
             if status < 0:
@@ -160,9 +173,16 @@ class Windows:
             if self.user32.IsWindowVisible(handle):
                 pid = self.wintypes.DWORD()
                 self.user32.GetWindowThreadProcessId(handle, self.ctypes.byref(pid))
-                found.append((handle, pid.value, self._string(self.user32.GetWindowTextW, handle),
-                              self._string(self.user32.GetClassNameW, handle)))
+                found.append(
+                    (
+                        handle,
+                        pid.value,
+                        self._string(self.user32.GetWindowTextW, handle),
+                        self._string(self.user32.GetClassNameW, handle),
+                    )
+                )
             return True
+
         self.user32.EnumWindows(self.callback(visit), 0)
         return found
 
@@ -216,8 +236,11 @@ class Watch:
     def prompts(self):
         """The password prompts PowerPoint shows."""
         pids = {pid for pid, name in self.windows.processes() if name.lower() == EXECUTABLES["PowerPoint"]}
-        return [handle for handle, pid, title, _ in self.windows.visible()
-                if pid in pids and " ".join(title.split()).lower() in PROMPTS]
+        return [
+            handle
+            for handle, pid, title, _ in self.windows.visible()
+            if pid in pids and " ".join(title.split()).lower() in PROMPTS
+        ]
 
     def refuse_prompts(self):
         """Cancel the password prompts PowerPoint showed since the worker started, which ask for the worker's file;

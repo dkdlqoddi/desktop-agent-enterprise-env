@@ -12,8 +12,14 @@ from agent.service import Service
 class FakeLLM:
     def __init__(self):
         self.calls = []
-        self.result = {"summary": "Python API 성능 개선 기록", "keywords": ["Python", "API", "캐시"],
-                       "relations": [{"source": "Python", "target": "API", "label": "구현"}, {"source": "캐시", "target": "API", "label": "성능 개선"}]}
+        self.result = {
+            "summary": "Python API 성능 개선 기록",
+            "keywords": ["Python", "API", "캐시"],
+            "relations": [
+                {"source": "Python", "target": "API", "label": "구현"},
+                {"source": "캐시", "target": "API", "label": "성능 개선"},
+            ],
+        }
 
     def structured(self, system, content):
         self.calls.append((system, content))
@@ -163,9 +169,16 @@ def test_clear_analysis_returns_documents_to_before_their_analysis(tmp_path):
     from test_search import RoutingLLM, long_document
 
     service = Service(Database(tmp_path / "wiki.db"), RoutingLLM())
-    short, long, plain, failed, busy = (service.wiki_save({"title": title, "content": content})["id"] for title, content in (
-        ("짧은 문서", "캐시 전략을 정리했습니다."), ("긴 문서", long_document()), ("원문", "분석하지 않은 글"),
-        ("실패한 문서", "분석이 실패한 글"), ("분석 중인 문서", "지금 분석하는 글")))
+    short, long, plain, failed, busy = (
+        service.wiki_save({"title": title, "content": content})["id"]
+        for title, content in (
+            ("짧은 문서", "캐시 전략을 정리했습니다."),
+            ("긴 문서", long_document()),
+            ("원문", "분석하지 않은 글"),
+            ("실패한 문서", "분석이 실패한 글"),
+            ("분석 중인 문서", "지금 분석하는 글"),
+        )
+    )
     service.wiki_analyze({"id": short})
     service.wiki_analyze({"id": long})
     service.llm.extract = UserError("LLM 응답 형식이 올바르지 않습니다.")
@@ -182,8 +195,11 @@ def test_clear_analysis_returns_documents_to_before_their_analysis(tmp_path):
         assert (doc["status"], doc["summary"], doc["error"], doc["index_mode"]) == ("pending", "", "", "")
         assert doc["keywords"] == doc["relations"] == doc["outline"] == []
     after = service.wiki_get({"id": long})
-    assert (after["content"], after["revision"], after["updated_at"]) == \
-        (before["content"], before["revision"], before["updated_at"])
+    assert (after["content"], after["revision"], after["updated_at"]) == (
+        before["content"],
+        before["revision"],
+        before["updated_at"],
+    )
     assert service.wiki_get({"id": busy})["status"] == "indexing"
     assert service.wiki_graph({})["nodes"] == []
     with service.db.connect() as db:
@@ -208,8 +224,11 @@ def test_invalid_metadata_keeps_source_document(service, bad):
 def test_what_the_llm_got_wrong_is_left_out_and_the_rest_of_the_analysis_kept(service):
     doc = document(service)
     service.llm.result["keywords"] += [123, "", "x" * 81]
-    service.llm.result["relations"] += [{"source": "hallucinated", "target": "API", "label": "가짜"},
-                                        {"source": "Python", "target": "캐시", "label": " "}, "not a relation"]
+    service.llm.result["relations"] += [
+        {"source": "hallucinated", "target": "API", "label": "가짜"},
+        {"source": "Python", "target": "캐시", "label": " "},
+        "not a relation",
+    ]
     service.llm.result["summary"] = "요" * 3000
     analyzed = service.wiki_analyze({"id": doc["id"]})
     assert analyzed["keywords"] == ["api", "python", "캐시"]
@@ -222,8 +241,10 @@ def test_what_the_llm_got_wrong_is_left_out_and_the_rest_of_the_analysis_kept(se
 
 def aliases(service):
     with service.db.connect() as db:
-        return [tuple(row) for row in db.execute(
-            "SELECT keyword,alias,normalized FROM keyword_aliases ORDER BY keyword,normalized")]
+        return [
+            tuple(row)
+            for row in db.execute("SELECT keyword,alias,normalized FROM keyword_aliases ORDER BY keyword,normalized")
+        ]
 
 
 def test_the_analysis_keeps_up_to_five_aliases_of_each_keyword(service):
@@ -234,15 +255,24 @@ def test_the_analysis_keeps_up_to_five_aliases_of_each_keyword(service):
     service.llm.result["aliases"] = {
         "Python": ["파이썬", "PY", "py", "Ｐｙｔｈｏｎ", "  파이썬  ", "python3"],
         "API": ["에이피아이", "Application  Programming Interface", "a", "b", "c", "d"],
-        "캐시": ["cache", "x" * 81, ""], "없는키워드": ["무시"]}
+        "캐시": ["cache", "x" * 81, ""],
+        "없는키워드": ["무시"],
+    }
     analyzed = service.wiki_analyze({"id": doc["id"]})
     system = service.llm.calls[-1][0]
     assert '"aliases"' in system and "at most 5" in system and "Use lowercase English keywords" in system
     assert analyzed["keywords"] == ["api", "python", "캐시"]
     assert aliases(service) == [
-        ("api", "a", "a"), ("api", "Application Programming Interface", "application programming interface"),
-        ("api", "b", "b"), ("api", "c", "c"), ("api", "에이피아이", "에이피아이"),
-        ("python", "PY", "py"), ("python", "python3", "python3"), ("python", "파이썬", "파이썬"), ("캐시", "cache", "cache")]
+        ("api", "a", "a"),
+        ("api", "Application Programming Interface", "application programming interface"),
+        ("api", "b", "b"),
+        ("api", "c", "c"),
+        ("api", "에이피아이", "에이피아이"),
+        ("python", "PY", "py"),
+        ("python", "python3", "python3"),
+        ("python", "파이썬", "파이썬"),
+        ("캐시", "cache", "cache"),
+    ]
     assert [d["id"] for d in service.wiki_search({"query": "파이썬", "mode": "keyword"})["documents"]] == [doc["id"]]
     # Analyzed again, the document keeps only the new answer's aliases.
     service.llm.result["aliases"] = {"python": ["파이선"]}
@@ -250,13 +280,26 @@ def test_the_analysis_keeps_up_to_five_aliases_of_each_keyword(service):
     assert aliases(service) == [("python", "파이선", "파이선")]
 
 
-@pytest.mark.parametrize("bad", [None, "파이썬", ["파이썬"], {"python": "파이썬"}, {"": ["x"], "python": None},
-                                 {"python": [1, None, {"x": 1}, ["파이썬"], " ", "x" * 81]}])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        "파이썬",
+        ["파이썬"],
+        {"python": "파이썬"},
+        {"": ["x"], "python": None},
+        {"python": [1, None, {"x": 1}, ["파이썬"], " ", "x" * 81]},
+    ],
+)
 def test_aliases_in_another_form_are_left_out_and_the_analysis_kept(service, bad):
     doc = document(service)
     service.llm.result["aliases"] = bad
     analyzed = service.wiki_analyze({"id": doc["id"]})
-    assert (analyzed["status"], analyzed["keywords"], len(analyzed["relations"])) == ("ready", ["api", "python", "캐시"], 2)
+    assert (analyzed["status"], analyzed["keywords"], len(analyzed["relations"])) == (
+        "ready",
+        ["api", "python", "캐시"],
+        2,
+    )
     assert aliases(service) == []
 
 
@@ -265,15 +308,23 @@ def test_saving_the_same_text_keeps_the_ai_analysis(service):
     analyzed = service.wiki_analyze({"id": doc["id"]})
     kept = ("summary", "keywords", "relations", "status", "index_mode", "revision", "format")
     # Saved without a change, or with only a new title: what the analysis found still holds.
-    same = service.wiki_save({"id": doc["id"], "title": doc["title"], "content": doc["content"] + "\n",
-                              "expected_revision": analyzed["revision"]})
+    same = service.wiki_save(
+        {
+            "id": doc["id"],
+            "title": doc["title"],
+            "content": doc["content"] + "\n",
+            "expected_revision": analyzed["revision"],
+        }
+    )
     assert {key: same[key] for key in kept} == {key: analyzed[key] for key in kept}
-    renamed = service.wiki_save({"id": doc["id"], "title": "새 제목", "content": doc["content"],
-                                 "expected_revision": analyzed["revision"]})
+    renamed = service.wiki_save(
+        {"id": doc["id"], "title": "새 제목", "content": doc["content"], "expected_revision": analyzed["revision"]}
+    )
     assert renamed["title"] == "새 제목" and {key: renamed[key] for key in kept} == {key: analyzed[key] for key in kept}
     # New text clears it, in the same save.
-    edited = service.wiki_save({"id": doc["id"], "title": "새 제목", "content": "다른 내용",
-                                "expected_revision": analyzed["revision"]})
+    edited = service.wiki_save(
+        {"id": doc["id"], "title": "새 제목", "content": "다른 내용", "expected_revision": analyzed["revision"]}
+    )
     assert (edited["summary"], edited["keywords"], edited["status"], edited["index_mode"]) == ("", [], "pending", "")
     assert edited["revision"] == analyzed["revision"] + 1
 
@@ -283,8 +334,9 @@ def test_an_edit_never_overwrites_text_that_changed_while_it_was_open(service):
     # Another window, an AI tool or an import changed the text after the editor opened it.
     service.wiki_save({"id": doc["id"], "title": doc["title"], "content": "다른 곳에서 고친 내용"})
     with pytest.raises(UserError, match="다른 곳에서 문서가 바뀌었습니다"):
-        service.wiki_save({"id": doc["id"], "title": doc["title"], "content": "내가 쓴 내용",
-                           "expected_revision": doc["revision"]})
+        service.wiki_save(
+            {"id": doc["id"], "title": doc["title"], "content": "내가 쓴 내용", "expected_revision": doc["revision"]}
+        )
     assert service.wiki_get({"id": doc["id"]})["content"] == "다른 곳에서 고친 내용"
     service.wiki_delete({"id": doc["id"]})
     with pytest.raises(UserError, match="휴지통으로 옮겨졌습니다"):
@@ -308,17 +360,22 @@ def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(servic
     base = "# 배포 계획\n\n- 월요일 준비\n- 화요일 배포\n- 금요일 회고"
     doc = document(service, "배포 계획", base)
     service.wiki_analyze({"id": doc["id"]})
-    theirs = service.wiki_save({"id": doc["id"], "title": "배포 계획",
-                                "content": "# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고"})
+    theirs = service.wiki_save(
+        {"id": doc["id"], "title": "배포 계획", "content": "# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고"}
+    )
     mine = base + "\n- 다음 주 점검"
     with pytest.raises(UserError, match="다른 곳에서 문서가 바뀌었습니다"):
-        service.wiki_save({"id": doc["id"], "title": "배포 계획", "content": mine, "expected_revision": doc["revision"]})
+        service.wiki_save(
+            {"id": doc["id"], "title": "배포 계획", "content": mine, "expected_revision": doc["revision"]}
+        )
     stored = service.wiki_get({"id": doc["id"]})
-    conflict = service.dispatch("wiki.compare", {"id": doc["id"], "base_revision": doc["revision"], "base": base,
-                                                 "content": mine})
+    conflict = service.dispatch(
+        "wiki.compare", {"id": doc["id"], "base_revision": doc["revision"], "base": base, "content": mine}
+    )
     assert conflict["changed"] is True
-    assert {key: conflict["document"][key] for key in ("id", "title", "content", "revision")} == \
-        {key: theirs[key] for key in ("id", "title", "content", "revision")}
+    assert {key: conflict["document"][key] for key in ("id", "title", "content", "revision")} == {
+        key: theirs[key] for key in ("id", "title", "content", "revision")
+    }
     assert "html" not in conflict["document"]
 
     def lines(change):
@@ -327,20 +384,31 @@ def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(servic
     elsewhere = conflict["diffs"]["theirs"]
     assert (elsewhere["added"], elsewhere["removed"], elsewhere["more"]) == (1, 1, 0)
     assert [(hunk["old_start"], hunk["new_start"]) for hunk in elsewhere["hunks"]] == [(1, 1)]
-    assert lines(elsewhere) == [(" ", "# 배포 계획"), (" ", ""), (" ", "- 월요일 준비"), ("-", "- 화요일 배포"),
-                                ("+", "- 목요일 배포"), (" ", "- 금요일 회고")]
+    assert lines(elsewhere) == [
+        (" ", "# 배포 계획"),
+        (" ", ""),
+        (" ", "- 월요일 준비"),
+        ("-", "- 화요일 배포"),
+        ("+", "- 목요일 배포"),
+        (" ", "- 금요일 회고"),
+    ]
     assert [line for line in lines(conflict["diffs"]["ours"]) if line[0] != " "] == [("+", "- 다음 주 점검")]
     # Saving over the document would take back what changed elsewhere and add what the user wrote.
     assert [line for line in lines(conflict["diffs"]["overwrite"]) if line[0] != " "] == [
-        ("-", "- 목요일 배포"), ("+", "- 화요일 배포"), ("+", "- 다음 주 점검")]
+        ("-", "- 목요일 배포"),
+        ("+", "- 화요일 배포"),
+        ("+", "- 다음 주 점검"),
+    ]
     # Only read: the document, its analysis state and its revision are as they were.
     assert service.wiki_get({"id": doc["id"]}) == stored
     # Saved over the revision the comparison showed, the user's text wins; compared again, nothing changed since.
-    saved = service.wiki_save({"id": doc["id"], "title": "배포 계획", "content": mine,
-                               "expected_revision": conflict["document"]["revision"]})
+    saved = service.wiki_save(
+        {"id": doc["id"], "title": "배포 계획", "content": mine, "expected_revision": conflict["document"]["revision"]}
+    )
     assert saved["content"] == mine and saved["revision"] == theirs["revision"] + 1
-    again = service.dispatch("wiki.compare", {"id": doc["id"], "base_revision": saved["revision"], "base": mine,
-                                              "content": mine})
+    again = service.dispatch(
+        "wiki.compare", {"id": doc["id"], "base_revision": saved["revision"], "base": mine, "content": mine}
+    )
     assert again["changed"] is False
     assert all(change == {"added": 0, "removed": 0, "hunks": [], "more": 0} for change in again["diffs"].values())
     # Without a revision, a text that differs from the one the editor started from is a change.
@@ -355,18 +423,22 @@ def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(servic
     # A document moved to the trash meanwhile is no conflict to compare: the window tells wiki.save's refusal.
     service.wiki_delete({"id": doc["id"]})
     with pytest.raises(UserError, match="찾을 수 없습니다"):
-        service.dispatch("wiki.compare", {"id": doc["id"], "base_revision": doc["revision"], "base": base,
-                                          "content": mine})
+        service.dispatch(
+            "wiki.compare", {"id": doc["id"], "base_revision": doc["revision"], "base": base, "content": mine}
+        )
 
 
 def test_a_comparison_shows_changes_among_a_few_unchanged_lines_and_stays_bounded():
     from agent.changes import diff
+
     old = "\n".join(f"줄 {n}" for n in range(1, 31))
     new = old.replace("줄 5", "다섯째 줄").replace("줄 9", "아홉째 줄").replace("줄 25", "스물다섯째 줄")
     change = diff(old, new)
     # Changes close together share a hunk; each hunk starts three unchanged lines before its first change.
-    assert [(hunk["old_start"], hunk["new_start"], len(hunk["lines"])) for hunk in change["hunks"]] == \
-        [(2, 2, 13), (22, 22, 8)]
+    assert [(hunk["old_start"], hunk["new_start"], len(hunk["lines"])) for hunk in change["hunks"]] == [
+        (2, 2, 13),
+        (22, 22, 8),
+    ]
     assert (change["added"], change["removed"], change["more"]) == (3, 3, 0)
     # Lines past the limit are counted, not sent; a hunk cut before its first change is left out whole.
     cut = diff(old, new, limit=9)
@@ -377,7 +449,10 @@ def test_a_comparison_shows_changes_among_a_few_unchanged_lines_and_stays_bounde
     assert diff("가\r\n\r\n나\r\n", "가\n\n나") == {"added": 0, "removed": 0, "hunks": [], "more": 0}
     assert diff("가  \n나", "가\n나")["hunks"] == []
     assert diff("가\n나", "가\n\n나")["hunks"][0]["lines"] == [
-        {"op": " ", "text": "가"}, {"op": "+", "text": ""}, {"op": " ", "text": "나"}]
+        {"op": " ", "text": "가"},
+        {"op": "+", "text": ""},
+        {"op": " ", "text": "나"},
+    ]
     assert diff("", "새 글")["hunks"] == [{"old_start": 1, "new_start": 1, "lines": [{"op": "+", "text": "새 글"}]}]
 
 
@@ -405,7 +480,9 @@ def test_concurrent_edit_cannot_receive_old_analysis(service):
 
 
 def test_prompt_variables_and_saved_history(service):
-    prompt = service.prompts_save({"title": "테스트", "template": "요약: {{ 내용 }}", "system_prompt": "친절하게", "category": "업무"})
+    prompt = service.prompts_save(
+        {"title": "테스트", "template": "요약: {{ 내용 }}", "system_prompt": "친절하게", "category": "업무"}
+    )
     with pytest.raises(UserError):
         service.prompts_run({"prompt_id": prompt["id"]})
     result = service.prompts_run({"prompt_id": prompt["id"], "variables": {"내용": "주간 계획"}})
@@ -420,8 +497,15 @@ def test_prompt_variables_and_saved_history(service):
 
 def test_a_template_change_keeps_what_it_leaves_out(service):
     fields = ("title", "template", "description", "category", "system_prompt")
-    prompt = service.prompts_save({"title": "보고", "template": "{{내용}}", "description": "주간 보고", "category": "업무",
-                                   "system_prompt": "간결하게"})
+    prompt = service.prompts_save(
+        {
+            "title": "보고",
+            "template": "{{내용}}",
+            "description": "주간 보고",
+            "category": "업무",
+            "system_prompt": "간결하게",
+        }
+    )
     # An AI tool's PUT /prompts/{id} sends what its catalog asks for: the title and the prompt.
     changed = service.prompts_save({"id": prompt["id"], "title": "주간 보고", "template": "{{내용}} 정리"})
     assert [changed[key] for key in fields] == ["주간 보고", "{{내용}} 정리", "주간 보고", "업무", "간결하게"]
@@ -454,28 +538,32 @@ def test_a_copied_certificate_path_loses_its_quotes():
     assert LLM().update({"ca_bundle": ' "C:\\인증서\\private-ca.pem" '})["ca_bundle"] == "C:\\인증서\\private-ca.pem"
 
 
-@pytest.mark.parametrize("value", [float('nan'), float('inf'), -1, 5])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1, 5])
 def test_invalid_temperature(value):
     with pytest.raises(UserError):
         LLM().update({"temperature": value})
 
 
-@pytest.mark.parametrize("reply", [
-    '```json\n{"keywords": ["python"]}\n```',
-    '```json {"keywords": ["python"]} ```',
-    '분석 결과입니다.\n{"keywords": ["python"]}\n이상입니다.',
-    '<think>{"keywords": ["wrong"]} 생각해 보면…</think>\n{"keywords": ["python"]}',
-    '{"keywords": ["python"]} {"keywords": ["second"]}',
-])
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '```json\n{"keywords": ["python"]}\n```',
+        '```json {"keywords": ["python"]} ```',
+        '분석 결과입니다.\n{"keywords": ["python"]}\n이상입니다.',
+        '<think>{"keywords": ["wrong"]} 생각해 보면…</think>\n{"keywords": ["python"]}',
+        '{"keywords": ["python"]} {"keywords": ["second"]}',
+    ],
+)
 def test_llm_json_is_found_among_what_models_put_around_it(monkeypatch, reply):
     llm = LLM()
     monkeypatch.setattr(llm, "complete", lambda *a, **kw: reply)
     assert llm.structured("system", "doc")["keywords"] == ["python"]
 
 
-@pytest.mark.parametrize("reply", ["not JSON", "[1, 2]", "<think>{\"keywords\": [\"cut short\"]}", '{"keywords": '])
+@pytest.mark.parametrize("reply", ["not JSON", "[1, 2]", '<think>{"keywords": ["cut short"]}', '{"keywords": '])
 def test_llm_reply_without_a_json_object_is_a_format_error(monkeypatch, reply):
     from agent.llm import LLMFormatError
+
     llm = LLM()
     monkeypatch.setattr(llm, "complete", lambda *a, **kw: reply)
     with pytest.raises(LLMFormatError, match="JSON"):
@@ -484,7 +572,14 @@ def test_llm_reply_without_a_json_object_is_a_format_error(monkeypatch, reply):
 
 def configured_llm():
     llm = LLM()
-    llm.update({"provider": "general", "base_url": "https://llm.example/api", "api_key": "test-secret", "model_name": "test-model"})
+    llm.update(
+        {
+            "provider": "general",
+            "base_url": "https://llm.example/api",
+            "api_key": "test-secret",
+            "model_name": "test-model",
+        }
+    )
     return llm
 
 
@@ -492,9 +587,15 @@ def configured_llm():
 def test_http_errors_never_expose_response_body_or_credentials(monkeypatch, status):
     class Response:
         status_code = status
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def json(self): raise AssertionError("Error body must not be read or disclosed")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def json(self):
+            raise AssertionError("Error body must not be read or disclosed")
 
     # Every request goes through the LLM's session; the retries of 429 and 503 do not wait here.
     monkeypatch.setattr("agent.llm.requests.Session.post", lambda *a, **kw: Response())
@@ -507,8 +608,10 @@ def test_http_errors_never_expose_response_body_or_credentials(monkeypatch, stat
 
 def test_failed_llm_request_preserves_existing_configuration(monkeypatch):
     import requests
+
     def fail(*args, **kwargs):
         raise requests.exceptions.Timeout("sensitive diagnostic test-secret")
+
     monkeypatch.setattr("agent.llm.requests.Session.post", fail)
     monkeypatch.setattr("agent.llm.BACKOFF", 0)
     llm = configured_llm()
@@ -529,15 +632,26 @@ def test_dashboard_preferences_merge_validate_and_persist(tmp_path):
     assert service.dispatch("preferences.save", {"ai_answer": False})["widgets"] == saved["widgets"]
     assert service.dispatch("preferences.save", {"web_assist": True})["ai_answer"] is False
     restarted = Service(Database(tmp_path / "wiki.db"), None)
-    assert restarted.dispatch("preferences.get", {}) == {"widgets": saved["widgets"], "ai_answer": False,
-                                                         "web_assist": True}
-    for bad in ([{"id": "Tasks", "size": "m"}], [{"id": "tasks", "size": "huge"}],
-                [{"id": "tasks", "size": "m"}, {"id": "tasks", "size": "s"}], "tasks", [{"id": "x", "size": "m"}] * 41,
-                [{"id": "tasks-2", "type": "Tasks", "size": "m"}], [{"id": "tasks-2", "view": 3, "size": "m"}],
-                [{"id": "tasks-2", "type": None, "size": "m"}], [{"id": "tasks", "size": "m", "height": "xl"}],
-                # Every JavaScript object answers `constructor`: the screen would take it for a widget.
-                [{"id": "constructor", "size": "m"}], [{"id": "tasks", "type": "constructor", "size": "m"}],
-                [{"id": "tasks", "type": "tasks", "view": "constructor", "size": "m"}]):
+    assert restarted.dispatch("preferences.get", {}) == {
+        "widgets": saved["widgets"],
+        "ai_answer": False,
+        "web_assist": True,
+    }
+    for bad in (
+        [{"id": "Tasks", "size": "m"}],
+        [{"id": "tasks", "size": "huge"}],
+        [{"id": "tasks", "size": "m"}, {"id": "tasks", "size": "s"}],
+        "tasks",
+        [{"id": "x", "size": "m"}] * 41,
+        [{"id": "tasks-2", "type": "Tasks", "size": "m"}],
+        [{"id": "tasks-2", "view": 3, "size": "m"}],
+        [{"id": "tasks-2", "type": None, "size": "m"}],
+        [{"id": "tasks", "size": "m", "height": "xl"}],
+        # Every JavaScript object answers `constructor`: the screen would take it for a widget.
+        [{"id": "constructor", "size": "m"}],
+        [{"id": "tasks", "type": "constructor", "size": "m"}],
+        [{"id": "tasks", "type": "tasks", "view": "constructor", "size": "m"}],
+    ):
         with pytest.raises(UserError, match="위젯"):
             service.dispatch("preferences.save", {"widgets": bad})
     with pytest.raises(UserError, match="AI"):
@@ -553,31 +667,49 @@ def test_dashboard_preferences_merge_validate_and_persist(tmp_path):
 
 def test_a_dashboard_places_one_content_in_several_formats_and_heights(tmp_path):
     service = Service(Database(tmp_path / "wiki.db"), None)
-    layout = [{"id": "tasks", "type": "tasks", "view": "checklist", "size": "m", "height": "auto"},
-              {"id": "tasks-2", "type": "tasks", "view": "week", "size": "xl", "height": "m"},
-              {"id": "briefing", "size": "l"}]
+    layout = [
+        {"id": "tasks", "type": "tasks", "view": "checklist", "size": "m", "height": "auto"},
+        {"id": "tasks-2", "type": "tasks", "view": "week", "size": "xl", "height": "m"},
+        {"id": "briefing", "size": "l"},
+    ]
     saved = service.dispatch("preferences.save", {"widgets": layout})["widgets"]
     # An auto height is the default and left out; a layout saved before formats keeps its plain items.
-    assert saved == [{"id": "tasks", "type": "tasks", "view": "checklist", "size": "m"},
-                     {"id": "tasks-2", "type": "tasks", "view": "week", "size": "xl", "height": "m"},
-                     {"id": "briefing", "size": "l"}]
+    assert saved == [
+        {"id": "tasks", "type": "tasks", "view": "checklist", "size": "m"},
+        {"id": "tasks-2", "type": "tasks", "view": "week", "size": "xl", "height": "m"},
+        {"id": "briefing", "size": "l"},
+    ]
     assert Service(Database(tmp_path / "wiki.db"), None).dispatch("preferences.get", {})["widgets"] == saved
     # A damaged item of a stored layout is left out instead of breaking the dashboard, a name the screen would take
     # for a function (saved by an earlier version) too.
     with service.db.connect() as db:
-        db.execute("UPDATE metadata SET value=? WHERE key='preferences'", (json.dumps({"widgets": [
-            {"id": "tasks", "type": "tasks", "view": "board", "size": "m", "height": "huge"},
-            {"id": "constructor", "type": "constructor", "size": "m"},
-            {"id": "tasks-2", "type": "tasks", "view": "constructor", "size": "m"},
-            {"id": "documents", "type": "documents", "view": "cards", "size": "l", "height": "s"}]}),))
+        db.execute(
+            "UPDATE metadata SET value=? WHERE key='preferences'",
+            (
+                json.dumps(
+                    {
+                        "widgets": [
+                            {"id": "tasks", "type": "tasks", "view": "board", "size": "m", "height": "huge"},
+                            {"id": "constructor", "type": "constructor", "size": "m"},
+                            {"id": "tasks-2", "type": "tasks", "view": "constructor", "size": "m"},
+                            {"id": "documents", "type": "documents", "view": "cards", "size": "l", "height": "s"},
+                        ]
+                    }
+                ),
+            ),
+        )
     assert service.dispatch("preferences.get", {})["widgets"] == [
-        {"id": "documents", "type": "documents", "view": "cards", "size": "l", "height": "s"}]
+        {"id": "documents", "type": "documents", "view": "cards", "size": "l", "height": "s"}
+    ]
     # A stored layout longer than a save allows keeps its first widgets rather than none.
     with service.db.connect() as db:
-        db.execute("UPDATE metadata SET value=? WHERE key='preferences'", (json.dumps({"widgets": [
-            {"id": f"tasks-{n}", "type": "tasks", "size": "s"} for n in range(2, 45)]}),))
+        db.execute(
+            "UPDATE metadata SET value=? WHERE key='preferences'",
+            (json.dumps({"widgets": [{"id": f"tasks-{n}", "type": "tasks", "size": "s"} for n in range(2, 45)]}),),
+        )
     assert [item["id"] for item in service.dispatch("preferences.get", {})["widgets"]] == [
-        f"tasks-{n}" for n in range(2, 42)]
+        f"tasks-{n}" for n in range(2, 42)
+    ]
 
 
 def test_a_request_the_backend_cannot_read_is_refused_and_the_next_one_answered(tmp_path):
@@ -588,15 +720,28 @@ def test_a_request_the_backend_cannot_read_is_refused_and_the_next_one_answered(
     from pathlib import Path
 
     deep = '{"id":"deep","method":"health","params":{"a":' + "[" * 100_000 + "]" * 100_000 + "}}"
-    lines = [deep, json.dumps({"id": "nameless", "method": 7}), "not json", json.dumps({"id": "ok", "method": "health"})]
+    lines = [
+        deep,
+        json.dumps({"id": "nameless", "method": 7}),
+        "not json",
+        json.dumps({"id": "ok", "method": "health"}),
+    ]
     backend = Path(__file__).resolve().parents[1]
-    result = subprocess.run([sys.executable, str(backend / "main.py")], input="\n".join(lines) + "\n",
-                            capture_output=True, text=True, encoding="utf-8", timeout=60,
-                            env={**os.environ, "PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1"})
+    result = subprocess.run(
+        [sys.executable, str(backend / "main.py")],
+        input="\n".join(lines) + "\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        env={**os.environ, "PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1"},
+    )
     assert result.returncode == 0, result.stderr
     replies = {reply["id"]: reply for reply in map(json.loads, result.stdout.splitlines())}
     # The callers hear back at once, by the id their line starts with when it can be read at all.
-    assert replies["deep"]["error"] == replies["nameless"]["error"] == replies[None]["error"] == "잘못된 RPC 요청입니다."
+    assert (
+        replies["deep"]["error"] == replies["nameless"]["error"] == replies[None]["error"] == "잘못된 RPC 요청입니다."
+    )
     assert replies["ok"]["result"] == {"ok": True}
 
 
@@ -633,13 +778,34 @@ def test_quick_requests_have_their_own_lane_beside_llm_requests(tmp_path):
     # keeps the environment. Every LLM setting is given, so a developer's .env changes nothing, and no proxy, from
     # the environment or the Windows settings, stands between the backend and the local LLM.
     env = {name: value for name, value in os.environ.items() if not name.lower().endswith("_proxy")}
-    env.update({"PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1", "PYTHONPATH": "", "NO_PROXY": "127.0.0.1",
-                "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1", "API_KEY": "k", "MODEL_NAME": "m",
-                "TEMPERATURE": "0.5", "LLM_TIMEOUT": "120", "CA_BUNDLE": "", "LLM_MAX_TOKENS": "0",
-                "LLM_CONTEXT_WINDOW": "64000", "LLM_CONCURRENCY": "3"})
-    child = subprocess.Popen([sys.executable, str(backend / "main.py")], cwd=backend, text=True, encoding="utf-8",
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    env.update(
+        {
+            "PRIVATE_AGENT_DATA_DIR": str(tmp_path),
+            "PYTHONUTF8": "1",
+            "PYTHONPATH": "",
+            "NO_PROXY": "127.0.0.1",
+            "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+            "API_KEY": "k",
+            "MODEL_NAME": "m",
+            "TEMPERATURE": "0.5",
+            "LLM_TIMEOUT": "120",
+            "CA_BUNDLE": "",
+            "LLM_MAX_TOKENS": "0",
+            "LLM_CONTEXT_WINDOW": "64000",
+            "LLM_CONCURRENCY": "3",
+        }
+    )
+    child = subprocess.Popen(
+        [sys.executable, str(backend / "main.py")],
+        cwd=backend,
+        text=True,
+        encoding="utf-8",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
     try:
+
         def send(ident, method, params=None):
             child.stdin.write(json.dumps({"id": ident, "method": method, "params": params or {}}) + "\n")
             child.stdin.flush()
@@ -680,10 +846,15 @@ def test_requests_the_user_waits_for_get_the_llm_first():
     those of a scheduled run, an import or a routine do not. Stopping an answer is a quick request of its own."""
     import main
     from agent.llm import BATCH, INTERACTIVE
-    assert all(main.priority_of({"method": name}) == INTERACTIVE
-               for name in ("assistant.ask", "settings.test", "prompts.run", "wiki.analyze", "tasks.extract"))
-    assert all(main.priority_of({"method": name}) == BATCH
-               for name in ("schedules.execute", "analysis.start", "routines.run", "office.start"))
+
+    assert all(
+        main.priority_of({"method": name}) == INTERACTIVE
+        for name in ("assistant.ask", "settings.test", "prompts.run", "wiki.analyze", "tasks.extract")
+    )
+    assert all(
+        main.priority_of({"method": name}) == BATCH
+        for name in ("schedules.execute", "analysis.start", "routines.run", "office.start")
+    )
     assert not main.slow({"method": "assistant.cancel"}) and main.slow({"method": "assistant.ask"})
 
 
@@ -733,15 +904,36 @@ def test_a_streamed_answer_comes_as_events_before_its_answer_and_stops_when_aske
     threading.Thread(target=server.serve_forever, daemon=True).start()
     backend = Path(__file__).resolve().parents[1]
     env = {name: value for name, value in os.environ.items() if not name.lower().endswith("_proxy")}
-    env.update({"PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1", "PYTHONPATH": "", "NO_PROXY": "127.0.0.1",
-                "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1", "API_KEY": "k", "MODEL_NAME": "m",
-                "TEMPERATURE": "0.5", "LLM_TIMEOUT": "60", "CA_BUNDLE": "", "LLM_MAX_TOKENS": "0",
-                "LLM_CONTEXT_WINDOW": "64000", "LLM_CONCURRENCY": "3"})
-    child = subprocess.Popen([sys.executable, str(backend / "main.py")], cwd=backend, text=True, encoding="utf-8",
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    env.update(
+        {
+            "PRIVATE_AGENT_DATA_DIR": str(tmp_path),
+            "PYTHONUTF8": "1",
+            "PYTHONPATH": "",
+            "NO_PROXY": "127.0.0.1",
+            "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+            "API_KEY": "k",
+            "MODEL_NAME": "m",
+            "TEMPERATURE": "0.5",
+            "LLM_TIMEOUT": "60",
+            "CA_BUNDLE": "",
+            "LLM_MAX_TOKENS": "0",
+            "LLM_CONTEXT_WINDOW": "64000",
+            "LLM_CONCURRENCY": "3",
+        }
+    )
+    child = subprocess.Popen(
+        [sys.executable, str(backend / "main.py")],
+        cwd=backend,
+        text=True,
+        encoding="utf-8",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
     lines = queue.Queue()
     threading.Thread(target=lambda: [lines.put(json.loads(line)) for line in child.stdout], daemon=True).start()
     try:
+
         def send(ident, method, params):
             child.stdin.write(json.dumps({"id": ident, "method": method, "params": params}) + "\n")
             child.stdin.flush()
@@ -763,11 +955,20 @@ def test_a_streamed_answer_comes_as_events_before_its_answer_and_stops_when_aske
         deltas = [event["params"] for event in events if event["event"] == "assistant.delta"]
         assert "".join(delta["text"] for delta in deltas) == reply["result"]["messages"][-1]["content"]
         assert reply["result"]["messages"][-1]["content"] == "캐시를 도입했습니다. [1]"
-        assert events[-1] == {"event": "assistant.done", "params": {
-            "request_id": "r1", "conversation_id": reply["result"]["conversation_id"], "status": "completed",
-            "truncated": False}}
-        send("stalled", "assistant.ask", {"question": "멈출 질문", "document_ids": [doc], "stream": True,
-                                          "request_id": "r2"})
+        assert events[-1] == {
+            "event": "assistant.done",
+            "params": {
+                "request_id": "r1",
+                "conversation_id": reply["result"]["conversation_id"],
+                "status": "completed",
+                "truncated": False,
+            },
+        }
+        send(
+            "stalled",
+            "assistant.ask",
+            {"question": "멈출 질문", "document_ids": [doc], "stream": True, "request_id": "r2"},
+        )
         # The first part, without the space at its end until more follows.
         assert lines.get(timeout=20)["params"]["text"] == "캐시를"
         started = time.monotonic()

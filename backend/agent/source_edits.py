@@ -20,6 +20,7 @@ since is never written over. Excel is compared cell by cell, as the page keeps e
 A write-back that left the file with other text than the import read (a document changed while a write was in
 progress) makes the next plan a choice per text the file may hold, each with what tells it from the others (witness):
 the writer takes the one the file is found to hold."""
+
 import difflib
 import re
 from typing import NamedTuple
@@ -27,6 +28,7 @@ from typing import NamedTuple
 from bs4 import BeautifulSoup
 
 from .llm import UserError
+
 # Headings are read as PageIndex reads them, without the regular expression whose backtracking took seconds.
 from .pageindex import heading as atx_heading
 
@@ -41,9 +43,11 @@ QUOTE = re.compile(r" {0,3}>[ ]?")
 # The number or bullet Word or PowerPoint draws before a paragraph: the page shows it as text, the paragraph's own text
 # does not hold it. Lines are compared without it, so a list item still meets its paragraph. Word's numbers: 1. a) (가)
 # ㄱ. 1.1 1.1.1 제1장 Ⅱ. and the like.
-LABEL = re.compile(r"(?:[(（]?(?:\d{1,4}(?:\.\d{1,4})*|[a-zA-Z]{1,3}|[가-힣ㄱ-ㅎ]|[０-９]{1,4}|[Ⅰ-ⅿ]{1,4})[.)）]"
-                   r"|[(（](?:\d{1,4}|[a-zA-Z]{1,3}|[가-힣ㄱ-ㅎ])[)）]|\d{1,4}(?:\.\d{1,4})+|제 ?\d{1,4} ?[장절조항관편부]"
-                   r"|[Ⅰ-ⅿ]{1,4}|[①-⑳⑴-⒇⒈-⒛❶-❿➀-➓]|[•◦▪▫■□●○◆◇◈➢➤►▶▷✓✔☐☑※\-–—·∙・*+>→])\s+")
+LABEL = re.compile(
+    r"(?:[(（]?(?:\d{1,4}(?:\.\d{1,4})*|[a-zA-Z]{1,3}|[가-힣ㄱ-ㅎ]|[０-９]{1,4}|[Ⅰ-ⅿ]{1,4})[.)）]"
+    r"|[(（](?:\d{1,4}|[a-zA-Z]{1,3}|[가-힣ㄱ-ㅎ])[)）]|\d{1,4}(?:\.\d{1,4})+|제 ?\d{1,4} ?[장절조항관편부]"
+    r"|[Ⅰ-ⅿ]{1,4}|[①-⑳⑴-⒇⒈-⒛❶-❿➀-➓]|[•◦▪▫■□●○◆◇◈➢➤►▶▷✓✔☐☑※\-–—·∙・*+>→])\s+"
+)
 SLIDE = re.compile(r"슬라이드 (\d+)(?: · (.*?))?(?: \(숨긴 슬라이드\))?")
 PAGE = re.compile(r"페이지 (\d+)(?: · .*?)?(?: \(배경\))?")
 CONTINUED = " (계속)"
@@ -53,13 +57,19 @@ VISIO_TEXT = "도형 텍스트"
 # picture or a note's or comment's mark, the page a trace in brackets for a picture or comment, a note's number or
 # nothing (a floating picture).
 MARKS = re.compile(r"[\x00-\x08\x0e-\x1b]+")
-TRACE = re.compile(r"\[(?:그림|개체|연결된 그림|그리지 못한 도형|삽입된 개체|차트|SmartArt|외부 삽입 콘텐츠|메모)\b[^\[\]]*\]")
+TRACE = re.compile(
+    r"\[(?:그림|개체|연결된 그림|그리지 못한 도형|삽입된 개체|차트|SmartArt|외부 삽입 콘텐츠|메모)\b[^\[\]]*\]"
+)
 NOTE = r"(?:\d{1,4}|[ivxlcdm]{1,8})?"
 UPDATE = "가져온 뒤 원본이 바뀌었다면 ‘원본에서 업데이트’ 후 다시 고쳐 주세요."
-ELSEWHERE = ("원본이 가져온 때의 내용과도, 지난번 원본에 반영한 내용과도 달라 반영하지 않았습니다. 그 뒤 원본이 바뀌었다면 "
-             "‘원본에서 업데이트’로 원본의 지금 내용을 가져온 뒤 다시 고쳐 주세요.")
-ALREADY = ("원본에 이미 지금 문서의 내용이 들어 있어 반영할 것이 없습니다. ‘원본에서 업데이트’로 문서를 원본에 맞출 수 "
-           "있습니다.")
+ELSEWHERE = (
+    "원본이 가져온 때의 내용과도, 지난번 원본에 반영한 내용과도 달라 반영하지 않았습니다. 그 뒤 원본이 바뀌었다면 "
+    "‘원본에서 업데이트’로 원본의 지금 내용을 가져온 뒤 다시 고쳐 주세요."
+)
+ALREADY = (
+    "원본에 이미 지금 문서의 내용이 들어 있어 반영할 것이 없습니다. ‘원본에서 업데이트’로 문서를 원본에 맞출 수 "
+    "있습니다."
+)
 # The most characters (old times new) the units between two lines that are the same may hold for their characters to
 # be compared; more takes too long, and their changes are then not found.
 ALIGN_LIMIT = 2_000_000
@@ -101,7 +111,7 @@ def code_span(text, index):
         while end < len(text) and text[end] == "`":
             end += 1
         if end - found == size:
-            content = text[index + size:found]
+            content = text[index + size : found]
             if len(content) > 2 and content[0] == content[-1] == " " and content.strip():
                 content = content[1:-1]
             return end, content
@@ -135,7 +145,7 @@ def link_at(text, index):
     if close is None or close >= len(text) or text[close] != "(":
         return None
     end = bracket(text, close, "(", ")")
-    return None if end is None else (end, text[index + 1:close - 1])
+    return None if end is None else (end, text[index + 1 : close - 1])
 
 
 def punctuation(char):
@@ -174,8 +184,13 @@ def inline(text):
                 pieces.append((text[index:end], False))
                 index = end
             continue
-        link = link_at(text, index + 1) if char == "!" and text.startswith("[", index + 1) else \
-            link_at(text, index) if char == "[" else None
+        link = (
+            link_at(text, index + 1)
+            if char == "!" and text.startswith("[", index + 1)
+            else link_at(text, index)
+            if char == "["
+            else None
+        )
         if link:
             pieces.append((inline(link[1]), False))
             index = link[0]
@@ -220,7 +235,7 @@ def emphasis(pieces):
                 removed.update(range(start, start + size))
                 opener[1] -= size
                 start += size
-                del openers[position + (opener[1] > opener[0]):]
+                del openers[position + (opener[1] > opener[0]) :]
                 break
         if can_open and start < end:
             openers.append([start, end, char])
@@ -241,7 +256,7 @@ def cells(line):
     while index < len(body):
         char = body[index]
         if char == "\\" and index + 1 < len(body):
-            current.append(body[index:index + 2])
+            current.append(body[index : index + 2])
             index += 2
             continue
         if char == "|":
@@ -281,8 +296,10 @@ def units(markdown, application):
             joined = False
             if not TABLE_RULE.fullmatch(line):
                 row += 1
-                found.extend(Unit(plain(cell), "cell", scope, False, section, table, row, column)
-                             for column, cell in enumerate(cells(line)))
+                found.extend(
+                    Unit(plain(cell), "cell", scope, False, section, table, row, column)
+                    for column, cell in enumerate(cells(line))
+                )
             continue
         in_table = False
         if heading := atx_heading(line):
@@ -296,7 +313,7 @@ def units(markdown, application):
         hard = line.endswith("  ") or (line.endswith("\\") and not line.endswith("\\\\"))
         text = line[:-1] if hard and line.endswith("\\") else line
         while quote := QUOTE.match(text):
-            text = text[quote.end():]
+            text = text[quote.end() :]
         kind = "li" if joined and found and found[-1].kind == "li" else "p"
         if not joined and (item := LIST.fullmatch(text)):
             kind, text = "li", item.group(1) or ""
@@ -315,8 +332,11 @@ def heading_unit(level, text, application, scope, section):
         slide = SLIDE.fullmatch(text) if application == "PowerPoint" else None
         if slide:
             return Unit(slide.group(2) or "", "title", int(slide.group(1)), False, True), int(slide.group(1)), True
-        continued = SLIDE.fullmatch(text.removesuffix(CONTINUED)) if application == "PowerPoint" else \
-            PAGE.fullmatch(text.removesuffix(CONTINUED))
+        continued = (
+            SLIDE.fullmatch(text.removesuffix(CONTINUED))
+            if application == "PowerPoint"
+            else PAGE.fullmatch(text.removesuffix(CONTINUED))
+        )
         if continued:
             scope = int(continued.group(1))
             section = application == "PowerPoint" or (text.endswith(CONTINUED) and section)
@@ -337,8 +357,11 @@ def spans(old, new):
 
 
 def similarity(first, second):
-    score = difflib.SequenceMatcher(None, first.text, second.text, autojunk=False).ratio() if first.text or second.text \
+    score = (
+        difflib.SequenceMatcher(None, first.text, second.text, autojunk=False).ratio()
+        if first.text or second.text
         else 1.0
+    )
     return score + (first.kind == second.kind) * 0.01
 
 
@@ -374,9 +397,10 @@ def pairing(old, new):
         deleted = [i for i, j in gap if j is None]
         added = [j for i, j in gap if i is None]
         pairs.extend(zip(deleted, added))
-        pairs.extend((i, None) for i in deleted[len(added):])
-        pairs.extend((None, j) for j in added[len(deleted):])
+        pairs.extend((i, None) for i in deleted[len(added) :])
+        pairs.extend((None, j) for j in added[len(deleted) :])
         gap.clear()
+
     for step in steps:
         if step[0] is not None and step[1] is not None:
             close()
@@ -400,6 +424,7 @@ def among_text(old, after):
 
 class Line(NamedTuple):
     """Units compared together: a table row's cells, or one other unit."""
+
     start: int  # the index of its first unit
     units: list
     row: bool
@@ -417,7 +442,12 @@ def lines(units):
     found = []
     for index, unit in enumerate(units):
         last = found[-1] if found else None
-        if unit.kind == "cell" and last and last.row and (last.units[0].table, last.units[0].row) == (unit.table, unit.row):
+        if (
+            unit.kind == "cell"
+            and last
+            and last.row
+            and (last.units[0].table, last.units[0].row) == (unit.table, unit.row)
+        ):
             last.units.append(unit)
         else:
             found.append(Line(index, [unit], unit.kind == "cell"))
@@ -440,8 +470,9 @@ def changes(old, new, application):
             raise unsupported(old[i], "앱이 만든 줄(슬라이드·페이지 제목, 연결, 도형 데이터 등)을 고친 것은")
         found.append({"op": "edit", "unit": i, "spans": spans(old[i].text, line.text)})
 
-    matcher = difflib.SequenceMatcher(None, [(line.row, line.text) for line in olds],
-                                      [(line.row, line.text) for line in news], autojunk=False)
+    matcher = difflib.SequenceMatcher(
+        None, [(line.row, line.text) for line in olds], [(line.row, line.text) for line in news], autojunk=False
+    )
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             kept.update(line.start + offset for line in olds[i1:i2] for offset in range(len(line.units)))
@@ -494,8 +525,9 @@ def witness(old, other):
     before]]}, the old units `other` does not have as they are, and the places between two old units (-1: the start or
     the end) where `other` has lines that `old` does not."""
     olds, others = lines(old), lines(other)
-    matcher = difflib.SequenceMatcher(None, [(line.row, line.text) for line in olds],
-                                      [(line.row, line.text) for line in others], autojunk=False)
+    matcher = difflib.SequenceMatcher(
+        None, [(line.row, line.text) for line in olds], [(line.row, line.text) for line in others], autojunk=False
+    )
     found, gaps = [], []
     for tag, i1, i2, _, _ in matcher.get_opcodes():
         if tag in ("replace", "delete"):
@@ -522,7 +554,7 @@ def sheet_names(heading):
         changed = False
         for suffix in SHEET_SUFFIXES:
             if name.endswith(suffix):
-                name = name[:-len(suffix)]
+                name = name[: -len(suffix)]
                 names.append(name)
                 changed = True
     return list(dict.fromkeys(names))
@@ -571,8 +603,10 @@ def grid(html):
             rows = table.find_all("tr", recursive=False) or table.find_all("tr")
             if not rows:
                 continue
-            letters = [match.group(1) if (match := COLUMN.fullmatch(norm(cell.get_text()))) else None
-                       for cell in rows[0].find_all(["th", "td"])[1:]]
+            letters = [
+                match.group(1) if (match := COLUMN.fullmatch(norm(cell.get_text()))) else None
+                for cell in rows[0].find_all(["th", "td"])[1:]
+            ]
             covered, mapped = set(), []
             for index, tr in enumerate(rows[1:]):
                 number = tr.find("th")
@@ -587,7 +621,9 @@ def grid(html):
                     letter = letters[column] if column < len(letters) else None
                     addresses.append(f"{letter}{row}" if letter and row.isdigit() else None)
                     addresses.extend([None] * (across - 1))
-                    covered.update((index + below, column + beside) for below in range(down) for beside in range(across))
+                    covered.update(
+                        (index + below, column + beside) for below in range(down) for beside in range(across)
+                    )
                     column += across
                 mapped.append(addresses)
             found.append((name, mapped))
@@ -610,14 +646,23 @@ def excel_changes(parts):
     found = []
     for heading, row, address, (old_shown, old_formula), (new_shown, new_formula) in excel_cells(parts):
         if address is None:
-            raise UserError(f"‘{heading}’ 시트 {row}행에서 병합된 셀이 덮은 칸에 쓴 것은 원본에 반영할 수 없습니다. "
-                            "병합된 셀의 첫 칸에 써 주세요.")
+            raise UserError(
+                f"‘{heading}’ 시트 {row}행에서 병합된 셀이 덮은 칸에 쓴 것은 원본에 반영할 수 없습니다. "
+                "병합된 셀의 첫 칸에 써 주세요."
+            )
         if old_formula is not None and new_formula is None:
             raise UserError(f"{address} 셀의 수식을 지운 것은 원본에 반영할 수 없습니다. 수식을 고쳐 주세요.")
         if old_formula is not None and old_formula == new_formula:
             raise UserError(f"{address} 셀은 수식이 계산한 값이라 값만 바꿀 수 없습니다. 수식을 고쳐 주세요.")
-        found.append({"sheet": sheet_names(heading), "address": address, "old": old_shown, "new": new_shown,
-                      "formula": None if old_formula is None and new_formula is None else [old_formula, new_formula]})
+        found.append(
+            {
+                "sheet": sheet_names(heading),
+                "address": address,
+                "old": old_shown,
+                "new": new_shown,
+                "formula": None if old_formula is None and new_formula is None else [old_formula, new_formula],
+            }
+        )
     if not found:
         raise Unchanged("가져온 뒤 고친 셀이 없어 원본에 반영할 것이 없습니다.")
     return found
@@ -626,8 +671,11 @@ def excel_changes(parts):
 def excel_witness(parts):
     """What tells a workbook holding the first texts of `parts` [(Markdown, Markdown, HTML page)] from one holding the
     second: [{"sheet": [names], "address", "old", "formula"}], the cells that differ, as the first text has them."""
-    return [{"sheet": sheet_names(heading), "address": address, "old": shown, "formula": formula}
-            for heading, _, address, (shown, formula), _ in excel_cells(parts) if address]
+    return [
+        {"sheet": sheet_names(heading), "address": address, "old": shown, "formula": formula}
+        for heading, _, address, (shown, formula), _ in excel_cells(parts)
+        if address
+    ]
 
 
 def excel_cells(parts):
@@ -639,25 +687,35 @@ def excel_cells(parts):
         if old_text == new_text:
             continue
         if not html:
-            raise UserError("이 문서에는 가져올 때 만든 HTML 문서가 없어 셀 위치를 알 수 없습니다. ‘원본에서 업데이트’로 "
-                            "다시 가져온 뒤 고쳐 주세요.")
+            raise UserError(
+                "이 문서에는 가져올 때 만든 HTML 문서가 없어 셀 위치를 알 수 없습니다. ‘원본에서 업데이트’로 "
+                "다시 가져온 뒤 고쳐 주세요."
+            )
         (old_tables, old_others), (new_tables, new_others) = sheet_tables(old_text), sheet_tables(new_text)
         layout = grid(html)
         if old_others != new_others:
-            changed = next((line for line in new_others if line not in old_others), "") or \
-                next((line for line in old_others if line not in new_others), "")
-            raise UserError("셀 밖의 글(시트 이름·차트·메모·도형 등)을 고친 것은 원본에 반영할 수 없습니다"
-                            + (f": ‘{changed[:40]}’" if changed else "") + ". 원래대로 되돌린 뒤 다시 반영해 주세요.")
+            changed = next((line for line in new_others if line not in old_others), "") or next(
+                (line for line in old_others if line not in new_others), ""
+            )
+            raise UserError(
+                "셀 밖의 글(시트 이름·차트·메모·도형 등)을 고친 것은 원본에 반영할 수 없습니다"
+                + (f": ‘{changed[:40]}’" if changed else "")
+                + ". 원래대로 되돌린 뒤 다시 반영해 주세요."
+            )
         if [(name, len(rows)) for name, rows in old_tables] != [(name, len(rows)) for name, rows in new_tables]:
             raise UserError("시트의 행을 더하거나 지운 것은 원본에 반영할 수 없습니다. 셀의 값만 고칠 수 있습니다.")
         if [len(rows) for _, rows in layout] != [len(rows) for _, rows in old_tables]:
-            raise UserError("가져온 HTML 문서와 글의 시트가 맞지 않아 셀 위치를 알 수 없습니다. ‘원본에서 업데이트’로 다시 "
-                            "가져온 뒤 고쳐 주세요.")
+            raise UserError(
+                "가져온 HTML 문서와 글의 시트가 맞지 않아 셀 위치를 알 수 없습니다. ‘원본에서 업데이트’로 다시 "
+                "가져온 뒤 고쳐 주세요."
+            )
         for (heading, old_rows), (_, new_rows), (_, addresses) in zip(old_tables, new_tables, layout):
             for old_row, new_row, row_addresses in zip(old_rows, new_rows, addresses):
                 if plain(old_row[0]) != plain(new_row[0]) or len(old_row) != len(new_row):
-                    raise UserError(f"‘{heading}’ 시트의 행 번호나 열을 바꾼 것은 원본에 반영할 수 없습니다. 셀의 값만 "
-                                    "고칠 수 있습니다.")
+                    raise UserError(
+                        f"‘{heading}’ 시트의 행 번호나 열을 바꾼 것은 원본에 반영할 수 없습니다. 셀의 값만 "
+                        "고칠 수 있습니다."
+                    )
                 for position, (old_cell, new_cell) in enumerate(zip(old_row[1:], new_row[1:])):
                     before, after = excel_value(old_cell), excel_value(new_cell)
                     if before != after:
@@ -672,6 +730,7 @@ def excel_cells(parts):
 class Text(NamedTuple):
     """A unit of the file's own text: characters start:end of a container (Word's main text, a PowerPoint text frame,
     a Visio shape), compared as `text`, each character of which stands for the raw ones at `index`."""
+
     container: int
     start: int
     end: int
@@ -690,6 +749,7 @@ def normalized(raw, start=0, translate=None):
 
     def mapped(char):
         return translate.get(char, char) if translate else char
+
     while position < size:
         char = mapped(raw[position])
         if not char:
@@ -714,7 +774,7 @@ def split_units(raw, container, scope, separators, translate=None, cell=None):
     """The units of a container's raw text, split at `separators` (a compiled pattern, longest alternative first)."""
     found, start = [], 0
     for match in separators.finditer(raw):
-        text, index = normalized(raw[start:match.start()], start, translate)
+        text, index = normalized(raw[start : match.start()], start, translate)
         found.append(Text(container, start, match.start(), text, index, match.group(0), scope, cell))
         start = match.end()
     text, index = normalized(raw[start:], start, translate)
@@ -726,7 +786,7 @@ def key(text):
     """(what a unit is compared as, where that starts in it): without a list number or bullet before it."""
     match = LABEL.match(text)
     if match and match.end() < len(text):
-        return text[match.end():], match.end()
+        return text[match.end() :], match.end()
     return text, 0
 
 
@@ -773,8 +833,9 @@ def align(old, doc):
     old_keys, doc_keys = [key(text) for text in old], [key(text) for text in doc]
     olds = [i for i, text in enumerate(old) if text]
     docs = [j for j, text in enumerate(doc) if text]
-    matcher = difflib.SequenceMatcher(None, [old_keys[i][0] for i in olds], [doc_keys[j][0] for j in docs],
-                                      autojunk=False)
+    matcher = difflib.SequenceMatcher(
+        None, [old_keys[i][0] for i in olds], [doc_keys[j][0] for j in docs], autojunk=False
+    )
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             for i, j in zip(olds[i1:i2], docs[j1:j2]):
@@ -800,8 +861,13 @@ def compare(old, doc, olds, docs, found):
             left, right = first_at[a + offset], second_at[b + offset]
             if left is None or right is None:
                 run = None
-            elif run and run[0] == left[0] and run[2] == right[0] and run[1] + run[4] == left[1] \
-                    and run[3] + run[4] == right[1]:
+            elif (
+                run
+                and run[0] == left[0]
+                and run[2] == right[0]
+                and run[1] + run[4] == left[1]
+                and run[3] + run[4] == right[1]
+            ):
                 run[4] += 1
             else:
                 run = [left[0], left[1], right[0], right[1], 1]
@@ -983,9 +1049,18 @@ def cell_place(old, doc, blocks, i):
     unit = old[i]
     if unit.kind != "cell":
         return None
-    near = sorted((k for k, other in enumerate(old) if other.kind == "cell" and other.table == unit.table and
-                   other.scope == unit.scope and other.text and primary(blocks[k]) is not None),
-                  key=lambda k: abs(k - i))
+    near = sorted(
+        (
+            k
+            for k, other in enumerate(old)
+            if other.kind == "cell"
+            and other.table == unit.table
+            and other.scope == unit.scope
+            and other.text
+            and primary(blocks[k]) is not None
+        ),
+        key=lambda k: abs(k - i),
+    )
     for k in near:
         found = doc[primary(blocks[k])].cell
         if found is None:
@@ -1002,8 +1077,12 @@ def cell_place(old, doc, blocks, i):
 def row_ends(old, start, end):
     """How many table rows end between the old units start and end: Word's text has a mark there that the Markdown
     table does not."""
-    return sum(1 for k in range(start + 1, end + 1) if old[k - 1].kind == "cell" and (
-        old[k].kind != "cell" or old[k].table != old[k - 1].table or old[k].row != old[k - 1].row))
+    return sum(
+        1
+        for k in range(start + 1, end + 1)
+        if old[k - 1].kind == "cell"
+        and (old[k].kind != "cell" or old[k].table != old[k - 1].table or old[k].row != old[k - 1].row)
+    )
 
 
 def empty_place(old, doc, blocks, i, marked_rows):
@@ -1020,7 +1099,7 @@ def empty_place(old, doc, blocks, i, marked_rows):
     after = next((k for k in range(i + 1, len(old)) if old[k].scope == scope and primary(blocks[k]) is not None), None)
     marks = (lambda start, end: row_ends(old, start, end)) if marked_rows else (lambda start, end: 0)
     # Lines the reader wrote (a heading of its own) are not in the file's text.
-    absent = (lambda start, end: sum(1 for k in range(start + 1, end) if not old[k].editable))
+    absent = lambda start, end: sum(1 for k in range(start + 1, end) if not old[k].editable)
     target = None
     if before is not None and after is not None:
         first, last = primary(blocks[before]), primary(blocks[after])
@@ -1083,8 +1162,9 @@ def replacements(plan, doc, separators, marked_rows=False, searched=False):
         unit = old[i]
         if edit["op"] == "delete":
             held(old, doc, homes, i, "원본 파일에서 지울 곳을 찾지 못했습니다")
-            spot = place(blocks[i], 0, len(unit.text), len(unit.text)) or \
-                place(blocks[i], key(unit.text)[1], len(unit.text), len(unit.text))
+            spot = place(blocks[i], 0, len(unit.text), len(unit.text)) or place(
+                blocks[i], key(unit.text)[1], len(unit.text), len(unit.text)
+            )
             if spot is None:
                 raise missing(unit.text, "원본 파일에서 지울 곳을 찾지 못했습니다")
             if spot[1] == 0 and spot[2] == len(doc[spot[0]].text):
@@ -1101,10 +1181,21 @@ def replacements(plan, doc, separators, marked_rows=False, searched=False):
         for start, end, text in edit["spans"]:
             spot = (empty[0], 0, 0) if empty else place(blocks[i], start, end, len(unit.text))
             if spot is None:
-                raise missing(unit.text or text, "원본 파일에서 고칠 곳을 찾지 못했습니다" if unit.text else
-                              "원본 파일에서 빈 칸의 자리를 찾지 못했습니다(병합된 셀 옆이나 표의 처음·끝 칸)")
-            found.append((doc[spot[0]].container, *raw_span(doc[spot[0]], spot[1], spot[2]), text,
-                          empty[1] if empty else None, LINE))
+                raise missing(
+                    unit.text or text,
+                    "원본 파일에서 고칠 곳을 찾지 못했습니다"
+                    if unit.text
+                    else "원본 파일에서 빈 칸의 자리를 찾지 못했습니다(병합된 셀 옆이나 표의 처음·끝 칸)",
+                )
+            found.append(
+                (
+                    doc[spot[0]].container,
+                    *raw_span(doc[spot[0]], spot[1], spot[2]),
+                    text,
+                    empty[1] if empty else None,
+                    LINE,
+                )
+            )
     found.extend(removals(doc, whole))
     found = joined_insertions(found, searched)
     found.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
@@ -1150,9 +1241,12 @@ def removals(doc, whole):
     runs = []
     for unit in sorted(whole):
         last = runs[-1][1] if runs else None
-        if last is not None and doc[unit].container == doc[last].container and \
-                all(doc[k].separator in LINE_BREAKS for k in range(last, unit)) and \
-                not any(doc[k].text for k in range(last + 1, unit)):
+        if (
+            last is not None
+            and doc[unit].container == doc[last].container
+            and all(doc[k].separator in LINE_BREAKS for k in range(last, unit))
+            and not any(doc[k].text for k in range(last + 1, unit))
+        ):
             runs[-1][1] = unit
         else:
             runs.append([unit, unit])
@@ -1173,8 +1267,12 @@ def removal(doc, first, last):
     if previous is not None and previous.separator in LINE_BREAKS:
         return container, previous.end, end.end, "", None, LINE
     following = doc[last + 1] if last + 1 < len(doc) and doc[last + 1].container == container else None
-    final = following is not None and not following.text and not following.separator and \
-        (last + 2 >= len(doc) or doc[last + 2].container != container)
+    final = (
+        following is not None
+        and not following.text
+        and not following.separator
+        and (last + 2 >= len(doc) or doc[last + 2].container != container)
+    )
     if final:
         return container, target.start, end.end, "", None, LINE
     if end.separator:
@@ -1193,12 +1291,19 @@ def insertion(edit, old, doc, blocks, homes, separators):
     lines = edit["lines"]
     beside = intruder(old, doc, homes, edit["after"], edit["before"])
     if beside is not None:
-        raise changed(lines[0][0], doc[beside].text,
-                      "원본 파일에서 새 줄을 넣을 곳에 가져온 때 없던 줄이 있어 반영하지 않았습니다")
+        raise changed(
+            lines[0][0],
+            doc[beside].text,
+            "원본 파일에서 새 줄을 넣을 곳에 가져온 때 없던 줄이 있어 반영하지 않았습니다",
+        )
     options = [("after", edit["after"]), ("before", edit["before"])]
     options = [(side, i) for side, i in options if i >= 0]
-    options.sort(key=lambda option: (old[option[1]].kind != (lines[0][1] if option[0] == "after" else lines[-1][1]),
-                                     option[0] != "after"))
+    options.sort(
+        key=lambda option: (
+            old[option[1]].kind != (lines[0][1] if option[0] == "after" else lines[-1][1]),
+            option[0] != "after",
+        )
+    )
     differs = None  # an old unit beside them the file holds with other text
     for side, i in options:
         if homes[i] is None or old[i].kind == "cell":
@@ -1213,7 +1318,9 @@ def insertion(edit, old, doc, blocks, homes, separators):
         values = [key(text)[0] if drawn else text for text, _, _ in lines]
         target = doc[unit]
         if side == "after":
-            text = "".join((line_break if joined else paragraph) + value for value, (_, _, joined) in zip(values, lines))
+            text = "".join(
+                (line_break if joined else paragraph) + value for value, (_, _, joined) in zip(values, lines)
+            )
             return target.container, target.end, target.end, text, None, AFTER
         breaks = [line_break if joined else paragraph for _, _, joined in lines[1:]]
         previous = doc[unit - 1] if unit > 0 and doc[unit - 1].container == target.container else None
@@ -1221,6 +1328,9 @@ def insertion(edit, old, doc, blocks, homes, separators):
         text = "".join(value + separator for value, separator in zip(values, breaks + [tail]))
         return target.container, target.start, target.start, text, None, BEFORE
     if differs is not None:
-        raise changed(old[differs].text, " ".join(doc[k].text for k in homes[differs]),
-                      "원본 파일에서 새 줄 옆의 줄이 가져온 때와 달라 반영하지 않았습니다")
+        raise changed(
+            old[differs].text,
+            " ".join(doc[k].text for k in homes[differs]),
+            "원본 파일에서 새 줄 옆의 줄이 가져온 때와 달라 반영하지 않았습니다",
+        )
     raise missing(lines[0][0], "원본 파일에서 새 줄을 넣을 곳을 찾지 못했습니다")

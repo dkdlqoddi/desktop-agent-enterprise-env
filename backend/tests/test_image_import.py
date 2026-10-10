@@ -29,10 +29,17 @@ def importer(tmp_path):
     return service.images
 
 
-@pytest.mark.parametrize("name,data,kind", [
-    ("a.png", picture("PNG"), "image/png"), ("b.JPG", picture("JPEG"), "image/jpeg"), ("c.gif", picture("GIF"), "image/gif"),
-    ("d.bmp", picture("BMP"), "image/bmp"), ("e.webp", picture("WEBP"), "image/webp"), ("f.svg", SVG, "image/svg+xml"),
-])
+@pytest.mark.parametrize(
+    "name,data,kind",
+    [
+        ("a.png", picture("PNG"), "image/png"),
+        ("b.JPG", picture("JPEG"), "image/jpeg"),
+        ("c.gif", picture("GIF"), "image/gif"),
+        ("d.bmp", picture("BMP"), "image/bmp"),
+        ("e.webp", picture("WEBP"), "image/webp"),
+        ("f.svg", SVG, "image/svg+xml"),
+    ],
+)
 def test_pictures_the_app_shows_stay_as_they_are(tmp_path, name, data, kind):
     file = tmp_path / name
     file.write_bytes(data)
@@ -41,14 +48,21 @@ def test_pictures_the_app_shows_stay_as_they_are(tmp_path, name, data, kind):
     source = re.search(r'<img src="data:([^;]+);base64,([^"]+)" alt="([^"]+)"', html)
     assert source.group(1) == kind and base64.b64decode(source.group(2)) == data and source.group(3) == name
     assert '<div class="doc image">' in html and f"<title>{file.stem}</title>" in html
-    label = {"image/png": "PNG", "image/jpeg": "JPEG", "image/gif": "GIF", "image/bmp": "BMP", "image/webp": "WebP",
-             "image/svg+xml": "SVG"}[kind]
+    label = {
+        "image/png": "PNG",
+        "image/jpeg": "JPEG",
+        "image/gif": "GIF",
+        "image/bmp": "BMP",
+        "image/webp": "WebP",
+        "image/svg+xml": "SVG",
+    }[kind]
     assert f'<p class="caption">{name} · {label} · {"30×20px" if label == "SVG" else "6×4px"} · ' in html
     assert index_markdown(html).startswith(f"[그림: {name}]")
 
 
 def test_recognizing_svg_stays_quick_for_files_full_of_comments():
     import time
+
     started = time.monotonic()
     assert sniff(b"<!---->" * 600 + b"not a picture") is None
     assert sniff(b"<!-- a -->\n<!-- b --><svg xmlns='http://www.w3.org/2000/svg'/>") == "image/svg+xml"
@@ -64,7 +78,10 @@ def test_tiff_pages_become_png_and_metafiles_need_windows(tmp_path):
     file.write_bytes(buffer.getvalue())
     html = image_page(file)
     pages = re.findall(r'<img src="data:image/png;base64,([^"]+)" alt="([^"]+)" width="(\d+)" height="(\d+)"', html)
-    assert [(alt, width, height) for _, alt, width, height in pages] == [("스캔.tif (1/2쪽)", "8", "5"), ("스캔.tif (2/2쪽)", "4", "4")]
+    assert [(alt, width, height) for _, alt, width, height in pages] == [
+        ("스캔.tif (1/2쪽)", "8", "5"),
+        ("스캔.tif (2/2쪽)", "4", "4"),
+    ]
     assert Image.open(io.BytesIO(base64.b64decode(pages[0][0]))).getpixel((0, 0)) == (255, 0, 0)
     assert "스캔.tif · TIFF · 8×5px" in html and "PNG로 변환 · 2쪽" in html
     metafile = b"\x01\x00\x00\x00" + b"\x00" * 36 + b" EMF" + b"\x00" * 60
@@ -84,8 +101,10 @@ def test_tiff_pages_past_the_limits_are_left_out_and_the_page_says_so(tmp_path, 
     monkeypatch.setattr("agent.images.MAX_PIXELS", 1000)
     html = image_page(file)
     assert html.count("<img ") == 49 and "PNG로 변환 · 49쪽" in html
-    assert ('<div class="doc image"><p class="caption">그림 일부를 넣지 못했습니다: 53쪽 중 앞 50쪽만 넣었습니다. '
-            '2쪽은 1,000픽셀을 넘어 넣지 않았습니다.</p><figure>') in html
+    assert (
+        '<div class="doc image"><p class="caption">그림 일부를 넣지 못했습니다: 53쪽 중 앞 50쪽만 넣었습니다. '
+        "2쪽은 1,000픽셀을 넘어 넣지 않았습니다.</p><figure>"
+    ) in html
     # A picture of nothing but such pages is no picture.
     single = io.BytesIO()
     pages[1].save(single, "TIFF")
@@ -94,8 +113,10 @@ def test_tiff_pages_past_the_limits_are_left_out_and_the_page_says_so(tmp_path, 
 
 
 def test_svg_with_a_document_type_definition_of_its_own_is_refused():
-    bomb = (b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;">]>'
-            b'<svg xmlns="http://www.w3.org/2000/svg"><text>&b;</text></svg>')
+    bomb = (
+        b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;">]>'
+        b'<svg xmlns="http://www.w3.org/2000/svg"><text>&b;</text></svg>'
+    )
     # Not recognized by its bytes, and refused when a package names it as SVG.
     assert sniff(bomb) is None
     entity = b'<svg xmlns="http://www.w3.org/2000/svg"><!ENTITY x "y"></svg>'
@@ -122,7 +143,12 @@ def test_folder_import_saves_each_picture_as_an_html_document_and_skips_others(i
     service = importer.service
     # Files are read in name order, so the copy named 같은 로고 is the one saved.
     statuses = {Path(r["path"]).name: r["status"] for r in job["results"]}
-    assert statuses == {"같은 로고.PNG": "imported", "깨진 그림.jpg": "failed", "로고.png": "skipped", "도면.svg": "imported"}
+    assert statuses == {
+        "같은 로고.PNG": "imported",
+        "깨진 그림.jpg": "failed",
+        "로고.png": "skipped",
+        "도면.svg": "imported",
+    }
     ident = next(r["doc_id"] for r in job["results"] if r["path"].endswith("같은 로고.PNG"))
     doc = service.wiki_get({"id": ident})
     assert (doc["title"], doc["format"], doc["source"]["kind"]) == ("같은 로고", "html", "image")
@@ -140,6 +166,7 @@ def test_folder_import_saves_each_picture_as_an_html_document_and_skips_others(i
 
 def test_image_import_validates_paths_and_reports_its_capability(importer, tmp_path):
     from agent.llm import UserError
+
     text = tmp_path / "a.txt"
     text.write_text("x")
     with pytest.raises(UserError, match="존재하는 이미지 파일"):

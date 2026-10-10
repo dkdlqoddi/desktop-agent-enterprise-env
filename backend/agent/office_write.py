@@ -9,6 +9,7 @@ file closes without being saved. Word's character positions count field codes an
 place in Word is found by Word's own search for the text around it; PowerPoint and Visio take positions in a text frame
 or shape. Excel cells are written by their address, after their value is checked against the one imported, and read
 back before the workbook is saved."""
+
 import contextlib
 import math
 import re
@@ -19,8 +20,19 @@ from .llm import UserError
 from .office_converter import PROGIDS, capabilities, close_drawing, same_file
 from .office_html import VISIO_GROUP, VISIO_SHAPES, cell_text, connector_ends, one_line, read, slide_title
 from .office_session import OfficeSession, run_worker
-from .source_edits import (ALREADY, ELSEWHERE, Missing, Text, choose, missing, norm, normalized, raw_span, spans,
-                           split_units)
+from .source_edits import (
+    ALREADY,
+    ELSEWHERE,
+    Missing,
+    Text,
+    choose,
+    missing,
+    norm,
+    normalized,
+    raw_span,
+    spans,
+    split_units,
+)
 from .word_converter import WordConverter, close_document
 
 # visOpenDontList | visOpenMacrosDisabled | visOpenNoWorkspace, without visOpenRO.
@@ -33,19 +45,33 @@ VISIO_SEPARATORS = re.compile(r"\r\n|\r|\n|\u2028|\u2029|\v")
 # Field placeholders in a Visio shape's text, which the page leaves out.
 VISIO_CHARACTERS = {"\ufffc": ""}
 # What Word's search is told to do: exactly the characters given.
-WORD_FIND = (("MatchByte", True), ("MatchFuzzy", False), ("IgnoreSpace", False), ("IgnorePunct", False),
-             ("MatchPrefix", False), ("MatchSuffix", False), ("MatchPhrase", False), ("MatchDiacritics", True),
-             ("MatchKashida", True), ("MatchAlefHamza", True), ("MatchControl", True))
+WORD_FIND = (
+    ("MatchByte", True),
+    ("MatchFuzzy", False),
+    ("IgnoreSpace", False),
+    ("IgnorePunct", False),
+    ("MatchPrefix", False),
+    ("MatchSuffix", False),
+    ("MatchPhrase", False),
+    ("MatchDiacritics", True),
+    ("MatchKashida", True),
+    ("MatchAlefHamza", True),
+    ("MatchControl", True),
+)
 FIND_LIMIT = 255  # characters Word searches for at once
 CONTEXT = 24  # characters around a place that tell it apart
 CANCELLED = "원본 반영을 취소했습니다. 원본 파일은 바뀌지 않았습니다."
 HINT = "해당 앱에서 파일을 직접 열고 저장할 수 있는지, 암호·DRM·보안 정책을 확인해 주세요."
-READ_ONLY = ("{name} 파일을 읽기 전용으로 열어 고칠 수 없습니다. 파일의 읽기 전용 속성, 다른 사람이나 다른 프로그램이 "
-             "쓰고 있는지, 쓰기 암호를 확인해 주세요.")
+READ_ONLY = (
+    "{name} 파일을 읽기 전용으로 열어 고칠 수 없습니다. 파일의 읽기 전용 속성, 다른 사람이나 다른 프로그램이 "
+    "쓰고 있는지, 쓰기 암호를 확인해 주세요."
+)
 CHANGED = "{name}에 고친 결과가 예상과 달라 저장하지 않았습니다. 원본 파일은 바뀌지 않았습니다."
 TRACKED = " 변경 내용 추적이 켜져 있으니 Word에서 끈 뒤 다시 반영해 보세요."
-REVISED = ("이 문서에는 변경 내용 추적으로 남은 글이 있습니다. 지운 글이 남은 줄이라면 Word에서 변경 내용을 적용한 뒤 "
-           "다시 반영해 주세요.")
+REVISED = (
+    "이 문서에는 변경 내용 추적으로 남은 글이 있습니다. 지운 글이 남은 줄이라면 Word에서 변경 내용을 적용한 뒤 "
+    "다시 반영해 주세요."
+)
 
 
 def subject(name):
@@ -85,8 +111,15 @@ def searchable(char):
 
 def find_text(text):
     """`text` as Word's search takes it: its special characters written as ^ codes."""
-    return (text.replace("^", "^^").replace("\t", "^t").replace("\v", "^l").replace("\r", "^p").replace("\xa0", "^s")
-            .replace("\x1e", "^~").replace("\x1f", "^-"))
+    return (
+        text.replace("^", "^^")
+        .replace("\t", "^t")
+        .replace("\v", "^l")
+        .replace("\r", "^p")
+        .replace("\xa0", "^s")
+        .replace("\x1e", "^~")
+        .replace("\x1f", "^-")
+    )
 
 
 def bounds(text, start, end, limit):
@@ -108,8 +141,8 @@ def anchor(text, start, end, limit):
     until it occurs once where it can, within FIND_LIMIT characters around the place, in its paragraphs. None when the
     place cannot be searched for: a picture, footnote or field mark in it."""
     # A deleted paragraph takes its paragraph mark along; a table cell's end never goes.
-    place = text[start:min(end, start + FIND_LIMIT)]
-    if any(not searchable(char) and char != "\r" for char in place) or "\r\x07" in text[start:end + 1]:
+    place = text[start : min(end, start + FIND_LIMIT)]
+    if any(not searchable(char) and char != "\r" for char in place) or "\r\x07" in text[start : end + 1]:
         return None
     low, high = bounds(text, start, min(end, start + FIND_LIMIT), limit)
     leftward = start == end and start > low
@@ -144,9 +177,18 @@ def find_nth(document, needle, count):
         with contextlib.suppress(Exception):  # Options of languages this Word does not have.
             setattr(search, name, value)
     seen = 0
-    while search.Execute(FindText=find_text(needle), MatchCase=True, MatchWholeWord=False, MatchWildcards=False,
-                         MatchSoundsLike=False, MatchAllWordForms=False, Forward=True, Wrap=0, Format=False,
-                         Replace=0):
+    while search.Execute(
+        FindText=find_text(needle),
+        MatchCase=True,
+        MatchWholeWord=False,
+        MatchWildcards=False,
+        MatchSoundsLike=False,
+        MatchAllWordForms=False,
+        Forward=True,
+        Wrap=0,
+        Format=False,
+        Replace=0,
+    ):
         if found.Text == needle:
             if seen == count:
                 return found
@@ -160,8 +202,10 @@ def word_range(document, text, start, end, limit):
     characters. `limit` is where text already written begins."""
     found = anchor(text, start, end, limit)
     if found is None:
-        raise missing(text[start:end] or text[max(0, start - 20):start + 20],
-                      "그림·각주·필드 표시가 있는 곳이라 Word에서 찾지 못했습니다")
+        raise missing(
+            text[start:end] or text[max(0, start - 20) : start + 20],
+            "그림·각주·필드 표시가 있는 곳이라 Word에서 찾지 못했습니다",
+        )
     first, last, count = found
     match = find_nth(document, text[first:last], count)
     if match is None:
@@ -173,8 +217,9 @@ def word_range(document, text, start, end, limit):
     target = document.Range(origin + width(text[first:start]), origin + width(text[first:end]))
     # What lies between the start of what was found and the place, then the place itself, must be what the text says:
     # a field's code, which positions count, would show here as a difference.
-    if (first < start and (document.Range(origin, target.Start).Text or "") != text[first:start]) or \
-            (target.Text or "") != text[start:end]:
+    if (first < start and (document.Range(origin, target.Start).Text or "") != text[first:start]) or (
+        target.Text or ""
+    ) != text[start:end]:
         raise missing(text[start:end] or text[first:last], "Word에서 고칠 곳의 글이 가져온 때와 달라 쓰지 않았습니다")
     return target
 
@@ -253,13 +298,17 @@ def shape_frames(shape, tables, depth=0):
     kind = shape.Type
     if kind == 6:  # msoGroup
         items = shape.GroupItems
-        return [frame for index in range(1, items.Count + 1)
-                for frame in shape_frames(items.Item(index), tables, depth + 1)]
+        return [
+            frame for index in range(1, items.Count + 1) for frame in shape_frames(items.Item(index), tables, depth + 1)
+        ]
     if shape.HasTable:
         table = shape.Table
         tables[0] += 1
-        return [(table.Cell(row, column).Shape.TextFrame.TextRange, (tables[0], row, column))
-                for row in range(1, table.Rows.Count + 1) for column in range(1, table.Columns.Count + 1)]
+        return [
+            (table.Cell(row, column).Shape.TextFrame.TextRange, (tables[0], row, column))
+            for row in range(1, table.Rows.Count + 1)
+            for column in range(1, table.Columns.Count + 1)
+        ]
     if read(shape, "HasChart") == -1 or shape.HasSmartArt or kind in (7, 10, 11, 13, 16):
         return []
     if shape.HasTextFrame and shape.TextFrame.HasText:
@@ -288,7 +337,12 @@ def powerpoint_frames(presentation):
         notes = slide.NotesPage.Shapes
         for index in range(1, notes.Count + 1):
             shape = notes.Item(index)
-            if shape.Type == 14 and shape.PlaceholderFormat.Type == 2 and shape.HasTextFrame and shape.TextFrame.HasText:
+            if (
+                shape.Type == 14
+                and shape.PlaceholderFormat.Type == 2
+                and shape.HasTextFrame
+                and shape.TextFrame.HasText
+            ):
                 body.append((number, shape.TextFrame.TextRange, False, None))
         found.extend(heading + body)
     return found
@@ -325,7 +379,7 @@ def edit_powerpoint(presentation, plan, stop):
         elif not raw:
             frame.Text = new
         elif start > 0:
-            frame.Characters(width(raw[:start - 1]) + 1, width(raw[start - 1])).InsertAfter(new)
+            frame.Characters(width(raw[: start - 1]) + 1, width(raw[start - 1])).InsertAfter(new)
         else:
             frame.Characters(1, width(raw[0])).InsertBefore(new)
     for container in {item[0] for item in changes}:
@@ -357,6 +411,7 @@ def visio_shapes(document):
                 raise UserError("Visio 도형이 20,000개를 초과합니다.")
             if shape.Type == VISIO_GROUP:
                 walk(shape.Shapes, number, depth + 1)
+
     pages = document.Pages
     for number in range(1, pages.Count + 1):
         walk(pages.Item(number).Shapes, number, 0)
@@ -493,8 +548,9 @@ def edit_excel(workbook, plan, stop):
     choice taken.)"""
     sheets = workbook.Worksheets
     choices = plan.get("choices") or [plan]
-    number = next((number for number, choice in enumerate(choices) if proven_cells(sheets, choice.get("witness", ()))),
-                  None)
+    number = next(
+        (number for number, choice in enumerate(choices) if proven_cells(sheets, choice.get("witness", ()))), None
+    )
     if number is None:
         raise UserError(ELSEWHERE)
     cells = choices[number]["cells"]
@@ -506,8 +562,9 @@ def edit_excel(workbook, plan, stop):
         cell, where = worksheet_cell(sheets, change)
         formula = change["formula"]
         if not holds(cell, change["old"], formula[0] if formula else None):
-            raise missing(where if formula else f"{where}: {change['old']}",
-                          "원본 파일의 셀이 가져온 때와 달라 쓰지 않았습니다")
+            raise missing(
+                where if formula else f"{where}: {change['old']}", "원본 파일의 셀이 가져온 때와 달라 쓰지 않았습니다"
+            )
         raw = read(cell, "Value2")
         if formula:
             cell.Formula = formula[1]
@@ -537,8 +594,12 @@ def discard_presentation(presentation):
     presentation.Close()
 
 
-DISCARD = {"Word": close_document, "Excel": lambda book: book.Close(SaveChanges=False),
-           "PowerPoint": discard_presentation, "Visio": close_drawing}
+DISCARD = {
+    "Word": close_document,
+    "Excel": lambda book: book.Close(SaveChanges=False),
+    "PowerPoint": discard_presentation,
+    "Visio": close_drawing,
+}
 
 
 def note(journal, phase):
@@ -572,10 +633,20 @@ def write_word(path, plan, stop, dispatch=None, journal=None):
         office.change(word, AutomationSecurity=3)  # msoAutomationSecurityForceDisable
         office.change(word.Options, UpdateLinksAtOpen=False)
         with office.opening():
-            document = office.track(word.Documents.Open(
-                FileName=str(path), ReadOnly=False, AddToRecentFiles=False, ConfirmConversions=False, Visible=False,
-                PasswordDocument="", WritePasswordDocument="", OpenAndRepair=False, NoEncodingDialog=True,
-            ), close_document)
+            document = office.track(
+                word.Documents.Open(
+                    FileName=str(path),
+                    ReadOnly=False,
+                    AddToRecentFiles=False,
+                    ConfirmConversions=False,
+                    Visible=False,
+                    PasswordDocument="",
+                    WritePasswordDocument="",
+                    OpenAndRepair=False,
+                    NoEncodingDialog=True,
+                ),
+                close_document,
+            )
         writable(document, "Word")
         return edit(office, document, "Word", plan, stop, journal)
 
@@ -587,10 +658,19 @@ def write_excel(path, plan, stop, dispatch=None, journal=None):
         office.quiet(DisplayAlerts=False, ScreenUpdating=False)
         office.change(excel, EnableEvents=False, AskToUpdateLinks=False, AutomationSecurity=3)
         with office.opening():
-            workbook = office.track(excel.Workbooks.Open(
-                Filename=str(path), UpdateLinks=0, ReadOnly=False, Password="", WriteResPassword="",
-                IgnoreReadOnlyRecommended=True, Notify=False, AddToMru=False,
-            ), DISCARD["Excel"])
+            workbook = office.track(
+                excel.Workbooks.Open(
+                    Filename=str(path),
+                    UpdateLinks=0,
+                    ReadOnly=False,
+                    Password="",
+                    WriteResPassword="",
+                    IgnoreReadOnlyRecommended=True,
+                    Notify=False,
+                    AddToMru=False,
+                ),
+                DISCARD["Excel"],
+            )
         writable(workbook, "Excel")
         return edit(office, workbook, "Excel", plan, stop, journal)
 
@@ -645,6 +725,7 @@ def _worker(source, sender, stop, payload):
 class OfficeWriter(WordConverter):
     """Writes the changes into a file in a disposable worker, as the converters read files: one that hangs in a
     dialog is killed after the time limit, and a hidden application it started is ended (word_converter.Watch)."""
+
     worker = staticmethod(_worker)
     stage = "원본 반영"
     cancelled = CANCELLED
@@ -665,13 +746,17 @@ class OfficeWriter(WordConverter):
         return False  # A file the worker saved stays saved: its answer is awaited.
 
     def stopped(self):
-        return (f"원본 반영을 멈췄지만 {subject(self.application_label)} 제때 끝내지 않아 원본 파일이 바뀌었는지 알 수 "
-                "없습니다. 원본 파일을 열어 확인해 주세요.")
+        return (
+            f"원본 반영을 멈췄지만 {subject(self.application_label)} 제때 끝내지 않아 원본 파일이 바뀌었는지 알 수 "
+            "없습니다. 원본 파일을 열어 확인해 주세요."
+        )
 
     def password(self, name):
         # The prompt shows as the file opens, before anything is written.
-        return (f"암호가 걸린 {name} 파일이라 원본에 반영하지 않았습니다. {name}이(가) 띄운 암호 입력 창은 앱이 취소했고, "
-                "원본 파일은 바뀌지 않았습니다.")
+        return (
+            f"암호가 걸린 {name} 파일이라 원본에 반영하지 않았습니다. {name}이(가) 띄운 암호 입력 창은 앱이 취소했고, "
+            "원본 파일은 바뀌지 않았습니다."
+        )
 
     @staticmethod
     def ready(name):

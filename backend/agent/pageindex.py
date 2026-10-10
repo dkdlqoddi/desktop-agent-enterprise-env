@@ -11,6 +11,7 @@ Nodes are dicts {id, parent, depth, title, kind, start, end, summary} in pre-ord
 of contents ("2", "2.3", "2.3.1"); start and end are character offsets of the whole section, children
 included, in the document revision the tree was built from.
 """
+
 import contextvars
 import json
 import re
@@ -64,7 +65,7 @@ def plain(markdown):
 
 def lead(markdown, limit=160):
     value = plain(markdown)
-    return value if len(value) <= limit else value[:limit - 1].rstrip() + "…"
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
 def heading(line):
@@ -90,8 +91,12 @@ def headings(content):
         bare = line.rstrip("\r\n")
         opening = FENCE.match(bare)
         if fence:
-            if opening and opening.group(1)[0] == fence[0] and len(opening.group(1)) >= len(fence) \
-                    and not bare.strip().strip(fence[0]):
+            if (
+                opening
+                and opening.group(1)[0] == fence[0]
+                and len(opening.group(1)) >= len(fence)
+                and not bare.strip().strip(fence[0])
+            ):
                 fence = ""
         elif opening:
             fence = opening.group(1)
@@ -111,7 +116,7 @@ def split(content, start, end, size=PAGE_CHARS):
     break or space of each span."""
     spans = []
     while end - start > size:
-        window = content[start:start + size]
+        window = content[start : start + size]
         cut = start + size
         for separator in ("\n\n", "\n", " "):
             found = window.rfind(separator)
@@ -161,9 +166,12 @@ def _group(children):
             run = []
         run.append(child)
     runs.append(run)
-    return [run[0] if len(run) == 1 else
-            _node(f"{run[0]['title']} ~ {run[-1]['title']}", 1, run[0]["start"], run[-1]["end"], "group")
-            for run in runs]
+    return [
+        run[0]
+        if len(run) == 1
+        else _node(f"{run[0]['title']} ~ {run[-1]['title']}", 1, run[0]["start"], run[-1]["end"], "group")
+        for run in runs
+    ]
 
 
 def _paginate(node, content):
@@ -190,8 +198,18 @@ def _flatten(root):
     def walk(parent, prefix, depth):
         for number, child in enumerate(parent["children"], 1):
             ident = f"{prefix}{number}"
-            nodes.append({"id": ident, "parent": prefix[:-1] or None, "depth": depth, "title": child["title"],
-                          "kind": child["kind"], "start": child["start"], "end": child["end"], "summary": ""})
+            nodes.append(
+                {
+                    "id": ident,
+                    "parent": prefix[:-1] or None,
+                    "depth": depth,
+                    "title": child["title"],
+                    "kind": child["kind"],
+                    "start": child["start"],
+                    "end": child["end"],
+                    "summary": "",
+                }
+            )
             walk(child, ident + ".", depth + 1)
 
     walk(root, "", 1)
@@ -209,7 +227,7 @@ def build(content):
         stack[-1]["children"].append(node)
         stack.append(node)
     _close(root)
-    if root["children"] and content[:root["children"][0]["start"]].strip():
+    if root["children"] and content[: root["children"][0]["start"]].strip():
         root["children"].insert(0, _node("문서 앞부분", 1, 0, root["children"][0]["start"], "intro"))
     while _count(root) > MAX_SECTIONS and _height(root) > 1:
         _prune(root, _height(root) - 1)
@@ -223,7 +241,7 @@ def own_text(content, nodes, index):
     """The text of a section before its first subsection, without its heading line."""
     node = nodes[index]
     child = nodes[index + 1] if index + 1 < len(nodes) and nodes[index + 1]["parent"] == node["id"] else None
-    text = content[node["start"]:child["start"] if child else node["end"]]
+    text = content[node["start"] : child["start"] if child else node["end"]]
     if node["kind"] == "section":
         text = text.partition("\n")[2]
     return text
@@ -276,8 +294,10 @@ def summarize(llm, title, content, nodes):
     def run(batch):
         """None once the sections of `batch` have their summaries, or the error of a request that may succeed when
         asked again; any other error is raised."""
-        payload = {"document_title": title,
-                   "sections": [{"id": node["id"], "title": node["title"], "text": text} for node, text in batch]}
+        payload = {
+            "document_title": title,
+            "sections": [{"id": node["id"], "title": node["title"], "text": text} for node, text in batch],
+        }
         try:
             items = llm.structured(SUMMARIZE, json.dumps(payload, ensure_ascii=False)).get("summaries")
             if not isinstance(items, list):
@@ -329,9 +349,12 @@ def summarize(llm, title, content, nodes):
         raise lost[-1][1]  # Not one summary: the LLM is not answering, and the analysis fails with why.
     for node, text in failed:
         node["summary"] = lead(text)
-    return {"batches": len(batches), "failed": [node["id"] for node, _ in failed],
-            "labels": [f"{node['id']} {node['title']}" for node, _ in failed],
-            "error": str(lost[-1][1]) if lost else ""}
+    return {
+        "batches": len(batches),
+        "failed": [node["id"] for node, _ in failed],
+        "labels": [f"{node['id']} {node['title']}" for node, _ in failed],
+        "error": str(lost[-1][1]) if lost else "",
+    }
 
 
 def failure_note(result):
@@ -343,8 +366,10 @@ def failure_note(result):
     named = ", ".join(labels[:FAILED_SHOWN])
     if len(labels) > FAILED_SHOWN:
         named += f" 외 {len(labels) - FAILED_SHOWN}개"
-    return (f"섹션 {len(labels)}개({named})는 LLM 요약에 실패해 본문 앞부분으로 요약을 대신했습니다: {result['error']} "
-            "다시 분석하면 이 섹션들도 다시 요약합니다.")
+    return (
+        f"섹션 {len(labels)}개({named})는 LLM 요약에 실패해 본문 앞부분으로 요약을 대신했습니다: {result['error']} "
+        "다시 분석하면 이 섹션들도 다시 요약합니다."
+    )
 
 
 def outline(nodes, budget=OUTLINE_CHARS, focus=()):
@@ -358,15 +383,19 @@ def outline(nodes, budget=OUTLINE_CHARS, focus=()):
         head = f"{node['id']} {node['title']}"
         parts.append((0 if node["id"] in keep else (2, 3, 6, 8)[depth - 1], order, "head", len(head) + 1))
         if node["summary"]:
-            parts.append((1 if node["id"] in focus else (4, 5, 7, 9)[depth - 1], order, "tail",
-                          len(node["summary"]) + 3))
+            parts.append(
+                (1 if node["id"] in focus else (4, 5, 7, 9)[depth - 1], order, "tail", len(node["summary"]) + 3)
+            )
     chosen, used = set(), 0
     for _, order, part, cost in sorted(parts):
         if (part == "head" or (order, "head") in chosen) and used + cost <= budget:
             chosen.add((order, part))
             used += cost
-    lines = [f"{node['id']} {node['title']}" + (f" — {node['summary']}" if (order, "tail") in chosen else "")
-             for order, node in enumerate(nodes) if (order, "head") in chosen]
+    lines = [
+        f"{node['id']} {node['title']}" + (f" — {node['summary']}" if (order, "tail") in chosen else "")
+        for order, node in enumerate(nodes)
+        if (order, "head") in chosen
+    ]
     if len(lines) < len(nodes):
         lines.append(f"(목차 {len(nodes) - len(lines)}개 항목 생략)")
     return "\n".join(lines)
@@ -376,8 +405,9 @@ def path(nodes, ident):
     """Titles from the top-level section down to the section, e.g. "설계 › 캐시"."""
     titles = {node["id"]: node["title"] for node in nodes}
     parts = ident.split(".")
-    return " › ".join(titles[".".join(parts[:size])] for size in range(1, len(parts) + 1)
-                      if ".".join(parts[:size]) in titles)
+    return " › ".join(
+        titles[".".join(parts[:size])] for size in range(1, len(parts) + 1) if ".".join(parts[:size]) in titles
+    )
 
 
 def locate(nodes, offset):
@@ -395,31 +425,62 @@ def section_text(content, nodes, ids, budget):
     specific choice, and a long parent cut to the budget could miss it. Returns (text, labels)."""
     index = {node["id"]: node for node in nodes}
     chosen = {ident for ident in ids if ident in index}
-    spans = sorted((index[ident] for ident in chosen if not any(other.startswith(ident + ".") for other in chosen)),
-                   key=lambda node: node["start"])
+    spans = sorted(
+        (index[ident] for ident in chosen if not any(other.startswith(ident + ".") for other in chosen)),
+        key=lambda node: node["start"],
+    )
     parts, labels = [], []
     for position, node in enumerate(spans):
         label = f"{node['id']} {node['title']}"
         share = max(0, (budget - sum(len(part) + 2 for part in parts)) // (len(spans) - position) - len(label) - 5)
-        body = content[node["start"]:node["end"]].strip()
-        parts.append(f"[{label}]\n" + (body if len(body) <= share else body[:max(0, share - 1)].rstrip() + "…"))
+        body = content[node["start"] : node["end"]].strip()
+        parts.append(f"[{label}]\n" + (body if len(body) <= share else body[: max(0, share - 1)].rstrip() + "…"))
         labels.append(label)
     return "\n\n".join(parts), labels
 
 
 def save(db, doc_id, revision, nodes):
     db.execute("DELETE FROM doc_nodes WHERE doc_id=?", (doc_id,))
-    db.executemany("""INSERT INTO doc_nodes (doc_id,revision,node_id,parent_id,position,depth,title,kind,summary,
+    db.executemany(
+        """INSERT INTO doc_nodes (doc_id,revision,node_id,parent_id,position,depth,title,kind,summary,
         start_offset,end_offset) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-        [(doc_id, revision, n["id"], n["parent"], position, n["depth"], n["title"], n["kind"], n["summary"],
-          n["start"], n["end"]) for position, n in enumerate(nodes)])
+        [
+            (
+                doc_id,
+                revision,
+                n["id"],
+                n["parent"],
+                position,
+                n["depth"],
+                n["title"],
+                n["kind"],
+                n["summary"],
+                n["start"],
+                n["end"],
+            )
+            for position, n in enumerate(nodes)
+        ],
+    )
 
 
 def load(db, doc_id, revision):
-    return [{"id": r["node_id"], "parent": r["parent_id"], "depth": r["depth"], "title": r["title"],
-             "kind": r["kind"], "summary": r["summary"], "start": r["start_offset"], "end": r["end_offset"]}
-            for r in db.execute("""SELECT * FROM doc_nodes WHERE doc_id=? AND revision=?
-                ORDER BY position""", (doc_id, revision))]
+    return [
+        {
+            "id": r["node_id"],
+            "parent": r["parent_id"],
+            "depth": r["depth"],
+            "title": r["title"],
+            "kind": r["kind"],
+            "summary": r["summary"],
+            "start": r["start_offset"],
+            "end": r["end_offset"],
+        }
+        for r in db.execute(
+            """SELECT * FROM doc_nodes WHERE doc_id=? AND revision=?
+                ORDER BY position""",
+            (doc_id, revision),
+        )
+    ]
 
 
 def tree(db, doc):

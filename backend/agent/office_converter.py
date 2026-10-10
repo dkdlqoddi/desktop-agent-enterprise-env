@@ -1,4 +1,5 @@
 """Read local Office documents in disposable, hidden Windows COM workers."""
+
 import os
 import sys
 import tempfile
@@ -12,13 +13,28 @@ from .office_pictures import Exports, scratch
 from .office_session import LEFT_RUNNING, OfficeSession, run_worker
 from .word_converter import WordConverter, convert_with_word
 
-FORMATS = {".doc": "Word", ".docx": "Word", ".docm": "Word",
-           ".xls": "Excel", ".xlsx": "Excel", ".xlsm": "Excel", ".xlsb": "Excel",
-           ".ppt": "PowerPoint", ".pptx": "PowerPoint", ".pptm": "PowerPoint",
-           ".vsd": "Visio", ".vsdx": "Visio", ".vsdm": "Visio"}
+FORMATS = {
+    ".doc": "Word",
+    ".docx": "Word",
+    ".docm": "Word",
+    ".xls": "Excel",
+    ".xlsx": "Excel",
+    ".xlsm": "Excel",
+    ".xlsb": "Excel",
+    ".ppt": "PowerPoint",
+    ".pptx": "PowerPoint",
+    ".pptm": "PowerPoint",
+    ".vsd": "Visio",
+    ".vsdx": "Visio",
+    ".vsdm": "Visio",
+}
 # Visio.InvisibleApp starts a Visio that never shows a window.
-PROGIDS = {"Word": "Word.Application", "Excel": "Excel.Application",
-           "PowerPoint": "PowerPoint.Application", "Visio": "Visio.InvisibleApp"}
+PROGIDS = {
+    "Word": "Word.Application",
+    "Excel": "Excel.Application",
+    "PowerPoint": "PowerPoint.Application",
+    "Visio": "Visio.InvisibleApp",
+}
 # visOpenRO | visOpenDontList | visOpenMacrosDisabled | visOpenNoWorkspace
 VISIO_OPEN = 0x2 | 0x8 | 0x80 | 0x100
 
@@ -30,17 +46,23 @@ def capabilities():
         if sys.platform == "win32":
             try:
                 import winreg
+
                 import pythoncom  # noqa: F401
                 import win32com.client  # noqa: F401
+
                 with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, progid + r"\CLSID"):
                     available = True
             except (ImportError, OSError):
                 pass
         apps[name] = available
     installed = [name for name, available in apps.items() if available]
-    return {"available": bool(installed), "applications": apps,
-            "reason": ("사용 가능: " + ", ".join(installed) + ". 해당 Office 앱으로 백그라운드에서 읽습니다.")
-            if installed else "Microsoft Word·Excel·PowerPoint·Visio 데스크톱 앱이 설치된 Windows에서 사용할 수 있습니다."}
+    return {
+        "available": bool(installed),
+        "applications": apps,
+        "reason": ("사용 가능: " + ", ".join(installed) + ". 해당 Office 앱으로 백그라운드에서 읽습니다.")
+        if installed
+        else "Microsoft Word·Excel·PowerPoint·Visio 데스크톱 앱이 설치된 Windows에서 사용할 수 있습니다.",
+    }
 
 
 def same_file(first, second):
@@ -52,14 +74,23 @@ def read_excel(path, tick, exports=None):
         excel = office.application
         office.hide()
         office.quiet(DisplayAlerts=False, ScreenUpdating=False)
-        office.change(excel, EnableEvents=False, AskToUpdateLinks=False,
-                      AutomationSecurity=3)  # msoAutomationSecurityForceDisable
+        office.change(
+            excel, EnableEvents=False, AskToUpdateLinks=False, AutomationSecurity=3
+        )  # msoAutomationSecurityForceDisable
         with office.opening():
-            workbook = office.track(excel.Workbooks.Open(
-                Filename=str(path), UpdateLinks=0, ReadOnly=True,
-                Password="", WriteResPassword="", IgnoreReadOnlyRecommended=True,
-                Notify=False, AddToMru=False,
-            ), lambda book: book.Close(SaveChanges=False))
+            workbook = office.track(
+                excel.Workbooks.Open(
+                    Filename=str(path),
+                    UpdateLinks=0,
+                    ReadOnly=True,
+                    Password="",
+                    WriteResPassword="",
+                    IgnoreReadOnlyRecommended=True,
+                    Notify=False,
+                    AddToMru=False,
+                ),
+                lambda book: book.Close(SaveChanges=False),
+            )
         with office.reading():
             return excel_html(workbook, tick, exports)
 
@@ -137,8 +168,12 @@ def convert_with_office(source, stop=None, folder=None):
 
 
 def _worker(source, sender, stop, folder=None):
-    run_worker(lambda: convert_with_office(source, stop, folder), sender, "Office 변환",
-               "해당 앱에서 파일을 열 수 있는지, 암호·DRM·보안 정책을 확인해 주세요.")
+    run_worker(
+        lambda: convert_with_office(source, stop, folder),
+        sender,
+        "Office 변환",
+        "해당 앱에서 파일을 열 수 있는지, 암호·DRM·보안 정책을 확인해 주세요.",
+    )
 
 
 class OfficeConverter(WordConverter):

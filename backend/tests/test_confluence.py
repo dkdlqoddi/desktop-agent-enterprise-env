@@ -17,7 +17,11 @@ def service(tmp_path):
 
 
 def capture(service, body="<table><tr><td>한국어 표</td></tr></table><pre>if x:\n  return 1</pre>"):
-    return {"source_url": "https://wiki.test/confluence/pages/viewpage.action?pageId=123", "page_id": "123", "html": f"<html><head><title>Confluence 테스트</title></head><body>{body}</body></html>"}
+    return {
+        "source_url": "https://wiki.test/confluence/pages/viewpage.action?pageId=123",
+        "page_id": "123",
+        "html": f"<html><head><title>Confluence 테스트</title></head><body>{body}</body></html>",
+    }
 
 
 def test_import_search_source_persistence_duplicate_edits_and_delete(service):
@@ -40,7 +44,9 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
     changed = capture(service, "<p>변경된 페이지</p>")
     # The page changed, and so did the document: the user's text stays unless the update replaces it.
     skipped = import_page(service, changed)
-    assert (skipped["status"], skipped["doc_id"]) == ("skipped", doc["id"]) and "‘원본에서 업데이트’" in skipped["message"]
+    assert (skipped["status"], skipped["doc_id"]) == ("skipped", doc["id"]) and "‘원본에서 업데이트’" in skipped[
+        "message"
+    ]
     assert service.wiki_get({"id": doc["id"]})["content"] == "개인 메모"
     restarted = Service(Database(service.db.path), None)
     assert restarted.wiki_source_markdown({"id": doc["id"]})["markdown"] == markdown
@@ -61,8 +67,10 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
 
 
 def test_code_macro_language_becomes_fence_info(service):
-    body = ('<pre data-syntaxhighlighter-params="brush: java; gutter: false">int x = 1;</pre>'
-            '<pre data-syntaxhighlighter-params="brush: text">plain</pre>')
+    body = (
+        '<pre data-syntaxhighlighter-params="brush: java; gutter: false">int x = 1;</pre>'
+        '<pre data-syntaxhighlighter-params="brush: text">plain</pre>'
+    )
     content = service.wiki_get({"id": import_page(service, capture(service, body))["doc_id"]})["content"]
     assert "```java\nint x = 1;\n```" in content
     assert "```\nplain\n```" in content
@@ -94,15 +102,24 @@ def test_a_page_longer_than_a_document_is_saved_as_documents_in_parts(service):
     assert first["content"].startswith("## 절 0\n\n가") and second["content"].startswith("## 절 ")
     assert len(first["content"]) <= 80000 and len(second["content"]) <= 80000
     assert (first["source"]["part"], second["source"]["part"], second["source"]["parts"]) == (1, 2, 2)
-    assert first["parts"] == second["parts"] == [{"id": first["id"], "title": first["title"], "part": 1},
-                                                 {"id": second["id"], "title": second["title"], "part": 2}]
+    assert (
+        first["parts"]
+        == second["parts"]
+        == [
+            {"id": first["id"], "title": first["title"], "part": 1},
+            {"id": second["id"], "title": second["title"], "part": 2},
+        ]
+    )
     assert service.wiki_source_markdown({"id": second["id"]})["markdown"] == second["content"]
     # The same page is not saved again while any of its parts is left: a part in the trash comes back when the user
     # imports the page again (sources.plan), so the two parts are whole once more.
     service.wiki_delete({"id": first["id"]})
     assert import_page(service, capture(service, sections)) == {
-        "status": "skipped", "doc_id": first["id"], "message": "동일한 페이지 내용이 이미 저장되어 있습니다.",
-        "reason": "same"}
+        "status": "skipped",
+        "doc_id": first["id"],
+        "message": "동일한 페이지 내용이 이미 저장되어 있습니다.",
+        "reason": "same",
+    }
     assert [part["id"] for part in service.wiki_get({"id": second["id"]})["parts"]] == [first["id"], second["id"]]
     # Purged for good, the page is saved again as new documents.
     service.wiki_delete({"id": first["id"]})
@@ -114,6 +131,7 @@ def test_what_a_watched_page_changed_is_compared_after_its_import_is_saved(servi
     """Comparing a long page takes a while; the import holds the Wiki's write lock only to save, so a save meanwhile
     (an edit, another import) does not wait for the comparison or fail as locked."""
     import agent.changes as changes
+
     tracked = lambda body: {**capture(service, body), "track_changes": True}
     import_page(service, tracked("<p>첫 판</p>"))
     compare, saved = changes.compare, []
@@ -132,6 +150,7 @@ def test_what_a_watched_page_changed_is_compared_after_its_import_is_saved(servi
 
 def test_a_long_page_with_many_changed_lines_is_compared_quickly():
     from agent.changes import compare
+
     before = "\n".join(f"| {i} | 값 {i} |" for i in range(30000))
     after = "\n".join(f"| {i} | 값 {i}{' 바뀜' if i % 3 == 0 else ''} |" for i in range(30000))
     started = time.monotonic()

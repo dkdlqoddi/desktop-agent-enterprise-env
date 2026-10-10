@@ -15,11 +15,12 @@ it sits on. PowerPoint keeps a picture of each slide as PowerPoint draws it,
 with the slide's title, text with its formatting, bullets and numbers, tables, charts, SmartArt, speaker
 notes and comments. Visio keeps a picture of each page with its shape text, connections and Shape Data.
 Where Office cannot hand a picture over, its text or a marker stays."""
+
 import math
 import re
 from datetime import date, datetime, time, timedelta
-from functools import lru_cache
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from functools import lru_cache
 from html import escape
 from xml.etree import ElementTree as ET
 
@@ -39,9 +40,22 @@ LINE_BREAKS = ("\r\n", "\r", "\v", "\u2028", "\u2029")
 TRUE = -1  # msoTrue
 
 # Excel error values arrive as VT_ERROR codes 0x800A0000 + xlErr…; numbers always arrive as floats.
-EXCEL_ERRORS = {2000: "#NULL!", 2007: "#DIV/0!", 2015: "#VALUE!", 2023: "#REF!", 2029: "#NAME?",
-                2036: "#NUM!", 2042: "#N/A", 2043: "#GETTING_DATA", 2045: "#SPILL!", 2046: "#CONNECT!",
-                2047: "#BLOCKED!", 2048: "#UNKNOWN!", 2049: "#FIELD!", 2050: "#CALC!"}
+EXCEL_ERRORS = {
+    2000: "#NULL!",
+    2007: "#DIV/0!",
+    2015: "#VALUE!",
+    2023: "#REF!",
+    2029: "#NAME?",
+    2036: "#NUM!",
+    2042: "#N/A",
+    2043: "#GETTING_DATA",
+    2045: "#SPILL!",
+    2046: "#CONNECT!",
+    2047: "#BLOCKED!",
+    2048: "#UNKNOWN!",
+    2049: "#FIELD!",
+    2050: "#CALC!",
+}
 XML_SPREADSHEET = 11  # xlRangeValueXMLSpreadsheet: values, formatting, formulas and names of a range
 SS = "{urn:schemas-microsoft-com:office:spreadsheet}"
 HTML40 = "{http://www.w3.org/TR/REC-html40}"
@@ -55,24 +69,77 @@ VISIO_DATA = 243  # visSectionProp, the Shape Data section
 VISIO_VALUE, VISIO_LABEL, VISIO_HIDDEN = 0, 2, 6  # visCustPropsValue, visCustPropsLabel, visCustPropsInvis
 VISIO_BEGIN, VISIO_END = {7, 8, 9}, {10, 11, 12}  # visBeginX/Y, visBegin; visEndX/Y, visEnd
 # xlChartType values of the common chart families.
-CHART_TYPES = {**dict.fromkeys((51, 52, 53, -4100, 54, 55, 56), "세로 막대형"), **dict.fromkeys((57, 58, 59, 60, 61, 62), "가로 막대형"),
-               **dict.fromkeys((4, 63, 64, 65, 66, 67, -4101), "꺾은선형"), **dict.fromkeys((5, 69, -4102, 70, 68, 71), "원형"),
-               **dict.fromkeys((1, 76, 77, -4098, 78, 79), "영역형"), **dict.fromkeys((-4169, 72, 73, 74, 75), "분산형"),
-               -4120: "도넛형", 80: "도넛형", -4151: "방사형", 81: "방사형", 82: "방사형", 15: "거품형", 87: "거품형",
-               83: "표면형", 84: "표면형", 85: "표면형", 86: "표면형", 88: "주식형", 89: "주식형", 90: "주식형", 91: "주식형"}
-EXCEL_BORDERS = {"Continuous": "solid", "Dash": "dashed", "Dot": "dotted", "DashDot": "dashed", "DashDotDot": "dashed",
-                 "SlantDashDot": "dashed", "Double": "double"}
-EXCEL_ALIGN = {"Left": "left", "Center": "center", "Right": "right", "Justify": "justify", "Distributed": "justify",
-               "CenterAcrossSelection": "center", "Fill": "left"}
-COLORS = {"red": "#FF0000", "blue": "#0000FF", "green": "#00FF00", "yellow": "#FFFF00", "magenta": "#FF00FF",
-          "cyan": "#00FFFF", "black": "#000000", "white": "#FFFFFF"}
+CHART_TYPES = {
+    **dict.fromkeys((51, 52, 53, -4100, 54, 55, 56), "세로 막대형"),
+    **dict.fromkeys((57, 58, 59, 60, 61, 62), "가로 막대형"),
+    **dict.fromkeys((4, 63, 64, 65, 66, 67, -4101), "꺾은선형"),
+    **dict.fromkeys((5, 69, -4102, 70, 68, 71), "원형"),
+    **dict.fromkeys((1, 76, 77, -4098, 78, 79), "영역형"),
+    **dict.fromkeys((-4169, 72, 73, 74, 75), "분산형"),
+    -4120: "도넛형",
+    80: "도넛형",
+    -4151: "방사형",
+    81: "방사형",
+    82: "방사형",
+    15: "거품형",
+    87: "거품형",
+    83: "표면형",
+    84: "표면형",
+    85: "표면형",
+    86: "표면형",
+    88: "주식형",
+    89: "주식형",
+    90: "주식형",
+    91: "주식형",
+}
+EXCEL_BORDERS = {
+    "Continuous": "solid",
+    "Dash": "dashed",
+    "Dot": "dotted",
+    "DashDot": "dashed",
+    "DashDotDot": "dashed",
+    "SlantDashDot": "dashed",
+    "Double": "double",
+}
+EXCEL_ALIGN = {
+    "Left": "left",
+    "Center": "center",
+    "Right": "right",
+    "Justify": "justify",
+    "Distributed": "justify",
+    "CenterAcrossSelection": "center",
+    "Fill": "left",
+}
+COLORS = {
+    "red": "#FF0000",
+    "blue": "#0000FF",
+    "green": "#00FF00",
+    "yellow": "#FFFF00",
+    "magenta": "#FF00FF",
+    "cyan": "#00FFFF",
+    "black": "#000000",
+    "white": "#FFFFFF",
+}
 POWERPOINT_ALIGN = {2: "center", 3: "right", 4: "justify", 5: "justify"}
 # PpNumberedBulletStyle: how a numbered paragraph writes its number.
-NUMBER_STYLES = {0: ("lowerLetter", "{}."), 1: ("upperLetter", "{}."), 2: ("decimal", "{})"), 3: ("decimal", "{}."),
-                 4: ("lowerRoman", "({})"), 5: ("lowerRoman", "{})"), 6: ("lowerRoman", "{}."), 7: ("upperRoman", "{}."),
-                 8: ("lowerLetter", "({})"), 9: ("lowerLetter", "{})"), 10: ("upperLetter", "({})"),
-                 11: ("upperLetter", "{})"), 12: ("decimal", "({})"), 13: ("decimal", "{}"), 14: ("upperRoman", "({})"),
-                 15: ("upperRoman", "{})")}
+NUMBER_STYLES = {
+    0: ("lowerLetter", "{}."),
+    1: ("upperLetter", "{}."),
+    2: ("decimal", "{})"),
+    3: ("decimal", "{}."),
+    4: ("lowerRoman", "({})"),
+    5: ("lowerRoman", "{})"),
+    6: ("lowerRoman", "{}."),
+    7: ("upperRoman", "{}."),
+    8: ("lowerLetter", "({})"),
+    9: ("lowerLetter", "{})"),
+    10: ("upperLetter", "({})"),
+    11: ("upperLetter", "{})"),
+    12: ("decimal", "({})"),
+    13: ("decimal", "{}"),
+    14: ("upperRoman", "({})"),
+    15: ("upperRoman", "{})"),
+}
 
 
 def plain(text):
@@ -115,6 +182,7 @@ def as_tuple(value):
 
 # --- Excel values and number formats --------------------------------------------------------------
 
+
 def cell_text(value):
     """A cell value in the General format, as Excel shows it near enough for a Wiki page."""
     if value is None:
@@ -138,18 +206,43 @@ def cell_text(value):
 
 
 # Excel's named formats of the XML Spreadsheet format, written as the codes a Korean Excel shows.
-NAMED_FORMATS = {"General Number": "General", "General Date": "yyyy-mm-dd h:mm", "Short Date": "yyyy-mm-dd",
-                 "Medium Date": "dd-mmm-yy", "Long Date": 'yyyy"년" m"월" d"일" dddd', "Short Time": "h:mm",
-                 "Medium Time": "h:mm AM/PM", "Long Time": "h:mm:ss", "Fixed": "0.00", "Standard": "#,##0.00",
-                 "Percent": "0.00%", "Scientific": "0.00E+00", "Currency": "₩#,##0;-₩#,##0",
-                 "Euro Currency": "€#,##0.00;-€#,##0.00", "Yes/No": '"Yes";"Yes";"No"',
-                 "True/False": '"True";"True";"False"', "On/Off": '"On";"On";"Off"'}
+NAMED_FORMATS = {
+    "General Number": "General",
+    "General Date": "yyyy-mm-dd h:mm",
+    "Short Date": "yyyy-mm-dd",
+    "Medium Date": "dd-mmm-yy",
+    "Long Date": 'yyyy"년" m"월" d"일" dddd',
+    "Short Time": "h:mm",
+    "Medium Time": "h:mm AM/PM",
+    "Long Time": "h:mm:ss",
+    "Fixed": "0.00",
+    "Standard": "#,##0.00",
+    "Percent": "0.00%",
+    "Scientific": "0.00E+00",
+    "Currency": "₩#,##0;-₩#,##0",
+    "Euro Currency": "€#,##0.00;-€#,##0.00",
+    "Yes/No": '"Yes";"Yes";"No"',
+    "True/False": '"True";"True";"False"',
+    "On/Off": '"On";"On";"Off"',
+}
 EPOCH = datetime(1899, 12, 30)
 EPOCH_1904 = datetime(1904, 1, 1)  # day 0 of a workbook in the 1904 date system (Workbook.Date1904)
 KOREAN_DAYS = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
 ENGLISH_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-ENGLISH_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
-                  "October", "November", "December"]
+ENGLISH_MONTHS = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+]
 
 
 def format_sections(code):
@@ -160,15 +253,15 @@ def format_sections(code):
         if char == '"':
             end = code.find('"', index + 1)
             end = len(code) if end < 0 else end
-            current += code[index:end + 1]
+            current += code[index : end + 1]
             index = end + 1
         elif char in "\\_*" and index + 1 < len(code):
-            current += code[index:index + 2]
+            current += code[index : index + 2]
             index += 2
         elif char == "[":
             end = code.find("]", index)
             end = len(code) if end < 0 else end
-            current += code[index:end + 1]
+            current += code[index : end + 1]
             index = end + 1
         elif char == ";":
             found.append(current)
@@ -187,7 +280,7 @@ def format_tokens(section):
         if char == '"':
             end = section.find('"', index + 1)
             end = len(section) if end < 0 else end
-            found.append(("text", section[index + 1:end]))
+            found.append(("text", section[index + 1 : end]))
             index = end + 1
         elif char == "\\" and index + 1 < len(section):
             found.append(("text", section[index + 1]))
@@ -200,7 +293,7 @@ def format_tokens(section):
         elif char == "[":
             end = section.find("]", index)
             end = len(section) if end < 0 else end
-            inner = section[index + 1:end]
+            inner = section[index + 1 : end]
             if re.fullmatch(r"[hms]+", inner, re.I):
                 found.append(("elapsed", inner.lower()))
             elif inner.startswith("$"):
@@ -238,8 +331,15 @@ def format_tokens(section):
             found.append(("digit", char))
             index += 1
         elif char in ".,%@/":
-            found.append({".": ("point", "."), ",": ("comma", ","), "%": ("percent", "%"), "@": ("at", "@"),
-                          "/": ("slash", "/")}[char])
+            found.append(
+                {
+                    ".": ("point", "."),
+                    ",": ("comma", ","),
+                    "%": ("percent", "%"),
+                    "@": ("at", "@"),
+                    "/": ("slash", "/"),
+                }[char]
+            )
             index += 1
         else:
             found.append(("text", char))
@@ -250,8 +350,14 @@ def format_tokens(section):
 def matches(condition, number):
     operator, limit = re.match(r"([<>=]{1,2})(.*)", condition).groups()
     limit = float(limit)
-    return {"<": number < limit, ">": number > limit, "=": number == limit, "<=": number <= limit,
-            ">=": number >= limit, "<>": number != limit}.get(operator, False)
+    return {
+        "<": number < limit,
+        ">": number > limit,
+        "=": number == limit,
+        "<=": number <= limit,
+        ">=": number >= limit,
+        "<>": number != limit,
+    }.get(operator, False)
 
 
 @lru_cache(maxsize=1024)
@@ -330,12 +436,12 @@ def date_text(tokens, serial, locale, date1904=False):
     for index, (kind, text) in enumerate(tokens):
         if kind == "point" and index and tokens[index - 1][0] == "date" and tokens[index - 1][1][0] == "s":
             fraction_at = index
-            for kind_, text_ in tokens[index + 1:]:
+            for kind_, text_ in tokens[index + 1 :]:
                 if kind_ != "digit" or text_ != "0":
                     break
                 decimals += 1
             break
-    unit = timedelta(seconds=10 ** -decimals)
+    unit = timedelta(seconds=10**-decimals)
     offset = round(timedelta(days=serial) / unit) * unit
     moment, (year, month, day), weekday = calendar(offset, date1904)
     english = locale.lower() in ("409", "809", "en-us", "en-gb")
@@ -412,14 +518,17 @@ def number_text(tokens, number):
     if any(kind == "slash" for kind, _ in tokens):
         return None
     if not any(kind == "digit" for kind, _ in tokens):
-        return "".join(cell_text(number) if kind == "general" else text for kind, text in tokens
-                       if kind in ("text", "percent", "general"))
+        return "".join(
+            cell_text(number) if kind == "general" else text
+            for kind, text in tokens
+            if kind in ("text", "percent", "general")
+        )
     value = Decimal(repr(float(number))) * 100 ** sum(1 for kind, _ in tokens if kind == "percent")
     exponent = next((index for index, (kind, _) in enumerate(tokens) if kind == "exp"), None)
     body = tokens if exponent is None else tokens[:exponent]
     point = next((index for index, (kind, _) in enumerate(body) if kind == "point"), None)
     whole_tokens = body if point is None else body[:point]
-    part_tokens = [] if point is None else body[point + 1:]
+    part_tokens = [] if point is None else body[point + 1 :]
     places = sum(1 for kind, _ in part_tokens if kind == "digit")
     # A comma right after the last digit placeholder divides by 1,000; one between digits groups them.
     digits = [index for index, (kind, _) in enumerate(body) if kind == "digit"]
@@ -430,7 +539,9 @@ def number_text(tokens, number):
         scale, position = scale + 1, position + 1
     value /= Decimal(1000) ** scale
     whole_digits = [index for index, (kind, _) in enumerate(whole_tokens) if kind == "digit"]
-    grouping = bool(whole_digits) and any(kind == "comma" for kind, _ in whole_tokens[whole_digits[0]:whole_digits[-1]])
+    grouping = bool(whole_digits) and any(
+        kind == "comma" for kind, _ in whole_tokens[whole_digits[0] : whole_digits[-1]]
+    )
     power = 0
     if exponent is not None and value:
         size = max(1, len(whole_digits))
@@ -450,7 +561,7 @@ def number_text(tokens, number):
         whole = f"{int(whole):,}"
     spaces = sum(1 for index in whole_digits if whole_tokens[index][1] == "?")
     out = []
-    between = [kind for kind, _ in whole_tokens[whole_digits[0]:whole_digits[-1]]] if whole_digits else []
+    between = [kind for kind, _ in whole_tokens[whole_digits[0] : whole_digits[-1]]] if whole_digits else []
     if "text" in between and not grouping:
         # Placeholders fill from the right; text between them (as in 000-0000) stays where it is.
         fill, written = list(whole), []
@@ -489,7 +600,7 @@ def number_text(tokens, number):
             elif kind in ("text", "percent"):
                 out.append(text)
     if exponent is not None:
-        tail = tokens[exponent + 1:]
+        tail = tokens[exponent + 1 :]
         width = sum(1 for kind, _ in tail if kind == "digit")
         sign = "-" if power < 0 else "+" if tokens[exponent][1][1] == "+" else ""
         out.append(tokens[exponent][1][0].upper() + sign + str(abs(power)).zfill(max(1, width)))
@@ -498,6 +609,7 @@ def number_text(tokens, number):
 
 
 # --- Excel ----------------------------------------------------------------------------------------
+
 
 def column_name(index):
     """Excel's letters for a 1-based column index: 1 → A, 27 → AA."""
@@ -525,18 +637,39 @@ def spreadsheet_xml(used):
 
 def style_props(element, props):
     for child in [] if element is None else element:
-        name = child.tag[len(SS):] if child.tag.startswith(SS) else ""
+        name = child.tag[len(SS) :] if child.tag.startswith(SS) else ""
         get = lambda key: child.get(SS + key)
         if name == "Alignment":
-            props.update({key: value for key, value in (("horizontal", get("Horizontal")), ("vertical", get("Vertical")),
-                                                         ("wrap", get("WrapText")), ("indent", get("Indent")),
-                                                         ("rotate", get("Rotate"))) if value is not None})
+            props.update(
+                {
+                    key: value
+                    for key, value in (
+                        ("horizontal", get("Horizontal")),
+                        ("vertical", get("Vertical")),
+                        ("wrap", get("WrapText")),
+                        ("indent", get("Indent")),
+                        ("rotate", get("Rotate")),
+                    )
+                    if value is not None
+                }
+            )
         elif name == "Font":
-            props.update({key: value for key, value in (("font", get("FontName")), ("size", get("Size")),
-                                                         ("color", get("Color")), ("bold", get("Bold")),
-                                                         ("italic", get("Italic")), ("underline", get("Underline")),
-                                                         ("strike", get("StrikeThrough")),
-                                                         ("script", get("VerticalAlign"))) if value is not None})
+            props.update(
+                {
+                    key: value
+                    for key, value in (
+                        ("font", get("FontName")),
+                        ("size", get("Size")),
+                        ("color", get("Color")),
+                        ("bold", get("Bold")),
+                        ("italic", get("Italic")),
+                        ("underline", get("Underline")),
+                        ("strike", get("StrikeThrough")),
+                        ("script", get("VerticalAlign")),
+                    )
+                    if value is not None
+                }
+            )
         elif name == "Interior":
             props["fill"] = get("Color") if get("Pattern") != "None" else None
         elif name == "Borders":
@@ -560,27 +693,38 @@ class Sheet:
         for item in table.findall(SS + "Column"):
             column = int(item.get(SS + "Index")) - 1 if (item.get(SS + "Index") or "").isdigit() else column
             for _ in range(int(item.get(SS + "Span", "0") or 0) + 1):
-                self.columns[column] = {"width": item.get(SS + "Width"), "hidden": item.get(SS + "Hidden") == "1",
-                                        "style": item.get(SS + "StyleID")}
+                self.columns[column] = {
+                    "width": item.get(SS + "Width"),
+                    "hidden": item.get(SS + "Hidden") == "1",
+                    "style": item.get(SS + "StyleID"),
+                }
                 column += 1
         row = 0
         for item in table.findall(SS + "Row"):
             row = int(item.get(SS + "Index")) - 1 if (item.get(SS + "Index") or "").isdigit() else row
             span = int(item.get(SS + "Span", "0") or 0) + 1
             for offset in range(span):
-                self.rows[row + offset] = {"height": item.get(SS + "Height"), "hidden": item.get(SS + "Hidden") == "1",
-                                           "style": item.get(SS + "StyleID")}
+                self.rows[row + offset] = {
+                    "height": item.get(SS + "Height"),
+                    "hidden": item.get(SS + "Hidden") == "1",
+                    "style": item.get(SS + "StyleID"),
+                }
             column = 0
             for cell in item.findall(SS + "Cell"):
                 column = int(cell.get(SS + "Index")) - 1 if (cell.get(SS + "Index") or "").isdigit() else column
                 across, down = int(cell.get(SS + "MergeAcross", "0") or 0), int(cell.get(SS + "MergeDown", "0") or 0)
                 data, note = cell.find(SS + "Data"), cell.find(SS + "Comment")
                 self.cells[(row, column)] = {
-                    "style": cell.get(SS + "StyleID") or self.rows[row]["style"] or self.columns.get(column, {}).get("style"),
-                    "across": across, "down": down, "href": cell.get(SS + "HRef"),
+                    "style": cell.get(SS + "StyleID")
+                    or self.rows[row]["style"]
+                    or self.columns.get(column, {}).get("style"),
+                    "across": across,
+                    "down": down,
+                    "href": cell.get(SS + "HRef"),
                     "rich": rich(data) if data is not None and len(data) else None,
                     "comment": comment_text(note) if note is not None else None,
-                    "author": note.get(SS + "Author", "") if note is not None else ""}
+                    "author": note.get(SS + "Author", "") if note is not None else "",
+                }
                 column += across + 1
             row += span
 
@@ -590,7 +734,7 @@ class Sheet:
             chain, current = [], ident
             while current and current not in chain and len(chain) < 16:
                 chain.append(current)
-                current = (self.styles.get(current).get(SS + "Parent") if self.styles.get(current) is not None else None)
+                current = self.styles.get(current).get(SS + "Parent") if self.styles.get(current) is not None else None
             props = style_props(self.styles.get("Default"), {})
             for item in reversed(chain):
                 if item != "Default":
@@ -606,14 +750,21 @@ def rich(data):
     def walk(element, depth=0):
         html = escape(element.text or "").replace("\n", "<br>")
         for child in element:
-            name = child.tag[len(HTML40):] if child.tag.startswith(HTML40) else ""
+            name = child.tag[len(HTML40) :] if child.tag.startswith(HTML40) else ""
             inner = walk(child, depth + 1) if depth < MAX_DEPTH else ""
             if name in tags:
                 html += f"<{tags[name]}>{inner}</{tags[name]}>"
             elif name == "Font":
-                pairs = [("color", hex_color(child.get(HTML40 + "Color"))),
-                         ("font-family", font_family([child.get(HTML40 + "Face")]) if child.get(HTML40 + "Face") else None),
-                         ("font-size", points(float(child.get(HTML40 + "Size"))) if re.fullmatch(r"[\d.]+", child.get(HTML40 + "Size") or "") else None)]
+                pairs = [
+                    ("color", hex_color(child.get(HTML40 + "Color"))),
+                    ("font-family", font_family([child.get(HTML40 + "Face")]) if child.get(HTML40 + "Face") else None),
+                    (
+                        "font-size",
+                        points(float(child.get(HTML40 + "Size")))
+                        if re.fullmatch(r"[\d.]+", child.get(HTML40 + "Size") or "")
+                        else None,
+                    ),
+                ]
                 style = css(pairs)
                 html += f'<span style="{attribute(style)}">{inner}</span>' if style else inner
             else:
@@ -652,10 +803,16 @@ def excel_cell_css(props, default, kind, color):
         pairs.append(("font-weight", "bold"))
     if props.get("italic") == "1":
         pairs.append(("font-style", "italic"))
-    lines = (["underline"] if props.get("underline") not in (None, "None") else []) + \
-            (["line-through"] if props.get("strike") == "1" else [])
+    lines = (["underline"] if props.get("underline") not in (None, "None") else []) + (
+        ["line-through"] if props.get("strike") == "1" else []
+    )
     if lines:
-        pairs.append(("text-decoration", " ".join(lines) + (" double" if (props.get("underline") or "").startswith("Double") else "")))
+        pairs.append(
+            (
+                "text-decoration",
+                " ".join(lines) + (" double" if (props.get("underline") or "").startswith("Double") else ""),
+            )
+        )
     shown = color or hex_color(props.get("color"))
     if shown and shown != hex_color(default.get("color")):
         pairs.append(("color", shown))
@@ -667,7 +824,9 @@ def excel_cell_css(props, default, kind, color):
         align = {"number": "right", "logical": "center"}.get(kind)
     if align:
         pairs.append(("text-align", align))
-    vertical = {"Top": "top", "Center": "middle", "Justify": "middle", "Distributed": "middle"}.get(props.get("vertical"))
+    vertical = {"Top": "top", "Center": "middle", "Justify": "middle", "Distributed": "middle"}.get(
+        props.get("vertical")
+    )
     if vertical:
         pairs.append(("vertical-align", vertical))
     if props.get("wrap") == "1":
@@ -696,8 +855,10 @@ def excel_html(workbook, tick=lambda: None, exports=None):
         tick()
         chart = charts.Item(index)
         name = one_line(read(chart, "Name", ""))
-        parts.append(f'<section class="sheet"><h2>{html_text(name or f"차트 시트 {index}")} (차트 시트)</h2>'
-                     f"{chart_picture(chart, name, exports)}{chart_html(chart, name)}</section>")
+        parts.append(
+            f'<section class="sheet"><h2>{html_text(name or f"차트 시트 {index}")} (차트 시트)</h2>'
+            f"{chart_picture(chart, name, exports)}{chart_html(chart, name)}</section>"
+        )
     return (exports.notice() if exports is not None else "") + "".join(parts)
 
 
@@ -715,12 +876,16 @@ def sheet_html(sheet, total, workbook=None, exports=None):
     if total[0] + cells > MAX_CELLS:
         kept = (MAX_CELLS - total[0]) // columns
         if kept < 1:  # charts and pictures hold no cells: they still come
-            return (f'<section class="sheet"><h2>{html_text(sheet.Name)}{hidden}</h2><p class="caption">통합 문서가 '
-                    f'커서 이 시트의 셀은 가져오지 않았습니다 (시트 사용 범위 합계 {MAX_CELLS:,}셀까지).</p>'
-                    f'{sheet_charts(sheet, exports)}{sheet_shapes(sheet, workbook, exports)}</section>')
+            return (
+                f'<section class="sheet"><h2>{html_text(sheet.Name)}{hidden}</h2><p class="caption">통합 문서가 '
+                f"커서 이 시트의 셀은 가져오지 않았습니다 (시트 사용 범위 합계 {MAX_CELLS:,}셀까지).</p>"
+                f"{sheet_charts(sheet, exports)}{sheet_shapes(sheet, workbook, exports)}</section>"
+            )
         used = sheet.Range(f"{column_name(left)}{top}:{column_name(left + columns - 1)}{top + kept - 1}")
-        cut = (f'<p class="caption">시트가 커서 {rows:,}행 중 앞 {kept:,}행만 가져왔습니다 '
-               f'(시트 사용 범위 합계 {MAX_CELLS:,}셀까지).</p>')
+        cut = (
+            f'<p class="caption">시트가 커서 {rows:,}행 중 앞 {kept:,}행만 가져왔습니다 '
+            f"(시트 사용 범위 합계 {MAX_CELLS:,}셀까지).</p>"
+        )
         rows, columns = used.Rows.Count, used.Columns.Count
         cells = rows * columns
     total[0] += cells
@@ -753,9 +918,16 @@ def sheet_html(sheet, total, workbook=None, exports=None):
             formula = formulas[r][c] if isinstance(formulas[r][c], str) and formulas[r][c].startswith("=") else ""
             if not (content or comment):
                 continue
-            kind = ("number" if isinstance(value, float) else "logical" if isinstance(value, (bool, int)) else "text")
-            grid[(r, c)] = {"content": content, "formula": formula, "kind": kind, "color": color, "props": props,
-                            "info": info, "noted": bool(comment)}
+            kind = "number" if isinstance(value, float) else "logical" if isinstance(value, (bool, int)) else "text"
+            grid[(r, c)] = {
+                "content": content,
+                "formula": formula,
+                "kind": kind,
+                "color": color,
+                "props": props,
+                "info": info,
+                "noted": bool(comment),
+            }
             for author, text in comment:
                 notes.append((address, author, text))
     # Formatting alone stretches the used range; rows and columns without a value are left out.
@@ -764,15 +936,20 @@ def sheet_html(sheet, total, workbook=None, exports=None):
     charts, shapes = sheet_charts(sheet, exports), sheet_shapes(sheet, workbook, exports)
     if not kept_rows and not charts and not shapes and not cut:
         return ""
-    html = [f"<section class=\"sheet\"><h2>{html_text(sheet.Name)}{hidden}</h2>{cut}"]
+    html = [f'<section class="sheet"><h2>{html_text(sheet.Name)}{hidden}</h2>{cut}']
     if kept_rows:
         if layout is None:
             html.append(f'<p class="caption">{PLAIN_CELLS}</p>')
         html.append(cells_table(grid, kept_rows, kept_columns, top, left, layout, default))
     if notes:
-        html.append('<div class="notes"><p class="caption">메모</p><ul>' + "".join(
-            f"<li>{escape(address)}{' · ' + html_text(author) if author else ''}: {html_text(text)}</li>"
-            for address, author, text in notes) + "</ul></div>")
+        html.append(
+            '<div class="notes"><p class="caption">메모</p><ul>'
+            + "".join(
+                f"<li>{escape(address)}{' · ' + html_text(author) if author else ''}: {html_text(text)}</li>"
+                for address, author, text in notes
+            )
+            + "</ul></div>"
+        )
     html.append(charts + shapes + "</section>")
     return "".join(html)
 
@@ -781,9 +958,16 @@ def cells_table(grid, kept_rows, kept_columns, top, left, layout, default):
     """The grid with column letters and row numbers, so the cell addresses formulas refer to stay."""
     kept_row_set, kept_column_set = set(kept_rows), set(kept_columns)
     covered = set()
-    style = css([("font-family", font_family([default["font"]]) if default.get("font") else None),
-                 ("font-size", points(float(default["size"])) if re.fullmatch(r"[\d.]+", default.get("size") or "") else None),
-                 ("color", hex_color(default.get("color")))])
+    style = css(
+        [
+            ("font-family", font_family([default["font"]]) if default.get("font") else None),
+            (
+                "font-size",
+                points(float(default["size"])) if re.fullmatch(r"[\d.]+", default.get("size") or "") else None,
+            ),
+            ("color", hex_color(default.get("color"))),
+        ]
+    )
     html = [f'<table class="cells"{f" style={chr(34)}{attribute(style)}{chr(34)}" if style else ""}><colgroup><col>']
     for c in kept_columns:
         width = (layout.columns.get(c, {}).get("width") if layout else None) or ""
@@ -797,8 +981,9 @@ def cells_table(grid, kept_rows, kept_columns, top, left, layout, default):
     for r in kept_rows:
         row = layout.rows.get(r, {}) if layout else {}
         height = row.get("height") or ""
-        attributes = (' class="hidden" title="숨긴 행"' if row.get("hidden") else "") + \
-            (f' style="height:{points(float(height))}"' if re.fullmatch(r"[\d.]+", height) else "")
+        attributes = (' class="hidden" title="숨긴 행"' if row.get("hidden") else "") + (
+            f' style="height:{points(float(height))}"' if re.fullmatch(r"[\d.]+", height) else ""
+        )
         html.append(f"<tr{attributes}><th>{top + r}</th>")
         for c in kept_columns:
             if (r, c) in covered:
@@ -818,9 +1003,16 @@ def cells_table(grid, kept_rows, kept_columns, top, left, layout, default):
                 look = excel_cell_css(props, default, "text", None) if props else ""
                 html.append(f"<td{spans}{f' style={chr(34)}{attribute(look)}{chr(34)}' if look else ''}></td>")
                 continue
-            look = excel_cell_css(cell["props"], default, cell["kind"], cell["color"]) if layout else \
-                ("text-align:right" if cell["kind"] == "number" else "")
-            formula = f' data-formula="{attribute(cell["formula"])}" title="{attribute(cell["formula"])}"' if cell["formula"] else ""
+            look = (
+                excel_cell_css(cell["props"], default, cell["kind"], cell["color"])
+                if layout
+                else ("text-align:right" if cell["kind"] == "number" else "")
+            )
+            formula = (
+                f' data-formula="{attribute(cell["formula"])}" title="{attribute(cell["formula"])}"'
+                if cell["formula"]
+                else ""
+            )
             content = cell["content"]
             href = info.get("href")
             if href and re.match(r"(https?|mailto):", href, re.I):
@@ -829,7 +1021,9 @@ def cells_table(grid, kept_rows, kept_columns, top, left, layout, default):
                 content = f'<span title="{attribute(href)}">{content}</span>'
             if cell["noted"]:
                 content += '<span class="note-mark" title="메모">◥</span>'
-            html.append(f"<td{spans}{formula}{f' style={chr(34)}{attribute(look)}{chr(34)}' if look else ''}>{content}</td>")
+            html.append(
+                f"<td{spans}{formula}{f' style={chr(34)}{attribute(look)}{chr(34)}' if look else ''}>{content}</td>"
+            )
         html.append("</tr>")
     html.append("</table>")
     return "".join(html)
@@ -865,8 +1059,12 @@ def chart_html(chart, name=""):
             item = collection.Item(index)
             for position, label in enumerate(as_tuple(read(item, "XValues"))):
                 labels.setdefault(position, cell_text(label))
-            series.append((one_line(read(item, "Name", "")) or f"계열 {index}",
-                           {position: cell_text(value) for position, value in enumerate(as_tuple(read(item, "Values")))}))
+            series.append(
+                (
+                    one_line(read(item, "Name", "")) or f"계열 {index}",
+                    {position: cell_text(value) for position, value in enumerate(as_tuple(read(item, "Values")))},
+                )
+            )
         return chart_table(title or name, kind, labels, series)
     except Exception:
         return f"<p>{images.missing(f'[차트: {name}] 데이터를 읽지 못했습니다' if name else '[차트] 데이터를 읽지 못했습니다')}</p>"
@@ -878,7 +1076,9 @@ def chart_picture(chart, name, exports):
     if found is None:
         return ""
     kind, data, size = found
-    return f'<figure class="chart">{images.img(kind, data, f"차트: {name}" if name else "차트", *(size or ()))}</figure>'
+    return (
+        f'<figure class="chart">{images.img(kind, data, f"차트: {name}" if name else "차트", *(size or ()))}</figure>'
+    )
 
 
 def sheet_charts(sheet, exports=None):
@@ -963,8 +1163,11 @@ def sheet_shapes(sheet, workbook=None, exports=None):
         entries.extend(shape_entries(item, 0, pictures))
     if not entries:
         return ""
-    cut = (f'<p class="caption">도형이 많아 {count:,}개 중 앞 {MAX_SHEET_SHAPES:,}개만 적었습니다.</p>'
-           if count > MAX_SHEET_SHAPES else "")
+    cut = (
+        f'<p class="caption">도형이 많아 {count:,}개 중 앞 {MAX_SHEET_SHAPES:,}개만 적었습니다.</p>'
+        if count > MAX_SHEET_SHAPES
+        else ""
+    )
     return f'<div class="notes"><p class="caption">그림·도형</p>{cut}<ul>' + "".join(entries) + "</ul></div>"
 
 
@@ -976,11 +1179,16 @@ def shape_words(shape, depth=0):
             return ""
         if kind == 6:  # msoGroup
             items = shape.GroupItems
-            return " / ".join(filter(None, (shape_words(items.Item(index), depth + 1) for index in range(1, items.Count + 1))))
+            return " / ".join(
+                filter(None, (shape_words(items.Item(index), depth + 1) for index in range(1, items.Count + 1)))
+            )
         if kind == 24 and read(shape, "HasSmartArt") == TRUE:
             nodes = shape.SmartArt.AllNodes
-            return " / ".join(filter(None, (one_line(nodes.Item(index).TextFrame2.TextRange.Text)
-                                             for index in range(1, nodes.Count + 1))))
+            return " / ".join(
+                filter(
+                    None, (one_line(nodes.Item(index).TextFrame2.TextRange.Text) for index in range(1, nodes.Count + 1))
+                )
+            )
         frame = read(shape, "TextFrame2")
         return one_line(read(read(frame, "TextRange"), "Text", "")) if read(frame, "HasText") == TRUE else ""
     except Exception:
@@ -993,8 +1201,9 @@ def form_control(shape):
     kind = read(shape, "FormControlType")
     control = read(shape, "ControlFormat")
     value = read(control, "Value")
-    caption = one_line(read(read(read(shape, "OLEFormat"), "Object"), "Caption", "")) \
-        or one_line(read(shape, "AlternativeText", ""))
+    caption = one_line(read(read(read(shape, "OLEFormat"), "Object"), "Caption", "")) or one_line(
+        read(shape, "AlternativeText", "")
+    )
     if kind == 1:  # xlCheckBox: xlOn 1, xlMixed 2, xlOff -4146
         return f"{CHECK_MARKS.get(value, '☐')} {caption}".rstrip()
     if kind == 7:  # xlOptionButton
@@ -1049,6 +1258,7 @@ def shape_entries(shape, depth, pictures=None):
 
 
 # --- PowerPoint -----------------------------------------------------------------------------------
+
 
 def run_css(font):
     """The CSS of a PowerPoint text run's font."""
@@ -1125,9 +1335,15 @@ def text_html(text_range):
             continue
         form = read(paragraph, "ParagraphFormat")
         level = read(paragraph, "IndentLevel", 1)
-        style = css([("margin-left", points((level - 1) * 18) if isinstance(level, int) and level > 1 else None),
-                     ("text-align", POWERPOINT_ALIGN.get(read(form, "Alignment")))])
-        html.append(f'<p{f" style={chr(34)}{attribute(style)}{chr(34)}" if style else ""}>{bullet_label(form)}{content}</p>')
+        style = css(
+            [
+                ("margin-left", points((level - 1) * 18) if isinstance(level, int) and level > 1 else None),
+                ("text-align", POWERPOINT_ALIGN.get(read(form, "Alignment"))),
+            ]
+        )
+        html.append(
+            f"<p{f' style={chr(34)}{attribute(style)}{chr(34)}' if style else ''}>{bullet_label(form)}{content}</p>"
+        )
     return "".join(html)
 
 
@@ -1194,9 +1410,17 @@ def shape_html(shape, depth=0, pictured=False):
     if kind in (11, 13) or contained == 13:  # msoLinkedPicture, msoPicture
         return "" if pictured else f'<p class="shape">{images.missing(f"[그림: {label}]" if label else "[그림]")}</p>'
     if kind == 16:  # msoMedia
-        return "" if pictured else f'<p class="shape">{images.missing(f"[동영상·소리: {label}]" if label else "[동영상·소리]")}</p>'
+        return (
+            ""
+            if pictured
+            else f'<p class="shape">{images.missing(f"[동영상·소리: {label}]" if label else "[동영상·소리]")}</p>'
+        )
     if kind in (7, 10):  # msoEmbeddedOLEObject, msoLinkedOLEObject
-        return "" if pictured else f'<p class="shape">{images.missing(f"[삽입된 개체: {label}]" if label else "[삽입된 개체]")}</p>'
+        return (
+            ""
+            if pictured
+            else f'<p class="shape">{images.missing(f"[삽입된 개체: {label}]" if label else "[삽입된 개체]")}</p>'
+        )
     if shape.HasTextFrame and shape.TextFrame.HasText:
         return f'<div class="shape">{text_html(shape.TextFrame.TextRange)}</div>'
     return ""
@@ -1237,8 +1461,10 @@ def slide_size(presentation):
     """((width, height) px a slide's picture is exported at, (width, height) px it is shown at), or None."""
     setup = read(presentation, "PageSetup")
     width, height = read(setup, "SlideWidth"), read(setup, "SlideHeight")
-    if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < 100000
-               for value in (width, height)):
+    if not all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < 100000
+        for value in (width, height)
+    ):
         return None
     scale = SLIDE_SIDE / max(width, height)
     return (round(width * scale), round(height * scale)), (width * 4 / 3, height * 4 / 3)
@@ -1276,8 +1502,10 @@ def powerpoint_html(presentation, tick=lambda: None, exports=None):
                 body.append(shape_html(shape, pictured=bool(figure)))
         hidden = read(read(slide, "SlideShowTransition"), "Hidden") == TRUE
         heading = f"슬라이드 {index} · {title}" if title else f"슬라이드 {index}"
-        parts.append(f'<section class="slide{" hidden" if hidden else ""}">'
-                     f"<h2>{html_text(heading)}{' (숨긴 슬라이드)' if hidden else ''}</h2>{figure}{''.join(body)}")
+        parts.append(
+            f'<section class="slide{" hidden" if hidden else ""}">'
+            f"<h2>{html_text(heading)}{' (숨긴 슬라이드)' if hidden else ''}</h2>{figure}{''.join(body)}"
+        )
         notes = slide.NotesPage.Shapes
         for note_index in range(1, notes.Count + 1):
             shape = notes.Item(note_index)
@@ -1291,6 +1519,7 @@ def powerpoint_html(presentation, tick=lambda: None, exports=None):
 
 
 # --- Visio ----------------------------------------------------------------------------------------
+
 
 def connector_ends(shape):
     """IDs of the shapes glued to a connector's begin and end; None for a free end."""
@@ -1316,7 +1545,9 @@ def shape_data(shape):
                 value = shape.CellsSRC(VISIO_DATA, row, VISIO_VALUE)
                 text = one_line(value.ResultStr(""))
                 if text:
-                    rows.append((one_line(shape.CellsSRC(VISIO_DATA, row, VISIO_LABEL).ResultStr("")) or value.RowName, text))
+                    rows.append(
+                        (one_line(shape.CellsSRC(VISIO_DATA, row, VISIO_LABEL).ResultStr("")) or value.RowName, text)
+                    )
     except Exception:
         # Shape Data only adds to a shape; one whose ShapeSheet cannot be read keeps its text and links.
         pass
@@ -1385,13 +1616,17 @@ def visio_page(page, number, tick, counted, exports):
         html.append(f"<h3>도형 텍스트</h3><ul>{''.join(items)}</ul>")
     if links:
         html.append("<h3>연결</h3><ul>")
-        html.extend(f"<li>{html_text(f'{label(begin)} → {label(end)}' + (f': {text}' if text else ''))}</li>"
-                    for (begin, end), text in links)
+        html.extend(
+            f"<li>{html_text(f'{label(begin)} → {label(end)}' + (f': {text}' if text else ''))}</li>"
+            for (begin, end), text in links
+        )
         html.append("</ul>")
     if data:
         html.append('<h3>도형 데이터</h3><table class="grid"><tr><th>도형</th><th>항목</th><th>값</th></tr>')
-        html.extend(f"<tr><td>{html_text(label(ident))}</td><td>{html_text(key)}</td><td>{html_text(value)}</td></tr>"
-                    for ident, key, value in data)
+        html.extend(
+            f"<tr><td>{html_text(label(ident))}</td><td>{html_text(key)}</td><td>{html_text(value)}</td></tr>"
+            for ident, key, value in data
+        )
         html.append("</table>")
     return "".join(html) + "</section>"
 

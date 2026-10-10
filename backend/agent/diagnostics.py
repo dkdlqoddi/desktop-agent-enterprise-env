@@ -2,6 +2,7 @@
 addresses or credentials; this log in the app's settings folder keeps the exception, its traceback and the short ID
 that ends the message, so a failure on a user's PC can be found again and reported. It holds no request parameters
 and no document text, only exceptions, whose messages may name files."""
+
 import errno
 import logging
 import logging.handlers
@@ -34,8 +35,14 @@ LOG_ID = re.compile(r"\s*\(오류 ID [0-9a-f]{8}\)")
 SECRETS = (
     (re.compile(r"\bpa_[A-Za-z0-9_-]{6,}"), "pa_[REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "sk-[REDACTED]"),
-    (re.compile(r"\b(password|passwd|pwd|api[_-]?key|x-api-key|authorization|token|secret|cookie)\b"
-                r"(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)", re.I), r"\1\2[REDACTED]"),
+    (
+        re.compile(
+            r"\b(password|passwd|pwd|api[_-]?key|x-api-key|authorization|token|secret|cookie)\b"
+            r"(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)",
+            re.I,
+        ),
+        r"\1\2[REDACTED]",
+    ),
     (re.compile(r"\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}", re.I), r"\1 [REDACTED]"),
 )
 
@@ -71,7 +78,8 @@ def start(directory):
     LOG.setLevel(level())
     # A FileHandler is a StreamHandler too: only a plain one is the error output.
     if os.environ.get("PRIVATE_AGENT_LOG_CONSOLE") == "1" and not any(
-            type(handler) is logging.StreamHandler for handler in LOG.handlers):
+        type(handler) is logging.StreamHandler for handler in LOG.handlers
+    ):
         console = logging.StreamHandler(sys.stderr)
         console.setFormatter(Redacting(FORMAT))
         LOG.addHandler(console)
@@ -79,8 +87,9 @@ def start(directory):
         return
     try:
         Path(directory).mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(Path(directory) / "backend.log", maxBytes=MAX_BYTES,
-                                                       backupCount=BACKUPS, encoding="utf-8", delay=True)
+        handler = logging.handlers.RotatingFileHandler(
+            Path(directory) / "backend.log", maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8", delay=True
+        )
     except OSError:
         return
     handler.setFormatter(Redacting(FORMAT))

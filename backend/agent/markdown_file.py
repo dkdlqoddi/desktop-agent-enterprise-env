@@ -1,6 +1,7 @@
 """Markdown (.md, .markdown) files as Wiki documents: the text of a UTF-8 file as it is. The import box hands the path
 over through Electron (files.import_text); the file is kept as the document's source like any other import, so an
 import of the same path again updates the document. A text longer than one document holds is saved in parts."""
+
 import hashlib
 from pathlib import Path
 
@@ -22,7 +23,9 @@ def import_file(service, params):
         raise UserError("파일의 전체 경로를 입력해 주세요.")
     try:
         if not file.is_file():
-            raise UserError("파일 경로를 입력해 주세요." if file.exists() else "파일을 찾을 수 없습니다. 경로를 확인해 주세요.")
+            raise UserError(
+                "파일 경로를 입력해 주세요." if file.exists() else "파일을 찾을 수 없습니다. 경로를 확인해 주세요."
+            )
         stat = sources.file_stat(file)
         if stat[0] > MAX_SOURCE_BYTES:
             raise UserError("Markdown 파일이 10MB를 초과해 가져오지 않았습니다.")
@@ -45,16 +48,32 @@ def import_file(service, params):
         db.execute("BEGIN IMMEDIATE")
         # The file is told apart by its bytes, as the document window checks it; one whose text stayed (only its line
         # breaks or byte order mark changed) keeps its document and analysis and records its new bytes.
-        found = sources.plan(db, "markdown_sources", path, {"source_hash": checksum}, target, replace, split,
-                             automatic=bool(params.get("routine")), stat=stat)
+        found = sources.plan(
+            db,
+            "markdown_sources",
+            path,
+            {"source_hash": checksum},
+            target,
+            replace,
+            split,
+            automatic=bool(params.get("routine")),
+            stat=stat,
+        )
         known = {"source_size": stat[0], "source_mtime": stat[1]}
         if found.action == "skip":
             if found.reason == "same":
                 sources.touch(db, "markdown_sources", found.rows, known, path)
             result = sources.skipped(found, "이미 가져온 동일한 Markdown 파일입니다.")
         else:
-            ids, removed = sources.save(db, "markdown_sources", found, split, title, timestamp,
-                                        {"source_path": path, "source_hash": checksum, **known})
+            ids, removed = sources.save(
+                db,
+                "markdown_sources",
+                found,
+                split,
+                title,
+                timestamp,
+                {"source_path": path, "source_hash": checksum, **known},
+            )
             result = sources.outcome(found, split, ids, removed, "Markdown 문서를 Wiki에 저장했습니다.", "Markdown")
         # A source whose documents were purged has none left to name.
         row = db.execute("SELECT title FROM documents WHERE id=?", (result["doc_id"],)).fetchone()

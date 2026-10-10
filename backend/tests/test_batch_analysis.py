@@ -28,19 +28,37 @@ def test_chosen_documents_are_analyzed_one_after_another(service):
     job = service.dispatch("analysis.start", {"ids": ids + [ids[0]]})
     assert (job["status"], job["total"]) == ("running", 3)
     job = finished(service)
-    assert {k: job[k] for k in ("status", "processed", "analyzed", "skipped", "failed", "current", "queue")} == \
-        {"status": "completed", "processed": 3, "analyzed": 3, "skipped": 0, "failed": 0, "current": None, "queue": []}
+    assert {k: job[k] for k in ("status", "processed", "analyzed", "skipped", "failed", "current", "queue")} == {
+        "status": "completed",
+        "processed": 3,
+        "analyzed": 3,
+        "skipped": 0,
+        "failed": 0,
+        "current": None,
+        "queue": [],
+    }
     assert job["results"] == []
     docs = {doc["id"]: doc for doc in service.wiki_list({})}
-    assert [(docs[i]["status"], docs[i]["index_mode"]) for i in ids] == \
-        [("ready", "wiki"), ("ready", "pageindex"), ("ready", "wiki")]
+    assert [(docs[i]["status"], docs[i]["index_mode"]) for i in ids] == [
+        ("ready", "wiki"),
+        ("ready", "pageindex"),
+        ("ready", "wiki"),
+    ]
     # In the order chosen, each document's extraction before the next one starts.
-    assert [content.split("\n")[0] for stage, _, content in service.llm.calls if stage == "extract"] == \
-        ["제목: 첫 문서", "제목: 긴 문서", "제목: 세 번째"]
+    assert [content.split("\n")[0] for stage, _, content in service.llm.calls if stage == "extract"] == [
+        "제목: 첫 문서",
+        "제목: 긴 문서",
+        "제목: 세 번째",
+    ]
 
 
 def test_failed_deleted_and_busy_documents_are_reported_and_the_rest_analyzed(service):
-    ids = [save(service, "실패할 문서"), save(service, "지운 문서"), save(service, "분석 중인 문서"), save(service, "성공할 문서")]
+    ids = [
+        save(service, "실패할 문서"),
+        save(service, "지운 문서"),
+        save(service, "분석 중인 문서"),
+        save(service, "성공할 문서"),
+    ]
     original = service.llm.structured
 
     def structured(system, content):
@@ -54,12 +72,18 @@ def test_failed_deleted_and_busy_documents_are_reported_and_the_rest_analyzed(se
         db.execute("UPDATE documents SET status='indexing' WHERE id=?", (ids[2],))
     service.analysis.start({"ids": ids})
     job = finished(service)
-    assert {k: job[k] for k in ("status", "processed", "analyzed", "skipped", "failed")} == \
-        {"status": "completed", "processed": 4, "analyzed": 1, "skipped": 2, "failed": 1}
+    assert {k: job[k] for k in ("status", "processed", "analyzed", "skipped", "failed")} == {
+        "status": "completed",
+        "processed": 4,
+        "analyzed": 1,
+        "skipped": 2,
+        "failed": 1,
+    }
     assert [(r["id"], r["title"], r["status"], r["message"]) for r in job["results"]] == [
         (ids[0], "실패할 문서", "failed", "LLM 응답 형식이 올바르지 않습니다."),
         (ids[1], "", "skipped", "삭제된 문서입니다."),
-        (ids[2], "분석 중인 문서", "skipped", "다른 작업이 분석하고 있는 문서입니다.")]
+        (ids[2], "분석 중인 문서", "skipped", "다른 작업이 분석하고 있는 문서입니다."),
+    ]
     assert service.wiki_get({"id": ids[0]})["status"] == "error"
     assert service.wiki_get({"id": ids[2]})["status"] == "indexing"
     assert service.wiki_get({"id": ids[3]})["status"] == "ready"
@@ -88,7 +112,11 @@ def test_a_stopped_run_ends_after_the_document_being_analyzed(service):
     assert job["status"] == "cancelling" and job["queue"] == []
     release.set()
     job = finished(service)
-    assert {k: job[k] for k in ("status", "processed", "analyzed")} == {"status": "cancelled", "processed": 1, "analyzed": 1}
+    assert {k: job[k] for k in ("status", "processed", "analyzed")} == {
+        "status": "cancelled",
+        "processed": 1,
+        "analyzed": 1,
+    }
     assert [service.wiki_get({"id": i})["status"] for i in ids] == ["ready", "pending", "pending"]
     # A finished run is cleared for every screen, and the next one may start.
     assert "dismissed" not in service.analysis.dismiss({"id": "another"})
@@ -120,8 +148,13 @@ def test_documents_an_import_saved_join_a_run_under_way(service):
     assert (job["total"], job["queue"]) == (4, ids + [imported, ids[0]])
     release.set()
     job = finished(service)
-    assert {k: job[k] for k in ("status", "processed", "analyzed", "failed", "queue")} == \
-        {"status": "completed", "processed": 4, "analyzed": 4, "failed": 0, "queue": []}
+    assert {k: job[k] for k in ("status", "processed", "analyzed", "failed", "queue")} == {
+        "status": "completed",
+        "processed": 4,
+        "analyzed": 4,
+        "failed": 0,
+        "queue": [],
+    }
     assert service.wiki_get({"id": imported})["status"] == "ready"
     # A run that has ended takes nothing more: the documents start a run of their own.
     service.llm.structured = original

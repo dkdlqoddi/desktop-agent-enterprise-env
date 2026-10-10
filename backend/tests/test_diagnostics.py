@@ -37,6 +37,7 @@ def test_a_user_error_speaks_for_itself_and_is_not_logged(log):
 def test_an_unexpected_failure_is_logged_with_its_traceback_under_the_id_its_message_ends_with(log):
     def convert():
         return {}["page"]
+
     try:
         convert()
     except KeyError as error:
@@ -53,13 +54,16 @@ def test_an_unexpected_failure_is_logged_with_its_traceback_under_the_id_its_mes
     assert diagnostics.without_ids(f"가져오지 못했습니다: {message}") == "가져오지 못했습니다: 파일을 읽지 못했습니다."
 
 
-@pytest.mark.parametrize("error, says", [
-    (sqlite3.OperationalError("database is locked"), "다른 작업이나 프로그램"),
-    (sqlite3.OperationalError("database or disk is full"), "디스크 공간"),
-    (sqlite3.OperationalError("disk I/O error"), "드라이브의 연결과 권한"),
-    (OSError(28, "No space left on device"), "디스크 공간"),
-    (PermissionError(13, "Permission denied"), "권한"),
-])
+@pytest.mark.parametrize(
+    "error, says",
+    [
+        (sqlite3.OperationalError("database is locked"), "다른 작업이나 프로그램"),
+        (sqlite3.OperationalError("database or disk is full"), "디스크 공간"),
+        (sqlite3.OperationalError("disk I/O error"), "드라이브의 연결과 권한"),
+        (OSError(28, "No space left on device"), "디스크 공간"),
+        (PermissionError(13, "Permission denied"), "권한"),
+    ],
+)
 def test_a_failure_the_user_can_act_on_gets_its_own_message(log, error, says):
     message = diagnostics.report(error, "일반", "저장")
     assert says in message and ID.search(message)
@@ -73,8 +77,10 @@ def test_a_worker_failure_is_logged_only_with_a_traceback(log):
 
 
 def test_secrets_an_exception_carries_are_redacted_in_the_log(log):
-    error = RuntimeError('POST https://llm.example/v1?api_key=sk-abcdef123456 failed: {"password": "p@ss word", '
-                         '"headers": {"Authorization": "Bearer eyJhbGciOi.payload", "token": "pa_1234567890abcdef"}}')
+    error = RuntimeError(
+        'POST https://llm.example/v1?api_key=sk-abcdef123456 failed: {"password": "p@ss word", '
+        '"headers": {"Authorization": "Bearer eyJhbGciOi.payload", "token": "pa_1234567890abcdef"}}'
+    )
     message = diagnostics.report(error, "일반", "LLM 요청")
     assert "sk-abcdef123456" not in message
     logged = text(log)
@@ -82,7 +88,9 @@ def test_secrets_an_exception_carries_are_redacted_in_the_log(log):
         assert secret not in logged, secret
     assert "[REDACTED]" in logged and "llm.example" in logged
     # The patterns as such: the name of the secret stays, its value goes; ordinary words with those letters stay.
-    assert diagnostics.redact("x-api-key: abc123, cookie=sid=1; next") == "x-api-key: [REDACTED], cookie=[REDACTED]; next"
+    assert (
+        diagnostics.redact("x-api-key: abc123, cookie=sid=1; next") == "x-api-key: [REDACTED], cookie=[REDACTED]; next"
+    )
     assert diagnostics.redact("the token count is 12") == "the token count is 12"
 
 
@@ -96,11 +104,13 @@ def test_an_import_that_breaks_unexpectedly_says_where_to_look(tmp_path, log):
     class FakeLLM:
         def public(self):
             return {"configured": True}
+
     service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
     importer = RtfImporter(service, converter=lambda *args: "", capability_check=lambda: {"available": True})
 
     def broken(file, *_):
         raise RuntimeError("converter bug")
+
     importer._one = broken
     source = tmp_path / "report.rtf"
     source.write_bytes(b"x")
@@ -112,8 +122,16 @@ def test_an_import_that_breaks_unexpectedly_says_where_to_look(tmp_path, log):
     assert f"RTF 문서 가져오기 · 오류 ID {ident}" in text(log) and "RuntimeError: converter bug" in text(log)
 
 
-@pytest.mark.parametrize("name,expected", [("debug", logging.DEBUG), (" WARNING ", logging.WARNING),
-                                           ("error", logging.ERROR), ("", logging.INFO), ("verbose", logging.INFO)])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("debug", logging.DEBUG),
+        (" WARNING ", logging.WARNING),
+        ("error", logging.ERROR),
+        ("", logging.INFO),
+        ("verbose", logging.INFO),
+    ],
+)
 def test_the_log_level_is_named_by_private_agent_log_level(name, expected):
     assert diagnostics.level(name) == expected
 

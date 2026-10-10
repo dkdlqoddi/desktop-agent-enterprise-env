@@ -3,6 +3,7 @@
 A page carries everything it shows: formatting as inline styles, the stylesheet below in its head and
 images as data: URIs. It loads nothing from elsewhere, so it looks the same in the app and as a
 downloaded .html file. Search, PageIndex and the LLM read a Markdown text made from the same page."""
+
 import re
 from html import escape
 
@@ -56,8 +57,10 @@ STYLE = """
 def page(title, body, kind, style=""):
     """The page of one imported file; `kind` (word, excel, powerpoint, visio, image, text) selects its stylesheet."""
     root = f' style="{escape(style)}"' if style else ""
-    return (f'<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>{escape(title)}</title>'
-            f'<style>{STYLE}</style></head><body><div class="doc {kind}"{root}>{body}</div></body></html>')
+    return (
+        f'<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>{escape(title)}</title>'
+        f'<style>{STYLE}</style></head><body><div class="doc {kind}"{root}>{body}</div></body></html>'
+    )
 
 
 def validate_html(html):
@@ -120,8 +123,11 @@ def page_text(html):
         cell.append("수식: ")
         cell.append(code)
     clean_soup(soup)
-    return IndexConverter(heading_style="ATX", bullets="-", escape_misc=True, autolinks=False,
-                          table_infer_header=False).convert_soup(soup).strip()
+    return (
+        IndexConverter(heading_style="ATX", bullets="-", escape_misc=True, autolinks=False, table_infer_header=False)
+        .convert_soup(soup)
+        .strip()
+    )
 
 
 def chart_table(title, kinds, labels, series):
@@ -132,9 +138,14 @@ def chart_table(title, kinds, labels, series):
     if not series:
         return f'<figure class="chart"><figcaption>{escape(heading)}</figcaption></figure>'
     head = "<tr><th>항목</th>" + "".join(f"<th>{escape(name)}</th>" for name, _ in series) + "</tr>"
-    rows = "".join("<tr><th>" + escape(labels.get(index, str(index + 1))) + "</th>"
-                   + "".join(f"<td>{escape(values.get(index, ''))}</td>" for _, values in series) + "</tr>"
-                   for index in indices)
+    rows = "".join(
+        "<tr><th>"
+        + escape(labels.get(index, str(index + 1)))
+        + "</th>"
+        + "".join(f"<td>{escape(values.get(index, ''))}</td>" for _, values in series)
+        + "</tr>"
+        for index in indices
+    )
     return f'<figure class="chart"><figcaption>{escape(heading)}</figcaption><table class="grid">{head}{rows}</table></figure>'
 
 

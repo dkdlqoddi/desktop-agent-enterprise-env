@@ -10,6 +10,7 @@ progress report or a saved search (query), and may import the tickets the routin
 A routine's import asks for a ticket's updated time first, or takes it from the search that found the ticket: one not
 updated since the Wiki took it, read in full within sources.RECHECK, is not read again.
 """
+
 import asyncio
 import contextlib
 import json
@@ -19,8 +20,22 @@ from urllib.parse import quote, urlencode
 
 from . import diagnostics, sources
 from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page, polite
-from .jira import (FORMAT_ERROR, KEY, PROJECT, brief, build_html, comment_item, import_issue, jql_string,
-                   parse_issue_url, project_of, safe_prefix, search_jql, site_of, ticket_page)
+from .jira import (
+    FORMAT_ERROR,
+    KEY,
+    PROJECT,
+    brief,
+    build_html,
+    comment_item,
+    import_issue,
+    jql_string,
+    parse_issue_url,
+    project_of,
+    safe_prefix,
+    search_jql,
+    site_of,
+    ticket_page,
+)
 from .llm import BusyError, UserError
 from .service import routine_name, text
 from .web_login import origin_of, sign_in, signed_in, validate_plan, with_scheme
@@ -65,9 +80,12 @@ FETCH_JSON = """async ({url, limit}) => {
 
 class ApiError(UserError):
     def __init__(self, status, detail=""):
-        hint = {401: "로그인이 필요합니다.", 403: "접근 권한이 없습니다.", 404: "티켓이 없거나 볼 권한이 없습니다.",
-                429: "요청이 너무 많다며 JIRA가 거절했습니다. 잠시 후 다시 시도해 주세요."}.get(
-            status, "로그인·접근 권한·REST API 사용 가능 여부를 확인해 주세요.")
+        hint = {
+            401: "로그인이 필요합니다.",
+            403: "접근 권한이 없습니다.",
+            404: "티켓이 없거나 볼 권한이 없습니다.",
+            429: "요청이 너무 많다며 JIRA가 거절했습니다. 잠시 후 다시 시도해 주세요.",
+        }.get(status, "로그인·접근 권한·REST API 사용 가능 여부를 확인해 주세요.")
         super().__init__(f"JIRA 데이터를 읽지 못했습니다 (HTTP {status}). {detail or hint}")
         self.status = status
 
@@ -82,8 +100,9 @@ class JiraApi:
         """A REST answer of JIRA, within the site's rate; one JIRA refuses as too many is waited out and asked again
         (browser_import.polite). The address is the site's own path, so the rate is counted by the page's host."""
         url = f"{self.base}/rest/api/2/{resource}" + (f"?{urlencode(params, quote_via=quote)}" if params else "")
-        result = await polite(self.page.url, lambda: self.page.evaluate(
-            FETCH_JSON, {"url": url, "limit": MAX_RESPONSE_CHARS}))
+        result = await polite(
+            self.page.url, lambda: self.page.evaluate(FETCH_JSON, {"url": url, "limit": MAX_RESPONSE_CHARS})
+        )
         status, body = result.get("status"), result.get("text")
         if body is None:
             raise UserError("JIRA 응답이 20MB를 초과합니다.")
@@ -101,7 +120,9 @@ class JiraApi:
                 reasons += list(data["errors"].values()) if isinstance(data.get("errors"), dict) else []
             raise ApiError(status, " ".join(r for r in reasons if isinstance(r, str))[:300])
         if not isinstance(data, dict):
-            raise UserError("JIRA 데이터 대신 로그인 화면 또는 잘못된 응답을 받았습니다. 로그인이 풀렸거나 권한이 없을 수 있습니다.")
+            raise UserError(
+                "JIRA 데이터 대신 로그인 화면 또는 잘못된 응답을 받았습니다. 로그인이 풀렸거나 권한이 없을 수 있습니다."
+            )
         return data
 
     async def issue(self, key):
@@ -121,7 +142,9 @@ class JiraApi:
             return [comment_item(c, bodies.get(c.get("id"))) for c in items], total
         found, start = [], 0
         while True:
-            body = await self.get(f"issue/{issue['key']}/comment", {"startAt": start, "maxResults": 100, "expand": "renderedBody"})
+            body = await self.get(
+                f"issue/{issue['key']}/comment", {"startAt": start, "maxResults": 100, "expand": "renderedBody"}
+            )
             values = body.get("comments")
             if not isinstance(values, list) or body.get("startAt") != start or not isinstance(body.get("total"), int):
                 raise UserError("댓글 목록의 페이지 정보를 확인하지 못했습니다.")
@@ -142,11 +165,15 @@ class JiraApi:
         while len(found) < limit:
             size = min(100, limit - len(found))
             if cursor:
-                body = await self.get("search/jql", {"jql": jql, "fields": fields, "maxResults": size,
-                                                     **({"nextPageToken": token} if token else {})})
+                body = await self.get(
+                    "search/jql",
+                    {"jql": jql, "fields": fields, "maxResults": size, **({"nextPageToken": token} if token else {})},
+                )
             else:
                 try:
-                    body = await self.get("search", {"jql": jql, "fields": fields, "startAt": start, "maxResults": size})
+                    body = await self.get(
+                        "search", {"jql": jql, "fields": fields, "startAt": start, "maxResults": size}
+                    )
                 except ApiError as error:
                     if start or error.status not in (404, 405, 410):
                         raise
@@ -192,11 +219,15 @@ class JiraApi:
         found, start, token, tokens, cursor = {}, 0, None, set(), False
         while True:
             if cursor:
-                body = await self.get("search/jql", {"jql": jql, "fields": "summary", "maxResults": 100,
-                                                     **({"nextPageToken": token} if token else {})})
+                body = await self.get(
+                    "search/jql",
+                    {"jql": jql, "fields": "summary", "maxResults": 100, **({"nextPageToken": token} if token else {})},
+                )
             else:
                 try:
-                    body = await self.get("search", {"jql": jql, "fields": "summary", "startAt": start, "maxResults": 100})
+                    body = await self.get(
+                        "search", {"jql": jql, "fields": "summary", "startAt": start, "maxResults": 100}
+                    )
                 except ApiError as error:
                     # Newer JIRA Cloud replaced /search with the cursor-based /search/jql.
                     if start or error.status not in (404, 405, 410):
@@ -208,7 +239,9 @@ class JiraApi:
                 raise UserError("JIRA 검색 결과 형식을 확인하지 못했습니다.")
             total = body.get("total")
             if isinstance(total, int) and total > MAX_ISSUES:
-                raise UserError(f"검색된 티켓이 {total:,}개로 최대 {MAX_ISSUES:,}개를 초과합니다. 키워드나 사용자를 더 구체적으로 입력해 주세요.")
+                raise UserError(
+                    f"검색된 티켓이 {total:,}개로 최대 {MAX_ISSUES:,}개를 초과합니다. 키워드나 사용자를 더 구체적으로 입력해 주세요."
+                )
             count = len(found)
             for issue in issues:
                 key = issue.get("key") if isinstance(issue, dict) else None
@@ -216,7 +249,9 @@ class JiraApi:
                     raise UserError("검색 결과의 티켓 키가 올바르지 않습니다.")
                 found[key] = True
             if len(found) > MAX_ISSUES:
-                raise UserError(f"검색된 티켓이 최대 {MAX_ISSUES:,}개를 초과합니다. 키워드나 사용자를 더 구체적으로 입력해 주세요.")
+                raise UserError(
+                    f"검색된 티켓이 최대 {MAX_ISSUES:,}개를 초과합니다. 키워드나 사용자를 더 구체적으로 입력해 주세요."
+                )
             progress(len(found))
             if cursor:
                 token = body.get("nextPageToken")
@@ -254,8 +289,11 @@ class JiraImporter(BrowserImporter):
         keys = []
         if scope == "list":
             keys = params.get("keys")
-            if not isinstance(keys, list) or not 1 <= len(keys) <= MAX_LIST or not all(
-                    isinstance(key, str) and KEY.fullmatch(key.upper()) for key in keys):
+            if (
+                not isinstance(keys, list)
+                or not 1 <= len(keys) <= MAX_LIST
+                or not all(isinstance(key, str) and KEY.fullmatch(key.upper()) for key in keys)
+            ):
                 raise UserError(f"확인할 티켓은 1~{MAX_LIST}개의 티켓 키로 주세요.")
             keys = list(dict.fromkeys([target[2], *(key.upper() for key in keys)]))
         keyword = text(params.get("keyword", ""), "검색 키워드", 200, scope == "keyword")
@@ -274,21 +312,50 @@ class JiraImporter(BrowserImporter):
             raise UserError("AI 분석을 사용하려면 먼저 LLM을 연결해 주세요.")
         doc_id, replace = sources.options(params)
         # An automatic routine (routines.py) that watches tickets learns what each import changed.
-        options = {"scope": scope, "keyword": keyword if scope == "keyword" else "",
-                   "user": user if scope == "user" else "", "role": role, "analyze": analyze,
-                   "doc_id": doc_id, "replace": replace, "keys": keys,
-                   "track_changes": params.get("track_changes") is True}
+        options = {
+            "scope": scope,
+            "keyword": keyword if scope == "keyword" else "",
+            "user": user if scope == "user" else "",
+            "role": role,
+            "analyze": analyze,
+            "doc_id": doc_id,
+            "replace": replace,
+            "keys": keys,
+            "track_changes": params.get("track_changes") is True,
+        }
         routine = routine_name(params)
         with self.lock:
             if self._busy():
                 raise BusyError(BUSY_ERROR)
-            job = {"id": str(uuid.uuid4()), "url": url, **options, "routine": routine, "auto_login": bool(login),
-                   "login": {"site": login["site_name"] if login else "", "method": None, "label": "",
-                             "detected": False, "error": ""},
-                   "status": "scanning", "project": target[2].split("-")[0], "jql": "",
-                   "total": len(keys) if scope == "list" else 1 if scope == "issue" else 0, "processed": 0, "imported": 0, "updated": 0, "skipped": 0,
-                   "failed": 0, "analysis_failed": 0, "current_url": "", "notice": "", "results": [], "error": "",
-                   "diagnosis": None}
+            job = {
+                "id": str(uuid.uuid4()),
+                "url": url,
+                **options,
+                "routine": routine,
+                "auto_login": bool(login),
+                "login": {
+                    "site": login["site_name"] if login else "",
+                    "method": None,
+                    "label": "",
+                    "detected": False,
+                    "error": "",
+                },
+                "status": "scanning",
+                "project": target[2].split("-")[0],
+                "jql": "",
+                "total": len(keys) if scope == "list" else 1 if scope == "issue" else 0,
+                "processed": 0,
+                "imported": 0,
+                "updated": 0,
+                "skipped": 0,
+                "failed": 0,
+                "analysis_failed": 0,
+                "current_url": "",
+                "notice": "",
+                "results": [],
+                "error": "",
+                "diagnosis": None,
+            }
             self._begin(job, lambda: self._collect(job, url, target[0], options, login), "jira-browser")
             return self.status()
 
@@ -317,14 +384,22 @@ class JiraImporter(BrowserImporter):
                 context.on("page", lambda popup: close_popup(page, popup))
                 assist = self._assistant(page, login, lambda **values: self._update(job, **values))
                 # Until the first ticket is read, a failure is one of opening JIRA or signing in.
-                async with self._explaining(job, assist, page,
-                                            lambda: "로그인" if job["status"] == "login" else "티켓 열기"):
+                async with self._explaining(
+                    job, assist, page, lambda: "로그인" if job["status"] == "login" else "티켓 열기"
+                ):
                     if login:
                         self._update(job, status="login")
                         try:
-                            result = await sign_in(context, page, url, login, product="JIRA 티켓", assist=assist,
-                                                   arrived=lambda value: self._at_ticket(value, origin),
-                                                   **self._timeouts())
+                            result = await sign_in(
+                                context,
+                                page,
+                                url,
+                                login,
+                                product="JIRA 티켓",
+                                assist=assist,
+                                arrived=lambda value: self._at_ticket(value, origin),
+                                **self._timeouts(),
+                            )
                         except UserError as error:
                             with self.lock:
                                 job["login"].update(error=str(error), sent=getattr(error, "sent", False))
@@ -340,8 +415,10 @@ class JiraImporter(BrowserImporter):
                             raise UserError(f"티켓 페이지에 접근하지 못했습니다 (HTTP {response.status}).")
                     arrived = parse_issue_url(page.url)
                     if not arrived or arrived[0] != origin:
-                        raise UserError("로그인이 필요합니다. 관리 → 사이트 계정에서 이 JIRA의 로그인 정보를 저장하거나 "
-                                        "‘로그인 창 열기’에서 먼저 로그인해 주세요.")
+                        raise UserError(
+                            "로그인이 필요합니다. 관리 → 사이트 계정에서 이 JIRA의 로그인 정보를 저장하거나 "
+                            "‘로그인 창 열기’에서 먼저 로그인해 주세요."
+                        )
                     self._update(job, status="scanning")
                     # A moved ticket redirects to its new key; the page also names the context path.
                     _, prefix, key = arrived
@@ -357,8 +434,11 @@ class JiraImporter(BrowserImporter):
                             raise
                         first = None
                 project = first["fields"].get("project") if first else None
-                project = project["key"] if isinstance(project, dict) and isinstance(project.get("key"), str) \
+                project = (
+                    project["key"]
+                    if isinstance(project, dict) and isinstance(project.get("key"), str)
                     else (first["key"] if first else key).split("-")[0]
+                )
                 queue = [first["key"] if first else key]
                 if options["scope"] == "list":
                     queue = list(dict.fromkeys([*queue, *options["keys"]]))
@@ -373,8 +453,9 @@ class JiraImporter(BrowserImporter):
                     if page.is_closed():
                         raise UserError("JIRA 브라우저가 닫혀 가져오기를 중단했습니다.")
                     self._update(job, current_url=f"{base_url}/browse/{key}")
-                    result = await self._import(api, base_url, first if first and key == first["key"] else key,
-                                                options["analyze"], job)
+                    result = await self._import(
+                        api, base_url, first if first and key == first["key"] else key, options["analyze"], job
+                    )
                     with self.lock:
                         job["results"].append({"key": key, "url": f"{base_url}/browse/{key}", **result})
                         job[result["status"]] += 1
@@ -382,11 +463,19 @@ class JiraImporter(BrowserImporter):
         except asyncio.CancelledError:
             pass
         except Exception as error:
-            self._update(job, error=diagnostics.report(
-                error, "JIRA 가져오기를 완료하지 못했습니다. 링크·네트워크·로그인 상태를 확인해 주세요.", "JIRA 가져오기"))
+            self._update(
+                job,
+                error=diagnostics.report(
+                    error,
+                    "JIRA 가져오기를 완료하지 못했습니다. 링크·네트워크·로그인 상태를 확인해 주세요.",
+                    "JIRA 가져오기",
+                ),
+            )
         finally:
             with self.lock:
-                job["status"] = "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
+                job["status"] = (
+                    "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
+                )
                 job["current_url"] = ""
 
     async def _import(self, api, base_url, issue, analyze, job, updated=None):
@@ -402,19 +491,35 @@ class JiraImporter(BrowserImporter):
             comments, total = await api.comments(issue)
             source_url, document = build_html(issue, base_url, comments, total)
             stamp = issue["fields"].get("updated")
-            result = import_issue(self.service, {"source_url": source_url, "issue_key": issue["key"], "html": document,
-                                                 "doc_id": job.get("doc_id"), "replace": job.get("replace", False),
-                                                 "updated": stamp if isinstance(stamp, str) else "",
-                                                 "track_changes": job.get("track_changes", False)})
+            result = import_issue(
+                self.service,
+                {
+                    "source_url": source_url,
+                    "issue_key": issue["key"],
+                    "html": document,
+                    "doc_id": job.get("doc_id"),
+                    "replace": job.get("replace", False),
+                    "updated": stamp if isinstance(stamp, str) else "",
+                    "track_changes": job.get("track_changes", False),
+                },
+            )
         except Exception as error:
-            return {"status": "failed", "message": diagnostics.report(
-                error, "티켓을 읽거나 저장하지 못했습니다. 네트워크·로그인 상태를 확인해 주세요.", "JIRA 티켓 가져오기")}
+            return {
+                "status": "failed",
+                "message": diagnostics.report(
+                    error,
+                    "티켓을 읽거나 저장하지 못했습니다. 네트워크·로그인 상태를 확인해 주세요.",
+                    "JIRA 티켓 가져오기",
+                ),
+            }
         if analyze and result["status"] in ("imported", "updated"):
             for ident in result["doc_ids"]:
                 try:
                     await asyncio.to_thread(self.service.wiki_analyze, {"id": ident})
                 except Exception:
-                    result["analysis_error"] = "Markdown 문서는 저장되었지만 AI 분석에 실패했습니다. 문서에서 재시도해 주세요."
+                    result["analysis_error"] = (
+                        "Markdown 문서는 저장되었지만 AI 분석에 실패했습니다. 문서에서 재시도해 주세요."
+                    )
             if "analysis_error" in result:
                 with self.lock:
                     job["analysis_failed"] += 1
@@ -471,7 +576,9 @@ class JiraImporter(BrowserImporter):
         if mode == "report":
             project = (params.get("project") or project_of(url) or "").strip().upper()
             if not PROJECT.fullmatch(project):
-                raise UserError("JIRA 프로젝트 키를 확인해 주세요. 예) TEAM (프로젝트 링크에 들어 있으면 비워도 됩니다)")
+                raise UserError(
+                    "JIRA 프로젝트 키를 확인해 주세요. 예) TEAM (프로젝트 링크에 들어 있으면 비워도 됩니다)"
+                )
             if ORDERED.search(jql):
                 raise UserError("추가 조건(JQL)에는 ORDER BY를 넣지 말아 주세요. 정렬은 앱이 정합니다.")
         days = params.get("days", 7)
@@ -486,14 +593,44 @@ class JiraImporter(BrowserImporter):
         with self.lock:
             if self._busy():
                 raise BusyError(BUSY_ERROR)
-            job = {"id": str(uuid.uuid4()), "url": url, "scope": mode, "keyword": "", "user": "", "role": "any",
-                   "analyze": analyze, "doc_id": None, "replace": False, "keys": [], "track_changes": True,
-                   "routine": routine_name(params), "auto_login": bool(login),
-                   "login": {"site": login["site_name"] if login else "", "method": None, "label": "",
-                             "detected": False, "error": ""},
-                   "status": "scanning", "project": project, "jql": jql, "total": 0, "processed": 0, "imported": 0,
-                   "updated": 0, "skipped": 0, "failed": 0, "analysis_failed": 0, "current_url": "", "notice": "",
-                   "results": [], "error": "", "diagnosis": None, "report": None}
+            job = {
+                "id": str(uuid.uuid4()),
+                "url": url,
+                "scope": mode,
+                "keyword": "",
+                "user": "",
+                "role": "any",
+                "analyze": analyze,
+                "doc_id": None,
+                "replace": False,
+                "keys": [],
+                "track_changes": True,
+                "routine": routine_name(params),
+                "auto_login": bool(login),
+                "login": {
+                    "site": login["site_name"] if login else "",
+                    "method": None,
+                    "label": "",
+                    "detected": False,
+                    "error": "",
+                },
+                "status": "scanning",
+                "project": project,
+                "jql": jql,
+                "total": 0,
+                "processed": 0,
+                "imported": 0,
+                "updated": 0,
+                "skipped": 0,
+                "failed": 0,
+                "analysis_failed": 0,
+                "current_url": "",
+                "notice": "",
+                "results": [],
+                "error": "",
+                "diagnosis": None,
+                "report": None,
+            }
             self._begin(job, lambda: self._query(job, url, site, options, login, pick), "jira-browser")
             return self.status()
 
@@ -505,13 +642,22 @@ class JiraImporter(BrowserImporter):
                 context.on("page", lambda popup: close_popup(page, popup))
                 assist = self._assistant(page, login, lambda **values: self._update(job, **values))
                 # Until JIRA's page shows, a failure is one of opening JIRA or signing in.
-                async with self._explaining(job, assist, page,
-                                            lambda: "로그인" if job["status"] == "login" else "JIRA 열기"):
+                async with self._explaining(
+                    job, assist, page, lambda: "로그인" if job["status"] == "login" else "JIRA 열기"
+                ):
                     if login:
                         self._update(job, status="login")
                         try:
-                            result = await sign_in(context, page, url, login, product="JIRA", assist=assist,
-                                                   arrived=lambda value: signed_in(value, origin), **self._timeouts())
+                            result = await sign_in(
+                                context,
+                                page,
+                                url,
+                                login,
+                                product="JIRA",
+                                assist=assist,
+                                arrived=lambda value: signed_in(value, origin),
+                                **self._timeouts(),
+                            )
                         except UserError as error:
                             with self.lock:
                                 job["login"].update(error=str(error), sent=getattr(error, "sent", False))
@@ -523,21 +669,27 @@ class JiraImporter(BrowserImporter):
                         if response and response.status >= 400:
                             raise UserError(f"JIRA 페이지에 접근하지 못했습니다 (HTTP {response.status}).")
                     if origin_of(page.url) != origin:
-                        raise UserError("로그인이 필요합니다. 관리 → 사이트 계정에서 이 JIRA의 로그인 정보를 저장하거나 "
-                                        "‘로그인 창 열기’에서 먼저 로그인해 주세요.")
+                        raise UserError(
+                            "로그인이 필요합니다. 관리 → 사이트 계정에서 이 JIRA의 로그인 정보를 저장하거나 "
+                            "‘로그인 창 열기’에서 먼저 로그인해 주세요."
+                        )
                     context_path = await page.evaluate(CONTEXT_PATH)
                 base_path = context_path if safe_prefix(context_path) else prefix
                 api, base_url = JiraApi(page, base_path), origin + base_path
                 self._update(job, status="scanning")
-                report = await (self._report(api, options, job) if options["mode"] == "report"
-                                else self._search(api, options, job))
+                report = await (
+                    self._report(api, options, job) if options["mode"] == "report" else self._search(api, options, job)
+                )
                 report["base_url"] = base_url
                 with self.lock:
                     job["report"] = report
                 keys = list(dict.fromkeys(key for key in (pick(report) if pick else []) if KEY.fullmatch(key)))
                 # The search gave each ticket's updated time: a ticket picked is not asked for it again.
-                stamps = {issue["key"]: issue["updated"] for name in ("issues", "open", "resolved")
-                          for issue in report.get(name) or []}
+                stamps = {
+                    issue["key"]: issue["updated"]
+                    for name in ("issues", "open", "resolved")
+                    for issue in report.get(name) or []
+                }
                 self._update(job, status="running", total=len(keys[:MAX_PICKED]), processed=0)
                 for key in keys[:MAX_PICKED]:
                     if page.is_closed():
@@ -551,11 +703,17 @@ class JiraImporter(BrowserImporter):
         except asyncio.CancelledError:
             pass
         except Exception as error:
-            self._update(job, error=diagnostics.report(
-                error, "JIRA를 조회하지 못했습니다. 주소·JQL·네트워크·로그인 상태를 확인해 주세요.", "JIRA 조회"))
+            self._update(
+                job,
+                error=diagnostics.report(
+                    error, "JIRA를 조회하지 못했습니다. 주소·JQL·네트워크·로그인 상태를 확인해 주세요.", "JIRA 조회"
+                ),
+            )
         finally:
             with self.lock:
-                job["status"] = "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
+                job["status"] = (
+                    "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
+                )
                 job["current_url"] = ""
 
     async def _report(self, api, options, job):
@@ -564,29 +722,45 @@ class JiraImporter(BrowserImporter):
         base = f"project = {jql_string(options['project'])}" + (f" AND ({options['jql']})" if options["jql"] else "")
         days = options["days"]
         self._update(job, jql=base)
-        found, open_total = await api.issues(f"{base} AND resolution = Unresolved ORDER BY updated DESC",
-                                             REPORT_FIELDS, MAX_OPEN, lambda count: self._update(job, processed=count))
-        resolved, resolved_total = await api.issues(f"{base} AND resolutiondate >= -{days}d ORDER BY resolutiondate DESC",
-                                                    REPORT_FIELDS, MAX_RESOLVED)
+        found, open_total = await api.issues(
+            f"{base} AND resolution = Unresolved ORDER BY updated DESC",
+            REPORT_FIELDS,
+            MAX_OPEN,
+            lambda count: self._update(job, processed=count),
+        )
+        resolved, resolved_total = await api.issues(
+            f"{base} AND resolutiondate >= -{days}d ORDER BY resolutiondate DESC", REPORT_FIELDS, MAX_RESOLVED
+        )
         name = ""
         for issue in found + resolved:
             project = (issue.get("fields") or {}).get("project")
             if isinstance(project, dict) and isinstance(project.get("name"), str):
                 name = project["name"][:120]
                 break
-        return {"mode": "report", "project": options["project"], "name": name, "jql": base, "days": days,
-                "total": await api.count(base), "created": await api.count(f"{base} AND created >= -{days}d"),
-                "open_total": open_total if open_total is not None else len(found),
-                "open": [brief(issue) for issue in found],
-                "resolved_total": resolved_total if resolved_total is not None else len(resolved),
-                "resolved": [brief(issue) for issue in resolved]}
+        return {
+            "mode": "report",
+            "project": options["project"],
+            "name": name,
+            "jql": base,
+            "days": days,
+            "total": await api.count(base),
+            "created": await api.count(f"{base} AND created >= -{days}d"),
+            "open_total": open_total if open_total is not None else len(found),
+            "open": [brief(issue) for issue in found],
+            "resolved_total": resolved_total if resolved_total is not None else len(resolved),
+            "resolved": [brief(issue) for issue in resolved],
+        }
 
     async def _search(self, api, options, job):
         """The issues of the user's own search, the latest updated first unless it says how to order them."""
         jql = options["jql"] if ORDERED.search(options["jql"]) else f"{options['jql']} ORDER BY updated DESC"
         found, total = await api.issues(jql, REPORT_FIELDS, MAX_FOUND, lambda count: self._update(job, processed=count))
-        return {"mode": "jql", "jql": options["jql"], "total": total if total is not None else len(found),
-                "issues": [brief(issue) for issue in found]}
+        return {
+            "mode": "jql",
+            "jql": options["jql"],
+            "total": total if total is not None else len(found),
+            "issues": [brief(issue) for issue in found],
+        }
 
     async def _prepare_login(self, context, page, url, origin, login):
         if not login:
@@ -598,12 +772,29 @@ class JiraImporter(BrowserImporter):
 
     async def _login_helper(self, context, page, url, origin, login):
         with contextlib.suppress(Exception):  # A failed automatic login leaves the window to the user.
-            result = await sign_in(context, page, url, login, product="JIRA", watched=True,
-                                   arrived=lambda value: self._at_ticket(value, origin), **self._timeouts())
+            result = await sign_in(
+                context,
+                page,
+                url,
+                login,
+                product="JIRA",
+                watched=True,
+                arrived=lambda value: self._at_ticket(value, origin),
+                **self._timeouts(),
+            )
             with self.lock:
                 self.login_result = result
 
     async def _verify(self, context, page, url, origin, login, assist):
         # A check tells whether the account and the method sign in: never the session a run or the window left.
-        return await sign_in(context, page, url, login, product="JIRA", assist=assist, fresh=True,
-                             arrived=lambda value: signed_in(value, origin), **self._timeouts())
+        return await sign_in(
+            context,
+            page,
+            url,
+            login,
+            product="JIRA",
+            assist=assist,
+            fresh=True,
+            arrived=lambda value: signed_in(value, origin),
+            **self._timeouts(),
+        )

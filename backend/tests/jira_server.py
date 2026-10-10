@@ -5,6 +5,7 @@ electron/login-methods.json handle: an SSO behind an "SSO Login" link, the same 
 JIRA's own form, JIRA's own login form, a form shown by a button (for user-defined methods) and a plain form with
 unusual field names (for the generic method). One more, a two-step screen that no method fits, is for the LLM's help
 (web_assist.py)."""
+
 import json
 import re
 import threading
@@ -82,12 +83,30 @@ SESSION_COOKIE = "session=valid; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax"
 USERS = {"tester": "테스터", "kim": "김개발"}
 # category: the status category JIRA gives each status (new, indeterminate, done); updated changes with an edit.
 ISSUES = {
-    "TEAM-1": {"summary": "로그인 화면 오류", "assignee": "kim", "reporter": "tester", "status": "Open",
-               "category": "new", "text": "로그인 버튼을 누르면 오류가 납니다"},
-    "TEAM-2": {"summary": "결제 모듈 개선", "assignee": "tester", "reporter": "kim", "status": "Done",
-               "category": "done", "text": "결제 API 응답 시간을 줄입니다"},
-    "TEAM-3": {"summary": "로그인 세션 만료", "assignee": "kim", "reporter": "tester", "status": "Open",
-               "category": "new", "text": "세션이 30분 뒤 만료됩니다"},
+    "TEAM-1": {
+        "summary": "로그인 화면 오류",
+        "assignee": "kim",
+        "reporter": "tester",
+        "status": "Open",
+        "category": "new",
+        "text": "로그인 버튼을 누르면 오류가 납니다",
+    },
+    "TEAM-2": {
+        "summary": "결제 모듈 개선",
+        "assignee": "tester",
+        "reporter": "kim",
+        "status": "Done",
+        "category": "done",
+        "text": "결제 API 응답 시간을 줄입니다",
+    },
+    "TEAM-3": {
+        "summary": "로그인 세션 만료",
+        "assignee": "kim",
+        "reporter": "tester",
+        "status": "Open",
+        "category": "new",
+        "text": "세션이 30분 뒤 만료됩니다",
+    },
 }
 UPDATED = "2026-09-02T09:00:00.000+0900"
 COMMENTS = [
@@ -105,52 +124,98 @@ def search_fields(key):
     """The fields a search gives of an issue (what the routines' reports ask for)."""
     data = ISSUES[key]
     done = data.get("category") == "done"
-    return {"summary": data["summary"], "project": {"key": "TEAM", "name": "팀 프로젝트"},
-            "issuetype": {"name": "버그"}, "priority": {"name": "높음"},
-            "status": {"name": data["status"], "statusCategory": {"key": data.get("category", "new")}},
-            "assignee": user(data["assignee"]), "created": "2026-09-01T10:23:45.000+0900",
-            "updated": data.get("updated", UPDATED), "duedate": data.get("due", "2026-10-01"),
-            "resolutiondate": data.get("updated", UPDATED) if done else None}
+    return {
+        "summary": data["summary"],
+        "project": {"key": "TEAM", "name": "팀 프로젝트"},
+        "issuetype": {"name": "버그"},
+        "priority": {"name": "높음"},
+        "status": {"name": data["status"], "statusCategory": {"key": data.get("category", "new")}},
+        "assignee": user(data["assignee"]),
+        "created": "2026-09-01T10:23:45.000+0900",
+        "updated": data.get("updated", UPDATED),
+        "duedate": data.get("due", "2026-10-01"),
+        "resolutiondate": data.get("updated", UPDATED) if done else None,
+    }
 
 
 def issue_json(key, origin):
     data = ISSUES[key]
     fields = {
-        "summary": data["summary"], "project": {"key": "TEAM", "name": "팀 프로젝트"},
-        "issuetype": {"name": "버그"}, "status": {"name": data["status"]}, "priority": {"name": "높음"},
-        "resolution": None, "assignee": user(data["assignee"]), "reporter": user(data["reporter"]),
-        "created": "2026-09-01T10:23:45.000+0900", "updated": data.get("updated", UPDATED),
-        "duedate": data.get("due", "2026-10-01"), "labels": ["login", "ui"], "components": [{"name": "웹"}],
-        "fixVersions": [{"name": "1.0"}], "description": data["text"],
+        "summary": data["summary"],
+        "project": {"key": "TEAM", "name": "팀 프로젝트"},
+        "issuetype": {"name": "버그"},
+        "status": {"name": data["status"]},
+        "priority": {"name": "높음"},
+        "resolution": None,
+        "assignee": user(data["assignee"]),
+        "reporter": user(data["reporter"]),
+        "created": "2026-09-01T10:23:45.000+0900",
+        "updated": data.get("updated", UPDATED),
+        "duedate": data.get("due", "2026-10-01"),
+        "labels": ["login", "ui"],
+        "components": [{"name": "웹"}],
+        "fixVersions": [{"name": "1.0"}],
+        "description": data["text"],
         "comment": {"comments": [], "total": 0, "maxResults": 0, "startAt": 0},
         "lastViewed": str(time.time()),
     }
     rendered = {"description": f"<p>{data['text']}</p>"}
     names = {"customfield_10001": "인수 조건", "customfield_10002": "심각도", "customfield_10003": "Rank"}
     if key == "TEAM-1":
-        fields.update({
-            "customfield_10001": "로그인 후 목록이 보여야 한다", "customfield_10002": {"value": "심각", "id": "1"},
-            "customfield_10003": "0|i0001:",
-            "attachment": [{"filename": "설계.txt", "content": f"{origin}/jira/secure/attachment/1/design.txt",
-                            "size": 2048, "author": user("kim"), "created": "2026-09-01T11:00:00.000+0900"}],
-            "issuelinks": [{"type": {"name": "Blocks", "outward": "blocks", "inward": "is blocked by"},
-                            "outwardIssue": {"key": "TEAM-2", "fields": {"summary": "결제 모듈 개선", "status": {"name": "Done"}}}}],
-            # The ticket response holds only the first two of three comments.
-            "comment": {"comments": [{"id": c["id"], "author": user(c["author"]), "body": c["body"],
-                                      "created": "2026-09-01T12:00:00.000+0900"} for c in COMMENTS[:2]],
-                        "total": 3, "maxResults": 2, "startAt": 0},
-        })
-        rendered.update({
-            "description": (
-                "<h1>재현 절차</h1><p>로그인 버튼을 누르면 <b>오류</b>가 납니다</p>"
-                "<table><tr><th>환경</th><th>결과</th></tr><tr><td>Chrome</td><td>실패</td></tr></table>"
-                '<div class="code panel"><div class="codeContent panelContent"><pre class="code-java">'
-                '<span class="code-keyword">int</span> answer = 1;</pre></div></div>'
-                '<a href="/jira/browse/TEAM-2">관련 티켓</a> <a href="javascript:alert(1)" onclick="secret()">위험</a>'
-                ' <img src="/jira/secure/attachment/2/capture.png" alt="화면 캡처"><script>secret()</script>'),
-            "customfield_10001": "<p>로그인 후 목록이 보여야 한다</p>",
-            "comment": {"comments": [{"id": c["id"], "body": c["html"]} for c in COMMENTS[:2]]},
-        })
+        fields.update(
+            {
+                "customfield_10001": "로그인 후 목록이 보여야 한다",
+                "customfield_10002": {"value": "심각", "id": "1"},
+                "customfield_10003": "0|i0001:",
+                "attachment": [
+                    {
+                        "filename": "설계.txt",
+                        "content": f"{origin}/jira/secure/attachment/1/design.txt",
+                        "size": 2048,
+                        "author": user("kim"),
+                        "created": "2026-09-01T11:00:00.000+0900",
+                    }
+                ],
+                "issuelinks": [
+                    {
+                        "type": {"name": "Blocks", "outward": "blocks", "inward": "is blocked by"},
+                        "outwardIssue": {
+                            "key": "TEAM-2",
+                            "fields": {"summary": "결제 모듈 개선", "status": {"name": "Done"}},
+                        },
+                    }
+                ],
+                # The ticket response holds only the first two of three comments.
+                "comment": {
+                    "comments": [
+                        {
+                            "id": c["id"],
+                            "author": user(c["author"]),
+                            "body": c["body"],
+                            "created": "2026-09-01T12:00:00.000+0900",
+                        }
+                        for c in COMMENTS[:2]
+                    ],
+                    "total": 3,
+                    "maxResults": 2,
+                    "startAt": 0,
+                },
+            }
+        )
+        rendered.update(
+            {
+                "description": (
+                    "<h1>재현 절차</h1><p>로그인 버튼을 누르면 <b>오류</b>가 납니다</p>"
+                    "<table><tr><th>환경</th><th>결과</th></tr><tr><td>Chrome</td><td>실패</td></tr></table>"
+                    '<div class="code panel"><div class="codeContent panelContent"><pre class="code-java">'
+                    '<span class="code-keyword">int</span> answer = 1;</pre></div></div>'
+                    '<a href="/jira/browse/TEAM-2">관련 티켓</a> <a href="javascript:alert(1)" onclick="secret()">위험</a>'
+                    ' <img src="/jira/secure/attachment/2/capture.png" alt="화면 캡처"><script>secret()</script>'
+                ),
+                "customfield_10001": "<p>로그인 후 목록이 보여야 한다</p>",
+                "comment": {"comments": [{"id": c["id"], "body": c["html"]} for c in COMMENTS[:2]]},
+            }
+        )
     return {"key": key, "fields": fields, "renderedFields": rendered, "names": names}
 
 
@@ -212,9 +277,13 @@ class JiraServer:
         query = f"os_destination={quote(destination, safe='')}"
         # A link drawn a moment after the site's own form, as a script of the page may add it.
         late = f"<script>setTimeout(() => {{ document.getElementById('sso-entry').hidden = false; }}, {self.sso_delay});</script>"
-        return page.format(sso=f"/jira/sso/start?{query}", action=action, message=message,
-                           late="hidden" if self.sso_delay else "",
-                           script=late if self.sso_delay else "")
+        return page.format(
+            sso=f"/jira/sso/start?{query}",
+            action=action,
+            message=message,
+            late="hidden" if self.sso_delay else "",
+            script=late if self.sso_delay else "",
+        )
 
     def dashboard(self, message=""):
         """What the site address shows signed-out visitors of style mixed: the dashboard with its login box."""
@@ -222,7 +291,9 @@ class JiraServer:
 
     @staticmethod
     def read_form(handler):
-        return {k: v[0] for k, v in parse_qs(handler.rfile.read(int(handler.headers["Content-Length"])).decode()).items()}
+        return {
+            k: v[0] for k, v in parse_qs(handler.rfile.read(int(handler.headers["Content-Length"])).decode()).items()
+        }
 
     @staticmethod
     def send(handler, status, body="", kind="text/html; charset=utf-8", headers=None):
@@ -255,8 +326,10 @@ class JiraServer:
             destination = query.get("os_destination", "/")
             if method == "POST" and self.style != "sso":
                 form = self.read_form(handler)
-                attempt = {"id": form.get("os_username", form.get("uid", form.get("login_id"))),
-                           "password": form.get("os_password", form.get("secret", form.get("passcode")))}
+                attempt = {
+                    "id": form.get("os_username", form.get("uid", form.get("login_id"))),
+                    "password": form.get("os_password", form.get("secret", form.get("passcode"))),
+                }
                 self.logins.append(attempt)
                 self.form_logins.append(attempt)
                 if attempt == self.credentials and self.style != "mixed":
@@ -280,23 +353,35 @@ class JiraServer:
                 return self.send(handler, 200, self.dashboard())
             if not signed_in:
                 return self.redirect(handler, "/jira/login.jsp?os_destination=%2F")
-            return self.send(handler, 200, '<!doctype html><html><head><meta name="ajs-context-path" content="/jira">'
-                             '<meta name="ajs-remote-user" content="tester"><title>대시보드</title></head>'
-                             '<body><h1>시스템 대시보드</h1></body></html>')
+            return self.send(
+                handler,
+                200,
+                '<!doctype html><html><head><meta name="ajs-context-path" content="/jira">'
+                '<meta name="ajs-remote-user" content="tester"><title>대시보드</title></head>'
+                "<body><h1>시스템 대시보드</h1></body></html>",
+            )
         project = re.fullmatch(r"/jira/projects/([A-Z]+)/?", url.path)
         if project:  # A project's page, which routines link to.
             if not signed_in:
                 return self.redirect(handler, f"/jira/login.jsp?os_destination={quote(url.path[5:], safe='')}")
-            return self.send(handler, 200, '<!doctype html><html><head><meta name="ajs-context-path" content="/jira">'
-                             f'<meta name="ajs-remote-user" content="tester"><title>{project[1]}</title></head>'
-                             f'<body><h1>{project[1]} 프로젝트</h1></body></html>')
+            return self.send(
+                handler,
+                200,
+                '<!doctype html><html><head><meta name="ajs-context-path" content="/jira">'
+                f'<meta name="ajs-remote-user" content="tester"><title>{project[1]}</title></head>'
+                f"<body><h1>{project[1]} 프로젝트</h1></body></html>",
+            )
         page = re.fullmatch(r"/jira/(?:browse|projects/[^/]+/issues)/([A-Z]+-\d+)", url.path)
         if page:
             if not signed_in:
                 return self.redirect(handler, f"/jira/login.jsp?os_destination={quote(url.path[5:], safe='')}")
-            return self.send(handler, 200, '<!doctype html><html><head><meta name="ajs-context-path" content="/jira">'
-                             f'<meta name="ajs-remote-user" content="tester"><title>{page[1]}</title></head>'
-                             f'<body><h1>{page[1]}</h1></body></html>')
+            return self.send(
+                handler,
+                200,
+                '<!doctype html><html><head><meta name="ajs-context-path" content="/jira">'
+                f'<meta name="ajs-remote-user" content="tester"><title>{page[1]}</title></head>'
+                f"<body><h1>{page[1]}</h1></body></html>",
+            )
         api = re.fullmatch(r"/jira/rest/api/2/(.+)", url.path)
         if not api:
             return self.send(handler, 404, "Not found")
@@ -315,9 +400,20 @@ class JiraServer:
             return self.json(handler, {"errorMessages": ["권한이 없습니다."]}, 403)
         if issue[2]:
             start = int(query.get("startAt", 0))
-            values = [{"id": c["id"], "author": user(c["author"]), "body": c["body"], "renderedBody": c["html"],
-                       "created": "2026-09-01T12:00:00.000+0900"} for c in COMMENTS]
-            return self.json(handler, {"startAt": start, "maxResults": 1, "total": len(values), "comments": values[start:start + 1]})
+            values = [
+                {
+                    "id": c["id"],
+                    "author": user(c["author"]),
+                    "body": c["body"],
+                    "renderedBody": c["html"],
+                    "created": "2026-09-01T12:00:00.000+0900",
+                }
+                for c in COMMENTS
+            ]
+            return self.json(
+                handler,
+                {"startAt": start, "maxResults": 1, "total": len(values), "comments": values[start : start + 1]},
+            )
         if self.slow:
             time.sleep(3)
         return self.json(handler, issue_json(issue[1], self.origin))
@@ -331,10 +427,14 @@ class JiraServer:
         form = self.read_form(handler)
         self.logins.append({"id": form.get("id"), "password": form.get("pw")})
         if {"id": form.get("id"), "password": form.get("pw")} != self.credentials:
-            return self.send(handler, 200, SSO_PAGE.format(action=action, message="ID 또는 비밀번호가 올바르지 않습니다."))
+            return self.send(
+                handler, 200, SSO_PAGE.format(action=action, message="ID 또는 비밀번호가 올바르지 않습니다.")
+            )
         if self.pending:
             return self.send(handler, 200, PENDING_PAGE)
-        self.redirect(handler, f"{self.origin}/jira/sso/callback?ticket=ok&return={quote(query.get('return', ''), safe='')}")
+        self.redirect(
+            handler, f"{self.origin}/jira/sso/callback?ticket=ok&return={quote(query.get('return', ''), safe='')}"
+        )
 
     def search(self, handler, query):
         jql = query.get("jql", "")
@@ -346,7 +446,14 @@ class JiraServer:
         for field in ("assignee", "reporter"):
             if match := re.search(rf'{field} = "([^"]*)"', jql):
                 if match[1] not in USERS:
-                    return self.json(handler, {"errorMessages": [f"The value '{match[1]}' does not exist for the field '{field}'."], "errors": {}}, 400)
+                    return self.json(
+                        handler,
+                        {
+                            "errorMessages": [f"The value '{match[1]}' does not exist for the field '{field}'."],
+                            "errors": {},
+                        },
+                        400,
+                    )
         people = re.findall(r'(assignee|reporter) = "([^"]*)"', jql)
         if people:
             keys = [k for k in keys if any(ISSUES[k][field] == name for field, name in people)]
@@ -363,6 +470,15 @@ class JiraServer:
             return self.json(handler, {"startAt": start, "maxResults": 0, "total": len(keys), "issues": []})
         fielded = "status" in query.get("fields", "")
         # One ticket per page, so the importer has to follow the pagination.
-        return self.json(handler, {"startAt": start, "maxResults": 1, "total": len(keys), "issues": [
-            {"key": k, "fields": search_fields(k) if fielded else {"summary": ISSUES[k]["summary"]}}
-            for k in keys[start:start + 1]]})
+        return self.json(
+            handler,
+            {
+                "startAt": start,
+                "maxResults": 1,
+                "total": len(keys),
+                "issues": [
+                    {"key": k, "fields": search_fields(k) if fielded else {"summary": ISSUES[k]["summary"]}}
+                    for k in keys[start : start + 1]
+                ],
+            },
+        )

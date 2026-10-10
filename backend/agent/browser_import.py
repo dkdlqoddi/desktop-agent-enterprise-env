@@ -15,14 +15,15 @@ The importers' requests to a site go through polite(): a few a second per host (
 were too many (HTTP 429, or 503 with Retry-After) is waited out and tried again, so that a routine over many pages
 neither floods the site nor loses pages to a refusal.
 """
+
 import asyncio
 import contextlib
 import hashlib
 import os
 import random
+import re
 import shutil
 import sys
-import re
 import threading
 import time
 import traceback
@@ -103,8 +104,10 @@ class Worker:
             # No event loop, e.g. security software refused the local socket pair Windows builds it on: the work never
             # ran, so it could not report anything.
             reason = f" ({first_line(failures[0])})" if failures else ""
-            raise UserError("브라우저 작업을 시작하지 못했습니다. 백신이나 보안 프로그램이 앱을 막고 있는지 확인한 뒤 "
-                            f"앱을 다시 실행해 주세요.{reason}")
+            raise UserError(
+                "브라우저 작업을 시작하지 못했습니다. 백신이나 보안 프로그램이 앱을 막고 있는지 확인한 뒤 "
+                f"앱을 다시 실행해 주세요.{reason}"
+            )
 
     def cancel(self, again=False):
         """Stop the work. A second cancel would interrupt the browser cleanup, so only `again` sends one: to a worker
@@ -204,8 +207,11 @@ async def polite(url, send, throttle=None):
         await throttle.wait(url)
         answer = await send()
         status, retry = answered(answer)
-        if not (status == 429 or (status == 503 and retry)) or attempt == ATTEMPTS \
-                or not throttle.pause(url, attempt, retry):
+        if (
+            not (status == 429 or (status == 503 and retry))
+            or attempt == ATTEMPTS
+            or not throttle.pause(url, attempt, retry)
+        ):
             return answer
 
 
@@ -246,8 +252,9 @@ class BrowserImporter:
     def __init__(self, service):
         self.service = service
         # Electron keeps the profiles in its userData folder, apart from the Wiki folder.
-        self.profile_root = Path(os.environ.get(self.profiles_variable)
-                                 or Path.home() / ".private-agent" / self.profiles_folder)
+        self.profile_root = Path(
+            os.environ.get(self.profiles_variable) or Path.home() / ".private-agent" / self.profiles_folder
+        )
         self.lock = threading.RLock()
         self.job = None
         self.recent = {}  # The last RECENT_JOBS jobs by ID, the current one included.
@@ -282,8 +289,12 @@ class BrowserImporter:
         with self.lock:
             ident = params.get("id") if isinstance(params, dict) else None
             job = self.recent.get(ident, self.job) if isinstance(ident, str) else self.job
-            return {"job": deepcopy(job), "login_open": self.login_open, "login_error": self.login_error,
-                    "login_result": deepcopy(self.login_result)}
+            return {
+                "job": deepcopy(job),
+                "login_open": self.login_open,
+                "login_error": self.login_error,
+                "login_result": deepcopy(self.login_result),
+            }
 
     def cancel(self, _=None):
         with self.lock:
@@ -344,7 +355,9 @@ class BrowserImporter:
                 raise
         try:
             if not done.wait(self.check_seconds):
-                outcome["error"] = "로그인 확인 시간이 초과되었습니다. 주소를 확인하거나 ‘로그인 창 열기’에서 직접 확인해 주세요."
+                outcome["error"] = (
+                    "로그인 확인 시간이 초과되었습니다. 주소를 확인하거나 ‘로그인 창 열기’에서 직접 확인해 주세요."
+                )
                 worker.cancel()
                 if not done.wait(self.close_seconds):
                     # The browser does not close: its cleanup is stopped too, which stops Playwright's driver.
@@ -363,8 +376,14 @@ class BrowserImporter:
         result = outcome["result"]
         # Methods tried before the one that signed in, e.g. an SSO login that refused the account.
         tried = f" (먼저 시도한 방식: {', '.join(result['tried'])})" if result.get("tried") else ""
-        return {"ok": True, **result, "message": f"로그인했습니다 · {result['label']}{tried}" if result["label"]
-                else "로그인이 필요 없거나 이미 로그인되어 있습니다.", **diagnosis}
+        return {
+            "ok": True,
+            **result,
+            "message": f"로그인했습니다 · {result['label']}{tried}"
+            if result["label"]
+            else "로그인이 필요 없거나 이미 로그인되어 있습니다.",
+            **diagnosis,
+        }
 
     def check_cancel(self, _=None):
         """The user stops the running login check: its browser closes, and check() answers that it was stopped."""
@@ -409,8 +428,13 @@ class BrowserImporter:
     # -- helpers --------------------------------------------------------------
 
     def _busy(self):
-        return bool(self.job and self.job["status"] in ACTIVE) or self.login_open or self.checking \
-            or bool(self._lingering()) or self.sweeping
+        return (
+            bool(self.job and self.job["status"] in ACTIVE)
+            or self.login_open
+            or self.checking
+            or bool(self._lingering())
+            or self.sweeping
+        )
 
     def _lingering(self):
         """The login checks out of time whose browser has not closed yet, as (worker, done)."""
@@ -475,8 +499,11 @@ class BrowserImporter:
             job.update(values)
 
     def _timeouts(self):
-        return {"optional_seconds": self.optional_seconds, "form_seconds": self.form_seconds,
-                "login_seconds": self.login_seconds}
+        return {
+            "optional_seconds": self.optional_seconds,
+            "form_seconds": self.form_seconds,
+            "login_seconds": self.login_seconds,
+        }
 
     def _assistant(self, page, login, update):
         """The LLM's help in this browser (web_assist.Assist), watching `page`, when an LLM is connected and the
@@ -498,8 +525,11 @@ class BrowserImporter:
         except Exception as error:
             if assist is not None:
                 found = getattr(error, "diagnosis", None) or await assist.diagnose(
-                    page, stage() if callable(stage) else stage, str(error) if isinstance(error, UserError) else "",
-                    error)
+                    page,
+                    stage() if callable(stage) else stage,
+                    str(error) if isinstance(error, UserError) else "",
+                    error,
+                )
                 with self.lock:
                     record["diagnosis"] = found
             raise
@@ -534,6 +564,7 @@ class BrowserImporter:
         """Playwright's driver and the browser, as (playwright, context). A failure leaves neither running and is a
         UserError with Playwright's reason."""
         from playwright.async_api import async_playwright
+
         playwright = None
         try:
             profile.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -545,8 +576,10 @@ class BrowserImporter:
                     await playwright.stop()
             if isinstance(error, UserError) or not isinstance(error, Exception):
                 raise
-            raise UserError(f"{self.product} 브라우저를 시작하지 못했습니다: {first_line(error)} 앱을 다시 실행해 주세요. "
-                            "개발 환경에서는 npm run setup:python과 npm run setup:browser를 실행해 주세요.") from error
+            raise UserError(
+                f"{self.product} 브라우저를 시작하지 못했습니다: {first_line(error)} 앱을 다시 실행해 주세요. "
+                "개발 환경에서는 npm run setup:python과 npm run setup:browser를 실행해 주세요."
+            ) from error
 
     def _profile(self, origin):
         # One profile per site, so an existing profile keeps settings such as a sign-in prompt's "always allow".
@@ -555,8 +588,14 @@ class BrowserImporter:
     async def _launch(self, playwright, profile, headless):
         # Full Chromium also for new-headless background runs; no browser downloads. The pages it opens are other
         # people's, so the renderer sandbox stays on: Playwright turns it off by itself unless chromium_sandbox is True.
-        options = {"channel": "chromium", "headless": headless, "accept_downloads": False, "args": BROWSER_ARGS,
-                   "permissions": ["notifications"], "viewport": {"width": 1920, "height": 1080}}
+        options = {
+            "channel": "chromium",
+            "headless": headless,
+            "accept_downloads": False,
+            "args": BROWSER_ARGS,
+            "permissions": ["notifications"],
+            "viewport": {"width": 1920, "height": 1080},
+        }
         try:
             return await playwright.chromium.launch_persistent_context(str(profile), chromium_sandbox=True, **options)
         except Exception as error:
@@ -603,8 +642,13 @@ class BrowserImporter:
                 context.on("page", lambda popup: close_popup(page, popup))
                 url, origin = await self._reach(page, url)
                 # A page opened again keeps its analysis for the result; a check shows no notices.
-                assist = self._assistant(page, login, lambda **values: outcome.update(
-                    {key: value for key, value in values.items() if key == "diagnosis"}))
+                assist = self._assistant(
+                    page,
+                    login,
+                    lambda **values: outcome.update(
+                        {key: value for key, value in values.items() if key == "diagnosis"}
+                    ),
+                )
                 async with self._explaining(outcome, assist, page, "로그인 확인"):
                     outcome["result"] = await self._verify(context, page, url, origin, login, assist)
         except asyncio.CancelledError:

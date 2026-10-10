@@ -9,6 +9,7 @@ goes to confluence.import_page as an in-memory HTML capture; nothing but the bro
 A routine's import (track_changes) asks Confluence for a page's version number first, which the subpage list gives
 along: a page still at the version the Wiki took, read in full within sources.RECHECK, is not read again.
 """
+
 import asyncio
 import contextlib
 import json
@@ -31,8 +32,10 @@ MAX_LIST_CHARS = 10 * 1024 * 1024
 WINDOW_SECONDS = 600
 MAX_EXPANDS = 100
 CONTENT = '#main-content, .ak-renderer-document, [data-testid="renderer-wrapper"]'
-EXPAND = ('.expand-control:not([data-wiki-expanded]), '
-          'button[aria-expanded="false"][data-testid*="expand"]:not([data-wiki-expanded])')
+EXPAND = (
+    ".expand-control:not([data-wiki-expanded]), "
+    'button[aria-expanded="false"][data-testid*="expand"]:not([data-wiki-expanded])'
+)
 # Page link shapes, also below a context path such as /confluence or /wiki.
 PAGE_PATHS = (
     re.compile(r"/display/[^/]+/[^/]+"),  # /display/SPACEKEY/Page+Title
@@ -40,8 +43,10 @@ PAGE_PATHS = (
     re.compile(r"/x/[A-Za-z0-9_-]+/?$"),  # /x/AbCdEf short links
 )
 DIGITS = re.compile(r"[0-9]+")
-FORMAT_ERROR = ("Confluence 페이지 링크 형식이 아닙니다. 예) https://<주소>/display/SPACE/Page+Title, "
-                "https://<주소>/pages/viewpage.action?pageId=123456")
+FORMAT_ERROR = (
+    "Confluence 페이지 링크 형식이 아닙니다. 예) https://<주소>/display/SPACE/Page+Title, "
+    "https://<주소>/pages/viewpage.action?pageId=123456"
+)
 LINK_ERROR = "Confluence 페이지 링크를 확인해 주세요. 예) https://<주소>/display/SPACE/Page+Title"
 SITE_ERROR = "Confluence 주소를 확인해 주세요. 예) https://confluence.example.com/wiki, confluence.example.com/wiki"
 NOT_FOUND = "Confluence 페이지를 확인하지 못했습니다. 로그인 및 페이지 접근 권한을 확인해 주세요."
@@ -49,12 +54,14 @@ API_ERROR = "하위 페이지 API 경로가 올바르지 않습니다."
 ANALYSIS_ERROR = "Markdown 문서는 저장되었지만 AI 분석에 실패했습니다. 문서에서 재시도해 주세요."
 WINDOW_ERROR = "자동 입력하지 못했습니다. 창에서 직접 로그인해 주세요."
 # The HTML page of a capture: the page's body in a document of its own, with its title and link.
-DOCUMENT = ("<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" "
-            "content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; "
-            "form-action 'none'\"><title>{title}</title><style>body{{max-width:960px;margin:40px auto;"
-            "font-family:sans-serif;line-height:1.7}}table{{border-collapse:collapse}}td,th{{border:1px solid #ccc;"
-            "padding:8px}}pre{{white-space:pre-wrap}}</style></head><body><h1>{title}</h1><p>출처: <a href=\"{url}\">"
-            "{url}</a></p><main>{body}</main></body></html>")
+DOCUMENT = (
+    '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" '
+    "content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; "
+    "form-action 'none'\"><title>{title}</title><style>body{{max-width:960px;margin:40px auto;"
+    "font-family:sans-serif;line-height:1.7}}table{{border-collapse:collapse}}td,th{{border:1px solid #ccc;"
+    'padding:8px}}pre{{white-space:pre-wrap}}</style></head><body><h1>{title}</h1><p>출처: <a href="{url}">'
+    "{url}</a></p><main>{body}</main></body></html>"
+)
 
 # Runs in a signed-in Confluence page; a login redirect shows up as status 0.
 FETCH_JSON = """async ({url, limit}) => {
@@ -186,6 +193,7 @@ def is_page_url(value):
 
         def first(name):
             return (query.get(name) or [""])[0]
+
         return bool(first("pageId")) or bool(first("spaceKey") and first("title"))
     return any(pattern.search(url.path) for pattern in PAGE_PATHS)
 
@@ -214,8 +222,11 @@ def api_link(value, current, base):
         raise UserError(API_ERROR)
     target = base + value if value.startswith(("/rest/", "/api/")) else urljoin(current, value)
     found, site = urlsplit(target), urlsplit(base)
-    if "@" in found.netloc or origin_of(target) != origin_of(base) \
-            or not found.path.startswith(re.sub("/$", "", site.path) + "/"):
+    if (
+        "@" in found.netloc
+        or origin_of(target) != origin_of(base)
+        or not found.path.startswith(re.sub("/$", "", site.path) + "/")
+    ):
         raise UserError("다른 사이트를 가리키는 하위 페이지 응답을 거부했습니다.")
     if not found.path.startswith((urlsplit(base + "/rest/api/").path, urlsplit(base + "/api/v2/").path)):
         raise UserError(API_ERROR)
@@ -224,10 +235,12 @@ def api_link(value, current, base):
 
 def arrived_at(origin):
     """Signed in once a Confluence page of the site opens, or any page of the site names the signed-in user."""
+
     async def arrived(page):
         if origin_of(page.url) == origin and is_page_url(page.url):
             return True
         return await signed_in(page, origin)
+
     return arrived
 
 
@@ -240,8 +253,10 @@ def page_request(page):
     """REST requests made inside the signed-in page: the browser's cookies and certificate trust apply, where the
     backend's own requests could refuse a private certificate authority. Each goes within the site's rate, and one the
     site refuses as too many is waited out and sent again (browser_import.polite)."""
+
     async def request(url):
         return await polite(url, lambda: page.evaluate(FETCH_JSON, {"url": url, "limit": MAX_LIST_CHARS}))
+
     return request
 
 
@@ -254,8 +269,11 @@ async def json_page(page, url, origin):
         if response is None or origin_of(page.url) != origin:
             return None
         text = await response.text()
-        return {"status": response.status, "link": response.headers.get("link", ""),
-                "text": text if len(text) <= MAX_LIST_CHARS else None}
+        return {
+            "status": response.status,
+            "link": response.headers.get("link", ""),
+            "text": text if len(text) <= MAX_LIST_CHARS else None,
+        }
     except Exception:
         return None
 
@@ -269,6 +287,7 @@ def site_request(page, origin):
         if origin_of(page.url) == origin:
             return await inside(url)
         return await json_page(page, url, origin) or {"status": 0, "link": "", "text": ""}
+
     return request
 
 
@@ -309,7 +328,7 @@ def title_of(value):
         return None
     query = parse_qs(url.query)
     if url.path.endswith("/pages/viewpage.action") and not query.get("pageId"):
-        prefix = url.path[:-len("/pages/viewpage.action")]
+        prefix = url.path[: -len("/pages/viewpage.action")]
         space, title = (query.get("spaceKey") or [""])[0], (query.get("title") or [""])[0]
     else:
         match = re.fullmatch(r"(.*?)/display/([^/]+)/([^/]+)/?", url.path)
@@ -340,8 +359,12 @@ async def page_by_title(request, link):
     ident = str(item.get("id") or "")
     if not DIGITS.fullmatch(ident):
         return None
-    return {"id": ident, "base": base, "url": f"{base}/pages/viewpage.action?pageId={ident}",
-            "version": version_of(item)}
+    return {
+        "id": ident,
+        "base": base,
+        "url": f"{base}/pages/viewpage.action?pageId={ident}",
+        "version": version_of(item),
+    }
 
 
 async def children(request, info, on_child):
@@ -362,11 +385,15 @@ async def children(request, info, on_child):
         if status == 0:
             raise UserError("하위 페이지 목록 요청이 로그인 화면으로 이동했습니다. 로그인 상태를 확인해 주세요.")
         if status == 429:
-            raise UserError("요청이 너무 많다며 Confluence가 하위 페이지 목록을 거절했습니다 (HTTP 429). 잠시 후 다시 "
-                            "시도해 주세요.")
+            raise UserError(
+                "요청이 너무 많다며 Confluence가 하위 페이지 목록을 거절했습니다 (HTTP 429). 잠시 후 다시 "
+                "시도해 주세요."
+            )
         if not isinstance(status, int) or not 200 <= status <= 299:
-            raise UserError(f"하위 페이지 목록을 읽지 못했습니다 (HTTP {status}). 로그인·권한·REST API 사용 가능 여부를 "
-                            "확인해 주세요.")
+            raise UserError(
+                f"하위 페이지 목록을 읽지 못했습니다 (HTTP {status}). 로그인·권한·REST API 사용 가능 여부를 "
+                "확인해 주세요."
+            )
         if not isinstance(response.get("text"), str):
             raise UserError("하위 페이지 목록 응답이 10MB를 초과합니다.")
         header = re.search(r'<([^>]+)>;\s*rel="?next"?', response.get("link") or "")
@@ -385,8 +412,14 @@ async def children(request, info, on_child):
             count += 1
             if count > MAX_PAGES:
                 raise UserError(f"하위 페이지가 {MAX_PAGES:,}개를 초과합니다. 범위를 나누어 가져와 주세요.")
-            on_child({"id": ident, "base": info["base"], "url": f"{info['base']}/pages/viewpage.action?pageId={ident}",
-                      "version": version_of(item)})
+            on_child(
+                {
+                    "id": ident,
+                    "base": info["base"],
+                    "url": f"{info['base']}/pages/viewpage.action?pageId={ident}",
+                    "version": version_of(item),
+                }
+            )
         links = body.get("_links") if isinstance(body.get("_links"), dict) else {}
         following = links.get("next") or (header[1] if header else None)
         endpoint = api_link(following, endpoint, info["base"]) if following else ""
@@ -464,8 +497,9 @@ async def snapshot(page, source, origin, assist=None):
     info = location_info(data.get("url"), data)
     if source.get("id") and source["id"] != info["id"]:
         raise UserError("요청한 페이지와 열린 페이지의 ID가 다릅니다.")
-    html = DOCUMENT.format(title=escape(str(data.get("title") or "")), url=escape(info["url"]),
-                           body=data.get("html") or "")
+    html = DOCUMENT.format(
+        title=escape(str(data.get("title") or "")), url=escape(info["url"]), body=data.get("html") or ""
+    )
     if len(html.encode("utf-8", "surrogatepass")) > MAX_HTML_BYTES:
         raise UserError("페이지 HTML이 10MB를 초과해 가져오지 않았습니다. 페이지를 나누어 가져와 주세요.")
     return {**info, "html": html}
@@ -498,19 +532,46 @@ class ConfluenceImporter(BrowserImporter):
         if analyze and not self.service.llm.public()["configured"]:
             raise UserError("AI 분석을 사용하려면 먼저 LLM을 연결해 주세요.")
         # An automatic routine (routines.py) that watches the page learns what each import changed.
-        options = {"recursive": recursive, "analyze": analyze, "doc_id": doc_id, "replace": replace,
-                   "track_changes": params.get("track_changes") is True}
+        options = {
+            "recursive": recursive,
+            "analyze": analyze,
+            "doc_id": doc_id,
+            "replace": replace,
+            "track_changes": params.get("track_changes") is True,
+        }
         routine = routine_name(params)
         origin = origin_of(url)
         with self.lock:
             if self._busy():
                 raise BusyError(BUSY_ERROR)
-            job = {"id": str(uuid.uuid4()), "url": url, **options, "routine": routine, "auto_login": bool(login),
-                   "login": {"site": login["site_name"] if login else "", "method": None, "label": "",
-                             "detected": False, "error": ""},
-                   "status": "scanning", "total": 1, "processed": 0, "imported": 0, "updated": 0, "skipped": 0,
-                   "failed": 0, "analysis_failed": 0, "discovery_failed": 0, "current_url": "", "notice": "",
-                   "results": [], "error": "", "diagnosis": None}
+            job = {
+                "id": str(uuid.uuid4()),
+                "url": url,
+                **options,
+                "routine": routine,
+                "auto_login": bool(login),
+                "login": {
+                    "site": login["site_name"] if login else "",
+                    "method": None,
+                    "label": "",
+                    "detected": False,
+                    "error": "",
+                },
+                "status": "scanning",
+                "total": 1,
+                "processed": 0,
+                "imported": 0,
+                "updated": 0,
+                "skipped": 0,
+                "failed": 0,
+                "analysis_failed": 0,
+                "discovery_failed": 0,
+                "current_url": "",
+                "notice": "",
+                "results": [],
+                "error": "",
+                "diagnosis": None,
+            }
             self._begin(job, lambda: self._collect(job, url, origin, options, login), "confluence-browser")
             return self.status()
 
@@ -526,8 +587,16 @@ class ConfluenceImporter(BrowserImporter):
                     self._update(job, status="login")
                     async with self._explaining(job, assist, page, "로그인"):
                         try:
-                            result = await sign_in(context, page, url, login, product=self.product, assist=assist,
-                                                   arrived=arrived_at(origin), **self._timeouts())
+                            result = await sign_in(
+                                context,
+                                page,
+                                url,
+                                login,
+                                product=self.product,
+                                assist=assist,
+                                arrived=arrived_at(origin),
+                                **self._timeouts(),
+                            )
                         except UserError as error:
                             with self.lock:
                                 job["login"].update(error=str(error), sent=getattr(error, "sent", False))
@@ -538,11 +607,19 @@ class ConfluenceImporter(BrowserImporter):
         except asyncio.CancelledError:
             pass
         except Exception as error:
-            self._update(job, error=diagnostics.report(
-                error, "Confluence 가져오기를 완료하지 못했습니다. 링크·네트워크·로그인 상태를 확인해 주세요.", "Confluence 가져오기"))
+            self._update(
+                job,
+                error=diagnostics.report(
+                    error,
+                    "Confluence 가져오기를 완료하지 못했습니다. 링크·네트워크·로그인 상태를 확인해 주세요.",
+                    "Confluence 가져오기",
+                ),
+            )
         finally:
             with self.lock:
-                job["status"] = "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
+                job["status"] = (
+                    "cancelled" if job["status"] == "cancelling" else "error" if job["error"] else "completed"
+                )
                 job["current_url"] = ""
 
     async def _pages(self, job, page, url, origin, options, assist):
@@ -575,25 +652,43 @@ class ConfluenceImporter(BrowserImporter):
                 if result is None:
                     # The first page shows whether Confluence opens; it may be opened again (web_assist.py).
                     captured = await snapshot(page, source, origin, assist if cursor == 0 else None)
-                    source = {"id": captured["id"], "base": captured["base"], "url": captured["url"],
-                              "version": source.get("version", "")}
+                    source = {
+                        "id": captured["id"],
+                        "base": captured["base"],
+                        "url": captured["url"],
+                        "version": source.get("version", ""),
+                    }
                     seen.add(f"{source['base']}:{source['id']}")
-                    result = import_page(self.service, {"source_url": source["url"], "page_id": source["id"],
-                                                        "html": captured["html"], "doc_id": options["doc_id"],
-                                                        "replace": options["replace"], "version": source["version"],
-                                                        "track_changes": options["track_changes"]})
+                    result = import_page(
+                        self.service,
+                        {
+                            "source_url": source["url"],
+                            "page_id": source["id"],
+                            "html": captured["html"],
+                            "doc_id": options["doc_id"],
+                            "replace": options["replace"],
+                            "version": source["version"],
+                            "track_changes": options["track_changes"],
+                        },
+                    )
                     if options["analyze"] and result["status"] in ("imported", "updated"):
                         await self._analyze(job, result)
                 else:
                     seen.add(f"{source['base']}:{source['id']}")
             except Exception as error:
-                result = {"status": "failed", "message": diagnostics.report(
-                    error, "페이지를 읽거나 저장하지 못했습니다. 네트워크·접근 권한·저장 공간을 확인해 주세요.",
-                    "Confluence 페이지 가져오기")}
+                result = {
+                    "status": "failed",
+                    "message": diagnostics.report(
+                        error,
+                        "페이지를 읽거나 저장하지 못했습니다. 네트워크·접근 권한·저장 공간을 확인해 주세요.",
+                        "Confluence 페이지 가져오기",
+                    ),
+                }
                 # A first page that does not open: the LLM says why Confluence could not be reached.
                 if cursor == 0 and isinstance(error, AccessError) and assist is not None and not page.is_closed():
                     found = getattr(error, "diagnosis", None) or await assist.diagnose(
-                        page, "페이지 열기", str(error), error)
+                        page, "페이지 열기", str(error), error
+                    )
                     with self.lock:
                         job["diagnosis"] = found
             # Even when a page fails, the pages below it are listed by its known ID.
@@ -601,8 +696,11 @@ class ConfluenceImporter(BrowserImporter):
                 try:
                     await children(request, source, add)
                 except Exception as error:
-                    result["discovery_error"] = str(error) if isinstance(error, UserError) else \
-                        "하위 페이지 목록을 읽지 못했습니다. 이 페이지 아래에 누락된 문서가 있을 수 있습니다."
+                    result["discovery_error"] = (
+                        str(error)
+                        if isinstance(error, UserError)
+                        else "하위 페이지 목록을 읽지 못했습니다. 이 페이지 아래에 누락된 문서가 있을 수 있습니다."
+                    )
                     with self.lock:
                         job["discovery_failed"] += 1
             with self.lock:
@@ -657,8 +755,16 @@ class ConfluenceImporter(BrowserImporter):
 
     async def _login_helper(self, context, page, url, origin, login):
         try:
-            result = await sign_in(context, page, url, login, product=self.product, arrived=arrived_at(origin),
-                                   watched=True, **{**self._timeouts(), "login_seconds": self.window_seconds})
+            result = await sign_in(
+                context,
+                page,
+                url,
+                login,
+                product=self.product,
+                arrived=arrived_at(origin),
+                watched=True,
+                **{**self._timeouts(), "login_seconds": self.window_seconds},
+            )
         except Exception as error:
             if not page.is_closed():  # Closing the window ends the helper; that is no failed login.
                 with self.lock:
@@ -669,5 +775,14 @@ class ConfluenceImporter(BrowserImporter):
 
     async def _verify(self, context, page, url, origin, login, assist):
         # A check tells whether the account and the method sign in: never the session a run or the window left.
-        return await sign_in(context, page, url, login, product=self.product, assist=assist, fresh=True,
-                             arrived=lambda value: signed_in(value, origin), **self._timeouts())
+        return await sign_in(
+            context,
+            page,
+            url,
+            login,
+            product=self.product,
+            assist=assist,
+            fresh=True,
+            arrived=lambda value: signed_in(value, origin),
+            **self._timeouts(),
+        )

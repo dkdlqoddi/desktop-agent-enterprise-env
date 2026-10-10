@@ -44,6 +44,7 @@ def test_a_file_held_longer_is_left_after_the_wait(tmp_path):
 
 def test_scratch_folders_an_earlier_run_left_go_at_the_next_start(tmp_path):
     from agent.folders import sweep_scratch
+
     now = time.time()
 
     def folder(name, age, inner=True):

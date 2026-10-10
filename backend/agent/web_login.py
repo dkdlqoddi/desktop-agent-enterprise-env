@@ -36,6 +36,7 @@ An address may be given without its scheme (portal.example.com, jira.example.com
 (with_scheme), never over http, so the account never goes over a plain connection by a fallback; a site that only
 answers over http is saved with http:// written out, the user's own choice.
 """
+
 import asyncio
 import contextlib
 import re
@@ -66,8 +67,11 @@ LEARNED, LEARNED_LABEL = "learned", "AI가 찾은 로그인 화면"
 READY = 'input:not([type="hidden"]), button, a[href], [role="button"]'
 FIELDS = {"id": "ID 입력란", "password": "비밀번호 입력란", "text": "글자 입력란"}
 # The fields each value may be typed into: input types, as PAGE_STATE (web_assist.py) tells text fields.
-KINDS = {"id": ("text", "email", "tel", "number"), "password": ("password",),
-         "text": ("text", "email", "tel", "number", "search", "url", "textarea")}
+KINDS = {
+    "id": ("text", "email", "tel", "number"),
+    "password": ("password",),
+    "text": ("text", "email", "tel", "number", "search", "url", "textarea"),
+}
 PLAN_ERROR = "사이트 로그인 정보 형식이 올바르지 않습니다."
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # JIRA and Confluence name the signed-in user in these page metadata (Server/Data Center and Cloud).
@@ -242,14 +246,20 @@ class Hosts:
             raise LoginError("로그인 화면의 주소를 확인할 수 없어 ID·비밀번호를 입력하지 않았습니다.")
         if not self.trusts(host):
             if host in self.known:  # Where the site led, but not where it has signed in before.
-                raise LoginError(f"로그인 화면이 이 사이트에 저장된 로그인 주소에 없는 곳({host})에 있어 ID·비밀번호를 "
-                                 "입력하지 않았습니다. 사이트의 로그인 화면이 바뀐 것이 맞다면 관리 → 사이트 계정에서 "
-                                 "‘로그인 주소 초기화’ 뒤 로그인 확인을 해 주세요.")
-            raise LoginError(f"로그인 화면이 사이트 주소와 다른 곳({host})에 있어 ID·비밀번호를 입력하지 않았습니다. "
-                             "관리 → 사이트 계정에서 주소와 로그인 방식을 확인해 주세요.")
+                raise LoginError(
+                    f"로그인 화면이 이 사이트에 저장된 로그인 주소에 없는 곳({host})에 있어 ID·비밀번호를 "
+                    "입력하지 않았습니다. 사이트의 로그인 화면이 바뀐 것이 맞다면 관리 → 사이트 계정에서 "
+                    "‘로그인 주소 초기화’ 뒤 로그인 확인을 해 주세요."
+                )
+            raise LoginError(
+                f"로그인 화면이 사이트 주소와 다른 곳({host})에 있어 ID·비밀번호를 입력하지 않았습니다. "
+                "관리 → 사이트 계정에서 주소와 로그인 방식을 확인해 주세요."
+            )
         if self.secure and scheme != "https":
-            raise LoginError(f"로그인 화면이 암호화되지 않은 주소(http://{host})에 있어 ID·비밀번호를 입력하지 "
-                             "않았습니다. 관리 → 사이트 계정에서 주소와 로그인 방식을 확인해 주세요.")
+            raise LoginError(
+                f"로그인 화면이 암호화되지 않은 주소(http://{host})에 있어 ID·비밀번호를 입력하지 "
+                "않았습니다. 관리 → 사이트 계정에서 주소와 로그인 방식을 확인해 주세요."
+            )
         self.used.add(host)
 
 
@@ -288,8 +298,14 @@ def _step(step):
         optional = False
     if not isinstance(optional, bool) or optional and action != "click" and value != "text":
         _fail()
-    return {"action": action, "target": _selector(step.get("target"), required=action != "submit"),
-            "value": value, "text": text, "optional": optional, "unless": _selector(step.get("unless"), required=False)}
+    return {
+        "action": action,
+        "target": _selector(step.get("target"), required=action != "submit"),
+        "value": value,
+        "text": text,
+        "optional": optional,
+        "unless": _selector(step.get("unless"), required=False),
+    }
 
 
 def validate_plan(value):
@@ -307,17 +323,34 @@ def validate_plan(value):
         if not isinstance(method, dict):
             _fail()
         ident, label, detect, steps = (method.get(key) for key in ("id", "label", "detect", "steps"))
-        if not isinstance(ident, str) or not 1 <= len(ident) <= 40 or not isinstance(label, str) \
-                or not 1 <= len(label.strip()) <= 80 or method.get("priority") not in (None, True, False):
+        if (
+            not isinstance(ident, str)
+            or not 1 <= len(ident) <= 40
+            or not isinstance(label, str)
+            or not 1 <= len(label.strip()) <= 80
+            or method.get("priority") not in (None, True, False)
+        ):
             _fail()
-        if not isinstance(detect, list) or not 1 <= len(detect) <= MAX_DETECT or not isinstance(steps, list) \
-                or not 1 <= len(steps) <= MAX_STEPS:
+        if (
+            not isinstance(detect, list)
+            or not 1 <= len(detect) <= MAX_DETECT
+            or not isinstance(steps, list)
+            or not 1 <= len(steps) <= MAX_STEPS
+        ):
             _fail()
-        clean = {"id": ident, "label": label.strip(), "detect": [_selector(item) for item in detect],
-                 "steps": [_step(step) for step in steps], "priority": method.get("priority") is True}
+        clean = {
+            "id": ident,
+            "label": label.strip(),
+            "detect": [_selector(item) for item in detect],
+            "steps": [_step(step) for step in steps],
+            "priority": method.get("priority") is True,
+        }
         actions = [step["action"] for step in clean["steps"]]
-        if actions.count("submit") != 1 or actions[-1] != "submit" or \
-                not any(step["value"] == "password" for step in clean["steps"]):
+        if (
+            actions.count("submit") != 1
+            or actions[-1] != "submit"
+            or not any(step["value"] == "password" for step in clean["steps"])
+        ):
             _fail()
         # The saved method comes first and may appear again in the rest of the catalog.
         found.setdefault(ident, clean)
@@ -334,12 +367,20 @@ def validate_plan(value):
         _fail()
     # The hosts the account may be typed into besides the site's own, once Electron keeps them for the site.
     hosts = value.get("hosts") or []
-    if not isinstance(hosts, list) or len(hosts) > MAX_HOSTS \
-            or not all(isinstance(host, str) and HOST.fullmatch(host) for host in hosts):
+    if (
+        not isinstance(hosts, list)
+        or len(hosts) > MAX_HOSTS
+        or not all(isinstance(host, str) and HOST.fullmatch(host) for host in hosts)
+    ):
         _fail()
-    return {"site_id": site_id, "site_name": site_name.strip(), "mode": value["mode"],
-            "methods": list(found.values()), "credentials": {"id": login_id, "password": password},
-            "hosts": list(dict.fromkeys(host.lower() for host in hosts))}
+    return {
+        "site_id": site_id,
+        "site_name": site_name.strip(),
+        "mode": value["mode"],
+        "methods": list(found.values()),
+        "credentials": {"id": login_id, "password": password},
+        "hosts": list(dict.fromkeys(host.lower() for host in hosts)),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +392,9 @@ def redirected(error):
     """A navigation replaced by another one, e.g. a client-side redirect to the SSO page; not one replaced by the
     browser's error page of a page that did not open."""
     reason = str(error)
-    return ("interrupted by another navigation" in reason or "net::ERR_ABORTED" in reason) \
-        and "chrome-error:" not in reason
+    return (
+        "interrupted by another navigation" in reason or "net::ERR_ABORTED" in reason
+    ) and "chrome-error:" not in reason
 
 
 def _alive(page):
@@ -400,8 +442,11 @@ async def _cleared(locator, mark):
     """The password field shows again, empty, as on a login screen shown again after a rejected login: a field of the
     same kind and name at its place (`mark`), not another one there, e.g. a one-time code's."""
     try:
-        return await locator.is_visible() and (await locator.evaluate(FIELD, timeout=1000))["mark"] == mark \
+        return (
+            await locator.is_visible()
+            and (await locator.evaluate(FIELD, timeout=1000))["mark"] == mark
             and await locator.input_value(timeout=1000) == ""
+        )
     except Exception:
         return False
 
@@ -587,8 +632,13 @@ async def _run(page, method, credentials, optional_seconds, form_seconds, hosts,
             elif step["action"] == "fill":
                 value = step["value"]
                 try:
-                    element, found = await _fill(locator, value, step["text"] if value == "text" else credentials[value],
-                                                 hosts, optional_seconds if step["optional"] else form_seconds)
+                    element, found = await _fill(
+                        locator,
+                        value,
+                        step["text"] if value == "text" else credentials[value],
+                        hosts,
+                        optional_seconds if step["optional"] else form_seconds,
+                    )
                 except StepError:
                     if step["optional"]:  # A field that only some screens show.
                         continue
@@ -657,8 +707,9 @@ async def _sent(page, field, arrived, login_seconds):
 
 def _note(label, outcome, login_seconds):
     """How a login sent with the method `label` went, for the list of methods tried."""
-    return f"{label}: " + ("로그인 화면이 다시 표시됨" if outcome == "rejected" else
-                           f"{login_seconds:g}초 안에 사이트로 이동하지 않음")
+    return f"{label}: " + (
+        "로그인 화면이 다시 표시됨" if outcome == "rejected" else f"{login_seconds:g}초 안에 사이트로 이동하지 않음"
+    )
 
 
 def _failed(sent, notes, product, login_seconds):
@@ -667,11 +718,16 @@ def _failed(sent, notes, product, login_seconds):
     if "rejected" in outcomes:
         return LoginError("로그인하지 못했습니다. ID·비밀번호를 확인해 주세요." + _tried(notes), sent=True)
     if "timeout" in outcomes:
-        return LoginError(f"로그인 후 {login_seconds:g}초 안에 {product} 페이지로 이동하지 않았습니다. "
-                          "ID·비밀번호를 확인하고, 추가 인증이 필요한 사이트라면 관리 → 사이트 계정의 "
-                          "‘로그인 창 열기’에서 한 번 로그인해 주세요." + _tried(notes), sent=True)
-    return LoginError("로그인 화면을 찾지 못했습니다. 주소를 확인하거나 관리 → 사이트 계정에서 로그인 방식을 선택해 "
-                      "주세요." + _tried(notes))
+        return LoginError(
+            f"로그인 후 {login_seconds:g}초 안에 {product} 페이지로 이동하지 않았습니다. "
+            "ID·비밀번호를 확인하고, 추가 인증이 필요한 사이트라면 관리 → 사이트 계정의 "
+            "‘로그인 창 열기’에서 한 번 로그인해 주세요." + _tried(notes),
+            sent=True,
+        )
+    return LoginError(
+        "로그인 화면을 찾지 못했습니다. 주소를 확인하거나 관리 → 사이트 계정에서 로그인 방식을 선택해 "
+        "주세요." + _tried(notes)
+    )
 
 
 async def _ready(page, arrived, seconds):
@@ -708,8 +764,21 @@ def _step_of(action, target, value=None):
     return {"action": action, "target": target, "value": value, "text": None, "optional": False, "unless": None}
 
 
-async def _assisted(context, page, url, plan, arrived, product, assist, notes, hosts, sent, optional_seconds,
-                    form_seconds, login_seconds):
+async def _assisted(
+    context,
+    page,
+    url,
+    plan,
+    arrived,
+    product,
+    assist,
+    notes,
+    hosts,
+    sent,
+    optional_seconds,
+    form_seconds,
+    login_seconds,
+):
     """None of the plan's methods fits the page (any more): the LLM reads the login screen (web_assist.py) and the
     fields it picks are filled as a user-defined method's, sending the account once at most, and never into the fields
     of a login sent already (`sent`, which the login it sends joins). A screen before the form (a notice, an SSO link)
@@ -751,8 +820,9 @@ async def _assisted(context, page, url, plan, arrived, product, assist, notes, h
                 learned.update(password=found["password"], submit=found["submit"] or "")
                 steps += [_step_of("fill", found["password"], "password"), _step_of("submit", found["submit"])]
             try:
-                field = await _run(page, {"steps": steps}, plan["credentials"], optional_seconds, form_seconds, hosts,
-                                   sent, filled)
+                field = await _run(
+                    page, {"steps": steps}, plan["credentials"], optional_seconds, form_seconds, hosts, sent, filled
+                )
             except StepError as error:
                 notes.append(f"AI 분석: {error.what}에 입력하지 못함")
                 return None
@@ -787,8 +857,21 @@ async def _assisted(context, page, url, plan, arrived, product, assist, notes, h
         assist.update(notice="")
 
 
-async def sign_in(context, page, url, plan, *, arrived, product, optional_seconds=3, form_seconds=30,
-                  login_seconds=100, assist=None, watched=False, fresh=False):
+async def sign_in(
+    context,
+    page,
+    url,
+    plan,
+    *,
+    arrived,
+    product,
+    optional_seconds=3,
+    form_seconds=30,
+    login_seconds=100,
+    assist=None,
+    watched=False,
+    fresh=False,
+):
     """Sign in with the plan's methods, unless the profile's session is signed in already (`fresh` signs in anyway).
 
     arrived(page) tells the signed-in page apart. Every login detects which method's login screen shows, in plan
@@ -839,8 +922,21 @@ async def sign_in(context, page, url, plan, *, arrived, product, optional_second
                 # No other method fits the page: the LLM's try, once.
                 if assist is not None and not assisted:
                     assisted = True
-                    result = await _assisted(context, page, url, plan, arrived, product, assist, notes, hosts, sent,
-                                             optional_seconds, form_seconds, login_seconds)
+                    result = await _assisted(
+                        context,
+                        page,
+                        url,
+                        plan,
+                        arrived,
+                        product,
+                        assist,
+                        notes,
+                        hosts,
+                        sent,
+                        optional_seconds,
+                        form_seconds,
+                        login_seconds,
+                    )
                     if result is ARRIVED:
                         return {"method": None, "label": "", "detected": False}
                     if result is not None:

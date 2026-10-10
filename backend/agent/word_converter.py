@@ -1,4 +1,5 @@
 """Hidden Windows Word in a disposable COM worker. DispatchEx starts a Word of its own for every file."""
+
 import multiprocessing
 import sys
 import threading
@@ -16,8 +17,10 @@ from .word_html import word_xml_to_html
 WAITING = "다른 가져오기·원본 반영의 {name} 작업이 끝나기를 기다리는 중입니다."
 # How long a worker may take to answer once the password prompt of its file was cancelled: it fails at once then.
 PROMPT_SECONDS = 15
-PASSWORD = ("암호가 걸린 {name} 파일이라 열지 않았습니다. {name}이(가) 띄운 암호 입력 창은 앱이 취소했습니다. 암호를 "
-            "푼 파일을 가져와 주세요.")
+PASSWORD = (
+    "암호가 걸린 {name} 파일이라 열지 않았습니다. {name}이(가) 띄운 암호 입력 창은 앱이 취소했습니다. 암호를 "
+    "푼 파일을 가져와 주세요."
+)
 
 
 def capabilities():
@@ -25,12 +28,17 @@ def capabilities():
         return {"available": False, "reason": ".rtf 변환은 Microsoft Word가 설치된 Windows에서 사용할 수 있습니다."}
     try:
         import winreg
+
         import pythoncom  # noqa: F401 — verify that the packaged runtime includes pywin32
         import win32com.client  # noqa: F401
+
         with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Word.Application\CLSID"):
             pass
     except (ImportError, OSError):
-        return {"available": False, "reason": "Word COM을 찾을 수 없습니다. Microsoft Word 데스크톱 앱 설치를 확인해 주세요."}
+        return {
+            "available": False,
+            "reason": "Word COM을 찾을 수 없습니다. Microsoft Word 데스크톱 앱 설치를 확인해 주세요.",
+        }
     return {"available": True, "reason": "Microsoft Word를 백그라운드로 실행해 변환합니다."}
 
 
@@ -47,11 +55,19 @@ def read_word_xml(source, *, dispatch=None):
         office.change(word, AutomationSecurity=3)  # msoAutomationSecurityForceDisable
         office.change(word.Options, UpdateLinksAtOpen=False)
         with office.opening():
-            document = office.track(word.Documents.Open(
-                FileName=str(Path(source).resolve()), ReadOnly=True, AddToRecentFiles=False,
-                ConfirmConversions=False, Visible=False, PasswordDocument="",
-                OpenAndRepair=False, NoEncodingDialog=True,
-            ), close_document)
+            document = office.track(
+                word.Documents.Open(
+                    FileName=str(Path(source).resolve()),
+                    ReadOnly=True,
+                    AddToRecentFiles=False,
+                    ConfirmConversions=False,
+                    Visible=False,
+                    PasswordDocument="",
+                    OpenAndRepair=False,
+                    NoEncodingDialog=True,
+                ),
+                close_document,
+            )
         with office.reading():
             xml = document.Content.WordOpenXML
             if not isinstance(xml, str) or not xml.strip():
@@ -69,8 +85,12 @@ def convert_with_word(source, *, dispatch=None):
 
 
 def _worker(source, sender, stop):
-    run_worker(lambda: convert_with_word(source), sender, "Word 변환",
-               "Word에서 파일을 직접 열 수 있는지, 문서 암호·DRM·보안 정책을 확인해 주세요.")
+    run_worker(
+        lambda: convert_with_word(source),
+        sender,
+        "Word 변환",
+        "Word에서 파일을 직접 열 수 있는지, 문서 암호·DRM·보안 정책을 확인해 주세요.",
+    )
 
 
 def end_left_office(watch):
@@ -83,8 +103,12 @@ def end_left_office(watch):
         diagnostics.report(error, "", "숨은 Office 정리")
         return
     for found in ended:
-        diagnostics.LOG.info("ended the hidden %s (pid %d) an import or write-back worker left: %s",
-                             found.name, found.pid, found.command_line)
+        diagnostics.LOG.info(
+            "ended the hidden %s (pid %d) an import or write-back worker left: %s",
+            found.name,
+            found.pid,
+            found.command_line,
+        )
 
 
 class Turns:
@@ -214,7 +238,9 @@ class WordConverter:
                         raise UserError(self.password("PowerPoint"))
                     if cancelled:
                         raise UserError(self.stopped())
-                    raise UserError(f"{label}이 {self.timeout}초를 초과했습니다. 파일의 열기 대화상자나 보안 정책을 확인해 주세요.")
+                    raise UserError(
+                        f"{label}이 {self.timeout}초를 초과했습니다. 파일의 열기 대화상자나 보안 정책을 확인해 주세요."
+                    )
                 # Drain the pipe while the worker is alive: a full pipe blocks sender.send(). On Windows, polling a
                 # pipe whose worker has ended without a word raises BrokenPipeError.
                 try:

@@ -1,5 +1,6 @@
 """Text files as Wiki documents: one HTML page per .txt file, its text read through a hidden Notepad (notepad.py), so
 a file arrives as the words a person sees in Notepad."""
+
 import csv
 import io
 import sys
@@ -26,9 +27,14 @@ def text_page(file, value):
         raise UserError("빈 텍스트 파일입니다. 내용이 있는 문서라면 메모장에서 직접 열어 글이 보이는지 확인해 주세요.")
     if file.suffix.lower() == ".csv":
         rows = csv.reader(io.StringIO(value, newline=""))
-        body = '<table class="grid">' + "".join(
-            "<tr>" + "".join(f"<td>{escape(cell).replace(chr(10), '<br>')}</td>" for cell in row) + "</tr>"
-            for row in rows) + "</table>"
+        body = (
+            '<table class="grid">'
+            + "".join(
+                "<tr>" + "".join(f"<td>{escape(cell).replace(chr(10), '<br>')}</td>" for cell in row) + "</tr>"
+                for row in rows
+            )
+            + "</table>"
+        )
     else:
         body = f"<pre>{escape(value)}</pre>"
     return page(file.stem, body, "text")

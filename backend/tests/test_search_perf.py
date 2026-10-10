@@ -3,6 +3,7 @@
 It builds the Wiki first (half a minute), so it runs only when asked: PRIVATE_AGENT_PERF=1. The documents are made of
 Korean and English words drawn as often as words of a language are (Zipf), so some words of the query are in most of
 them and others in a few. Run with -s to see the times."""
+
 import os
 import random
 import sqlite3
@@ -14,13 +15,16 @@ import pytest
 from agent.db import Database
 from agent.service import Service
 
-pytestmark = pytest.mark.skipif(os.environ.get("PRIVATE_AGENT_PERF") != "1",
-                                reason="a performance test: set PRIVATE_AGENT_PERF=1 to run it")
+pytestmark = pytest.mark.skipif(
+    os.environ.get("PRIVATE_AGENT_PERF") != "1", reason="a performance test: set PRIVATE_AGENT_PERF=1 to run it"
+)
 
 DOCUMENTS = 10_000
 LIMIT = 0.3  # Seconds the search may take.
-SYLLABLES = ("가나다라마바사아자차카타파하고노도로모보소오조초코토포호구누두루무부수우주추쿠투푸후기니디리미비시이지치키티피히"
-             "개내대래매배새애재채캐태패해데레메베세에제체케테페헤")
+SYLLABLES = (
+    "가나다라마바사아자차카타파하고노도로모보소오조초코토포호구누두루무부수우주추쿠투푸후기니디리미비시이지치키티피히"
+    "개내대래매배새애재채캐태패해데레메베세에제체케테페헤"
+)
 
 
 def vocabulary(rng):
@@ -60,9 +64,18 @@ def build(path):
         analyzed = rng.random() < 0.3
         ident = str(uuid.UUID(int=rng.getrandbits(128)))
         stamp = f"2026-{rng.randint(1, 9):02d}-{rng.randint(1, 28):02d}T{rng.randint(0, 23):02d}:00:00.{i:06d}+00:00"
-        rows.append((ident, " ".join(rng.choices(words, weights, k=rng.randint(3, 7))), "\n\n".join(blocks),
-                     " ".join(rng.choices(words, weights, k=40)) if analyzed else "", "ready" if analyzed else "pending",
-                     "wiki" if analyzed else "", stamp, stamp))
+        rows.append(
+            (
+                ident,
+                " ".join(rng.choices(words, weights, k=rng.randint(3, 7))),
+                "\n\n".join(blocks),
+                " ".join(rng.choices(words, weights, k=40)) if analyzed else "",
+                "ready" if analyzed else "pending",
+                "wiki" if analyzed else "",
+                stamp,
+                stamp,
+            )
+        )
         if analyzed:
             keywords += [(ident, word) for word in set(rng.choices(words[:2000], k=6))]
     # Three aliases a keyword, words of the vocabulary as an analysis's other names would be, so the queries' words meet
@@ -70,24 +83,31 @@ def build(path):
     other = random.Random(11)
     aliases = [(ident, word, name, name) for ident, word in keywords for name in set(other.sample(words, 3)) - {word}]
     with sqlite3.connect(path) as db:
-        db.executemany("""INSERT INTO documents(id,title,content,summary,status,index_mode,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?)""", rows)
+        db.executemany(
+            """INSERT INTO documents(id,title,content,summary,status,index_mode,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            rows,
+        )
         db.executemany("INSERT INTO keywords VALUES (?,?)", keywords)
         db.executemany("INSERT INTO keyword_aliases VALUES (?,?,?,?)", aliases)
     database = Database(path)
     started = time.perf_counter()
     assert database._index()
-    print(f"\nsearch text and trigram index of {DOCUMENTS:,} documents: {time.perf_counter() - started:.1f}s "
-          f"(trigram index: {database.fts})")
+    print(
+        f"\nsearch text and trigram index of {DOCUMENTS:,} documents: {time.perf_counter() - started:.1f}s "
+        f"(trigram index: {database.fts})"
+    )
     long = [word for word in words if len(word) >= 3]
     rank = {word: index for index, word in enumerate(words)}
     # Eight words of one document, from its most frequent to its rarest, which a word search finds it by. Neither query
     # has a word more frequent than the 40th, which is in two of three documents: the first words are in every one,
     # as words a search drops would be (FILLER), and are timed on their own.
     own = sorted({word.strip(".") for word in rows[123][2].split()} & set(long[40:]), key=rank.get)
-    queries = {"frequent to rare": " ".join(long[r] for r in (40, 150, 400, 900, 1800, 3500, 6000, 9000)),
-               "one document's words": " ".join(own[round(i * (len(own) - 1) / 7)] for i in range(8)),
-               "a word in every document": " ".join(long[r] for r in (0, 150, 400, 900, 1800, 3500, 6000, 9000))}
+    queries = {
+        "frequent to rare": " ".join(long[r] for r in (40, 150, 400, 900, 1800, 3500, 6000, 9000)),
+        "one document's words": " ".join(own[round(i * (len(own) - 1) / 7)] for i in range(8)),
+        "a word in every document": " ".join(long[r] for r in (0, 150, 400, 900, 1800, 3500, 6000, 9000)),
+    }
     print("\n".join(f"{kind}: {query}" for kind, query in queries.items()))
     return Service(database, None), long, queries
 
@@ -131,8 +151,12 @@ def test_words_shorter_than_a_trigram_are_compared_over_the_search_text(wiki):
     not limited."""
     service, long, _ = wiki
     with service.db.connect() as db:
-        short = [row[0] for row in db.execute("SELECT keyword FROM keywords WHERE length(keyword)=2 GROUP BY keyword "
-                                              "ORDER BY count(*) DESC LIMIT 2")]
+        short = [
+            row[0]
+            for row in db.execute(
+                "SELECT keyword FROM keywords WHERE length(keyword)=2 GROUP BY keyword ORDER BY count(*) DESC LIMIT 2"
+            )
+        ]
     query = " ".join(short + [long[rank] for rank in (400, 900, 1800, 3500, 6000, 9000)])
     for mode in ("auto", "word"):
         seconds, found = timed(service, query, mode)

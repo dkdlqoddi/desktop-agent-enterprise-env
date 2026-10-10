@@ -1,5 +1,6 @@
 """Convert source markup to Markdown in memory: the stored text of Confluence and JIRA pages, and the
 search text of imported HTML pages (html_document.py)."""
+
 import re
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -17,8 +18,11 @@ def code_language(el):
     """Confluence code macros keep their language as data-syntaxhighlighter-params="brush: java; ...",
     JIRA code blocks as class="code-java"."""
     match = re.search(r"brush:\s*([\w+#-]+)", el.get("data-syntaxhighlighter-params") or "")
-    language = match.group(1) if match else next(
-        (name[5:] for name in el.get("class") or [] if re.fullmatch(r"code-[\w+#-]+", name)), "")
+    language = (
+        match.group(1)
+        if match
+        else next((name[5:] for name in el.get("class") or [] if re.fullmatch(r"code-[\w+#-]+", name)), "")
+    )
     return language if language not in ("text", "none", "plain") else ""
 
 
@@ -73,8 +77,13 @@ def html_to_markdown(html, source_url="", *, validate=True):
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
     clean_soup(soup, source_url)
-    content = WikiMarkdownConverter(heading_style="ATX", bullets="-", escape_misc=True,
-                                    autolinks=False, table_infer_header=False).convert_soup(soup).strip()
+    content = (
+        WikiMarkdownConverter(
+            heading_style="ATX", bullets="-", escape_misc=True, autolinks=False, table_infer_header=False
+        )
+        .convert_soup(soup)
+        .strip()
+    )
     return title, validate_markdown(content) if validate else content
 
 

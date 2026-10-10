@@ -13,9 +13,9 @@ import pytest
 from agent.db import Database
 from agent.html_document import index_markdown, page
 from agent.llm import UserError
-from agent.rtf_import import RtfImporter
 from agent.markdown_import import html_to_markdown
 from agent.parts import CUT
+from agent.rtf_import import RtfImporter
 from agent.service import Service
 from agent.storage import migrate_database, read_only_uri
 from agent.word_converter import capabilities, convert_with_word
@@ -25,8 +25,12 @@ HTML = """<html><head><meta charset="utf-8"><title>회의 안내</title><style>h
 <p>Python &amp; 캐시를 논의합니다.</p><script>alert('secret');</script></body></html>"""
 
 # What a converter hands over: the HTML page of the file.
-PAGE = page("회의 안내", '<p>작성자: 홍길동</p><p>안건: API 설계</p><table><tr><td>일시</td><td>월요일</td></tr></table>'
-            "<p>Python &amp; 캐시를 논의합니다.</p>", "word")
+PAGE = page(
+    "회의 안내",
+    "<p>작성자: 홍길동</p><p>안건: API 설계</p><table><tr><td>일시</td><td>월요일</td></tr></table>"
+    "<p>Python &amp; 캐시를 논의합니다.</p>",
+    "word",
+)
 TEXT = index_markdown(PAGE)
 WORD_XML = """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
 <w:p><w:r><w:t>작성자: 홍길동</w:t></w:r></w:p>
@@ -39,6 +43,7 @@ WORD_XML = """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocess
 class FakeLLM:
     def public(self):
         return {"configured": True}
+
 
 @pytest.fixture
 def importer(tmp_path):
@@ -101,7 +106,9 @@ def test_single_file_saves_the_html_page_and_searches_its_text_without_llm(impor
         assert db.execute("SELECT count(*) FROM rtf_sources").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM document_html").fetchone()[0] == 0
     with pytest.raises(UserError, match="HTML 원문이 없습니다"):
-        importer.service.wiki_source_html({"id": importer.service.wiki_save({"title": "메모", "content": "직접 쓴 글"})["id"]})
+        importer.service.wiki_source_html(
+            {"id": importer.service.wiki_save({"title": "메모", "content": "직접 쓴 글"})["id"]}
+        )
 
 
 def test_a_markdown_import_of_an_earlier_version_becomes_the_html_page(importer, tmp_path):
@@ -116,8 +123,10 @@ def test_a_markdown_import_of_an_earlier_version_becomes_the_html_page(importer,
         with service.db.connect() as db:
             db.execute("UPDATE documents SET summary='요약',status='ready',index_mode='wiki' WHERE id=?", (doc["id"],))
             db.execute("INSERT INTO keywords VALUES (?, '캐시')", (doc["id"],))
-            db.execute("INSERT INTO rtf_sources(doc_id,source_path,source_hash,markdown,imported_at) VALUES (?,?,?,?,?)",
-                       (doc["id"], str(file), importer._checksum(file), "예전 Markdown", "2026-09-01"))
+            db.execute(
+                "INSERT INTO rtf_sources(doc_id,source_path,source_hash,markdown,imported_at) VALUES (?,?,?,?,?)",
+                (doc["id"], str(file), importer._checksum(file), "예전 Markdown", "2026-09-01"),
+            )
         old[file.name] = doc
     service.wiki_save({"id": old["b.rtf"]["id"], "title": "b", "content": "내가 고친 글"})
     importer.start({"path": str(tmp_path), "mode": "directory"})
@@ -127,12 +136,18 @@ def test_a_markdown_import_of_an_earlier_version_becomes_the_html_page(importer,
     upgraded = service.wiki_get({"id": old["a.rtf"]["id"]})
     assert (upgraded["format"], upgraded["html"], upgraded["content"]) == ("html", PAGE, TEXT)
     # The text changed, so its earlier analysis is gone.
-    assert (upgraded["status"], upgraded["summary"], upgraded["keywords"], upgraded["revision"]) == ("pending", "", [], 2)
+    assert (upgraded["status"], upgraded["summary"], upgraded["keywords"], upgraded["revision"]) == (
+        "pending",
+        "",
+        [],
+        2,
+    )
     assert service.wiki_source_markdown({"id": upgraded["id"]})["markdown"] == TEXT
     kept = service.wiki_get({"id": old["b.rtf"]["id"]})
     assert (kept["format"], kept["content"], kept["has_html"]) == ("markdown", "내가 고친 글", False)
-    assert "본문을 고친 문서라 원본의 내용으로 바꾸지 않았습니다" in next(r["message"] for r in job["results"]
-                                                        if r["status"] == "skipped")
+    assert "본문을 고친 문서라 원본의 내용으로 바꾸지 않았습니다" in next(
+        r["message"] for r in job["results"] if r["status"] == "skipped"
+    )
     assert len(service.wiki_list({})) == 2
     # Imported again, both are duplicates.
     importer.start({"path": str(tmp_path), "mode": "directory"})
@@ -150,7 +165,10 @@ def test_a_file_longer_than_a_document_is_saved_as_html_documents_in_parts(impor
     importer.start({"path": str(rtf), "mode": "file", "analyze": True})
     job = wait(importer)
     result = job["results"][0]
-    assert (job["imported"], result["message"]) == (1, "글이 80,000자를 넘어 HTML 문서 3개로 나누어 Wiki에 저장했습니다.")
+    assert (job["imported"], result["message"]) == (
+        1,
+        "글이 80,000자를 넘어 HTML 문서 3개로 나누어 Wiki에 저장했습니다.",
+    )
     assert analyzed == result["doc_ids"] and result["doc_id"] == result["doc_ids"][0]
     docs = [service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
     assert [doc["title"] for doc in docs] == ["긴 문서 (1/3)", "긴 문서 (2/3)", "긴 문서 (3/3)"]
@@ -163,8 +181,13 @@ def test_a_file_longer_than_a_document_is_saved_as_html_documents_in_parts(impor
     # The same file is a duplicate while any of its parts is left; a part in the trash comes back with the import.
     service.wiki_delete({"id": docs[0]["id"]})
     importer.start({"path": str(rtf), "mode": "file"})
-    assert wait(importer)["results"][0] == {"path": str(rtf), "status": "skipped", "doc_id": docs[0]["id"],
-                                            "message": "이미 가져온 동일한 RTF 문서입니다.", "reason": "same"}
+    assert wait(importer)["results"][0] == {
+        "path": str(rtf),
+        "status": "skipped",
+        "doc_id": docs[0]["id"],
+        "message": "이미 가져온 동일한 RTF 문서입니다.",
+        "reason": "same",
+    }
     assert service.wiki_get({"id": docs[0]["id"]})["title"] == "긴 문서 (1/3)"
     assert service.dispatch("wiki.trash", {})["documents"] == []
     # Beyond the most parts, the rest is left out and the result and the last part say so.
@@ -173,8 +196,9 @@ def test_a_file_longer_than_a_document_is_saved_as_html_documents_in_parts(impor
     other.write_bytes(b"longer document")
     importer.start({"path": str(other), "mode": "file"})
     result = wait(importer)["results"][0]
-    assert result["message"] == ("글이 80,000자를 넘어 HTML 문서 2개로 나누어 Wiki에 저장했습니다. "
-                                 "문서 2개를 넘는 뒷부분은 저장하지 않았습니다.")
+    assert result["message"] == (
+        "글이 80,000자를 넘어 HTML 문서 2개로 나누어 Wiki에 저장했습니다. 문서 2개를 넘는 뒷부분은 저장하지 않았습니다."
+    )
     assert service.wiki_get({"id": result["doc_ids"][1]})["content"].endswith(CUT)
 
 
@@ -193,6 +217,7 @@ def test_folder_recursion_duplicates_failure_and_continuation(importer, tmp_path
         if source.read_bytes() == b"corrupt":
             raise UserError("테스트 변환 실패")
         return PAGE
+
     importer.converter = converter
     importer.start({"path": str(root), "mode": "directory", "recursive": True})
     job = wait(importer)
@@ -220,16 +245,25 @@ def test_a_folder_of_more_files_than_a_batch_is_imported_batch_after_batch(impor
         if source.name == "a.rtf":
             raise UserError("테스트 변환 실패")
         return page(source.stem, f"<p>{source.stem} 문서</p>", "word")
+
     importer.converter = converter
     importer.start({"path": str(root), "mode": "directory", "recursive": True})
     job = wait(importer)
-    assert (job["status"], job["total"], job["processed"], job["imported"], job["failed"]) == \
-        ("completed", 5, 5, 4, 1), job
+    assert (job["status"], job["total"], job["processed"], job["imported"], job["failed"]) == (
+        "completed",
+        5,
+        5,
+        4,
+        1,
+    ), job
     assert batches == {"a.rtf": 1, "b.rtf": 1, "c.rtf": 2, "d.rtf": 2, "e.rtf": 3}
     assert (job["batch"], job["batches"]) == (3, 3)
     # It lists its failure and its latest results; every file's document is saved.
     assert [(Path(r["path"]).name, r["status"]) for r in job["results"]] == [
-        ("a.rtf", "failed"), ("d.rtf", "imported"), ("e.rtf", "imported")]
+        ("a.rtf", "failed"),
+        ("d.rtf", "imported"),
+        ("e.rtf", "imported"),
+    ]
     assert sorted(doc["title"] for doc in importer.service.wiki_list({})) == ["b", "c", "d", "e"]
     # Imported again, the files saved are skipped and the one that failed is read again.
     importer.start({"path": str(root), "mode": "directory", "recursive": True})
@@ -275,8 +309,9 @@ def test_junctions_and_hidden_system_folders_are_not_entered(importer, tmp_path)
     (root / "a.rtf").write_bytes(b"first document")
     (root / "System Volume Information" / "b.rtf").write_bytes(b"second document")
     (elsewhere / "c.rtf").write_bytes(b"third document")
-    subprocess.run(["cmd", "/c", "mklink", "/J", str(root / "My Music"), str(elsewhere)], check=True,
-                   capture_output=True)
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(root / "My Music"), str(elsewhere)], check=True, capture_output=True
+    )
     subprocess.run(["attrib", "+h", "+s", str(root / "System Volume Information")], check=True, capture_output=True)
     assert importer._scan(root, "directory", True) == [root / "a.rtf"]
 
@@ -308,10 +343,12 @@ def test_cancel_does_not_commit_half_converted_document(importer, tmp_path):
     source = tmp_path / "cancel.rtf"
     source.write_bytes(b"cancel me")
     started = threading.Event()
+
     def convert(source, cancel):
         started.set()
         assert cancel.wait(3)
         return PAGE
+
     importer.converter = convert
     importer.start({"path": str(source), "mode": "file"})
     assert started.wait(3)
@@ -325,8 +362,10 @@ def test_cancel_does_not_commit_half_converted_document(importer, tmp_path):
 def test_analysis_failure_keeps_the_imported_document(importer, tmp_path):
     source = tmp_path / "analyze.rtf"
     source.write_bytes(b"analyze me")
+
     def fail(_):
         raise UserError("LLM 오프라인")
+
     importer.service.wiki_analyze = fail
     importer.start({"path": str(source), "mode": "file", "analyze": True})
     job = wait(importer)
@@ -377,24 +416,33 @@ def test_migration_includes_wal_preserves_original_and_refuses_overwrite(tmp_pat
 def test_read_only_uri_keeps_a_network_server_in_the_path():
     assert read_only_uri(PureWindowsPath(r"C:\Users\나\wiki.db")) == "file:///C:/Users/%EB%82%98/wiki.db?mode=ro"
     # SQLite refuses file://server/…, as a mapped drive or redirected AppData folder resolves to.
-    assert (read_only_uri(PureWindowsPath(r"\\server\share\Private Agent\wiki.db"))
-            == "file:////server/share/Private%20Agent/wiki.db?mode=ro")
+    assert (
+        read_only_uri(PureWindowsPath(r"\\server\share\Private Agent\wiki.db"))
+        == "file:////server/share/Private%20Agent/wiki.db?mode=ro"
+    )
 
 
 def fake_modules(monkeypatch, application, calls):
     """pywin32 whose DispatchEx serves `application`; `application` may be an exception DispatchEx raises."""
+
     def dispatch(progid):
         calls.append(("dispatch", progid))
         if isinstance(application, Exception):
             raise application
         return application
+
     client = SimpleNamespace(DispatchEx=dispatch)
     modules = {
-        "pythoncom": SimpleNamespace(COINIT_APARTMENTTHREADED=2, CoInitializeEx=lambda mode: calls.append(("init", mode)),
-                                     CoUninitialize=lambda: calls.append(("uninit",))),
-        "win32com": SimpleNamespace(client=client), "win32com.client": client,
+        "pythoncom": SimpleNamespace(
+            COINIT_APARTMENTTHREADED=2,
+            CoInitializeEx=lambda mode: calls.append(("init", mode)),
+            CoUninitialize=lambda: calls.append(("uninit",)),
+        ),
+        "win32com": SimpleNamespace(client=client),
+        "win32com.client": client,
     }
-    for name, module in modules.items(): monkeypatch.setitem(sys.modules, name, module)
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
 
 
 def fake_com(monkeypatch, *, fail=False, adopt=False, xml=WORD_XML):
@@ -403,14 +451,24 @@ def fake_com(monkeypatch, *, fail=False, adopt=False, xml=WORD_XML):
     word = SimpleNamespace(Options=options, Visible=False, DisplayAlerts=-1, AutomationSecurity=1)
     doc = SimpleNamespace(Content=SimpleNamespace(WordOpenXML=xml), Close=lambda **kw: calls.append(("close_doc", kw)))
     # Which settings Word has when it quits: the ones it saves as preferences must be the user's again.
-    word.Quit = lambda **kw: calls.append(("quit", kw, (word.DisplayAlerts, word.AutomationSecurity, options.UpdateLinksAtOpen)))
+    word.Quit = lambda **kw: calls.append(
+        ("quit", kw, (word.DisplayAlerts, word.AutomationSecurity, options.UpdateLinksAtOpen))
+    )
+
     def open_document(**kwargs):
         calls.append(("open", kwargs))
-        assert (word.Visible, word.DisplayAlerts, word.AutomationSecurity, options.UpdateLinksAtOpen) == (False, 0, 3, False)
-        if fail: raise RuntimeError("Word failure")
+        assert (word.Visible, word.DisplayAlerts, word.AutomationSecurity, options.UpdateLinksAtOpen) == (
+            False,
+            0,
+            3,
+            False,
+        )
+        if fail:
+            raise RuntimeError("Word failure")
         # The user opens their own document in this Word while the file is read.
         word.Visible = adopt
         return doc
+
     word.Documents = SimpleNamespace(Open=open_document)
     fake_modules(monkeypatch, word, calls)
     return calls, word, doc
@@ -423,9 +481,16 @@ def test_word_com_contract_hidden_readonly_memory_conversion_and_cleanup(monkeyp
     assert html.startswith("<!doctype html>") and "<title>in</title>" in html
     assert "<td" in html and ">일시</p></td>" in html and ">월요일</p></td>" in html
     opened = next(c[1] for c in calls if c[0] == "open")
-    assert opened == {"FileName": str(source.resolve()), "ReadOnly": True, "AddToRecentFiles": False,
-                      "ConfirmConversions": False, "Visible": False, "PasswordDocument": "",
-                      "OpenAndRepair": False, "NoEncodingDialog": True}
+    assert opened == {
+        "FileName": str(source.resolve()),
+        "ReadOnly": True,
+        "AddToRecentFiles": False,
+        "ConfirmConversions": False,
+        "Visible": False,
+        "PasswordDocument": "",
+        "OpenAndRepair": False,
+        "NoEncodingDialog": True,
+    }
     # Nothing but the file: no helper document, and the file closes before Word quits.
     assert [c[0] for c in calls] == ["dispatch", "open", "close_doc", "quit"]
     assert calls[2] == ("close_doc", {"SaveChanges": 0})
@@ -436,8 +501,11 @@ def test_word_com_contract_hidden_readonly_memory_conversion_and_cleanup(monkeyp
 
 def test_word_failure_names_the_step_and_still_quits_its_word(monkeypatch, tmp_path):
     calls, _, _ = fake_com(monkeypatch, fail=True)
-    with pytest.raises(UserError, match=r"^Word 파일 열기 실패: RuntimeError: Word failure\. Word에서 직접 열리는지, "
-                                        r"암호·DRM·보안 정책을 확인해 주세요\.$"):
+    with pytest.raises(
+        UserError,
+        match=r"^Word 파일 열기 실패: RuntimeError: Word failure\. Word에서 직접 열리는지, "
+        r"암호·DRM·보안 정책을 확인해 주세요\.$",
+    ):
         convert_with_word(tmp_path / "in.rtf")
     assert calls[-1] == ("quit", {"SaveChanges": 0}, (0, 1, True))
 
@@ -445,10 +513,14 @@ def test_word_failure_names_the_step_and_still_quits_its_word(monkeypatch, tmp_p
 def test_word_that_cannot_start_or_returns_no_xml_says_so(monkeypatch, tmp_path):
     class ComError(Exception):
         hresult, strerror = -2147221164, "클래스가 등록되지 않았습니다."
+
     calls = []
     fake_modules(monkeypatch, ComError(), calls)
-    with pytest.raises(UserError, match=r"^Word 실행 실패 \[0x80040154\]: 클래스가 등록되지 않았습니다\. "
-                                        r"Word 데스크톱 앱 설치 상태를 확인해 주세요\.$"):
+    with pytest.raises(
+        UserError,
+        match=r"^Word 실행 실패 \[0x80040154\]: 클래스가 등록되지 않았습니다\. "
+        r"Word 데스크톱 앱 설치 상태를 확인해 주세요\.$",
+    ):
         convert_with_word(tmp_path / "in.rtf")
     assert calls == [("dispatch", "Word.Application")]
     calls, _, _ = fake_com(monkeypatch, xml="  ")
@@ -473,12 +545,16 @@ def test_word_stays_open_for_a_document_the_user_opened_in_it(monkeypatch, tmp_p
 
 def test_worker_runs_the_conversion_in_its_own_com_apartment(monkeypatch):
     from agent.office_session import run_worker
+
     calls = []
     fake_modules(monkeypatch, None, calls)
 
     class Sender:
-        def send(self, message): calls.append(("send", message))
-        def close(self): calls.append(("close",))
+        def send(self, message):
+            calls.append(("send", message))
+
+        def close(self):
+            calls.append(("close",))
 
     run_worker(lambda: calls.append(("convert",)) or "<p>본문</p>", Sender(), "Word 변환", "안내")
     assert calls == [("init", 2), ("convert",), ("send", {"ok": True, "html": "<p>본문</p>"}), ("close",), ("uninit",)]
@@ -486,6 +562,7 @@ def test_worker_runs_the_conversion_in_its_own_com_apartment(monkeypatch):
 
     def fail():
         raise OSError(5, "액세스가 거부되었습니다")
+
     run_worker(fail, Sender(), "Word 변환", "안내")
     sent = calls[1][1]
     assert (sent["ok"], sent["error"]) == (False, "Word 변환 실패: 액세스가 거부되었습니다. 안내")
@@ -496,6 +573,7 @@ def test_worker_runs_the_conversion_in_its_own_com_apartment(monkeypatch):
 
     def refuse():
         raise UserError("그대로")
+
     run_worker(refuse, Sender(), "Word 변환", "안내")
     assert calls[1] == ("send", {"ok": False, "error": "그대로", "trace": ""})
     calls.clear()
@@ -506,15 +584,20 @@ def test_worker_runs_the_conversion_in_its_own_com_apartment(monkeypatch):
     def broken():
         with step("Word 본문 변환"):
             return {}["missing"]
+
     run_worker(broken, Sender(), "Word 변환", "안내")
     sent = calls[1][1]
     assert sent["error"].startswith("Word 본문 변환 실패: KeyError")
     assert "in broken" in sent["trace"] and "KeyError" in sent["trace"]
 
 
-@pytest.mark.skipif(sys.platform != "win32" or os.getenv("PRIVATE_AGENT_WORD_TEST") != "1", reason="Requires Windows desktop Word; opt in with PRIVATE_AGENT_WORD_TEST=1")
+@pytest.mark.skipif(
+    sys.platform != "win32" or os.getenv("PRIVATE_AGENT_WORD_TEST") != "1",
+    reason="Requires Windows desktop Word; opt in with PRIVATE_AGENT_WORD_TEST=1",
+)
 def test_real_word_conversion(tmp_path):
     from agent.word_converter import WordConverter
+
     source = tmp_path / "sample.rtf"
     source.write_text(r"{\rtf1\ansi Word COM integration sample}", encoding="ascii")
     result = WordConverter()(source, threading.Event())

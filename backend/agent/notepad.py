@@ -8,6 +8,7 @@ Windows 11 Notepad hands a file to the Notepad that is already running: as a tab
 new window. Only a window of the Notepad started here, or one that opened since with the file's name in its title,
 is ever read or closed, so a window someone else opened is never touched.
 """
+
 import contextlib
 import os
 import subprocess
@@ -41,11 +42,15 @@ WM_GETTEXT, WM_GETTEXTLENGTH, WM_CLOSE = 0x000D, 0x000E, 0x0010
 SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT = 0x0002, 0x0020
 
 CANCELLED = "가져오기를 취소했습니다."
-HANDED_OVER = ("메모장이 이 파일을 이미 열려 있던 메모장 창에 탭으로 열었습니다(Windows 11 메모장). 그 탭을 닫고, "
-               "열려 있는 메모장 창을 모두 닫은 뒤 다시 가져와 주세요.")
+HANDED_OVER = (
+    "메모장이 이 파일을 이미 열려 있던 메모장 창에 탭으로 열었습니다(Windows 11 메모장). 그 탭을 닫고, "
+    "열려 있는 메모장 창을 모두 닫은 뒤 다시 가져와 주세요."
+)
 CLOSED = "메모장이 파일을 보여 주기 전에 닫혔습니다. 메모장에서 이 파일이 직접 열리는지, DRM 열람 권한을 확인해 주세요."
-ENCRYPTED = ("메모장에 보인 내용이 글이 아니라 암호화된 데이터로 보여 가져오지 않았습니다. 메모장에서 이 파일을 "
-             "직접 열어 내용이 보이는지(DRM 열람 권한) 확인해 주세요.")
+ENCRYPTED = (
+    "메모장에 보인 내용이 글이 아니라 암호화된 데이터로 보여 가져오지 않았습니다. 메모장에서 이 파일을 "
+    "직접 열어 내용이 보이는지(DRM 열람 권한) 확인해 주세요."
+)
 
 
 class Window(NamedTuple):
@@ -61,22 +66,35 @@ class Desktop:
     def __init__(self):
         import ctypes
         from ctypes import wintypes
+
         self.ctypes, self.wintypes = ctypes, wintypes
         self.callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         # A library of its own, so these signatures never change ctypes.windll.user32 for other code.
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         for name, arguments, result in (
-                ("EnumWindows", [self.callback, wintypes.LPARAM], wintypes.BOOL),
-                ("EnumChildWindows", [wintypes.HWND, self.callback, wintypes.LPARAM], wintypes.BOOL),
-                ("GetClassNameW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
-                ("GetWindowTextW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
-                ("GetWindowThreadProcessId", [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD),
-                ("IsWindowVisible", [wintypes.HWND], wintypes.BOOL),
-                ("GetWindowLongW", [wintypes.HWND, ctypes.c_int], wintypes.LONG),
-                ("ShowWindowAsync", [wintypes.HWND, ctypes.c_int], wintypes.BOOL),
-                ("PostMessageW", [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL),
-                ("SendMessageTimeoutW", [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, wintypes.UINT,
-                                         wintypes.UINT, ctypes.POINTER(ctypes.c_size_t)], wintypes.LPARAM)):
+            ("EnumWindows", [self.callback, wintypes.LPARAM], wintypes.BOOL),
+            ("EnumChildWindows", [wintypes.HWND, self.callback, wintypes.LPARAM], wintypes.BOOL),
+            ("GetClassNameW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+            ("GetWindowTextW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+            ("GetWindowThreadProcessId", [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD),
+            ("IsWindowVisible", [wintypes.HWND], wintypes.BOOL),
+            ("GetWindowLongW", [wintypes.HWND, ctypes.c_int], wintypes.LONG),
+            ("ShowWindowAsync", [wintypes.HWND, ctypes.c_int], wintypes.BOOL),
+            ("PostMessageW", [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL),
+            (
+                "SendMessageTimeoutW",
+                [
+                    wintypes.HWND,
+                    wintypes.UINT,
+                    wintypes.WPARAM,
+                    wintypes.LPARAM,
+                    wintypes.UINT,
+                    wintypes.UINT,
+                    ctypes.POINTER(ctypes.c_size_t),
+                ],
+                wintypes.LPARAM,
+            ),
+        ):
             function = getattr(user32, name)
             function.argtypes, function.restype = arguments, result
         self.user32 = user32
@@ -103,20 +121,36 @@ class Desktop:
             if self._class(handle) == "Notepad":
                 pid = self.wintypes.DWORD()
                 self.user32.GetWindowThreadProcessId(handle, self.ctypes.byref(pid))
-                found.append(Window(handle, self._string(self.user32.GetWindowTextW, handle, 1024), pid.value,
-                                    bool(self.user32.IsWindowVisible(handle))))
+                found.append(
+                    Window(
+                        handle,
+                        self._string(self.user32.GetWindowTextW, handle, 1024),
+                        pid.value,
+                        bool(self.user32.IsWindowVisible(handle)),
+                    )
+                )
         return found
 
     def text_boxes(self, handle):
         """The text boxes in a window, each with whether its own style shows it: the hidden window hides them all, and
         Windows 11 Notepad may keep one for each tab."""
-        return [(child, bool(self.user32.GetWindowLongW(child, GWL_STYLE) & WS_VISIBLE))
-                for child in self._handles(self.user32.EnumChildWindows, handle) if self._class(child) in TEXT_BOXES]
+        return [
+            (child, bool(self.user32.GetWindowLongW(child, GWL_STYLE) & WS_VISIBLE))
+            for child in self._handles(self.user32.EnumChildWindows, handle)
+            if self._class(child) in TEXT_BOXES
+        ]
 
     def _send(self, handle, message, wparam, lparam, seconds):
         result = self.ctypes.c_size_t()
-        if not self.user32.SendMessageTimeoutW(handle, message, wparam, lparam, SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
-                                               int(seconds * 1000), self.ctypes.byref(result)):
+        if not self.user32.SendMessageTimeoutW(
+            handle,
+            message,
+            wparam,
+            lparam,
+            SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
+            int(seconds * 1000),
+            self.ctypes.byref(result),
+        ):
             return None
         return result.value
 
@@ -149,8 +183,13 @@ def launch(path):
     startup = subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW, wShowWindow=SW_HIDE)
     try:
         # Standard handles of its own, so Notepad never holds the backend's stdin and stdout.
-        return subprocess.Popen([str(notepad), str(path)], startupinfo=startup, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return subprocess.Popen(
+            [str(notepad), str(path)],
+            startupinfo=startup,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except OSError:
         raise UserError(f"메모장({notepad})을 시작하지 못했습니다.") from None
 
@@ -173,9 +212,16 @@ def looks_encrypted(text):
     make up a tenth to a half of such text, and next to nothing of a written one. The private-use characters of symbol
     fonts (U+F000-U+F0FF, such as the Wingdings bullets Office pastes) are writing; they are 256 of the 6,400
     private-use code points, so encrypted text still has plenty of the others."""
-    odd = sum(1 for char in text if char == "\ufffd" or (
-        unicodedata.category(char) in ("Cc", "Cs", "Co", "Cn") and char not in "\t\n\r\f\v\x1b"
-        and not "\uf000" <= char <= "\uf0ff"))
+    odd = sum(
+        1
+        for char in text
+        if char == "\ufffd"
+        or (
+            unicodedata.category(char) in ("Cc", "Cs", "Co", "Cn")
+            and char not in "\t\n\r\f\v\x1b"
+            and not "\uf000" <= char <= "\uf0ff"
+        )
+    )
     return odd >= 8 and odd >= len(text) * 0.02
 
 
@@ -188,8 +234,10 @@ class Reading:
         self.window = None  # The window for the file, once there is one; it closes however the reading ends.
         self.ended = None  # When the started Notepad ended, having handed the file to a running one.
         self.length, self.looks = None, 0
-        self.problem = (f"메모장이 {seconds:g}초 안에 파일을 열지 못했습니다. 메모장에서 이 파일이 직접 열리는지, "
-                        "DRM 열람 권한을 확인해 주세요.")
+        self.problem = (
+            f"메모장이 {seconds:g}초 안에 파일을 열지 못했습니다. 메모장에서 이 파일이 직접 열리는지, "
+            "DRM 열람 권한을 확인해 주세요."
+        )
 
     def text(self, stop):
         deadline = time.monotonic() + self.seconds

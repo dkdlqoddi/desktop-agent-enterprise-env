@@ -8,6 +8,7 @@
 
 test_web_login.py and test_web_assist.py, which sign in on real Chromium, are marked as a whole (their pytestmark);
 elsewhere the tests named test_real_browser_… are, and they are marked here."""
+
 import functools
 import os
 import sys
@@ -21,11 +22,16 @@ def chromium_missing():
     only when a browser test was collected: it starts Playwright's driver."""
     try:
         from playwright.sync_api import sync_playwright
+
         with sync_playwright() as playwright:
             path = playwright.chromium.executable_path
     except Exception as error:  # A driver that does not start: the tests would fail the same way.
         return f"Playwright을 시작하지 못했습니다: {error}"
-    return "" if path and os.path.exists(path) else f"Playwright의 Chromium이 없습니다({path}). npm run setup:browser를 실행하세요."
+    return (
+        ""
+        if path and os.path.exists(path)
+        else f"Playwright의 Chromium이 없습니다({path}). npm run setup:browser를 실행하세요."
+    )
 
 
 def pytest_collection_modifyitems(config, items):

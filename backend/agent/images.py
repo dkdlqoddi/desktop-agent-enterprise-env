@@ -3,22 +3,53 @@
 PNG, JPEG, GIF, BMP, WebP, AVIF, SVG and ICO stay as they are, since the app shows them. TIFF and the
 Windows metafiles EMF and WMF become PNG through Pillow; metafiles are drawn by Windows itself (GDI), so
 they convert only on Windows. Every picture goes into the page as a data: URI."""
+
 import base64
 import io
 import re
 
 from .html_document import attribute
 
-WEB = {"image/png": "PNG", "image/jpeg": "JPEG", "image/gif": "GIF", "image/bmp": "BMP",
-       "image/webp": "WebP", "image/avif": "AVIF", "image/svg+xml": "SVG", "image/x-icon": "ICO"}
+WEB = {
+    "image/png": "PNG",
+    "image/jpeg": "JPEG",
+    "image/gif": "GIF",
+    "image/bmp": "BMP",
+    "image/webp": "WebP",
+    "image/avif": "AVIF",
+    "image/svg+xml": "SVG",
+    "image/x-icon": "ICO",
+}
 CONVERTED = {"image/tiff": "TIFF", "image/x-emf": "EMF", "image/x-wmf": "WMF"}
 # Content types Office writes for the same pictures.
-ALIASES = {"image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg", "image/x-png": "image/png",
-           "image/svg": "image/svg+xml", "image/vnd.microsoft.icon": "image/x-icon", "image/x-ms-bmp": "image/bmp",
-           "image/emf": "image/x-emf", "image/wmf": "image/x-wmf", "image/x-tiff": "image/tiff"}
+ALIASES = {
+    "image/jpg": "image/jpeg",
+    "image/pjpeg": "image/jpeg",
+    "image/x-png": "image/png",
+    "image/svg": "image/svg+xml",
+    "image/vnd.microsoft.icon": "image/x-icon",
+    "image/x-ms-bmp": "image/bmp",
+    "image/emf": "image/x-emf",
+    "image/wmf": "image/x-wmf",
+    "image/x-tiff": "image/tiff",
+}
 # Image files the importer takes, as in the import widget (src/lib/links.ts) and the file picker.
-EXTENSIONS = (".png", ".jpg", ".jpeg", ".jfif", ".gif", ".bmp", ".webp", ".avif", ".svg", ".ico",
-              ".tif", ".tiff", ".emf", ".wmf")
+EXTENSIONS = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".jfif",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".avif",
+    ".svg",
+    ".ico",
+    ".tif",
+    ".tiff",
+    ".emf",
+    ".wmf",
+)
 MAX_SIDE = 4096  # longest side, in pixels, of a converted picture
 MAX_PAGES = 50  # pages of a multi-page TIFF
 # Pixels of one page decoded for conversion: decoding holds the whole page in memory before it is made smaller. A 600
@@ -33,6 +64,7 @@ SVG_DTD = re.compile(r"<!DOCTYPE[^>\[]*\[|<!ENTITY", re.I)
 
 class Pages(list):
     """The pages of a converted picture, with what the conversion left out (`notes`, for the page that shows them)."""
+
     notes = ()
 
 
@@ -95,6 +127,7 @@ def size(data, content_type):
         return svg_size(bytes(data[:8192]).decode("utf-8", "ignore"))
     try:
         from PIL import Image
+
         with Image.open(io.BytesIO(data)) as picture:
             return picture.size
     except Exception:
@@ -106,9 +139,11 @@ def svg_size(text):
     if not root:
         return None
     attributes = dict(re.findall(r'([\w:-]+)\s*=\s*"([^"]*)"', root.group(1)))
+
     def length(name):
         match = re.fullmatch(r"\s*([\d.]+)\s*(px|pt)?\s*", attributes.get(name, ""))
         return float(match.group(1)) * (4 / 3 if match.group(2) == "pt" else 1) if match else None
+
     width, height = length("width"), length("height")
     if not (width and height):
         box = re.split(r"[\s,]+", attributes.get("viewBox", "").strip())
@@ -123,6 +158,7 @@ def to_png(data, limit=MAX_PAGES):
     """PNG pages of a TIFF or a metafile, each with the size it is meant to be shown at. The first `limit` pages of a
     TIFF are read and a page of more than MAX_PIXELS is left out; the `notes` of the pages say so."""
     from PIL import Image, ImageSequence
+
     with Image.open(io.BytesIO(data)) as picture:
         scale = 1.0
         if picture.format == "WMF":
@@ -166,8 +202,11 @@ def data_uri(content_type, data):
 def img(content_type, data, alt, width=None, height=None, style=""):
     """An <img> of the picture. Width and height are presentational hints, so the stylesheet's
     max-width:100% with height:auto keeps the proportions in a narrow window; `style`, such as a crop."""
-    hints = "".join(f' {name}="{round(value)}"' for name, value in (("width", width), ("height", height))
-                    if isinstance(value, (int, float)) and 0 < value < 100000)
+    hints = "".join(
+        f' {name}="{round(value)}"'
+        for name, value in (("width", width), ("height", height))
+        if isinstance(value, (int, float)) and 0 < value < 100000
+    )
     look = f' style="{attribute(style)}"' if style else ""
     return f'<img src="{data_uri(content_type, data)}" alt="{attribute(alt)}"{hints}{look}>'
 

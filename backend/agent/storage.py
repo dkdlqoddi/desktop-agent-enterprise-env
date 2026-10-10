@@ -17,6 +17,7 @@ newest KEEP, so backups asked for again and again never push out the daily ones.
 there too, as wiki-before-restore-YYYYMMDD-HHMMSS.db, until the user removes it.
 
 Restore (stage_restore, apply_restore): see the section below."""
+
 import contextlib
 import json
 import os
@@ -74,7 +75,7 @@ def read_only_uri(path):
     drive) keeps its server in the path, as SQLite refuses a URI with a host: file:////server/share/…"""
     uri = path.as_uri()
     if not uri.startswith("file:///"):
-        uri = "file:////" + uri[len("file://"):]
+        uri = "file:////" + uri[len("file://") :]
     return uri + "?mode=ro"
 
 
@@ -199,14 +200,21 @@ def prepare(path):
         diagnostics.LOG.error("quick_check of %s failed; the Wiki was not opened:\n%s", path, found["detail"])
         raise Refused(damaged(path))
     if found["version"] > migrations.SCHEMA_VERSION:
-        diagnostics.LOG.error("%s has schema version %d, newer than %d; the Wiki was not opened", path,
-                              found["version"], migrations.SCHEMA_VERSION)
-        raise Refused(f"이 Wiki는 더 새로운 버전의 Private Agent가 바꾼 데이터베이스(버전 {found['version']})라서 "
-                      f"버전 {migrations.SCHEMA_VERSION}까지 아는 이 앱은 열지 않았습니다: {path}. 파일은 그대로 두었습니다. "
-                      "최신 버전의 Private Agent로 열어 주세요.")
+        diagnostics.LOG.error(
+            "%s has schema version %d, newer than %d; the Wiki was not opened",
+            path,
+            found["version"],
+            migrations.SCHEMA_VERSION,
+        )
+        raise Refused(
+            f"이 Wiki는 더 새로운 버전의 Private Agent가 바꾼 데이터베이스(버전 {found['version']})라서 "
+            f"버전 {migrations.SCHEMA_VERSION}까지 아는 이 앱은 열지 않았습니다: {path}. 파일은 그대로 두었습니다. "
+            "최신 버전의 Private Agent로 열어 주세요."
+        )
     if found["state"] == "unchecked":
-        diagnostics.LOG.warning("quick_check of %s did not end within %d seconds; the Wiki was opened unchecked", path,
-                                CHECK_BUDGET)
+        diagnostics.LOG.warning(
+            "quick_check of %s did not end within %d seconds; the Wiki was opened unchecked", path, CHECK_BUDGET
+        )
     return not found["tables"]
 
 
@@ -217,12 +225,18 @@ def damaged(path):
     newest = next((item["file"] for item in backups(path) if item["kind"] != "before_restore"), None)
     # The -wal and -shm go too: SQLite would apply the damaged Wiki's log to the copy put in its place.
     aside = f"앱을 닫고 Wiki 폴더의 {path.name}, {path.name}-wal, {path.name}-shm 파일을 다른 폴더로 옮긴 다음"
-    message = f"Wiki 데이터베이스 파일이 손상되어 열지 않았습니다: {path}. 파일은 고치거나 지우지 않고 그대로 두었습니다. "
+    message = (
+        f"Wiki 데이터베이스 파일이 손상되어 열지 않았습니다: {path}. 파일은 고치거나 지우지 않고 그대로 두었습니다. "
+    )
     if newest:
-        return message + (f"백업으로 되돌리려면 {aside}, 백업 폴더({folder})의 가장 최근 백업({newest})을 Wiki 폴더에 "
-                          f"{path.name}라는 이름으로 복사하고 앱을 다시 실행해 주세요.")
-    return message + (f"백업 폴더({folder})에 백업이 없습니다. 따로 복사해 둔 Wiki가 있으면 {aside} 그 Wiki의 {path.name}를 "
-                      "넣고 앱을 다시 실행해 주세요. 없으면 ‘진단 정보 복사’로 문제를 알려 주세요.")
+        return message + (
+            f"백업으로 되돌리려면 {aside}, 백업 폴더({folder})의 가장 최근 백업({newest})을 Wiki 폴더에 "
+            f"{path.name}라는 이름으로 복사하고 앱을 다시 실행해 주세요."
+        )
+    return message + (
+        f"백업 폴더({folder})에 백업이 없습니다. 따로 복사해 둔 Wiki가 있으면 {aside} 그 Wiki의 {path.name}를 "
+        "넣고 앱을 다시 실행해 주세요. 없으면 ‘진단 정보 복사’로 문제를 알려 주세요."
+    )
 
 
 # --- Backups ---------------------------------------------------------------------------------------------------------
@@ -249,8 +263,12 @@ def backups(path):
             continue
         if not item.is_file():
             continue
-        found.append(((match[2], int(match[3] or 1)), {
-            "file": item.name, "kind": KINDS[match[1]], "created_at": made.isoformat(), "size": details.st_size}))
+        found.append(
+            (
+                (match[2], int(match[3] or 1)),
+                {"file": item.name, "kind": KINDS[match[1]], "created_at": made.isoformat(), "size": details.st_size},
+            )
+        )
     return [entry for _, entry in sorted(found, key=lambda pair: pair[0], reverse=True)]
 
 
@@ -271,9 +289,11 @@ def new_name(folder, kind):
     """A name for a backup of `kind` made now, numbered after every backup of the same second, so that it sorts as the
     newest: the first free number could be one the oldest left as it was removed."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    numbers = [int(match[3] or 1) for match in (BACKUP_NAME.fullmatch(item.name) for item in
-                                                (folder.iterdir() if folder.is_dir() else ()))
-               if match and match[2] == stamp and KINDS[match[1]] == kind]
+    numbers = [
+        int(match[3] or 1)
+        for match in (BACKUP_NAME.fullmatch(item.name) for item in (folder.iterdir() if folder.is_dir() else ()))
+        if match and match[2] == stamp and KINDS[match[1]] == kind
+    ]
     number = max(numbers, default=0) + 1
     return f"{PREFIXES[kind]}{stamp}.db" if number == 1 else f"{PREFIXES[kind]}{stamp}-{number}.db"
 
@@ -306,9 +326,12 @@ def snapshot(connection, path, kind="auto", keep=KEEP):
     found, current = backups(path), datetime.now(timezone.utc)
     made, removed = next(item for item in found if item["file"] == name), []
     # The others of its kind, the newest first; those dated ahead of the clock count as the oldest and go first.
-    older = sorted((item for item in found if item["kind"] == kind and item["file"] != name),
-                   key=lambda item: not ahead(item, current), reverse=True)
-    for old in older[max(keep - 1, 0):]:
+    older = sorted(
+        (item for item in found if item["kind"] == kind and item["file"] != name),
+        key=lambda item: not ahead(item, current),
+        reverse=True,
+    )
+    for old in older[max(keep - 1, 0) :]:
         with contextlib.suppress(OSError):  # One another program holds goes the next time.
             (folder / old["file"]).unlink()
             removed.append(old["file"])
@@ -370,8 +393,13 @@ def write_json(target, value):
 def requested(folder):
     """The restore restore.json asks for: {"file", "staged", "requested_at"}, or None (none, or a file not of ours)."""
     request = read_json(folder / MARKER)
-    if not request or not isinstance(request.get("file"), str) or not BACKUP_NAME.fullmatch(request["file"]) \
-            or not isinstance(request.get("staged"), str) or not STAGED.fullmatch(request["staged"]):
+    if (
+        not request
+        or not isinstance(request.get("file"), str)
+        or not BACKUP_NAME.fullmatch(request["file"])
+        or not isinstance(request.get("staged"), str)
+        or not STAGED.fullmatch(request["staged"])
+    ):
         return None
     return request
 
@@ -393,8 +421,10 @@ def stage_restore(path, name):
     if found["state"] != "ok":
         raise UserError(f"백업 파일이 손상되어 복원할 수 없습니다: {name}. 다른 백업을 골라 주세요.")
     if found["version"] > migrations.SCHEMA_VERSION:
-        raise UserError(f"더 새로운 버전의 Private Agent가 만든 백업(데이터베이스 버전 {found['version']})이라 이 앱에서는 "
-                        f"복원할 수 없습니다: {name}. 최신 버전의 앱에서 복원해 주세요.")
+        raise UserError(
+            f"더 새로운 버전의 Private Agent가 만든 백업(데이터베이스 버전 {found['version']})이라 이 앱에서는 "
+            f"복원할 수 없습니다: {name}. 최신 버전의 앱에서 복원해 주세요."
+        )
     if "documents" not in found["tables"]:
         raise UserError(f"Wiki의 백업이 아닌 파일입니다: {name}.")
     folder = backup_folder(path)
@@ -485,19 +515,28 @@ def apply_restore(path):
         remove_staged(folder)  # A copy no request names: a backend stopped while it copied, or a cancel half done.
         return None
     request = requested(folder)
-    outcome = {"file": request["file"] if request else "", "status": "failed", "before": None, "error": "",
-               "at": datetime.now(timezone.utc).isoformat()}
+    outcome = {
+        "file": request["file"] if request else "",
+        "status": "failed",
+        "before": None,
+        "error": "",
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
     staged = folder / request["staged"] if request else None
     copied = staged is not None and staged.is_file()
     # What a start that got as far as the last rename wrote down before it (see below).
-    before = request.get("before") if request and isinstance(request.get("before"), str) \
-        and BACKUP_NAME.fullmatch(request["before"]) else None
+    before = (
+        request.get("before")
+        if request and isinstance(request.get("before"), str) and BACKUP_NAME.fullmatch(request["before"])
+        else None
+    )
     if request and request.get("moving") is True and not copied and path.exists():
         pass  # A start stopped after the copy took the Wiki's name, before it could say so: the restore is done.
     elif not copied:
         outcome["error"] = "복원할 백업의 사본을 찾지 못해 복원하지 않았습니다. 백업 목록에서 다시 복원해 주세요."
-        diagnostics.LOG.error("restore of %s given up: its staged copy is missing",
-                              outcome["file"] or "an unreadable request")
+        diagnostics.LOG.error(
+            "restore of %s given up: its staged copy is missing", outcome["file"] or "an unreadable request"
+        )
         with contextlib.suppress(OSError):
             (folder / MARKER).unlink(missing_ok=True)
         remove_staged(folder)
@@ -530,8 +569,10 @@ def apply_restore(path):
             with contextlib.suppress(OSError):
                 write_json(folder / MARKER, asked)
             diagnostics.LOG.error("restore of %s not done, tried again at the next start: %r", request["file"], error)
-            outcome["error"] = ("Wiki 파일을 옮기지 못해 복원하지 못했습니다. 다른 프로그램(백신, 동기화 프로그램 등)이 "
-                                "파일을 쓰고 있는지 확인한 뒤 앱을 다시 실행하면 다시 복원합니다.")
+            outcome["error"] = (
+                "Wiki 파일을 옮기지 못해 복원하지 못했습니다. 다른 프로그램(백신, 동기화 프로그램 등)이 "
+                "파일을 쓰고 있는지 확인한 뒤 앱을 다시 실행하면 다시 복원합니다."
+            )
             record(folder, outcome)
             return outcome
     with contextlib.suppress(OSError):  # Left behind, it would name a copy no longer there: given up next time.

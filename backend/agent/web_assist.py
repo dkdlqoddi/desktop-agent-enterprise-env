@@ -21,6 +21,7 @@ page is data for the LLM, not instructions: it only picks among the page's own e
 a password field, nothing it writes is run or typed, and a click it chose never takes the account to another site
 (web_login.Hosts).
 """
+
 import asyncio
 import contextlib
 import json
@@ -42,12 +43,31 @@ DIAGNOSIS_ELEMENTS = 30  # The analysis of a failure needs the page's text more 
 SCREENS = ("login", "before_login", "signed_in", "other")
 KINDS = ("text", "password", "button", "other")
 # What each element says about itself, and how much of it.
-DETAILS = (("tag", 20), ("type", 20), ("text", 80), ("label", 80), ("name", 60), ("id", 60), ("placeholder", 60),
-           ("aria_label", 60), ("title", 60), ("autocomplete", 40), ("role", 20))
+DETAILS = (
+    ("tag", 20),
+    ("type", 20),
+    ("text", 80),
+    ("label", 80),
+    ("name", 60),
+    ("id", 60),
+    ("placeholder", 60),
+    ("aria_label", 60),
+    ("title", 60),
+    ("autocomplete", 40),
+    ("role", 20),
+)
 CATEGORIES = {
-    "network": "네트워크 연결", "address": "주소·DNS", "certificate": "인증서", "blocked": "보안 정책·프록시",
-    "server": "사이트 오류·점검", "credentials": "ID·비밀번호", "account": "계정 상태",
-    "verification": "추가 인증·승인", "login_screen": "로그인 화면", "permission": "접근 권한", "unknown": "원인 불명",
+    "network": "네트워크 연결",
+    "address": "주소·DNS",
+    "certificate": "인증서",
+    "blocked": "보안 정책·프록시",
+    "server": "사이트 오류·점검",
+    "credentials": "ID·비밀번호",
+    "account": "계정 상태",
+    "verification": "추가 인증·승인",
+    "login_screen": "로그인 화면",
+    "permission": "접근 권한",
+    "unknown": "원인 불명",
 }
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+", re.I)
@@ -237,27 +257,47 @@ def clean_state(state, secrets=()):
         if not isinstance(item, dict):
             continue
         selector = item.get("selector")
-        if item.get("kind") not in KINDS or not isinstance(selector, str) or not selector.strip() or len(selector) > 1000 \
-                or CONTROL.search(selector):
+        if (
+            item.get("kind") not in KINDS
+            or not isinstance(selector, str)
+            or not selector.strip()
+            or len(selector) > 1000
+            or CONTROL.search(selector)
+        ):
             continue
         form = item.get("form")
-        elements.append({"kind": item["kind"], **{key: scrub(item.get(key), secrets)[:limit] for key, limit in DETAILS},
-                         "form": form if isinstance(form, int) and not isinstance(form, bool) and 0 <= form <= 1000 else 0,
-                         "disabled": item.get("disabled") is True, "selector": selector.strip()})
+        elements.append(
+            {
+                "kind": item["kind"],
+                **{key: scrub(item.get(key), secrets)[:limit] for key, limit in DETAILS},
+                "form": form if isinstance(form, int) and not isinstance(form, bool) and 0 <= form <= 1000 else 0,
+                "disabled": item.get("disabled") is True,
+                "selector": selector.strip(),
+            }
+        )
     frames = state.get("frames")
-    return {"address": location(state.get("url", ""), secrets), "title": scrub(state.get("title"), secrets)[:200],
-            "text": scrub(state.get("text"), secrets)[:MAX_TEXT],
-            "frames": frames if isinstance(frames, int) and not isinstance(frames, bool) and 0 <= frames <= 1000 else 0,
-            "elements": elements}
+    return {
+        "address": location(state.get("url", ""), secrets),
+        "title": scrub(state.get("title"), secrets)[:200],
+        "text": scrub(state.get("text"), secrets)[:MAX_TEXT],
+        "frames": frames if isinstance(frames, int) and not isinstance(frames, bool) and 0 <= frames <= 1000 else 0,
+        "elements": elements,
+    }
 
 
 def for_llm(state, limit=MAX_ELEMENTS):
     """A clean_state() as the LLM reads it: elements numbered from 1, without selectors and empty details."""
-    elements = [{"n": number, **{key: value for key, value in element.items()
-                                 if key != "selector" and value not in ("", 0, False)}}
-                for number, element in enumerate(state["elements"][:limit], 1)]
-    return {**{key: value for key, value in state.items() if key != "elements" and value not in ("", 0)},
-            "elements": elements}
+    elements = [
+        {
+            "n": number,
+            **{key: value for key, value in element.items() if key != "selector" and value not in ("", 0, False)},
+        }
+        for number, element in enumerate(state["elements"][:limit], 1)
+    ]
+    return {
+        **{key: value for key, value in state.items() if key != "elements" and value not in ("", 0)},
+        "elements": elements,
+    }
 
 
 def ask(llm, system, payload, seconds):
@@ -293,6 +333,7 @@ def pick(answer, elements):
     id, next, password and submit, or None. Only an element of the page's own list counts, and only of its kind: the
     ID goes into a text field, the password into a password field, and both into the same form when they are in
     forms. An answer that names anything else is a misreading, and its screen becomes "other"."""
+
     def element(key, kind):
         """The element named for `key`: None when none is, False when the one named does not fit."""
         number = answer.get(key)
@@ -304,8 +345,15 @@ def pick(answer, elements):
         return found if found["kind"] == kind and not found["disabled"] else False
 
     screen = answer.get("screen") if answer.get("screen") in SCREENS else "other"
-    result = {"screen": screen, "reason": sentence(answer.get("reason"), 200),
-              "click": None, "id": None, "next": None, "password": None, "submit": None}
+    result = {
+        "screen": screen,
+        "reason": sentence(answer.get("reason"), 200),
+        "click": None,
+        "id": None,
+        "next": None,
+        "password": None,
+        "submit": None,
+    }
     misread = {**result, "screen": "other"}
     if screen == "before_login":
         click = element("click", "button")
@@ -314,12 +362,19 @@ def pick(answer, elements):
         return result
     login, password = element("id", "text"), element("password", "password")
     go_on, submit = element("next", "button"), element("submit", "button")
-    if any(found is False for found in (login, password, go_on, submit)) or \
-            (password is None and not (login and go_on)) or \
-            (login and password and login["form"] and password["form"] and login["form"] != password["form"]):
+    if (
+        any(found is False for found in (login, password, go_on, submit))
+        or (password is None and not (login and go_on))
+        or (login and password and login["form"] and password["form"] and login["form"] != password["form"])
+    ):
         return misread
-    return {**result, "id": login and login["selector"], "password": password and password["selector"],
-            "next": None if password else go_on["selector"], "submit": submit["selector"] if password and submit else None}
+    return {
+        **result,
+        "id": login and login["selector"],
+        "password": password and password["selector"],
+        "next": None if password else go_on["selector"],
+        "submit": submit["selector"] if password and submit else None,
+    }
 
 
 def diagnosis(answer):
@@ -330,24 +385,46 @@ def diagnosis(answer):
     if not cause:
         raise LLMFormatError("LLM이 실패 원인을 답하지 않았습니다.")
     wait = answer.get("wait")
-    wait = int(min(max(wait, 0), MAX_WAIT)) if isinstance(wait, (int, float)) and not isinstance(wait, bool) \
-        and math.isfinite(wait) else 0
+    wait = (
+        int(min(max(wait, 0), MAX_WAIT))
+        if isinstance(wait, (int, float)) and not isinstance(wait, bool) and math.isfinite(wait)
+        else 0
+    )
 
     def items(key):
         values = answer.get(key) if isinstance(answer.get(key), list) else []
         return [text for value in values if (text := sentence(value, 200))][:3]
-    return {"category": category, "label": CATEGORIES[category], "cause": cause, "evidence": items("evidence"),
-            "actions": items("actions"), "retry": answer.get("retry") is True, "wait": wait, "attempt": ""}
+
+    return {
+        "category": category,
+        "label": CATEGORIES[category],
+        "cause": cause,
+        "evidence": items("evidence"),
+        "actions": items("actions"),
+        "retry": answer.get("retry") is True,
+        "wait": wait,
+        "attempt": "",
+    }
 
 
 def facts(site, stage, message, error, loads, dialogs, state, after_login=None):
     """What the LLM gets to tell why a step failed; `after_login` is the page a login sent last left the browser on,
     with the method and its outcome."""
-    found = {"site": site, "stage": stage, "message": message, "error": error, "loads": loads, "dialogs": dialogs,
-             "page": for_llm(state, DIAGNOSIS_ELEMENTS) if state else None}
+    found = {
+        "site": site,
+        "stage": stage,
+        "message": message,
+        "error": error,
+        "loads": loads,
+        "dialogs": dialogs,
+        "page": for_llm(state, DIAGNOSIS_ELEMENTS) if state else None,
+    }
     if after_login:
-        found["after_login"] = {"method": after_login["method"], "outcome": after_login["outcome"],
-                                "page": for_llm(after_login["state"], DIAGNOSIS_ELEMENTS)}
+        found["after_login"] = {
+            "method": after_login["method"],
+            "outcome": after_login["outcome"],
+            "page": for_llm(after_login["state"], DIAGNOSIS_ELEMENTS),
+        }
     return found
 
 
@@ -386,8 +463,9 @@ class Assist:
     def _failed(self, request):
         with contextlib.suppress(Exception):
             if request.is_navigation_request() and request.frame.parent_frame is None:
-                self.loads.append({"address": location(request.url, self.secrets),
-                                   "error": error_text(request.failure, self.secrets)})
+                self.loads.append(
+                    {"address": location(request.url, self.secrets), "error": error_text(request.failure, self.secrets)}
+                )
 
     async def _dialog(self, dialog):
         self.dialogs.append(scrub(dialog.message, self.secrets)[:300])
@@ -418,14 +496,24 @@ class Assist:
             payload = {"site": self.product, "site_host": scrub(host, self.secrets)[:300], "page": for_llm(state)}
             return pick(await self._ask(LOGIN_SYSTEM, payload), state["elements"])
         except Exception as error:
-            return {"screen": "other", "reason": f"분석하지 못함 ({reason(error)})",
-                    "click": None, "id": None, "next": None, "password": None, "submit": None}
+            return {
+                "screen": "other",
+                "reason": f"분석하지 못함 ({reason(error)})",
+                "click": None,
+                "id": None,
+                "next": None,
+                "password": None,
+                "submit": None,
+            }
 
     async def sent(self, page, method, outcome):
         """A login sent with the method labelled `method` did not sign in (`outcome`: "rejected" or "timeout"): the page
         it left is kept for an analysis, as the sign-in opens the site again for the next method."""
-        self.after_login = {"method": scrub(method, self.secrets)[:80], "outcome": outcome,
-                            "state": await self.state(page)}
+        self.after_login = {
+            "method": scrub(method, self.secrets)[:80],
+            "outcome": outcome,
+            "state": await self.state(page),
+        }
 
     async def diagnose(self, page, stage, message, error=None):
         """Why `stage` failed, as diagnosis() gives the LLM's answer, or {"error": why} when there is none. Never raises
@@ -433,9 +521,21 @@ class Assist:
         self.update(notice="AI가 실패 원인을 분석하고 있습니다.")
         try:
             state = await self.state(page)
-            return diagnosis(await self._ask(DIAGNOSE_SYSTEM, facts(
-                self.product, stage, scrub(message, self.secrets)[:1000], error_text(error, self.secrets),
-                list(self.loads), list(self.dialogs), state, self.after_login)))
+            return diagnosis(
+                await self._ask(
+                    DIAGNOSE_SYSTEM,
+                    facts(
+                        self.product,
+                        stage,
+                        scrub(message, self.secrets)[:1000],
+                        error_text(error, self.secrets),
+                        list(self.loads),
+                        list(self.dialogs),
+                        state,
+                        self.after_login,
+                    ),
+                )
+            )
         except Exception as failure:
             return {"error": reason(failure)}
         finally:

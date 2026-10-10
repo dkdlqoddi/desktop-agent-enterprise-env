@@ -1,4 +1,5 @@
 """Image files as Wiki documents: one HTML page per picture file, made by Python without Office."""
+
 from html import escape
 
 from . import images
@@ -10,8 +11,10 @@ METAFILES = ("image/x-emf", "image/x-wmf")
 
 
 def capabilities():
-    return {"available": True, "reason": "PNG·JPEG·GIF·BMP·WebP·AVIF·SVG·ICO는 그대로, TIFF·EMF·WMF는 PNG로 바꿔 "
-                                         "HTML 문서로 저장합니다."}
+    return {
+        "available": True,
+        "reason": "PNG·JPEG·GIF·BMP·WebP·AVIF·SVG·ICO는 그대로, TIFF·EMF·WMF는 PNG로 바꿔 HTML 문서로 저장합니다.",
+    }
 
 
 def readable(size):
@@ -26,7 +29,9 @@ def image_page(file, cancel=None):
     data = file.read_bytes()
     kind = images.sniff(data)
     if not kind:
-        raise UserError("이미지 형식을 알아보지 못했습니다. PNG·JPEG·GIF·BMP·WebP·SVG·TIFF·EMF·WMF 파일인지 확인해 주세요.")
+        raise UserError(
+            "이미지 형식을 알아보지 못했습니다. PNG·JPEG·GIF·BMP·WebP·SVG·TIFF·EMF·WMF 파일인지 확인해 주세요."
+        )
     try:
         pictures = images.for_web(data, kind)
     except Exception:

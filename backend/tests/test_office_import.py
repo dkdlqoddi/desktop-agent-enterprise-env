@@ -14,8 +14,8 @@ from agent.db import Database
 from agent.html_document import index_markdown, page
 from agent.llm import UserError
 from agent.office_converter import PROGIDS, VISIO_OPEN, OfficeConverter, capabilities, convert_with_office
-from agent.office_import import POWERPOINT_NOTICE, OfficeImporter
 from agent.office_html import PLAIN_CELLS, excel_html, format_value, powerpoint_html, visio_html
+from agent.office_import import POWERPOINT_NOTICE, OfficeImporter
 from agent.office_session import OfficeSession, Patient, property_with, step
 from agent.service import Service
 from test_rtf_import import FakeLLM, fake_com, fake_modules, wait
@@ -30,11 +30,24 @@ def importer(tmp_path):
     return service.office
 
 
-@pytest.mark.parametrize("extension,application", [
-    (".ppt", "PowerPoint"), (".PPTX", "PowerPoint"), (".pptm", "PowerPoint"),
-    (".xls", "Excel"), (".xlsx", "Excel"), (".xlsm", "Excel"), (".xlsb", "Excel"),
-    (".doc", "Word"), (".docx", "Word"), (".docm", "Word"),
-    (".vsd", "Visio"), (".vsdx", "Visio"), (".VSDM", "Visio")])
+@pytest.mark.parametrize(
+    "extension,application",
+    [
+        (".ppt", "PowerPoint"),
+        (".PPTX", "PowerPoint"),
+        (".pptm", "PowerPoint"),
+        (".xls", "Excel"),
+        (".xlsx", "Excel"),
+        (".xlsm", "Excel"),
+        (".xlsb", "Excel"),
+        (".doc", "Word"),
+        (".docx", "Word"),
+        (".docm", "Word"),
+        (".vsd", "Visio"),
+        (".vsdx", "Visio"),
+        (".VSDM", "Visio"),
+    ],
+)
 def test_import_search_html_edit_restart_and_delete(importer, tmp_path, extension, application):
     source = tmp_path / ("업무 보고" + extension)
     source.write_bytes(b"office data")
@@ -70,16 +83,25 @@ def test_mixed_folder_duplicates_changes_and_per_file_failure(importer, tmp_path
     folder = tmp_path / "documents"
     folder.mkdir()
     (folder / "nested").mkdir()
-    for name, value in {"a.docx": b"same", "b.DOCX": b"same", "bad.xlsx": b"broken", "~$lock.docx": b"lock",
-                        "ignore.pdf": b"pdf", "nested/c.pptx": b"slides", "nested/d.vsdx": b"diagram"}.items():
+    for name, value in {
+        "a.docx": b"same",
+        "b.DOCX": b"same",
+        "bad.xlsx": b"broken",
+        "~$lock.docx": b"lock",
+        "ignore.pdf": b"pdf",
+        "nested/c.pptx": b"slides",
+        "nested/d.vsdx": b"diagram",
+    }.items():
         (folder / name).write_bytes(value)
     seen = []
+
     def convert(source, *_):
         seen.append(source.suffix)
         if source.read_bytes() == b"broken":
             raise UserError("손상된 Excel 파일")
         # Changed bytes are changed text here: a file whose text stayed keeps its document (sources.plan).
         return page("업무 보고", "<p>바뀐 계획</p>", "word") if source.read_bytes() == b"modified" else PAGE
+
     importer.converter = convert
     importer.start({"path": str(folder), "mode": "directory", "recursive": True})
     result = wait(importer)
@@ -99,9 +121,11 @@ def test_powerpoint_notice_is_raised_once_a_presentation_is_about_to_be_read(imp
     for name, value in {"a.docx": b"doc", "b.pptx": b"slides", "c.pptx": b"slides", "d.PPTM": b"more"}.items():
         (folder / name).write_bytes(value)
     seen = []
+
     def convert(source, *_):
         seen.append((source.name, importer.status()["notice"]))
         return PAGE
+
     importer.converter = convert
     assert importer.start({"path": str(folder), "mode": "directory"})["notice"] == ""
     job = wait(importer)
@@ -118,10 +142,12 @@ def test_cancel_remains_responsive_and_does_not_persist_partial_file(importer, t
     source = tmp_path / "cancel.docx"
     source.write_bytes(b"source")
     entered = threading.Event()
+
     def convert(source, cancel):
         entered.set()
         assert cancel.wait(3)
         return PAGE
+
     importer.converter = convert
     importer.start({"path": str(source), "mode": "file"})
     assert entered.wait(3)
@@ -139,10 +165,12 @@ def test_cleared_results_stay_cleared_until_the_next_job(importer, tmp_path):
     source = tmp_path / "clear.docx"
     source.write_bytes(b"source")
     entered, release = threading.Event(), threading.Event()
+
     def convert(source, cancel):
         entered.set()
         assert release.wait(3)
         return PAGE
+
     importer.converter = convert
     job = importer.service.dispatch("office.start", {"path": str(source), "mode": "file"})
     assert entered.wait(3)
@@ -164,8 +192,10 @@ def test_cleared_results_stay_cleared_until_the_next_job(importer, tmp_path):
 def test_analysis_failure_keeps_the_page_and_document(importer, tmp_path):
     source = tmp_path / "analyze.xlsx"
     source.write_bytes(b"data")
+
     def fail(_):
         raise UserError("LLM 오프라인")
+
     importer.service.wiki_analyze = fail
     importer.start({"path": str(source), "mode": "file", "analyze": True})
     job = wait(importer)
@@ -177,15 +207,20 @@ def test_database_failure_rolls_back_document_without_files(importer, tmp_path):
     source = tmp_path / "rollback.docx"
     source.write_bytes(b"data")
     with importer.service.db.connect() as db:
-        db.execute("CREATE TRIGGER fail_office BEFORE INSERT ON office_sources BEGIN SELECT RAISE(ABORT, 'failure'); END")
+        db.execute(
+            "CREATE TRIGGER fail_office BEFORE INSERT ON office_sources BEGIN SELECT RAISE(ABORT, 'failure'); END"
+        )
     importer.start({"path": str(source), "mode": "file"})
     assert wait(importer)["failed"] == 1
     assert importer.service.wiki_list({}) == []
     assert list(Path(importer.service.db.path).parent.glob("office/*")) == []
 
 
-@pytest.mark.parametrize("html", ["", " " * (10 * 1024 * 1024 + 1), page("빈 문서", "<p><br></p>", "word")],
-                         ids=["empty", "blank", "nothing-shown"])
+@pytest.mark.parametrize(
+    "html",
+    ["", " " * (10 * 1024 * 1024 + 1), page("빈 문서", "<p><br></p>", "word")],
+    ids=["empty", "blank", "nothing-shown"],
+)
 def test_empty_content_is_rejected(importer, tmp_path, monkeypatch, html):
     source = tmp_path / "invalid.docx"
     source.write_bytes(b"data")
@@ -196,7 +231,9 @@ def test_empty_content_is_rejected(importer, tmp_path, monkeypatch, html):
 
 
 def test_a_long_presentation_is_saved_in_parts_that_each_name_the_application(importer, tmp_path):
-    slides = "".join(f'<section class="slide"><h2>슬라이드 {i}</h2><p>{"발표 내용 " * 300}</p></section>' for i in range(60))
+    slides = "".join(
+        f'<section class="slide"><h2>슬라이드 {i}</h2><p>{"발표 내용 " * 300}</p></section>' for i in range(60)
+    )
     importer.converter = lambda *args: page("발표", slides, "powerpoint")
     source = tmp_path / "발표.pptx"
     source.write_bytes(b"slides")
@@ -204,11 +241,14 @@ def test_a_long_presentation_is_saved_in_parts_that_each_name_the_application(im
     result = wait(importer)["results"][0]
     docs = [importer.service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
     assert len(docs) == 2 and result["message"] == "글이 80,000자를 넘어 HTML 문서 2개로 나누어 Wiki에 저장했습니다."
-    assert [(doc["source"]["application"], doc["source"]["part"], doc["source"]["parts"]) for doc in docs] == \
-        [("PowerPoint", 1, 2), ("PowerPoint", 2, 2)]
+    assert [(doc["source"]["application"], doc["source"]["part"], doc["source"]["parts"]) for doc in docs] == [
+        ("PowerPoint", 1, 2),
+        ("PowerPoint", 2, 2),
+    ]
     # Slides are cut between, never inside: each part holds whole slides.
-    assert [doc["html"].count('<section class="slide">') for doc in docs] == [doc["content"].count("## 슬라이드")
-                                                                               for doc in docs]
+    assert [doc["html"].count('<section class="slide">') for doc in docs] == [
+        doc["content"].count("## 슬라이드") for doc in docs
+    ]
     assert sum(doc["content"].count("## 슬라이드") for doc in docs) == 60
 
 
@@ -235,8 +275,14 @@ def collection(items):
 
 
 def text_shape(text, **kwargs):
-    return NS(Type=1, HasTable=False, HasSmartArt=False, HasTextFrame=True,
-              TextFrame=NS(HasText=bool(text), TextRange=NS(Text=text)), **kwargs)
+    return NS(
+        Type=1,
+        HasTable=False,
+        HasSmartArt=False,
+        HasTextFrame=True,
+        TextFrame=NS(HasText=bool(text), TextRange=NS(Text=text)),
+        **kwargs,
+    )
 
 
 def placeholder(kind, text):
@@ -245,8 +291,9 @@ def placeholder(kind, text):
     return shape
 
 
-PLAIN_SPREADSHEET = ('<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet><Table/></Worksheet>'
-                     "</Workbook>")
+PLAIN_SPREADSHEET = (
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet><Table/></Worksheet></Workbook>'
+)
 
 
 def used_range(top, left, value2, *, value=None, formula=None, xml=PLAIN_SPREADSHEET):
@@ -255,18 +302,35 @@ def used_range(top, left, value2, *, value=None, formula=None, xml=PLAIN_SPREADS
     single = len(value2) == len(value2[0]) == 1
     grid = lambda rows: rows[0][0] if single else rows
     formula = formula or tuple(tuple("" if cell is None else str(cell) for cell in row) for row in value2)
-    return NS(Rows=NS(Count=len(value2)), Columns=NS(Count=len(value2[0])), Row=top, Column=left,
-              Value2=grid(value2), Value=grid(value or value2), Formula=grid(formula),
-              _oleobj_=SpreadsheetDispatch(xml, []))
+    return NS(
+        Rows=NS(Count=len(value2)),
+        Columns=NS(Count=len(value2[0])),
+        Row=top,
+        Column=left,
+        Value2=grid(value2),
+        Value=grid(value or value2),
+        Formula=grid(formula),
+        _oleobj_=SpreadsheetDispatch(xml, []),
+    )
 
 
 def workbook_fixture():
     # A1:C3 where row 2 and column B hold nothing but formatting.
-    report = used_range(1, 1, (("<담당자>", None, "홍길동"), (None, None, None), (0.1 + 0.2, None, 42.0)),
-                        formula=(("<담당자>", "", "홍길동"), ("", "", ""), ("0.3", "", "=SUM(A1:A2)")))
-    return NS(Worksheets=collection([NS(Name="개발 & 운영", Visible=-1, UsedRange=report),
-                                     NS(Name="요약", Visible=0, UsedRange=used_range(5, 4, ((False,),))),
-                                     NS(Name="빈 시트", Visible=-1, UsedRange=used_range(1, 1, ((None,),)))]))
+    report = used_range(
+        1,
+        1,
+        (("<담당자>", None, "홍길동"), (None, None, None), (0.1 + 0.2, None, 42.0)),
+        formula=(("<담당자>", "", "홍길동"), ("", "", ""), ("0.3", "", "=SUM(A1:A2)")),
+    )
+    return NS(
+        Worksheets=collection(
+            [
+                NS(Name="개발 & 운영", Visible=-1, UsedRange=report),
+                NS(Name="요약", Visible=0, UsedRange=used_range(5, 4, ((False,),))),
+                NS(Name="빈 시트", Visible=-1, UsedRange=used_range(1, 1, ((None,),))),
+            ]
+        )
+    )
 
 
 def markdown(body, kind="excel"):
@@ -276,8 +340,10 @@ def markdown(body, kind="excel"):
 def test_excel_keeps_cell_addresses_and_leaves_out_empty_rows_and_columns():
     ticks = []
     result = markdown(excel_html(workbook_fixture(), lambda: ticks.append(1)))
-    assert "## 개발 \\& 운영\n\n|  | A | C |\n| --- | --- | --- |\n| 1 | \\<담당자\\> | 홍길동 |\n" \
-           "| 3 | 0.3 | 42 수식: `=SUM(A1:A2)` |" in result
+    assert (
+        "## 개발 \\& 운영\n\n|  | A | C |\n| --- | --- | --- |\n| 1 | \\<담당자\\> | 홍길동 |\n"
+        "| 3 | 0.3 | 42 수식: `=SUM(A1:A2)` |" in result
+    )
     assert "## 요약 (숨긴 시트)\n\n|  | D |\n| --- | --- |\n| 5 | FALSE |" in result
     assert "빈 시트" not in result and len(ticks) == 3
     # A workbook beyond 100,000 cells is read up to there: the rows of a sheet that still fit, and the page says so.
@@ -285,12 +351,15 @@ def test_excel_keeps_cell_addresses_and_leaves_out_empty_rows_and_columns():
     first = workbook.Worksheets.Item(1)
     first.UsedRange.Rows.Count = 100001
     asked = []
-    first.Range = lambda address: asked.append(address) or used_range(
-        1, 1, (("<담당자>", None, "홍길동"),) + ((None, None, None),) * 33332)
+    first.Range = lambda address: (
+        asked.append(address) or used_range(1, 1, (("<담당자>", None, "홍길동"),) + ((None, None, None),) * 33332)
+    )
     result = markdown(excel_html(workbook))
     assert asked == ["A1:C33333"]
-    assert ("## 개발 \\& 운영\n\n시트가 커서 100,001행 중 앞 33,333행만 가져왔습니다 (시트 사용 범위 합계 100,000셀까지).\n\n"
-            "|  | A | C |\n| --- | --- | --- |\n| 1 | \\<담당자\\> | 홍길동 |") in result
+    assert (
+        "## 개발 \\& 운영\n\n시트가 커서 100,001행 중 앞 33,333행만 가져왔습니다 (시트 사용 범위 합계 100,000셀까지).\n\n"
+        "|  | A | C |\n| --- | --- | --- |\n| 1 | \\<담당자\\> | 홍길동 |"
+    ) in result
     assert "## 요약 (숨긴 시트)\n\n|  | D |" in result
     # An empty sheet has no cells to leave out: it is not listed, even once the cells are used up.
     assert result.endswith("| 5 | FALSE |") and "빈 시트" not in result
@@ -303,10 +372,22 @@ def test_excel_keeps_cell_addresses_and_leaves_out_empty_rows_and_columns():
 
 def test_excel_values_read_as_excel_shows_them():
     utc = timezone.utc  # pywin32 returns COM dates with a UTC zone
-    used = used_range(2, 2, ((46293.0, 0.3958333333, 46293.5729166667, -2146826281, 12.345678, True),),
-                      value=((datetime(2026, 9, 28, tzinfo=utc), datetime(1899, 12, 30, 9, 30, tzinfo=utc),
-                              datetime(2026, 9, 28, 13, 45, tzinfo=utc), -2146826281, Decimal("12.3457"), True),),
-                      formula=(("46293", "0.395833333333333", "46293.5729166667", "=1/0", "12.345678", "TRUE"),))
+    used = used_range(
+        2,
+        2,
+        ((46293.0, 0.3958333333, 46293.5729166667, -2146826281, 12.345678, True),),
+        value=(
+            (
+                datetime(2026, 9, 28, tzinfo=utc),
+                datetime(1899, 12, 30, 9, 30, tzinfo=utc),
+                datetime(2026, 9, 28, 13, 45, tzinfo=utc),
+                -2146826281,
+                Decimal("12.3457"),
+                True,
+            ),
+        ),
+        formula=(("46293", "0.395833333333333", "46293.5729166667", "=1/0", "12.345678", "TRUE"),),
+    )
     result = markdown(excel_html(NS(Worksheets=collection([NS(Name="값", Visible=-1, UsedRange=used)]))))
     assert "| 2 | 2026-09-28 | 09:30 | 2026-09-28 13:45 | #DIV/0! 수식: `=1/0` | 12.345678 | TRUE |" in result
     assert "|  | B | C | D | E | F | G |" in result
@@ -314,16 +395,29 @@ def test_excel_values_read_as_excel_shows_them():
 
 
 def presentation_fixture():
-    table = NS(Rows=NS(Count=2), Columns=NS(Count=2), FirstRow=True,
-               Cell=lambda r, c: NS(Shape=text_shape([["담당", "이름"], ["개발", "홍길동"]][r - 1][c - 1])))
-    shapes = [text_shape("슬라이드 본문\r두 번째 줄"), placeholder(1, "개발 계획\v2026"),
-              NS(Type=19, HasTable=True, Table=table), NS(Type=6, GroupItems=collection([text_shape("그룹 텍스트")])),
-              NS(Type=24, HasTable=False, HasSmartArt=True,
-                 SmartArt=NS(AllNodes=collection([NS(TextFrame2=NS(TextRange=NS(Text="SmartArt 텍스트")))]))),
-              placeholder(7, "")]
+    table = NS(
+        Rows=NS(Count=2),
+        Columns=NS(Count=2),
+        FirstRow=True,
+        Cell=lambda r, c: NS(Shape=text_shape([["담당", "이름"], ["개발", "홍길동"]][r - 1][c - 1])),
+    )
+    shapes = [
+        text_shape("슬라이드 본문\r두 번째 줄"),
+        placeholder(1, "개발 계획\v2026"),
+        NS(Type=19, HasTable=True, Table=table),
+        NS(Type=6, GroupItems=collection([text_shape("그룹 텍스트")])),
+        NS(
+            Type=24,
+            HasTable=False,
+            HasSmartArt=True,
+            SmartArt=NS(AllNodes=collection([NS(TextFrame2=NS(TextRange=NS(Text="SmartArt 텍스트")))])),
+        ),
+        placeholder(7, ""),
+    ]
     notes = collection([placeholder(2, "발표할 내용"), placeholder(15, "노트 바닥글")])
-    plain_table = NS(Rows=NS(Count=1), Columns=NS(Count=2), FirstRow=False,
-                     Cell=lambda r, c: NS(Shape=text_shape(["a", "b"][c - 1])))
+    plain_table = NS(
+        Rows=NS(Count=1), Columns=NS(Count=2), FirstRow=False, Cell=lambda r, c: NS(Shape=text_shape(["a", "b"][c - 1]))
+    )
     second = NS(Shapes=collection([NS(Type=19, HasTable=True, Table=plain_table)]), NotesPage=NS(Shapes=collection([])))
     return NS(Slides=collection([NS(Shapes=collection(shapes), NotesPage=NS(Shapes=notes)), second]))
 
@@ -331,9 +425,11 @@ def presentation_fixture():
 def test_powerpoint_titles_tables_groups_smartart_and_speaker_notes():
     ticks = []
     result = markdown(powerpoint_html(presentation_fixture(), lambda: ticks.append(1)), "powerpoint")
-    assert result.startswith("## 슬라이드 1 · 개발 계획 2026\n\n슬라이드 본문  \n두 번째 줄\n\n"
-                             "| 담당 | 이름 |\n| --- | --- |\n| 개발 | 홍길동 |\n\n그룹 텍스트\n\n- SmartArt 텍스트\n\n"
-                             "### 발표자 노트\n\n발표할 내용\n\n## 슬라이드 2\n\n|  |  |\n| --- | --- |\n| a | b |")
+    assert result.startswith(
+        "## 슬라이드 1 · 개발 계획 2026\n\n슬라이드 본문  \n두 번째 줄\n\n"
+        "| 담당 | 이름 |\n| --- | --- |\n| 개발 | 홍길동 |\n\n그룹 텍스트\n\n- SmartArt 텍스트\n\n"
+        "### 발표자 노트\n\n발표할 내용\n\n## 슬라이드 2\n\n|  |  |\n| --- | --- |\n| a | b |"
+    )
     assert "노트 바닥글" not in result and len(ticks) == 2
 
 
@@ -341,43 +437,71 @@ def visio_shape(ident, text="", *, kind=3, one_d=False, connects=(), data=(), ch
     def cells(section, row, column):
         assert section == 243
         label, value, hidden = data[row]
+
         def result(units):
             assert units == ""
             return {0: value, 2: label}[column]
+
         return NS(ResultIU=float(hidden), ResultStr=result, RowName=f"Row_{row + 1}")
+
     def exists(section, local):
         if broken:
             raise RuntimeError("ShapeSheet를 읽을 수 없음")
         return int(bool(data))
-    return NS(ID=ident, Type=kind, Name=name or f"Shape.{ident}", Characters=NS(Text=text), OneD=-1 if one_d else 0,
-              Connects=collection([NS(FromPart=part, ToSheet=NS(ID=target)) for part, target in connects]),
-              SectionExists=exists, RowCount=lambda section: len(data), CellsSRC=cells, Shapes=collection(list(children)))
+
+    return NS(
+        ID=ident,
+        Type=kind,
+        Name=name or f"Shape.{ident}",
+        Characters=NS(Text=text),
+        OneD=-1 if one_d else 0,
+        Connects=collection([NS(FromPart=part, ToSheet=NS(ID=target)) for part, target in connects]),
+        SectionExists=exists,
+        RowCount=lambda section: len(data),
+        CellsSRC=cells,
+        Shapes=collection(list(children)),
+    )
 
 
 def drawing_fixture():
-    shapes = [visio_shape(1, "사용자 단말"),
-              visio_shape(2, "API 서버", kind=2, data=[("담당자", "홍길동", 0), ("내부 코드", "X1", 1), ("", "10.0.0.1", 0)],
-                          children=[visio_shape(3, "인증 모듈")]),
-              visio_shape(4, "데이터베이스\u2028(주 DB)", broken=True),
-              visio_shape(5, "HTTPS", one_d=True, connects=[(9, 1), (12, 2)]),  # visBegin, visEnd
-              visio_shape(6, one_d=True, connects=[(7, 2)]),  # only its begin (visBeginX) is glued
-              visio_shape(7, "안내선", kind=5),  # a guide
-              visio_shape(8, name="Rectangle.8", kind=2, children=[visio_shape(9, "그룹 속 도형")]),
-              visio_shape(10, "자유 선", one_d=True),
-              visio_shape(11, one_d=True, connects=[(9, 4), (12, 8)])]
-    return NS(Pages=collection([NS(Name="시스템 구성도", Background=0, Shapes=collection(shapes)),
-                                NS(Name="배경-1", Background=-1, Shapes=collection([visio_shape(1, "대외비")])),
-                                NS(Name="빈 페이지", Background=0, Shapes=collection([visio_shape(1)]))]))
+    shapes = [
+        visio_shape(1, "사용자 단말"),
+        visio_shape(
+            2,
+            "API 서버",
+            kind=2,
+            data=[("담당자", "홍길동", 0), ("내부 코드", "X1", 1), ("", "10.0.0.1", 0)],
+            children=[visio_shape(3, "인증 모듈")],
+        ),
+        visio_shape(4, "데이터베이스\u2028(주 DB)", broken=True),
+        visio_shape(5, "HTTPS", one_d=True, connects=[(9, 1), (12, 2)]),  # visBegin, visEnd
+        visio_shape(6, one_d=True, connects=[(7, 2)]),  # only its begin (visBeginX) is glued
+        visio_shape(7, "안내선", kind=5),  # a guide
+        visio_shape(8, name="Rectangle.8", kind=2, children=[visio_shape(9, "그룹 속 도형")]),
+        visio_shape(10, "자유 선", one_d=True),
+        visio_shape(11, one_d=True, connects=[(9, 4), (12, 8)]),
+    ]
+    return NS(
+        Pages=collection(
+            [
+                NS(Name="시스템 구성도", Background=0, Shapes=collection(shapes)),
+                NS(Name="배경-1", Background=-1, Shapes=collection([visio_shape(1, "대외비")])),
+                NS(Name="빈 페이지", Background=0, Shapes=collection([visio_shape(1)])),
+            ]
+        )
+    )
 
 
 def test_visio_pages_shape_text_connections_and_shape_data():
     ticks = []
     result = markdown(visio_html(drawing_fixture(), lambda: ticks.append(1)), "visio")
-    assert result.startswith("## 페이지 1 · 시스템 구성도\n\n### 도형 텍스트\n\n- 사용자 단말\n- API 서버\n  - 인증 모듈\n"
-                             "- 데이터베이스  \n  (주 DB)\n- 그룹 속 도형\n- 자유 선\n\n### 연결\n\n"
-                             "- 사용자 단말 → API 서버: HTTPS\n- API 서버 → (미연결)\n- 데이터베이스 (주 DB) → Rectangle.8\n\n"
-                             "### 도형 데이터\n\n| 도형 | 항목 | 값 |\n| --- | --- | --- |\n| API 서버 | 담당자 | 홍길동 |\n"
-                             "| API 서버 | Row\\_3 | 10.0.0.1 |\n\n## 페이지 2 · 배경-1 (배경)\n\n### 도형 텍스트\n\n- 대외비")
+    assert result.startswith(
+        "## 페이지 1 · 시스템 구성도\n\n### 도형 텍스트\n\n- 사용자 단말\n- API 서버\n  - 인증 모듈\n"
+        "- 데이터베이스  \n  (주 DB)\n- 그룹 속 도형\n- 자유 선\n\n### 연결\n\n"
+        "- 사용자 단말 → API 서버: HTTPS\n- API 서버 → (미연결)\n- 데이터베이스 (주 DB) → Rectangle.8\n\n"
+        "### 도형 데이터\n\n| 도형 | 항목 | 값 |\n| --- | --- | --- |\n| API 서버 | 담당자 | 홍길동 |\n"
+        "| API 서버 | Row\\_3 | 10.0.0.1 |\n\n## 페이지 2 · 배경-1 (배경)\n\n### 도형 텍스트\n\n- 대외비"
+    )
     assert "안내선" not in result and "내부 코드" not in result and "빈 페이지" not in result
     assert len(ticks) == 3
 
@@ -407,10 +531,23 @@ def test_word_office_conversion_returns_the_page_without_files(monkeypatch, tmp_
 def excel_app(calls, *, fail=False, adopt=False):
     workbook = workbook_fixture()
     workbook.Close = lambda **kw: calls.append(("close", kw))
-    app = NS(Visible=False, DisplayAlerts=True, ScreenUpdating=True, EnableEvents=True, AskToUpdateLinks=True,
-             AutomationSecurity=1)
-    settings = lambda: (app.DisplayAlerts, app.ScreenUpdating, app.EnableEvents, app.AskToUpdateLinks, app.AutomationSecurity)
+    app = NS(
+        Visible=False,
+        DisplayAlerts=True,
+        ScreenUpdating=True,
+        EnableEvents=True,
+        AskToUpdateLinks=True,
+        AutomationSecurity=1,
+    )
+    settings = lambda: (
+        app.DisplayAlerts,
+        app.ScreenUpdating,
+        app.EnableEvents,
+        app.AskToUpdateLinks,
+        app.AutomationSecurity,
+    )
     app.Quit = lambda **kw: calls.append(("quit", kw, settings()))
+
     def open_workbook(**kwargs):
         calls.append(("open", kwargs))
         assert app.Visible is False and settings() == (False, False, False, False, 3)
@@ -418,6 +555,7 @@ def excel_app(calls, *, fail=False, adopt=False):
             raise RuntimeError("COM failed")
         app.Visible = adopt  # the user opens their own workbook in this Excel meanwhile
         return workbook
+
     app.Workbooks = NS(Open=open_workbook)
     return app
 
@@ -443,8 +581,11 @@ def test_excel_reads_a_readonly_workbook_hidden_and_puts_its_settings_back(monke
 def test_failures_name_the_step_and_still_quit_the_owned_process(monkeypatch, tmp_path):
     calls = []
     fake_modules(monkeypatch, excel_app(calls, fail=True), calls)
-    with pytest.raises(UserError, match=r"^Excel 파일 열기 실패: RuntimeError: COM failed\. Excel에서 직접 열리는지, "
-                                        r"암호·DRM·보안 정책을 확인해 주세요\.$"):
+    with pytest.raises(
+        UserError,
+        match=r"^Excel 파일 열기 실패: RuntimeError: COM failed\. Excel에서 직접 열리는지, "
+        r"암호·DRM·보안 정책을 확인해 주세요\.$",
+    ):
         convert_with_office(tmp_path / "손상.xlsx")
     assert calls[-1] == ("quit", {}, (False, False, True, True, 1))
 
@@ -455,8 +596,13 @@ def test_excel_the_user_opened_a_workbook_in_keeps_running_as_it_was(monkeypatch
     fake_modules(monkeypatch, app, calls)
     convert_with_office(tmp_path / "보고서.xlsx")
     assert ("close", {"SaveChanges": False}) in calls and not any(c[0] == "quit" for c in calls)
-    assert (app.DisplayAlerts, app.ScreenUpdating, app.EnableEvents, app.AskToUpdateLinks,
-            app.AutomationSecurity) == (True, True, True, True, 1)
+    assert (app.DisplayAlerts, app.ScreenUpdating, app.EnableEvents, app.AskToUpdateLinks, app.AutomationSecurity) == (
+        True,
+        True,
+        True,
+        True,
+        1,
+    )
 
 
 def powerpoint_app(calls, *, visible=0, running=(), windows=0, adopt=False):
@@ -464,19 +610,23 @@ def powerpoint_app(calls, *, visible=0, running=(), windows=0, adopt=False):
     presentation.Close = lambda **kw: calls.append(("close", kw))
     presentation.Windows = NS(Count=windows)
     app = NS(Visible=visible, DisplayAlerts=2, AutomationSecurity=1, Quit=lambda **kw: calls.append(("quit", kw)))
+
     def open_presentation(**kwargs):
         calls.append(("open", kwargs, app.DisplayAlerts))
         assert app.AutomationSecurity == 3
         if adopt:
             app.Visible = -1  # the user opens PowerPoint, which joins this process
         return presentation
+
     others = [NS(FullName=name) for name in running]
     app.Presentations = NS(Count=len(others), Item=lambda index: others[index - 1], Open=open_presentation)
     return app
 
 
-@pytest.mark.parametrize("visible,running", [(0, []), (-1, []), (-1, ["C:\\발표\\다른 파일.pptx"]),
-                                             (0, ["C:\\발표\\다른 프로그램이 연 파일.pptx"])])
+@pytest.mark.parametrize(
+    "visible,running",
+    [(0, []), (-1, []), (-1, ["C:\\발표\\다른 파일.pptx"]), (0, ["C:\\발표\\다른 프로그램이 연 파일.pptx"])],
+)
 def test_powerpoint_reads_without_a_window_and_quits_only_its_own_process(monkeypatch, tmp_path, visible, running):
     calls = []
     # PowerPoint runs one process per user: one that shows a window or holds presentations is someone's.
@@ -523,12 +673,14 @@ def visio_app(calls, *, fail=False, drawing=None):
     drawing.Close = lambda: calls.append(("close", drawing.Saved))
     app = NS(Visible=False, AlertResponse=0, EventsEnabled=-1, ScreenUpdating=-1)
     app.Quit = lambda **kw: calls.append(("quit", kw, (app.AlertResponse, app.EventsEnabled, app.ScreenUpdating)))
+
     def open_drawing(path, flags):
         calls.append(("open", path, flags))
         assert (app.AlertResponse, app.EventsEnabled, app.ScreenUpdating) == (7, False, False)
         if fail:
             raise RuntimeError("COM failed")
         return drawing
+
     app.Documents = NS(OpenEx=open_drawing)
     return app
 
@@ -624,6 +776,7 @@ def test_a_worker_says_which_office_it_may_have_left_running(monkeypatch, tmp_pa
         with OfficeSession("Word", PROGIDS["Word"], running=NS(Visible=True)) as office:
             office.track(object(), refuse)
         return {}
+
     assert "left" not in outcome(write, "원본 반영", "", key="summary")
 
     # A PowerPoint that does not say whether it is the user's is never quit; one started here is reported.
@@ -631,6 +784,7 @@ def test_a_worker_says_which_office_it_may_have_left_running(monkeypatch, tmp_pa
         @property
         def Visible(self):
             raise Broken()
+
     calls = []
     app = powerpoint_app(calls)
     fake_modules(monkeypatch, Silent(**{key: value for key, value in vars(app).items() if key != "Visible"}), calls)
@@ -658,8 +812,11 @@ def test_step_errors_carry_the_office_explanation():
         with step("Visio 내용 읽기"):
             raise KeyError("Shapes")
     # Still busy after every retry: most likely a dialog is open in that Office app.
-    with pytest.raises(UserError, match=r"^PowerPoint 파일 열기 실패 \[0x80010001\]: 호출 수신자가 호출을 거부했습니다\. "
-                                        r"Office 앱에 열린 대화 상자가 있다면 닫고 다시 시도해 주세요\.$"):
+    with pytest.raises(
+        UserError,
+        match=r"^PowerPoint 파일 열기 실패 \[0x80010001\]: 호출 수신자가 호출을 거부했습니다\. "
+        r"Office 앱에 열린 대화 상자가 있다면 닫고 다시 시도해 주세요\.$",
+    ):
         with step("PowerPoint 파일 열기", "무시되는 안내"):
             raise Busy()
     with pytest.raises(UserError, match="^그대로$"):
@@ -673,12 +830,15 @@ def stalled_worker(source, sender, stop, folder):
 
 def test_worker_timeout_and_cancellation_clean_up_child_processes(tmp_path, monkeypatch):
     import multiprocessing
+
     monkeypatch.setattr(OfficeConverter, "check", lambda *args: None)
     monkeypatch.setattr(OfficeConverter, "worker", staticmethod(stalled_worker))
     folders = []
     real_mkdtemp = tempfile.mkdtemp
-    monkeypatch.setattr("agent.office_converter.tempfile.mkdtemp",
-                        lambda **kwargs: folders.append(real_mkdtemp(**kwargs)) or folders[-1])
+    monkeypatch.setattr(
+        "agent.office_converter.tempfile.mkdtemp",
+        lambda **kwargs: folders.append(real_mkdtemp(**kwargs)) or folders[-1],
+    )
     before = {child.pid for child in multiprocessing.active_children()}
     for cancel, message in [(threading.Event(), "초과"), (threading.Event(), "취소")]:
         if message == "취소":
@@ -705,6 +865,7 @@ def page_worker(source, sender, stop, folder):
 
 def test_a_file_waiting_for_its_office_app_says_so_in_the_import(tmp_path, monkeypatch):
     from agent.word_converter import TURNS, WAITING
+
     monkeypatch.setattr(OfficeConverter, "check", lambda *args: None)
     monkeypatch.setattr(OfficeConverter, "worker", staticmethod(page_worker))
     service = Service(Database(tmp_path / "data" / "wiki.db"), FakeLLM())
@@ -742,13 +903,19 @@ def test_a_stopped_worker_closes_its_office_itself_before_it_would_be_killed(tmp
     assert Path(f"{source}.stopped").exists()
 
 
-@pytest.mark.skipif(sys.platform != "win32" or os.getenv("PRIVATE_AGENT_OFFICE_TEST") != "1", reason="Requires Windows Office; opt in with PRIVATE_AGENT_OFFICE_TEST=1")
-@pytest.mark.parametrize("name,extension", [("Word", ".docx"), ("Excel", ".xlsx"), ("PowerPoint", ".pptx"), ("Visio", ".vsdx")])
+@pytest.mark.skipif(
+    sys.platform != "win32" or os.getenv("PRIVATE_AGENT_OFFICE_TEST") != "1",
+    reason="Requires Windows Office; opt in with PRIVATE_AGENT_OFFICE_TEST=1",
+)
+@pytest.mark.parametrize(
+    "name,extension", [("Word", ".docx"), ("Excel", ".xlsx"), ("PowerPoint", ".pptx"), ("Visio", ".vsdx")]
+)
 def test_real_office_conversion(tmp_path, name, extension):
     if not capabilities()["applications"][name]:
         pytest.skip(f"{name} is not installed")
     import pythoncom
     import win32com.client
+
     pythoncom.CoInitialize()
     app = win32com.client.DispatchEx(PROGIDS[name])
     source = tmp_path / ("통합 테스트" + extension)
@@ -844,6 +1011,7 @@ SPREADSHEET = """<?xml version="1.0"?>
 
 class SpreadsheetDispatch:
     """IDispatch of a fake Range: Value(11) is read through Invoke, as late-bound pywin32 must."""
+
     def __init__(self, xml, calls):
         self.xml, self.calls = xml, calls
 
@@ -862,20 +1030,51 @@ def chart_fixture(title="분기 매출"):
 
 
 def styled_workbook(calls):
-    used = used_range(1, 1, (("매출 현황", None, "링크"), (1234.5, 46293.0, 0.256), ("굵은 글빨강", None, None)),
-                      value=(("매출 현황", None, "링크"), (1234.5, datetime(2026, 9, 28, tzinfo=timezone.utc), 0.256),
-                             ("굵은 글빨강", None, None)),
-                      formula=(("매출 현황", "", "링크"), ("=SUM(A3:A4)", "46293", "0.256"), ("굵은 글빨강", "", "")))
+    used = used_range(
+        1,
+        1,
+        (("매출 현황", None, "링크"), (1234.5, 46293.0, 0.256), ("굵은 글빨강", None, None)),
+        value=(
+            ("매출 현황", None, "링크"),
+            (1234.5, datetime(2026, 9, 28, tzinfo=timezone.utc), 0.256),
+            ("굵은 글빨강", None, None),
+        ),
+        formula=(("매출 현황", "", "링크"), ("=SUM(A3:A4)", "46293", "0.256"), ("굵은 글빨강", "", "")),
+    )
     used._oleobj_ = SpreadsheetDispatch(SPREADSHEET, calls)
-    sheet = NS(Name="매출", Visible=-1, UsedRange=used, ChartObjects=lambda: collection([NS(Name="차트 1", Chart=chart_fixture())]),
-               Shapes=collection([NS(Type=13, Name="그림 2", AlternativeText="로고", TopLeftCell=NS(Address="$E$2")),
-                                  NS(Type=17, Name="Text Box 3", AlternativeText="", TopLeftCell=NS(Address="$A$10"),
-                                     TextFrame2=NS(HasText=-1, TextRange=NS(Text="참고 사항"))),
-                                  NS(Type=3, Name="차트 1")]),
-               CommentsThreaded=collection([NS(Parent=NS(Address="$C$2"), Author=NS(Name="김철수"), Text=lambda: "검토했습니다",
-                                               Replies=collection([NS(Author=NS(Name="홍길동"), Text=lambda: "감사합니다")]))]))
-    return NS(Worksheets=collection([sheet]), Charts=collection([NS(Name="추이", HasTitle=False, ChartType=4,
-                                                                      SeriesCollection=lambda: collection([]))]))
+    sheet = NS(
+        Name="매출",
+        Visible=-1,
+        UsedRange=used,
+        ChartObjects=lambda: collection([NS(Name="차트 1", Chart=chart_fixture())]),
+        Shapes=collection(
+            [
+                NS(Type=13, Name="그림 2", AlternativeText="로고", TopLeftCell=NS(Address="$E$2")),
+                NS(
+                    Type=17,
+                    Name="Text Box 3",
+                    AlternativeText="",
+                    TopLeftCell=NS(Address="$A$10"),
+                    TextFrame2=NS(HasText=-1, TextRange=NS(Text="참고 사항")),
+                ),
+                NS(Type=3, Name="차트 1"),
+            ]
+        ),
+        CommentsThreaded=collection(
+            [
+                NS(
+                    Parent=NS(Address="$C$2"),
+                    Author=NS(Name="김철수"),
+                    Text=lambda: "검토했습니다",
+                    Replies=collection([NS(Author=NS(Name="홍길동"), Text=lambda: "감사합니다")]),
+                )
+            ]
+        ),
+    )
+    return NS(
+        Worksheets=collection([sheet]),
+        Charts=collection([NS(Name="추이", HasTitle=False, ChartType=4, SeriesCollection=lambda: collection([]))]),
+    )
 
 
 def test_excel_keeps_formatting_merged_cells_number_formats_comments_links_charts_and_shapes():
@@ -883,17 +1082,27 @@ def test_excel_keeps_formatting_merged_cells_number_formats_comments_links_chart
     body = excel_html(styled_workbook(calls))
     # Value(11) of the used range: XML Spreadsheet, in memory.
     assert calls == [("name", "Value"), ("invoke", 6, 2, (11,))]
-    assert ('<table class="cells" style="font-family:&quot;맑은 고딕&quot;;font-size:11pt;color:#000000"><colgroup><col>'
-            '<col style="width:80.25pt"><col><col style="width:120pt"></colgroup><tr><th></th><th>A</th><th>B</th><th>C</th></tr>') in body
-    assert ('<tr style="height:20pt"><th>1</th><td colspan="2" style="font-weight:bold;color:#FFFFFF;background-color:#4472C4;'
-            'text-align:center;vertical-align:middle;border-bottom:1.5pt solid #000000">매출 현황</td>'
-            '<td style="vertical-align:middle"><a href="https://wiki.test/a">링크</a></td></tr>') in body
-    assert ('<td data-formula="=SUM(A3:A4)" title="=SUM(A3:A4)" style="text-align:right;vertical-align:middle">1,234.50</td>'
-            '<td style="text-align:right;vertical-align:middle">2026년 9월 28일<span class="note-mark" title="메모">◥</span></td>'
-            '<td style="color:#FF0000;text-align:right;vertical-align:middle">25.6%<span class="note-mark" title="메모">◥</span></td>') in body
-    assert ('<tr class="hidden" title="숨긴 행"><th>3</th><td style="vertical-align:middle;white-space:pre-wrap">'
-            '<strong>굵은</strong> 글<span style="color:#FF0000">빨강</span></td>') in body
-    assert ('<li>B2 · 홍길동: 홍길동:<br>확인 바랍니다</li><li>C2 · 김철수: 검토했습니다</li><li>C2 · 홍길동: 감사합니다</li>') in body
+    assert (
+        '<table class="cells" style="font-family:&quot;맑은 고딕&quot;;font-size:11pt;color:#000000"><colgroup><col>'
+        '<col style="width:80.25pt"><col><col style="width:120pt"></colgroup><tr><th></th><th>A</th><th>B</th><th>C</th></tr>'
+    ) in body
+    assert (
+        '<tr style="height:20pt"><th>1</th><td colspan="2" style="font-weight:bold;color:#FFFFFF;background-color:#4472C4;'
+        'text-align:center;vertical-align:middle;border-bottom:1.5pt solid #000000">매출 현황</td>'
+        '<td style="vertical-align:middle"><a href="https://wiki.test/a">링크</a></td></tr>'
+    ) in body
+    assert (
+        '<td data-formula="=SUM(A3:A4)" title="=SUM(A3:A4)" style="text-align:right;vertical-align:middle">1,234.50</td>'
+        '<td style="text-align:right;vertical-align:middle">2026년 9월 28일<span class="note-mark" title="메모">◥</span></td>'
+        '<td style="color:#FF0000;text-align:right;vertical-align:middle">25.6%<span class="note-mark" title="메모">◥</span></td>'
+    ) in body
+    assert (
+        '<tr class="hidden" title="숨긴 행"><th>3</th><td style="vertical-align:middle;white-space:pre-wrap">'
+        '<strong>굵은</strong> 글<span style="color:#FF0000">빨강</span></td>'
+    ) in body
+    assert (
+        "<li>B2 · 홍길동: 홍길동:<br>확인 바랍니다</li><li>C2 · 김철수: 검토했습니다</li><li>C2 · 홍길동: 감사합니다</li>"
+    ) in body
     assert "<figcaption>차트: 분기 매출 (세로 막대형)</figcaption>" in body and "<th>1분기</th><td>10</td>" in body
     assert '<li><span class="missing">[그림: 로고]</span> (E2)</li><li>참고 사항 (A10)</li>' in body
     assert "<h2>추이 (차트 시트)</h2>" in body
@@ -909,12 +1118,16 @@ def test_excel_without_xml_spreadsheet_still_reads_values():
     workbook.Worksheets.Item(1).UsedRange._oleobj_ = SpreadsheetDispatch("<not xml", calls)
     body = excel_html(workbook)
     # Without formatting the values read as before: ISO dates, numbers as stored. The sheet says what is missing.
-    assert body.startswith(f'<section class="sheet"><h2>매출</h2><p class="caption">{PLAIN_CELLS}</p>'
-                           '<table class="cells">')
+    assert body.startswith(
+        f'<section class="sheet"><h2>매출</h2><p class="caption">{PLAIN_CELLS}</p><table class="cells">'
+    )
     assert '<td data-formula="=SUM(A3:A4)" title="=SUM(A3:A4)" style="text-align:right">1234.5</td>' in body
     assert '<td style="text-align:right">2026-09-28</td>' in body and "colspan" not in body
     # Threaded comments are read from Excel itself and marked in their cell.
-    assert '0.256<span class="note-mark" title="메모">◥</span>' in body and "<figcaption>차트: 추이 (꺾은선형)</figcaption></figure>" in body
+    assert (
+        '0.256<span class="note-mark" title="메모">◥</span>' in body
+        and "<figcaption>차트: 추이 (꺾은선형)</figcaption></figure>" in body
+    )
 
 
 def test_dates_of_a_workbook_in_the_1904_date_system():
@@ -927,37 +1140,71 @@ def test_dates_of_a_workbook_in_the_1904_date_system():
     assert "2026년 9월 28일" in excel_html(workbook)
 
 
-@pytest.mark.parametrize("value,code,expected", [
-    (1234.5, "#,##0.00", "1,234.50"), (-1234.5, "#,##0;[Red](#,##0)", "(1,235)"), (0.0, '0;-0;"-"', "-"),
-    (0.256, "0.0%", "25.6%"), (1234567.0, '#,##0,"천"', "1,235천"), (12345.678, "0.00E+00", "1.23E+04"),
-    (1012345678.0, "000-0000-0000", "010-1234-5678"), (0.5, "#.##", ".5"), (-5.0, "0.00", "-5.00"),
-    (46293.0, "yyyy-mm-dd", "2026-09-28"), (46293.5729166667, '[$-412]AM/PM h:mm', "오후 1:45"),
-    (46293.0, "dddd", "월요일"), (46293.0, "[$-409]mmmm d, yyyy", "September 28, 2026"), (1.5, "[h]:mm", "36:00"),
-    (0.3958333333, "h:mm:ss", "9:30:00"), (46293.0, "Short Date", "2026-09-28"), (0.123, "Percent", "12.30%"),
-    ("abc", '@" 님"', "abc 님"), (9.999, "0.00E+00", "1.00E+01"), (0.000123, "0.00E+00", "1.23E-04"),
-    (12345.0, "##0.0E+0", "12.3E+3"),
-])
+@pytest.mark.parametrize(
+    "value,code,expected",
+    [
+        (1234.5, "#,##0.00", "1,234.50"),
+        (-1234.5, "#,##0;[Red](#,##0)", "(1,235)"),
+        (0.0, '0;-0;"-"', "-"),
+        (0.256, "0.0%", "25.6%"),
+        (1234567.0, '#,##0,"천"', "1,235천"),
+        (12345.678, "0.00E+00", "1.23E+04"),
+        (1012345678.0, "000-0000-0000", "010-1234-5678"),
+        (0.5, "#.##", ".5"),
+        (-5.0, "0.00", "-5.00"),
+        (46293.0, "yyyy-mm-dd", "2026-09-28"),
+        (46293.5729166667, "[$-412]AM/PM h:mm", "오후 1:45"),
+        (46293.0, "dddd", "월요일"),
+        (46293.0, "[$-409]mmmm d, yyyy", "September 28, 2026"),
+        (1.5, "[h]:mm", "36:00"),
+        (0.3958333333, "h:mm:ss", "9:30:00"),
+        (46293.0, "Short Date", "2026-09-28"),
+        (0.123, "Percent", "12.30%"),
+        ("abc", '@" 님"', "abc 님"),
+        (9.999, "0.00E+00", "1.00E+01"),
+        (0.000123, "0.00E+00", "1.23E-04"),
+        (12345.0, "##0.0E+0", "12.3E+3"),
+    ],
+)
 def test_number_formats_read_as_excel_shows_them(value, code, expected):
     assert format_value(value, code)[0] == expected
 
 
-@pytest.mark.parametrize("value,code", [(5.0, "General"), (2.5, "# ?/?"), (True, "0.00"), ("text", "0.00"), (2007, "0"),
-                                        (5.0, "E-[Red]#[Red]"), (5.0, "[>=1.2.3]0;0")])
+@pytest.mark.parametrize(
+    "value,code",
+    [
+        (5.0, "General"),
+        (2.5, "# ?/?"),
+        (True, "0.00"),
+        ("text", "0.00"),
+        (2007, "0"),
+        (5.0, "E-[Red]#[Red]"),
+        (5.0, "[>=1.2.3]0;0"),
+    ],
+)
 def test_number_formats_it_does_not_read_are_left_to_the_general_format(value, code):
     assert format_value(value, code) is None
 
 
-@pytest.mark.parametrize("value,code,date1904,expected", [
-    # Excel counts 1900 as a leap year: day 1 is 1900-01-01, day 60 the 29 February that never was, day 0 "1900-01-00",
-    # and the weekdays before March 1900 are Excel's (1900-01-01 a Sunday).
-    (1.0, "yyyy-mm-dd", False, "1900-01-01"), (59.0, "yyyy-mm-dd", False, "1900-02-28"),
-    (60.0, "yyyy-mm-dd dddd", False, "1900-02-29 수요일"), (61.0, "yyyy-mm-dd dddd", False, "1900-03-01 목요일"),
-    (0.5, "yyyy-mm-dd h:mm", False, "1900-01-00 12:00"), (1.0, "[$-409]dddd", False, "Sunday"),
-    (2.5, "[h]:mm", False, "60:00"),
-    # A workbook of the 1904 date system counts from 1904-01-01, four years and a day later.
-    (44831.0, "yyyy-mm-dd", True, "2026-09-28"), (0.0, "yyyy-mm-dd", True, "1904-01-01"),
-    (60.0, "yyyy-mm-dd", True, "1904-03-01"), (1.5, "[h]:mm", True, "36:00"),
-])
+@pytest.mark.parametrize(
+    "value,code,date1904,expected",
+    [
+        # Excel counts 1900 as a leap year: day 1 is 1900-01-01, day 60 the 29 February that never was, day 0 "1900-01-00",
+        # and the weekdays before March 1900 are Excel's (1900-01-01 a Sunday).
+        (1.0, "yyyy-mm-dd", False, "1900-01-01"),
+        (59.0, "yyyy-mm-dd", False, "1900-02-28"),
+        (60.0, "yyyy-mm-dd dddd", False, "1900-02-29 수요일"),
+        (61.0, "yyyy-mm-dd dddd", False, "1900-03-01 목요일"),
+        (0.5, "yyyy-mm-dd h:mm", False, "1900-01-00 12:00"),
+        (1.0, "[$-409]dddd", False, "Sunday"),
+        (2.5, "[h]:mm", False, "60:00"),
+        # A workbook of the 1904 date system counts from 1904-01-01, four years and a day later.
+        (44831.0, "yyyy-mm-dd", True, "2026-09-28"),
+        (0.0, "yyyy-mm-dd", True, "1904-01-01"),
+        (60.0, "yyyy-mm-dd", True, "1904-03-01"),
+        (1.5, "[h]:mm", True, "36:00"),
+    ],
+)
 def test_dates_read_as_the_date_system_of_the_workbook_shows_them(value, code, date1904, expected):
     assert format_value(value, code, date1904)[0] == expected
 
@@ -965,10 +1212,53 @@ def test_dates_read_as_the_date_system_of_the_workbook_shows_them(value, code, d
 def test_any_number_format_code_is_read_or_left_to_the_general_format():
     """Format codes come from the file: whatever they hold, a cell is never what stops the import."""
     import random
+
     generator = random.Random(1904)
-    pieces = ["0", "#", "?", ".", ",", "%", "E+", "E-", "e-", "/", "@", ";", "[Red]", "[>=10]", "[<-1.5]", "[=1.2.3]",
-              "[$-412]", "[$₩-412]", "[h]", "[mm]", "[ss]", "yyyy", "mmmm", "m", "d", "dddd", "aaa", "h", "s", ".00",
-              "AM/PM", "A/P", "General", '"원"', "\\-", "_)", "*-", " ", "(", ")", "[", "]", '"']
+    pieces = [
+        "0",
+        "#",
+        "?",
+        ".",
+        ",",
+        "%",
+        "E+",
+        "E-",
+        "e-",
+        "/",
+        "@",
+        ";",
+        "[Red]",
+        "[>=10]",
+        "[<-1.5]",
+        "[=1.2.3]",
+        "[$-412]",
+        "[$₩-412]",
+        "[h]",
+        "[mm]",
+        "[ss]",
+        "yyyy",
+        "mmmm",
+        "m",
+        "d",
+        "dddd",
+        "aaa",
+        "h",
+        "s",
+        ".00",
+        "AM/PM",
+        "A/P",
+        "General",
+        '"원"',
+        "\\-",
+        "_)",
+        "*-",
+        " ",
+        "(",
+        ")",
+        "[",
+        "]",
+        '"',
+    ]
     for _ in range(3000):
         code = "".join(generator.choice(pieces) for _ in range(generator.randrange(1, 9)))
         for value in (0.0, 1.0, -2.5, 60.0, 1234567.891, 1e-9, 1e300, "글"):
@@ -980,35 +1270,87 @@ def rich_text(*paragraphs):
     """A PowerPoint TextRange with Paragraphs() and Runs(), each paragraph (level, alignment, bullet, runs)."""
     items = []
     for level, alignment, bullet, runs in paragraphs:
-        objects = [NS(Text=text, Font=NS(**{"Name": "맑은 고딕", "Size": 18.0, "Bold": 0, "Italic": 0, "Underline": 0,
-                                            "Color": NS(RGB=0), "Superscript": 0, "Subscript": 0, **font})) for text, font in runs]
-        items.append(NS(Text="".join(text for text, _ in runs), IndentLevel=level,
-                        ParagraphFormat=NS(Alignment=alignment, Bullet=bullet),
-                        Runs=lambda index=None, objects=objects: collection(objects) if index is None else objects[index - 1]))
-    return NS(Text="\r".join(item.Text for item in items),
-              Paragraphs=lambda index=None: collection(items) if index is None else items[index - 1])
+        objects = [
+            NS(
+                Text=text,
+                Font=NS(
+                    **{
+                        "Name": "맑은 고딕",
+                        "Size": 18.0,
+                        "Bold": 0,
+                        "Italic": 0,
+                        "Underline": 0,
+                        "Color": NS(RGB=0),
+                        "Superscript": 0,
+                        "Subscript": 0,
+                        **font,
+                    }
+                ),
+            )
+            for text, font in runs
+        ]
+        items.append(
+            NS(
+                Text="".join(text for text, _ in runs),
+                IndentLevel=level,
+                ParagraphFormat=NS(Alignment=alignment, Bullet=bullet),
+                Runs=lambda index=None, objects=objects: collection(objects) if index is None else objects[index - 1],
+            )
+        )
+    return NS(
+        Text="\r".join(item.Text for item in items),
+        Paragraphs=lambda index=None: collection(items) if index is None else items[index - 1],
+    )
 
 
 def test_powerpoint_keeps_run_formatting_bullets_fills_charts_pictures_comments_and_hidden_slides():
-    text = NS(Type=17, HasTable=False, HasChart=0, HasSmartArt=False, HasTextFrame=True, TextFrame=NS(HasText=True, TextRange=rich_text(
-        (1, 1, NS(Visible=-1, Type=1, Character=0x2022), [("굵게 ", {"Bold": -1, "Size": 24.0}), ("빨강", {"Color": NS(RGB=0x0000FF)})]),
-        (2, 2, NS(Visible=-1, Type=2, Number=3, Style=7), [("가운데", {})]),
-        (1, 1, NS(Visible=-1, Type=1, Character=0xF0D8, Font=NS(Name="Wingdings")), [("화살표 글머리", {})]),
-        (1, 1, NS(Visible=0), [("H", {}), ("2", {"Subscript": -1}), ("O", {})]))))
-    filled = NS(Shape=NS(Fill=NS(Visible=-1, ForeColor=NS(RGB=0xCCF2FF)), TextFrame=NS(HasText=True, TextRange=NS(Text="채움"))))
-    table = NS(Type=19, HasTable=True, Table=NS(Rows=NS(Count=1), Columns=NS(Count=1), FirstRow=False, Cell=lambda r, c: filled))
+    text = NS(
+        Type=17,
+        HasTable=False,
+        HasChart=0,
+        HasSmartArt=False,
+        HasTextFrame=True,
+        TextFrame=NS(
+            HasText=True,
+            TextRange=rich_text(
+                (
+                    1,
+                    1,
+                    NS(Visible=-1, Type=1, Character=0x2022),
+                    [("굵게 ", {"Bold": -1, "Size": 24.0}), ("빨강", {"Color": NS(RGB=0x0000FF)})],
+                ),
+                (2, 2, NS(Visible=-1, Type=2, Number=3, Style=7), [("가운데", {})]),
+                (1, 1, NS(Visible=-1, Type=1, Character=0xF0D8, Font=NS(Name="Wingdings")), [("화살표 글머리", {})]),
+                (1, 1, NS(Visible=0), [("H", {}), ("2", {"Subscript": -1}), ("O", {})]),
+            ),
+        ),
+    )
+    filled = NS(
+        Shape=NS(Fill=NS(Visible=-1, ForeColor=NS(RGB=0xCCF2FF)), TextFrame=NS(HasText=True, TextRange=NS(Text="채움")))
+    )
+    table = NS(
+        Type=19,
+        HasTable=True,
+        Table=NS(Rows=NS(Count=1), Columns=NS(Count=1), FirstRow=False, Cell=lambda r, c: filled),
+    )
     chart = NS(Type=3, HasTable=False, HasChart=-1, Chart=chart_fixture("점유율"), Name="차트 2")
     picture = NS(Type=13, HasTable=False, HasChart=0, HasSmartArt=False, AlternativeText="제품 사진", Name="그림 3")
-    slide = NS(Shapes=collection([placeholder(1, "결과"), text, table, chart, picture]), NotesPage=NS(Shapes=collection([])),
-               SlideShowTransition=NS(Hidden=-1), Comments=collection([NS(Author="홍길동", Text="수치 확인")]),
-               Hyperlinks=collection([NS(Address="https://wiki.test/r", TextToDisplay="보고서", SubAddress="")]))
+    slide = NS(
+        Shapes=collection([placeholder(1, "결과"), text, table, chart, picture]),
+        NotesPage=NS(Shapes=collection([])),
+        SlideShowTransition=NS(Hidden=-1),
+        Comments=collection([NS(Author="홍길동", Text="수치 확인")]),
+        Hyperlinks=collection([NS(Address="https://wiki.test/r", TextToDisplay="보고서", SubAddress="")]),
+    )
     body = powerpoint_html(NS(Slides=collection([slide])))
     assert '<section class="slide hidden"><h2>슬라이드 1 · 결과 (숨긴 슬라이드)</h2>' in body
-    assert ('<p><span class="bullet">• </span><span style="font-family:&quot;맑은 고딕&quot;;font-size:24pt;font-weight:bold">굵게 </span>'
-            '<span style="font-family:&quot;맑은 고딕&quot;;font-size:18pt;color:#FF0000">빨강</span></p>') in body
+    assert (
+        '<p><span class="bullet">• </span><span style="font-family:&quot;맑은 고딕&quot;;font-size:24pt;font-weight:bold">굵게 </span>'
+        '<span style="font-family:&quot;맑은 고딕&quot;;font-size:18pt;color:#FF0000">빨강</span></p>'
+    ) in body
     assert '<p style="margin-left:18pt;text-align:center"><span class="bullet">III. </span>' in body
     assert '<span class="bullet">➢ </span>' in body
-    assert '<sub><span' not in body and "<sub>2</sub>" in body
+    assert "<sub><span" not in body and "<sub>2</sub>" in body
     assert '<td style="background-color:#FFF2CC"><p>채움</p></td>' in body
     assert "<figcaption>차트: 점유율 (세로 막대형)</figcaption>" in body
     assert '<span class="missing">[그림: 제품 사진]</span>' in body

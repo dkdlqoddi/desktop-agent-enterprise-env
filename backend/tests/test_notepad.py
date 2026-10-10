@@ -1,5 +1,6 @@
 """The hidden Notepad reader against a stand-in desktop: which window it reads and closes, when it reads, and what it
 refuses. The real user32 and Notepad run only on Windows (PRIVATE_AGENT_NOTEPAD_TEST=1)."""
+
 import os
 import subprocess
 import sys
@@ -80,12 +81,19 @@ OTHER = {5: {"title": "회의록.txt - Windows 메모장", "pid": 50, "visible":
 
 def starting(text, title="회의록 - Windows 메모장", **window):
     """Notepad as it starts: a hidden window without a file first, then the file's name once the text has loaded."""
+
     def appear(desktop):
-        desktop.windows[7] = {"title": "제목 없음 - Windows 메모장", "pid": 100, "visible": False,
-                              "boxes": {70: (True, "")}, **window}
+        desktop.windows[7] = {
+            "title": "제목 없음 - Windows 메모장",
+            "pid": 100,
+            "visible": False,
+            "boxes": {70: (True, "")},
+            **window,
+        }
 
     def load(desktop):
         desktop.windows[7].update(title=title, boxes={70: (True, text)})
+
     return {3: appear, 5: load}
 
 
@@ -100,8 +108,9 @@ def source(tmp_path, monkeypatch):
 
 def read(source, desktop, process, stop=None, seconds=5):
     started = []
-    text = read_with_notepad(source, stop, seconds=seconds, desktop=desktop,
-                             start=lambda path: started.append(path) or process)
+    text = read_with_notepad(
+        source, stop, seconds=seconds, desktop=desktop, start=lambda path: started.append(path) or process
+    )
     assert started == [source.resolve()]
     return text
 
@@ -119,8 +128,12 @@ def test_reads_the_text_of_the_hidden_notepad_it_started_and_closes_it(source):
 def test_windows_11_notepad_is_hidden_and_the_tab_of_the_file_is_read(source):
     # Windows 11 Notepad may show its window all the same, and restore earlier tabs beside the file's.
     process = Process()
-    window = {"title": "회의록.txt - 메모장", "pid": 100, "visible": True,
-              "boxes": {80: (False, "지난 세션의 탭"), 81: (True, "이 파일의 글")}}
+    window = {
+        "title": "회의록.txt - 메모장",
+        "pid": 100,
+        "visible": True,
+        "boxes": {80: (False, "지난 세션의 탭"), 81: (True, "이 파일의 글")},
+    }
     desktop = Desktop(steps={3: lambda d: d.windows.update({8: window})}, process=process)
     assert read(source, desktop, process) == "이 파일의 글"
     assert desktop.events[0] == ("hide", 8) and desktop.events[-1] == ("close", 8)
@@ -225,8 +238,13 @@ def test_a_window_without_a_text_box_or_answer_says_so(source):
 
 def test_titles_that_show_the_file():
     path = Path("C:/temp/회의록.v2.txt")
-    for title in ("회의록.v2.txt - Windows 메모장", "회의록.v2 - Windows 메모장", "*회의록.v2.txt - 메모장",
-                  "회의록.V2.TXT - Notepad", "회의록.v2.txt"):
+    for title in (
+        "회의록.v2.txt - Windows 메모장",
+        "회의록.v2 - Windows 메모장",
+        "*회의록.v2.txt - 메모장",
+        "회의록.V2.TXT - Notepad",
+        "회의록.v2.txt",
+    ):
         assert notepad.showing(title, path), title
     for title in ("제목 없음 - Windows 메모장", "회의록 - Windows 메모장", "회의록.v2.txt.bak - 메모장", ""):
         assert not notepad.showing(title, path), title
@@ -254,15 +272,24 @@ def test_only_windows_has_notepad(source, monkeypatch):
         read_with_notepad(source)
 
 
-@pytest.mark.skipif(sys.platform != "win32" or os.getenv("PRIVATE_AGENT_NOTEPAD_TEST") != "1",
-                    reason="Requires Windows Notepad; opt in with PRIVATE_AGENT_NOTEPAD_TEST=1")
+@pytest.mark.skipif(
+    sys.platform != "win32" or os.getenv("PRIVATE_AGENT_NOTEPAD_TEST") != "1",
+    reason="Requires Windows Notepad; opt in with PRIVATE_AGENT_NOTEPAD_TEST=1",
+)
 def test_real_notepad(tmp_path):
-    files = {"메모장 ANSI.txt": ("메모장 한글\r\n둘째 줄", "cp949"), "utf8.txt": ("UTF-8 한글 글", "utf-8"),
-             "wide.txt": ("유니코드 글", "utf-16"), "표.csv": ('이름,설명\r\n김개발,"두 줄"', "utf-8")}
+    files = {
+        "메모장 ANSI.txt": ("메모장 한글\r\n둘째 줄", "cp949"),
+        "utf8.txt": ("UTF-8 한글 글", "utf-8"),
+        "wide.txt": ("유니코드 글", "utf-16"),
+        "표.csv": ('이름,설명\r\n김개발,"두 줄"', "utf-8"),
+    }
     for name, (text, encoding) in files.items():
         (tmp_path / name).write_bytes(text.encode(encoding))
         assert read_with_notepad(tmp_path / name, threading.Event()) == text.replace("\r\n", "\n"), name
     # Every Notepad it started has closed.
-    left = [window.title for window in notepad.Desktop().notepads()
-            if any(notepad.showing(window.title, tmp_path / name) for name in files)]
+    left = [
+        window.title
+        for window in notepad.Desktop().notepads()
+        if any(notepad.showing(window.title, tmp_path / name) for name in files)
+    ]
     assert left == []

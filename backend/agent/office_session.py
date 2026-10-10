@@ -5,6 +5,7 @@ changed with their previous values remembered, the file opens read-only without 
 content is read into memory. However the conversion ends, the file closes without saving, the settings
 go back and the application quits. An application someone uses keeps running with every setting back:
 the PowerPoint the user runs, which serves every client, or one the user opened a document in."""
+
 import gc
 import time
 import traceback
@@ -28,8 +29,11 @@ LEFT_RUNNING = []
 def failure(stage, error, hint=""):
     """`Word 파일 열기 실패 [0x800A1066]: Office's own explanation. hint` for the job result."""
     info = getattr(error, "excepinfo", None) or ()
-    text = ((info[2] if len(info) > 2 else None) or getattr(error, "strerror", None)
-            or (f"{type(error).__name__}: {error}" if str(error) else type(error).__name__))
+    text = (
+        (info[2] if len(info) > 2 else None)
+        or getattr(error, "strerror", None)
+        or (f"{type(error).__name__}: {error}" if str(error) else type(error).__name__)
+    )
     code = (info[5] if len(info) > 5 else None) or getattr(error, "hresult", None) or getattr(error, "winerror", None)
     text = " ".join(str(text).split())[:300]
     if not text.endswith((".", "!", "?")):
@@ -57,6 +61,7 @@ def run_worker(convert, sender, stage, hint, key="html"):
 
     COM is initialized for the conversion and uninitialized after it, once no Office object is left."""
     import pythoncom
+
     pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
     try:
         result = outcome(convert, stage, hint, key)
@@ -92,6 +97,7 @@ def trace(error):
 
 class Patient:
     """A COM object whose calls wait while its Office application reports that it is busy."""
+
     __slots__ = ("_target", "_session")
 
     def __init__(self, target, session):
@@ -144,6 +150,7 @@ class OfficeSession:
             self.application = Patient(self.running, self)
             return self
         from win32com.client import DispatchEx
+
         try:
             with self.starting():
                 self.application = Patient((self.dispatch or DispatchEx)(self.progid), self)
@@ -179,7 +186,9 @@ class OfficeSession:
         return step(f"{self.name} 내용 고치기")
 
     def saving(self):
-        return step(f"{self.name} 파일 저장", "파일이 읽기 전용이거나 다른 프로그램이 쓰고 있는지, 저장 공간을 확인해 주세요.")
+        return step(
+            f"{self.name} 파일 저장", "파일이 읽기 전용이거나 다른 프로그램이 쓰고 있는지, 저장 공간을 확인해 주세요."
+        )
 
     def hide(self):
         """Keep the application without a window, as DispatchEx started it."""

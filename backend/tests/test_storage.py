@@ -2,6 +2,7 @@
 screen (main.py --migrate-storage): written under a name of its own and renamed to wiki.db only when whole, so a copy
 stopped midway or failed never leaves the folder refused as "wiki.db가 이미 있습니다". The check before every start opens
 the Wiki, its backups in the backups folder, and the restore of one at the next start."""
+
 import contextlib
 import json
 import os
@@ -89,14 +90,19 @@ def test_a_wiki_that_appears_meanwhile_is_never_replaced(tmp_path):
 def test_the_command_line_as_electron_runs_it(tmp_path):
     source, destination = wiki(tmp_path / "old.db"), tmp_path / "chosen" / "wiki.db"
     command = [sys.executable, str(BACKEND / "main.py"), "--migrate-storage"]
-    result = subprocess.run([*command, str(source), str(destination)], cwd=BACKEND, capture_output=True,
-                            encoding="utf-8", timeout=60)
+    result = subprocess.run(
+        [*command, str(source), str(destination)], cwd=BACKEND, capture_output=True, encoding="utf-8", timeout=60
+    )
     assert (result.returncode, result.stdout.splitlines()[:1], result.stderr) == (0, ["copying"], "")
     assert destination.exists()
-    result = subprocess.run([*command, str(source), str(destination)], cwd=BACKEND, capture_output=True,
-                            encoding="utf-8", timeout=60)
+    result = subprocess.run(
+        [*command, str(source), str(destination)], cwd=BACKEND, capture_output=True, encoding="utf-8", timeout=60
+    )
     assert result.returncode == 1
-    assert result.stderr.strip() == "기존 저장소를 복사하지 못했습니다. 대상 폴더, 기존 파일, 권한과 디스크 공간을 확인해 주세요."
+    assert (
+        result.stderr.strip()
+        == "기존 저장소를 복사하지 못했습니다. 대상 폴더, 기존 파일, 권한과 디스크 공간을 확인해 주세요."
+    )
 
 
 # --- The check before the Wiki opens, its backups and the restore of one ---------------------------------------------
@@ -116,7 +122,7 @@ def corrupt(path):
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     data = bytearray(path.read_bytes())
     assert len(data) > 4096 * 8
-    data[4096 * 2:4096 * 6] = b"\xa5" * (4096 * 4)
+    data[4096 * 2 : 4096 * 6] = b"\xa5" * (4096 * 4)
     path.write_bytes(bytes(data))
 
 
@@ -170,7 +176,7 @@ def test_what_a_check_its_time_stopped_found_is_no_verdict(tmp_path, monkeypatch
         db.commit()
     found = storage.inspect(path)
     assert found["state"] == "damaged" and "NULL value in notes.text" in found["detail"]
-    monkeypatch.setattr(storage, "CHECK_STEPS", 10 ** 9)  # Only the time decides, as the old walk never asks.
+    monkeypatch.setattr(storage, "CHECK_STEPS", 10**9)  # Only the time decides, as the old walk never asks.
     assert storage.inspect(path, budget=-1)["state"] == "unchecked"
 
 
@@ -182,10 +188,22 @@ def test_the_backend_answers_every_request_with_why_the_wiki_did_not_open(tmp_pa
     (folder / "wiki.db").write_bytes(b"no database" * 1000)
     environment = {**os.environ, "PRIVATE_AGENT_DATA_DIR": str(folder), "PYTHONPATH": "", "PYTHONUTF8": "1"}
     environment.pop("PRIVATE_AGENT_LOG_DIR", None)
-    lines = "".join(json.dumps({"id": ident, "method": method, "params": {}}) + "\n"
-                    for ident, method in (("first", "health"), ("second", "wiki.list"))) + "not json\n"
-    result = subprocess.run([sys.executable, str(BACKEND / "main.py")], input=lines, cwd=BACKEND,
-                            capture_output=True, encoding="utf-8", env=environment, timeout=120)
+    lines = (
+        "".join(
+            json.dumps({"id": ident, "method": method, "params": {}}) + "\n"
+            for ident, method in (("first", "health"), ("second", "wiki.list"))
+        )
+        + "not json\n"
+    )
+    result = subprocess.run(
+        [sys.executable, str(BACKEND / "main.py")],
+        input=lines,
+        cwd=BACKEND,
+        capture_output=True,
+        encoding="utf-8",
+        env=environment,
+        timeout=120,
+    )
     answers = [json.loads(line) for line in result.stdout.splitlines()]
     assert [answer["id"] for answer in answers] == ["first", "second", None]
     assert all(f"손상되어 열지 않았습니다: {folder / 'wiki.db'}." in answer["error"] for answer in answers)
@@ -203,7 +221,7 @@ def test_backups_are_checked_single_files_and_each_kind_keeps_its_newest(tmp_pat
     assert [item["removed"] for item in made] == [[]] * storage.KEEP + [[files[0]], [files[1]]]
     listed = service.dispatch("wiki.backups", {})
     assert (listed["folder"], listed["keep"]) == (str(folder), storage.KEEP)
-    assert [item["file"] for item in listed["backups"]] == files[::-1][:storage.KEEP]
+    assert [item["file"] for item in listed["backups"]] == files[::-1][: storage.KEEP]
     assert {item["kind"] for item in listed["backups"]} == {"manual"} and names(folder) == sorted(files[2:])
     newest = made[-1]
     assert newest["size"] == (folder / newest["file"]).stat().st_size
@@ -289,7 +307,10 @@ def test_a_restore_can_be_taken_back_before_the_next_start(tmp_path):
     service.dispatch("wiki.restore_backup", {"file": kept})
     assert len([name for name in names(folder) if storage.STAGED.fullmatch(name)]) == 1
     assert service.dispatch("wiki.restore_backup", {"cancel": True}) == {
-        "restart_required": False, "cancelled": True, "message": "예약한 복원을 취소했습니다."}
+        "restart_required": False,
+        "cancelled": True,
+        "message": "예약한 복원을 취소했습니다.",
+    }
     assert names(folder) == [kept]
     assert service.dispatch("wiki.restore_backup", {"cancel": True})["cancelled"] is False
     # What a backend stopped while it copied leaves, which no request names, goes at the next start.
@@ -301,10 +322,24 @@ def test_a_restore_can_be_taken_back_before_the_next_start(tmp_path):
         service.dispatch("wiki.restore_backup", {"cancel": "yes"})
 
 
-@pytest.mark.parametrize("name", [None, 7, "", "wiki.db", "../wiki.db", "backups/wiki-20261009-093000.db",
-                                  "..\\wiki-20261009-093000.db", "/tmp/wiki-20261009-093000.db",
-                                  "C:\\Windows\\wiki-20261009-093000.db", "wiki-20261009-093000.db\x00",
-                                  "wiki-20261009-093000.DB", "restore-" + "0" * 32 + ".db", storage.MARKER])
+@pytest.mark.parametrize(
+    "name",
+    [
+        None,
+        7,
+        "",
+        "wiki.db",
+        "../wiki.db",
+        "backups/wiki-20261009-093000.db",
+        "..\\wiki-20261009-093000.db",
+        "/tmp/wiki-20261009-093000.db",
+        "C:\\Windows\\wiki-20261009-093000.db",
+        "wiki-20261009-093000.db\x00",
+        "wiki-20261009-093000.DB",
+        "restore-" + "0" * 32 + ".db",
+        storage.MARKER,
+    ],
+)
 def test_only_a_backup_the_backups_folder_lists_is_restored(tmp_path, name):
     service = filled(tmp_path / "wiki.db", documents=1)
     service.dispatch("wiki.backup", {})
@@ -342,8 +377,10 @@ def test_a_backup_that_is_missing_damaged_newer_or_no_wiki_is_not_restored(tmp_p
 
 def fail(error):
     """A stand-in that fails as a file another program holds makes a rename fail."""
+
     def failing(*_):
         raise error
+
     return failing
 
 

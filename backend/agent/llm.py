@@ -88,6 +88,7 @@ def answer(reply):
 def repaired(text):
     """JSON text with a backslash of its own for each backslash in a string that starts no escape, and without commas
     that end an object or list."""
+
     def fix(match):
         token = match.group(0)
         if token == ",":
@@ -116,7 +117,7 @@ def json_object(reply):
             break
         value = decoded(text, match.start())
         if value is None:
-            value = decoded(repaired(text[match.start():]))
+            value = decoded(repaired(text[match.start() :]))
         if value is not None:
             return value
     raise LLMFormatError("LLM이 유효한 JSON을 반환하지 않았습니다. 다시 분석해 주세요.")
@@ -139,21 +140,44 @@ UNREACHABLE = "LLM API에 연결할 수 없습니다. 네트워크·프록시, A
 # own cap, or ANTHROPIC_MAX_TOKENS for the Messages API, which needs one); context_window is how many tokens the model
 # reads and writes in one request, which bounds what a question sends (LLM.prompt_chars); concurrency is how many
 # requests go to the server at once (Slots).
-DEFAULTS = {"provider": "general", "api_format": "openai", "base_url": "", "api_key": "", "model_name": "",
-            "headers": [], "temperature": 0.5, "timeout": 300.0, "ca_bundle": "", "max_tokens": 0,
-            "context_window": 64_000, "concurrency": 3}
+DEFAULTS = {
+    "provider": "general",
+    "api_format": "openai",
+    "base_url": "",
+    "api_key": "",
+    "model_name": "",
+    "headers": [],
+    "temperature": 0.5,
+    "timeout": 300.0,
+    "ca_bundle": "",
+    "max_tokens": 0,
+    "context_window": 64_000,
+    "concurrency": 3,
+}
 SECRETS = ("api_key",)
 TEXT = ("provider", "api_format", "base_url", "api_key", "model_name", "ca_bundle")
 # The whole numbers among the settings: the lowest and highest value, whether 0 (automatic) is taken too, and what the
 # user is told for another value.
-WHOLE = {"max_tokens": (256, 1_000_000, True, "최대 출력 토큰은 0(자동) 또는 256~1,000,000으로 입력해 주세요."),
-         "context_window": (4_096, 10_000_000, False, "컨텍스트 크기는 4,096~10,000,000 토큰으로 입력해 주세요."),
-         "concurrency": (1, 8, False, "동시 요청 수는 1~8로 입력해 주세요.")}
+WHOLE = {
+    "max_tokens": (256, 1_000_000, True, "최대 출력 토큰은 0(자동) 또는 256~1,000,000으로 입력해 주세요."),
+    "context_window": (4_096, 10_000_000, False, "컨텍스트 크기는 4,096~10,000,000 토큰으로 입력해 주세요."),
+    "concurrency": (1, 8, False, "동시 요청 수는 1~8로 입력해 주세요."),
+}
 # The environment variable of each setting, as .env.example names them.
-ENVIRONMENT = {"provider": "PROVIDER", "api_format": "API_FORMAT", "base_url": "BASE_URL", "api_key": "API_KEY",
-               "model_name": "MODEL_NAME", "headers": "LLM_HEADERS",
-               "temperature": "TEMPERATURE", "timeout": "LLM_TIMEOUT", "ca_bundle": "CA_BUNDLE",
-               "max_tokens": "LLM_MAX_TOKENS", "context_window": "LLM_CONTEXT_WINDOW", "concurrency": "LLM_CONCURRENCY"}
+ENVIRONMENT = {
+    "provider": "PROVIDER",
+    "api_format": "API_FORMAT",
+    "base_url": "BASE_URL",
+    "api_key": "API_KEY",
+    "model_name": "MODEL_NAME",
+    "headers": "LLM_HEADERS",
+    "temperature": "TEMPERATURE",
+    "timeout": "LLM_TIMEOUT",
+    "ca_bundle": "CA_BUNDLE",
+    "max_tokens": "LLM_MAX_TOKENS",
+    "context_window": "LLM_CONTEXT_WINDOW",
+    "concurrency": "LLM_CONCURRENCY",
+}
 HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}")
 # Printable ASCII: what any HTTP header carries as it is, so a value never fails on its way out.
 HEADER_TEXT = re.compile(r"[\x20-\x7e]{0,8192}")
@@ -162,8 +186,10 @@ BEARER = re.compile(r"\Abearer\s+", re.I)
 # The HTTP client writes these from the request itself.
 RESERVED = {"host", "content-length", "transfer-encoding", "connection"}
 MAX_HEADERS = 30
-MOVED_HEADERS = ("API 엔드포인트를 다른 서버로 바꿀 때는 custom header 값을 모두 함께 보내 주세요. 저장된 헤더 값은 새 서버로 "
-                 "보내지 않습니다.")
+MOVED_HEADERS = (
+    "API 엔드포인트를 다른 서버로 바꿀 때는 custom header 값을 모두 함께 보내 주세요. 저장된 헤더 값은 새 서버로 "
+    "보내지 않습니다."
+)
 
 # Failures that may pass when the request is sent again a moment later: a server that is busy or overloaded (429, 503,
 # Anthropic's 529), a gateway's (502, 504), a server error (500) and a request the server gave up waiting for (408).
@@ -180,12 +206,18 @@ IDLE_SECONDS = 60
 
 # How a text answer the LLM stopped at its output limit ends, for the screens that show it; and why a JSON answer, or
 # one that is all thinking, cut short there could not be used.
-TRUNCATED_NOTE = ("(답변이 LLM의 최대 출력 길이에서 잘렸습니다. 관리 → LLM 연결에서 최대 출력 토큰을 늘리거나 요청을 줄여 다시 "
-                  "시도해 주세요.)")
-TRUNCATED_JSON = ("LLM 응답이 최대 출력 길이에서 잘려 결과를 읽지 못했습니다. 관리 → LLM 연결에서 최대 출력 토큰을 늘리거나 "
-                  "내용을 줄여 다시 시도해 주세요.")
-TRUNCATED_THINKING = ("LLM이 답을 쓰기 전에 최대 출력 길이에 닿았습니다(추론만 있음). 관리 → LLM 연결에서 최대 출력 토큰을 "
-                      "늘려 다시 시도해 주세요.")
+TRUNCATED_NOTE = (
+    "(답변이 LLM의 최대 출력 길이에서 잘렸습니다. 관리 → LLM 연결에서 최대 출력 토큰을 늘리거나 요청을 줄여 다시 "
+    "시도해 주세요.)"
+)
+TRUNCATED_JSON = (
+    "LLM 응답이 최대 출력 길이에서 잘려 결과를 읽지 못했습니다. 관리 → LLM 연결에서 최대 출력 토큰을 늘리거나 "
+    "내용을 줄여 다시 시도해 주세요."
+)
+TRUNCATED_THINKING = (
+    "LLM이 답을 쓰기 전에 최대 출력 길이에 닿았습니다(추론만 있음). 관리 → LLM 연결에서 최대 출력 토큰을 "
+    "늘려 다시 시도해 주세요."
+)
 RETRY_TOKENS = 16_000  # The cap a JSON answer cut short is asked again with when its request named none...
 MAX_RETRY_TOKENS = 64_000  # ...and otherwise twice the cap it named, up to this.
 
@@ -319,8 +351,13 @@ def hostname(value):
 
 def profile(config):
     """The endpoint a request goes to, as the settings name it."""
-    return {"format": config["api_format"], "base_url": config["base_url"], "api_key": config["api_key"],
-            "model_name": config["model_name"], "headers": config["headers"]}
+    return {
+        "format": config["api_format"],
+        "base_url": config["base_url"],
+        "api_key": config["api_key"],
+        "model_name": config["model_name"],
+        "headers": config["headers"],
+    }
 
 
 def missing(config, target):
@@ -356,8 +393,11 @@ def request_body(target, messages, temperature, max_tokens=0, stream=False):
     if target["format"] == "anthropic":
         # The system prompt is a field of its own, and current Claude models refuse a temperature.
         system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
-        body = {"model": target["model_name"], "max_tokens": max_tokens or ANTHROPIC_MAX_TOKENS,
-                "messages": [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]}
+        body = {
+            "model": target["model_name"],
+            "max_tokens": max_tokens or ANTHROPIC_MAX_TOKENS,
+            "messages": [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"],
+        }
         if system:
             body["system"] = system
         if stream:
@@ -515,7 +555,8 @@ def read_stream(response, api_format, on_text, cancel):
             raise Cancelled(text) from None
         # A time-out while streaming reaches here as a connection error; it is told as the time-out it is.
         if isinstance(error, requests.exceptions.ConnectionError) and any(
-                isinstance(arg, ReadTimeoutError) for arg in error.args):
+            isinstance(arg, ReadTimeoutError) for arg in error.args
+        ):
             raise requests.exceptions.ReadTimeout() from None
         raise
     if cancel is not None and cancel.is_set() and finish is None:
@@ -556,9 +597,15 @@ def backoff(attempt):
 def note_failure(host, failure, started, attempt, wait):
     """A failed request in the backend's log: the host, the status or failure, the time it took and what came next;
     never the key, the headers or a body."""
-    LOG.warning("LLM request failed · host %s · %s · %.1f s · attempt %d/%d · %s", host, failure,
-                time.monotonic() - started, attempt, ATTEMPTS,
-                f"retrying in {wait:.1f} s" if wait is not None else "giving up")
+    LOG.warning(
+        "LLM request failed · host %s · %s · %.1f s · attempt %d/%d · %s",
+        host,
+        failure,
+        time.monotonic() - started,
+        attempt,
+        ATTEMPTS,
+        f"retrying in {wait:.1f} s" if wait is not None else "giving up",
+    )
 
 
 def interrupt(response):
@@ -578,6 +625,7 @@ def interrupt(response):
 
 class Reply(str):
     """An answer's text, and whether the LLM stopped at its output limit (truncated), so it may end mid-sentence."""
+
     truncated = False
 
 
@@ -667,8 +715,10 @@ class Slots:
                         raise Cancelled()
                     remaining = POLL if deadline is None else min(POLL, deadline - time.monotonic())
                     if remaining <= 0:
-                        raise LLMRequestError("LLM에 보낼 요청이 많아 제한 시간 안에 보내지 못했습니다. 잠시 후 다시 시도해 "
-                                              "주세요.", transient=True)
+                        raise LLMRequestError(
+                            "LLM에 보낼 요청이 많아 제한 시간 안에 보내지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                            transient=True,
+                        )
                     self.condition.wait(remaining)
                 self.running[level] += 1
                 taken = True
@@ -687,6 +737,7 @@ class Slots:
 class Outcome:
     """What one request brought: its HTTP status; for a 200, the answer's text, why it ended (finish) and whether the
     stream callback had it as it came (streamed); for another status, the wait its Retry-After asks for."""
+
     __slots__ = ("status", "text", "finish", "streamed", "wait")
 
     def __init__(self, status, text="", finish=None, streamed=False, wait=None):
@@ -804,11 +855,20 @@ class LLM:
         value takes the key ({api_key})."""
         with self.lock:
             config, target = self.config, profile(self.config)
-            return {**{k: v for k, v in config.items() if k not in SECRETS},
-                    "headers": [{"name": header["name"], "has_value": bool(header["value"]),
-                                 "uses_api_key": "{api_key}" in header["value"]} for header in config["headers"]],
-                    "has_api_key": bool(config["api_key"]),
-                    "configured": missing(config, target) is None, "active_model": target["model_name"]}
+            return {
+                **{k: v for k, v in config.items() if k not in SECRETS},
+                "headers": [
+                    {
+                        "name": header["name"],
+                        "has_value": bool(header["value"]),
+                        "uses_api_key": "{api_key}" in header["value"],
+                    }
+                    for header in config["headers"]
+                ],
+                "has_api_key": bool(config["api_key"]),
+                "configured": missing(config, target) is None,
+                "active_model": target["model_name"],
+            }
 
     def secrets(self):
         """The API Key and the custom headers with their values, for the main process alone, which keeps them
@@ -846,8 +906,13 @@ class LLM:
         limit = config["timeout"] if timeout is None else min(config["timeout"], timeout)
         cancel = CANCEL.get() if cancel is None else cancel
         streamed = stream is not None and not unstreamed
-        body = request_body(target, messages, config["temperature"] if temperature is None else temperature,
-                            config["max_tokens"] if max_tokens is None else max_tokens, streamed)
+        body = request_body(
+            target,
+            messages,
+            config["temperature"] if temperature is None else temperature,
+            config["max_tokens"] if max_tokens is None else max_tokens,
+            streamed,
+        )
         plain = plain_body(target, body)
         with self.slots.hold(PRIORITY.get(), timeout=timeout, cancel=cancel):
             deadline = time.monotonic() + limit
@@ -873,25 +938,42 @@ class LLM:
                             self.unstreamed.add(model)
                 status = outcome.status
                 if status in (401, 403):
-                    raise LLMRequestError(f"LLM API가 인증을 거부했습니다(HTTP {status}). API Key와 헤더를 확인해 주세요.",
-                                          status)
+                    raise LLMRequestError(
+                        f"LLM API가 인증을 거부했습니다(HTTP {status}). API Key와 헤더를 확인해 주세요.", status
+                    )
                 if status == 429:
-                    raise LLMRequestError("LLM API가 요청이 너무 많다고 응답했습니다(HTTP 429). 잠시 후 다시 시도해 주세요.",
-                                          status, transient=True)
+                    raise LLMRequestError(
+                        "LLM API가 요청이 너무 많다고 응답했습니다(HTTP 429). 잠시 후 다시 시도해 주세요.",
+                        status,
+                        transient=True,
+                    )
                 if status in RETRY_STATUS:
-                    raise LLMRequestError(f"LLM API가 HTTP {status}를 반환했습니다. 서버가 바쁘거나 일시적인 오류일 수 있으니 "
-                                          "잠시 후 다시 시도해 주세요.", status, transient=True)
+                    raise LLMRequestError(
+                        f"LLM API가 HTTP {status}를 반환했습니다. 서버가 바쁘거나 일시적인 오류일 수 있으니 "
+                        "잠시 후 다시 시도해 주세요.",
+                        status,
+                        transient=True,
+                    )
                 if status != 200:
-                    raise LLMRequestError(f"LLM API가 HTTP {status}를 반환했습니다. 주소와 설정을 확인해 주세요.", status)
+                    raise LLMRequestError(
+                        f"LLM API가 HTTP {status}를 반환했습니다. 주소와 설정을 확인해 주세요.", status
+                    )
             except requests.exceptions.SSLError:
-                raise LLMRequestError("LLM 서버의 인증서를 확인할 수 없습니다. 사설·자체 서명 인증서를 쓰는 서버라면 고급 설정에서 CA 인증서 PEM 경로를 지정해 주세요.") from None
+                raise LLMRequestError(
+                    "LLM 서버의 인증서를 확인할 수 없습니다. 사설·자체 서명 인증서를 쓰는 서버라면 고급 설정에서 CA 인증서 PEM 경로를 지정해 주세요."
+                ) from None
             except requests.exceptions.Timeout:
-                raise LLMRequestError("LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요.", transient=True) from None
+                raise LLMRequestError(
+                    "LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요.", transient=True
+                ) from None
             except UnicodeEncodeError:
-                raise LLMRequestError("요청에 HTTP로 보낼 수 없는 글자가 있습니다. API 엔드포인트, API Key와 헤더를 확인해 주세요.") from None
+                raise LLMRequestError(
+                    "요청에 HTTP로 보낼 수 없는 글자가 있습니다. API 엔드포인트, API Key와 헤더를 확인해 주세요."
+                ) from None
             except StreamFailure:
-                raise LLMRequestError("LLM 서버가 답을 보내는 중에 오류를 알렸습니다. 잠시 후 다시 시도해 주세요.",
-                                      transient=True) from None
+                raise LLMRequestError(
+                    "LLM 서버가 답을 보내는 중에 오류를 알렸습니다. 잠시 후 다시 시도해 주세요.", transient=True
+                ) from None
             except (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError):
                 raise LLMRequestError(UNREACHABLE, transient=True) from None
             except requests.exceptions.RequestException:
@@ -900,7 +982,9 @@ class LLM:
             except OSError:
                 raise LLMRequestError(UNREACHABLE, transient=True) from None
             except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-                raise UserError(f"LLM 응답 형식이 올바르지 않습니다. API 형식 설정과 응답의 {ANSWER[target['format']]}를 확인해 주세요.") from None
+                raise UserError(
+                    f"LLM 응답 형식이 올바르지 않습니다. API 형식 설정과 응답의 {ANSWER[target['format']]}를 확인해 주세요."
+                ) from None
         if stream is not None and not outcome.streamed:
             stream(outcome.text)
         truncated = isinstance(outcome.finish, str) and outcome.finish in TRUNCATION[target["format"]]
@@ -923,8 +1007,9 @@ class LLM:
         host, waited = hostname(target["base_url"]), 0.0
 
         def again(attempt, wait):
-            return (attempt < ATTEMPTS and waited + wait <= MAX_WAIT
-                    and time.monotonic() + wait + MIN_ATTEMPT <= deadline)
+            return (
+                attempt < ATTEMPTS and waited + wait <= MAX_WAIT and time.monotonic() + wait + MIN_ATTEMPT <= deadline
+            )
 
         for attempt in range(1, ATTEMPTS + 1):
             if cancel is not None and cancel.is_set():
@@ -937,10 +1022,19 @@ class LLM:
             except requests.exceptions.SSLError:
                 note_failure(host, "TLS error", started, attempt, None)
                 raise  # A certificate that does not verify stays so.
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
-                    requests.exceptions.ChunkedEncodingError, StreamFailure) as error:
-                failure = ("time-out" if isinstance(error, requests.exceptions.Timeout) else
-                           "server error while streaming" if isinstance(error, StreamFailure) else "connection failed")
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+                StreamFailure,
+            ) as error:
+                failure = (
+                    "time-out"
+                    if isinstance(error, requests.exceptions.Timeout)
+                    else "server error while streaming"
+                    if isinstance(error, StreamFailure)
+                    else "connection failed"
+                )
                 wait = backoff(attempt)
                 if not again(attempt, wait):
                     note_failure(host, failure, started, attempt, None)
@@ -966,9 +1060,15 @@ class LLM:
             self.sending += 1
         try:
             # Never follow redirects carrying the authentication headers.
-            response = self.session.post(target["base_url"], headers=request_headers(target), json=body,
-                                         timeout=(min(CONNECT_SECONDS, seconds), seconds), allow_redirects=False,
-                                         verify=config["ca_bundle"] or True, stream=stream is not None)
+            response = self.session.post(
+                target["base_url"],
+                headers=request_headers(target),
+                json=body,
+                timeout=(min(CONNECT_SECONDS, seconds), seconds),
+                allow_redirects=False,
+                verify=config["ca_bundle"] or True,
+                stream=stream is not None,
+            )
             with response:
                 if response.status_code != 200:
                     return Outcome(response.status_code, wait=retry_after(getattr(response, "headers", None)))

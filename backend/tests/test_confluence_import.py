@@ -1,6 +1,7 @@
 """The Confluence importer (confluence_import.py): page links and the subpage list, and on real Chromium against a
 local Confluence and SSO: pages read as the server rendered them or as scripts draw them, subpages, failures,
 sessions, the saved account's login in the background, the login check and window, and the LLM's analysis."""
+
 import asyncio
 import json
 import re
@@ -21,19 +22,32 @@ from agent.web_assist import DIAGNOSE_SYSTEM
 from agent.web_login import with_scheme
 from confluence_server import ConfluenceServer
 
-CATALOG = json.loads((Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8"))["methods"]
+CATALOG = json.loads(
+    (Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8")
+)["methods"]
 METHODS = {method["id"]: method for method in CATALOG}
 SSO_FORM = METHODS["generic"]["label"]
 USER = {"id": "tester", "password": "correct horse"}
 PAGE = "https://wiki.test/confluence/pages/viewpage.action?pageId=1"
-ANALYSIS = {"category": "credentials", "cause": "SSO가 비밀번호를 거부했습니다.", "evidence": ["로그인 화면의 안내 문구"],
-            "actions": ["비밀번호를 고친 뒤 로그인 확인을 누르세요."], "retry": False, "wait": 0}
+ANALYSIS = {
+    "category": "credentials",
+    "cause": "SSO가 비밀번호를 거부했습니다.",
+    "evidence": ["로그인 화면의 안내 문구"],
+    "actions": ["비밀번호를 고친 뒤 로그인 확인을 누르세요."],
+    "retry": False,
+    "wait": 0,
+}
 
 
 def plan(credentials=USER, mode="auto", methods=None):
     """A site's login plan, as the main process builds it from the saved account."""
-    return {"site_id": "site-1", "site_name": "Confluence", "mode": mode, "methods": methods or CATALOG,
-            "credentials": dict(credentials)}
+    return {
+        "site_id": "site-1",
+        "site_name": "Confluence",
+        "mode": mode,
+        "methods": methods or CATALOG,
+        "credentials": dict(credentials),
+    }
 
 
 @pytest.fixture
@@ -54,39 +68,73 @@ def wait(condition, seconds=60):
 
 
 def test_page_links_site_paths_and_the_rest_api_links_of_a_subpage_list():
-    for value in ["https://wiki.test/display/SPACE/Page+Title",
-                  "https://wiki.test/confluence/display/SPACE/%ED%8E%98%EC%9D%B4%EC%A7%80",
-                  "https://wiki.test/pages/viewpage.action?pageId=123456",
-                  "https://wiki.test/confluence/pages/viewpage.action?spaceKey=SPACE&title=Page+Title",
-                  "https://wiki.test/spaces/SPACE/pages/123456/Page+Title", "https://wiki.test/wiki/spaces/SPACE/pages/123456",
-                  "https://wiki.test/x/AbCd-_9", "http://wiki.test/x/AbCdEf/"]:
+    for value in [
+        "https://wiki.test/display/SPACE/Page+Title",
+        "https://wiki.test/confluence/display/SPACE/%ED%8E%98%EC%9D%B4%EC%A7%80",
+        "https://wiki.test/pages/viewpage.action?pageId=123456",
+        "https://wiki.test/confluence/pages/viewpage.action?spaceKey=SPACE&title=Page+Title",
+        "https://wiki.test/spaces/SPACE/pages/123456/Page+Title",
+        "https://wiki.test/wiki/spaces/SPACE/pages/123456",
+        "https://wiki.test/x/AbCd-_9",
+        "http://wiki.test/x/AbCdEf/",
+    ]:
         assert is_page_url(value), value
-    for value in ["https://wiki.test/", "https://wiki.test/display/SPACE", "https://wiki.test/pages/viewpage.action",
-                  "https://wiki.test/pages/viewpage.action?pageId=", "https://wiki.test/pages/viewpage.action?spaceKey=SPACE",
-                  "https://wiki.test/dashboard.action", "https://wiki.test/login.action?os_destination=%2Fdisplay%2FA%2FB",
-                  "https://wiki.test/x/a/b", "ftp://wiki.test/display/SPACE/Page", "not a url", None]:
+    for value in [
+        "https://wiki.test/",
+        "https://wiki.test/display/SPACE",
+        "https://wiki.test/pages/viewpage.action",
+        "https://wiki.test/pages/viewpage.action?pageId=",
+        "https://wiki.test/pages/viewpage.action?spaceKey=SPACE",
+        "https://wiki.test/dashboard.action",
+        "https://wiki.test/login.action?os_destination=%2Fdisplay%2FA%2FB",
+        "https://wiki.test/x/a/b",
+        "ftp://wiki.test/display/SPACE/Page",
+        "not a url",
+        None,
+    ]:
         assert not is_page_url(value), value
     assert location_info("https://wiki.test/wiki/spaces/SPACE/pages/123/title")["base"] == "https://wiki.test/wiki"
     assert location_info("https://wiki.test/confluence/pages/viewpage.action?pageId=123")["id"] == "123"
-    assert location_info("https://wiki.test/confluence/x/short", {"id": "123", "context": "/confluence"})["url"] == \
-        "https://wiki.test/confluence/pages/viewpage.action?pageId=123"
+    assert (
+        location_info("https://wiki.test/confluence/x/short", {"id": "123", "context": "/confluence"})["url"]
+        == "https://wiki.test/confluence/pages/viewpage.action?pageId=123"
+    )
     # A site at the root, named as the browser names it.
-    assert location_info("HTTPS://Wiki.Test:443/display/S/P", {"id": "5", "context": ""})["url"] == \
-        "https://wiki.test/pages/viewpage.action?pageId=5"
+    assert (
+        location_info("HTTPS://Wiki.Test:443/display/S/P", {"id": "5", "context": ""})["url"]
+        == "https://wiki.test/pages/viewpage.action?pageId=5"
+    )
     # A link typed without its scheme is an https link (ConfluenceImporter.start).
     assert page_url(with_scheme("Wiki.Test/display/S/P#top")) == "https://wiki.test/display/S/P"
-    for value in ["file:///etc/passwd", "javascript:alert(1)", "https://user:password@wiki.test/", "invalid",
-                  "https://wiki.test\\.evil.test/display/S/P", "https://wiki.test/a b", 3]:
+    for value in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "https://user:password@wiki.test/",
+        "invalid",
+        "https://wiki.test\\.evil.test/display/S/P",
+        "https://wiki.test/a b",
+        3,
+    ]:
         with pytest.raises(UserError, match="페이지 링크를 확인"):
             page_url(value)
-    for value, metadata in [("https://wiki.test/login", None), (PAGE, {"id": "١٢"}),
-                            (PAGE, {"id": "1", "context": "//other.test"}), (PAGE, {"id": "1", "context": "/a?b"})]:
+    for value, metadata in [
+        ("https://wiki.test/login", None),
+        (PAGE, {"id": "١٢"}),
+        (PAGE, {"id": "1", "context": "//other.test"}),
+        (PAGE, {"id": "1", "context": "/a?b"}),
+    ]:
         with pytest.raises(UserError, match="Confluence"):
             location_info(value, metadata)
     base = "https://wiki.test/confluence"
     assert api_link("/rest/api/content/1?start=2", base, base) == f"{base}/rest/api/content/1?start=2"
-    for value in ["https://other.test/rest/api/content", "/login", "/rest/api/%2e%2e/%2e%2e/login", "//other.test/rest/api/x",
-                  None, {"href": "/rest/api/x"}]:
+    for value in [
+        "https://other.test/rest/api/content",
+        "/login",
+        "/rest/api/%2e%2e/%2e%2e/login",
+        "//other.test/rest/api/x",
+        None,
+        {"href": "/rest/api/x"},
+    ]:
         with pytest.raises(UserError):
             api_link(value, base, base)
 
@@ -97,8 +145,11 @@ def test_cloud_subpages_fall_back_to_v2_follow_link_cursors_and_refuse_login_red
     async def cloud(url):
         urls.append(url)
         old, last = "/rest/" in url, "cursor=next" in url
-        return {"status": 404 if old else 200, "link": "" if last else '</wiki/api/v2/pages/1/children?cursor=next>; rel="next"',
-                "text": "" if old else json.dumps({"results": [{"id": "3" if last else "2"}]})}
+        return {
+            "status": 404 if old else 200,
+            "link": "" if last else '</wiki/api/v2/pages/1/children?cursor=next>; rel="next"',
+            "text": "" if old else json.dumps({"results": [{"id": "3" if last else "2"}]}),
+        }
 
     asyncio.run(children(cloud, {"base": "https://wiki.test/wiki", "id": "1"}, lambda item: ids.append(item["id"])))
     assert (ids, len(urls)) == (["2", "3"], 3)
@@ -115,15 +166,25 @@ def test_cloud_subpages_fall_back_to_v2_follow_link_cursors_and_refuse_login_red
 
     async def offsets(url):
         start = int(re.search(r"start=(\d+)", url)[1])
-        return {"status": 200, "link": "", "text": json.dumps({"results": [{"id": n} for n in pages.get(start, [])],
-                                                               "start": start, "limit": 2})}
+        return {
+            "status": 200,
+            "link": "",
+            "text": json.dumps({"results": [{"id": n} for n in pages.get(start, [])], "start": start, "limit": 2}),
+        }
 
-    asyncio.run(children(offsets, {"base": "https://wiki.test/confluence", "id": "1"}, lambda item: found.append(item["id"])))
+    asyncio.run(
+        children(offsets, {"base": "https://wiki.test/confluence", "id": "1"}, lambda item: found.append(item["id"]))
+    )
     assert found == ["2", "3", "4"]
 
     async def loop(url):
-        return {"status": 200, "link": "", "text": json.dumps({"results": [{"id": 2}], "_links": {
-            "next": "/rest/api/content/1/child/page?limit=100&start=0"}})}
+        return {
+            "status": 200,
+            "link": "",
+            "text": json.dumps(
+                {"results": [{"id": 2}], "_links": {"next": "/rest/api/content/1/child/page?limit=100&start=0"}}
+            ),
+        }
 
     with pytest.raises(UserError, match="반복"):
         asyncio.run(children(loop, {"base": "https://wiki.test/confluence", "id": "1"}, lambda item: None))
@@ -162,6 +223,7 @@ def test_start_checks_its_request_before_a_browser_starts(service):
     class Unconfigured:
         def public(self):
             return {"configured": False}
+
     service.llm = Unconfigured()
     with pytest.raises(UserError, match="LLM"):
         importer.start({**base, "analyze": True})
@@ -253,18 +315,22 @@ def run(importer, url, **params):
 
 def remember_session(importer, server):
     """A session left in the site's profile, as a login in the login window leaves it."""
+
     async def visit():
         async with importer._browser(server.origin, headless=True) as context:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto(server.origin + "/login")
+
     asyncio.run(visit())
 
 
 def forget_session(importer, server):
     """The session the last job left in the site's profile is gone, as after the site signed the user out."""
+
     async def clear():
         async with importer._browser(server.origin, headless=True) as context:
             await context.clear_cookies()
+
     asyncio.run(clear())
 
 
@@ -278,7 +344,10 @@ def test_real_browser_pages_subpages_failures_session_and_cancel(browser, tmp_pa
     html = captures[0]["html"]
     assert "<table>" in html and "<pre>if (x &lt; 3)" in html
     # The server-rendered code macro, not the live DOM's line-numbered table.
-    assert '<pre data-syntaxhighlighter-params="brush: java; gutter: false; theme: Confluence">int answer = 1;</pre>' in html
+    assert (
+        '<pre data-syntaxhighlighter-params="brush: java; gutter: false; theme: Confluence">int answer = 1;</pre>'
+        in html
+    )
     assert "접힌 세부 내용" in html and re.search(r"http://127\.0\.0\.1:\d+/attachment\.txt", html)
     assert 'href="#section-1"' in html
     assert not re.search(r"<script|onclick=|javascript:|secret|<iframe|탐색 메뉴|class=", html)
@@ -291,7 +360,13 @@ def test_real_browser_pages_subpages_failures_session_and_cancel(browser, tmp_pa
     assert importer.status({"id": first})["job"]["id"] == first
 
     job = run(importer, server.url, recursive=True)
-    assert (job["total"], job["processed"], job["imported"], job["skipped"], job["discovery_failed"]) == (4, 4, 3, 1, 0), str(job)
+    assert (job["total"], job["processed"], job["imported"], job["skipped"], job["discovery_failed"]) == (
+        4,
+        4,
+        3,
+        1,
+        0,
+    ), str(job)
     assert any("start=1" in path for path in server.requests)
 
     server.forbidden = True
@@ -346,7 +421,11 @@ def test_real_browser_an_update_from_the_document_window(browser):
     job = run(importer, server.url, doc_id=ident, replace=True)
     assert job["status"] == "completed", str(job)
     assert (job["imported"], job["updated"], job["skipped"]) == (0, 1, 0)
-    assert [(params["doc_id"], params["replace"]) for params in captures] == [(None, False), (None, False), (ident, True)]
+    assert [(params["doc_id"], params["replace"]) for params in captures] == [
+        (None, False),
+        (None, False),
+        (ident, True),
+    ]
     assert service.wiki_get({"id": ident})["content"] == original
 
 
@@ -357,8 +436,14 @@ def test_real_browser_a_saved_account_signs_in_through_the_sso_in_the_background
     job = run(importer, f"{server.origin}/confluence/display/SPACE/Page+1", recursive=True, login=plan())
     assert job["status"] == "completed", str(job)
     assert job["auto_login"] is True
-    assert job["login"] == {"site": "Confluence", "method": "generic", "label": SSO_FORM, "detected": True, "error": "",
-                            "hosts": ["localhost"]}
+    assert job["login"] == {
+        "site": "Confluence",
+        "method": "generic",
+        "label": SSO_FORM,
+        "detected": True,
+        "error": "",
+        "hosts": ["localhost"],
+    }
     assert server.logins == [USER]
     assert (job["processed"], job["imported"]) == (4, 4), str(job["results"])
     assert job["results"][0]["url"] == server.url and "brush: java" in captures[0]["html"]
@@ -375,7 +460,10 @@ def test_real_browser_a_saved_account_signs_in_through_the_sso_in_the_background
     job = run(importer, server.url, login=plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]]))
     assert time.monotonic() - started < 30
     assert job["status"] == "error"
-    assert job["error"] == f"로그인하지 못했습니다. ID·비밀번호를 확인해 주세요. (시도한 방식: {SSO_FORM}: 로그인 화면이 다시 표시됨)"
+    assert (
+        job["error"]
+        == f"로그인하지 못했습니다. ID·비밀번호를 확인해 주세요. (시도한 방식: {SSO_FORM}: 로그인 화면이 다시 표시됨)"
+    )
     assert (job["login"]["error"], job["login"]["method"], job["processed"]) == (job["error"], None, 0)
     assert server.logins[-1]["password"] == "wrong" and "wrong" not in json.dumps(importer.status())
 
@@ -393,14 +481,22 @@ def test_real_browser_the_login_check_reports_the_method_without_importing(brows
     server.sso = True
     # Checked on the site's start page, which names the signed-in user.
     assert service.dispatch("confluence.check", {"url": server.site, "login": plan()}) == {
-        "ok": True, "method": "generic", "label": SSO_FORM, "detected": True, "hosts": ["localhost"],
-        "message": f"로그인했습니다 · {SSO_FORM}"}
+        "ok": True,
+        "method": "generic",
+        "label": SSO_FORM,
+        "detected": True,
+        "hosts": ["localhost"],
+        "message": f"로그인했습니다 · {SSO_FORM}",
+    }
     server.sso, server.form = False, True
     assert importer.check({"url": server.site, "login": plan()})["method"] == "atlassian"
     # A refused login is the check's result; without the LLM's help there is no analysis.
-    refused = importer.check({"url": server.site, "login": plan({"id": "tester", "password": "wrong"}, "fixed",
-                                                                [METHODS["atlassian"]])})
-    assert refused["ok"] is False and refused["message"].startswith("로그인하지 못했습니다. ID·비밀번호를 확인해 주세요.")
+    refused = importer.check(
+        {"url": server.site, "login": plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["atlassian"]])}
+    )
+    assert refused["ok"] is False and refused["message"].startswith(
+        "로그인하지 못했습니다. ID·비밀번호를 확인해 주세요."
+    )
     assert "diagnosis" not in refused
     assert captures == [] and importer.status()["job"] is None
     # One browser per profile: a running import refuses a check, and a check refuses an import.
@@ -437,17 +533,25 @@ def test_real_browser_rendered_pages_and_the_visible_login_window(browser):
     with pytest.raises(UserError, match="로그인 창"):
         importer.start({"url": server.url, "recursive": False, "analyze": False})
     wait(lambda: importer.status()["login_result"] is not None)
-    assert importer.status()["login_result"] == {"method": "generic", "label": SSO_FORM, "detected": True,
-                                                 "hosts": ["localhost"]}
+    assert importer.status()["login_result"] == {
+        "method": "generic",
+        "label": SSO_FORM,
+        "detected": True,
+        "hosts": ["localhost"],
+    }
     assert importer.login_close()["login_open"] is False
     assert len(server.logins) == 2 and importer.status()["login_error"] == ""
 
     # A saved account the SSO refuses leaves the window to the user, who is told so (the session the window before
     # left would sign in by itself, so it goes first).
     forget_session(importer, server)
-    importer.login({"url": server.url, "login": plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]])})
+    importer.login(
+        {"url": server.url, "login": plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]])}
+    )
     wait(lambda: importer.status()["login_error"] != "")
-    assert importer.status()["login_error"].startswith("자동 입력하지 못했습니다. 창에서 직접 로그인해 주세요. 로그인하지 못했습니다.")
+    assert importer.status()["login_error"].startswith(
+        "자동 입력하지 못했습니다. 창에서 직접 로그인해 주세요. 로그인하지 못했습니다."
+    )
     assert importer.status()["login_open"] is True
     assert importer.login_close()["login_open"] is False
 
@@ -469,12 +573,16 @@ def test_real_browser_with_the_llm_a_failed_login_and_a_page_that_does_not_open_
     server.sso, server.auth = False, True
     job = run(importer, server.url, recursive=True)
     assert (job["failed"], job["diagnosis"]) == (1, analysis), str(job)
-    assert (llm.asked[-1]["stage"], llm.asked[-1]["message"]) == ("페이지 열기", "페이지에 접근하지 못했습니다 (HTTP 401).")
+    assert (llm.asked[-1]["stage"], llm.asked[-1]["message"]) == (
+        "페이지 열기",
+        "페이지에 접근하지 못했습니다 (HTTP 401).",
+    )
 
     # A login check returns the failure with the analysis.
     server.auth, server.sso = False, True
-    checked = importer.check({"url": server.site, "login": plan({"id": "tester", "password": "wrong"}, "fixed",
-                                                                [METHODS["generic"]])})
+    checked = importer.check(
+        {"url": server.site, "login": plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]])}
+    )
     assert (checked["ok"], checked["diagnosis"], llm.asked[-1]["stage"]) == (False, analysis, "로그인 확인")
 
     # An AI analysis that fails keeps the saved page and says so.
@@ -517,13 +625,18 @@ def test_requests_keep_to_a_rate_per_host_and_wait_as_long_as_a_site_asks(monkey
 
         async def send():
             return sent.pop(0)
+
         return send
 
     # Too many: tried again once the site's wait is over; another refusal (503 without Retry-After) is the answer.
-    assert asyncio.run(browser_import.polite("https://wiki.test/", answers(
-        {"status": 429, "retry": "0"}, {"status": 200, "text": "{}"}), fast)) == {"status": 200, "text": "{}"}
-    assert asyncio.run(browser_import.polite("https://wiki.test/", answers(
-        {"status": 503, "retry": ""}, {"status": 200}), fast)) == {"status": 503, "retry": ""}
+    assert asyncio.run(
+        browser_import.polite(
+            "https://wiki.test/", answers({"status": 429, "retry": "0"}, {"status": 200, "text": "{}"}), fast
+        )
+    ) == {"status": 200, "text": "{}"}
+    assert asyncio.run(
+        browser_import.polite("https://wiki.test/", answers({"status": 503, "retry": ""}, {"status": 200}), fast)
+    ) == {"status": 503, "retry": ""}
     refused = [{"status": 429, "retry": "0"}] * browser_import.ATTEMPTS + [{"status": 200}]
     send = answers(*refused)
     assert asyncio.run(browser_import.polite("https://wiki.test/", send, fast)) == {"status": 429, "retry": "0"}
@@ -542,19 +655,31 @@ def test_a_subpage_list_refused_as_too_many_is_asked_again_and_gives_the_version
     listed = json.dumps({"results": [{"id": "2", "version": {"number": 7}}, {"id": "3"}]})
     page = Page({"status": 429, "link": "", "text": "", "retry": "0"}, {"status": 200, "link": "", "text": listed})
     found = []
-    asyncio.run(children(confluence_import.page_request(page), {"base": "https://wiki.test/confluence", "id": "1"},
-                         found.append))
+    asyncio.run(
+        children(
+            confluence_import.page_request(page), {"base": "https://wiki.test/confluence", "id": "1"}, found.append
+        )
+    )
     assert [(item["id"], item["version"]) for item in found] == [("2", "7"), ("3", "")]
     # A site that keeps refusing says so, and the job tells which list it could not read.
     page = Page(*[{"status": 429, "link": "", "text": "", "retry": "0"}] * browser_import.ATTEMPTS)
     with pytest.raises(UserError, match="HTTP 429"):
-        asyncio.run(children(confluence_import.page_request(page), {"base": "https://wiki.test/confluence", "id": "1"},
-                             found.append))
+        asyncio.run(
+            children(
+                confluence_import.page_request(page), {"base": "https://wiki.test/confluence", "id": "1"}, found.append
+            )
+        )
     # A link that names its page by space and title is looked up by them.
     assert confluence_import.title_of("https://wiki.test/confluence/display/SPACE/Page+1%2B2") == (
-        "https://wiki.test/confluence", "SPACE", "Page 1+2")
-    assert confluence_import.title_of(
-        "https://wiki.test/pages/viewpage.action?spaceKey=S&title=A+B") == ("https://wiki.test", "S", "A B")
+        "https://wiki.test/confluence",
+        "SPACE",
+        "Page 1+2",
+    )
+    assert confluence_import.title_of("https://wiki.test/pages/viewpage.action?spaceKey=S&title=A+B") == (
+        "https://wiki.test",
+        "S",
+        "A B",
+    )
     assert confluence_import.title_of(PAGE) is None and confluence_import.title_of("https://wiki.test/x/Ab") is None
 
 

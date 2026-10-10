@@ -15,12 +15,19 @@ from agent.service import Service
 from jira_server import JiraServer
 
 # The login method catalog Electron sends with each job; the auto plan tries its methods in this order.
-CATALOG = json.loads((Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8"))["methods"]
+CATALOG = json.loads(
+    (Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8")
+)["methods"]
 
 
 def plan(credentials, mode="auto", methods=None):
-    return {"site_id": "site-1", "site_name": "JIRA", "mode": mode, "methods": methods or CATALOG,
-            "credentials": dict(credentials)}
+    return {
+        "site_id": "site-1",
+        "site_name": "JIRA",
+        "mode": mode,
+        "methods": methods or CATALOG,
+        "credentials": dict(credentials),
+    }
 
 
 @pytest.fixture
@@ -29,7 +36,11 @@ def service(tmp_path):
 
 
 def capture(service, body="<table><tr><td>한국어 표</td></tr></table><pre>if x:\n  return 1</pre>"):
-    return {"source_url": "https://jira.test/jira/browse/TEAM-123", "issue_key": "TEAM-123", "html": f"<html><head><title>JIRA 테스트</title></head><body>{body}</body></html>"}
+    return {
+        "source_url": "https://jira.test/jira/browse/TEAM-123",
+        "issue_key": "TEAM-123",
+        "html": f"<html><head><title>JIRA 테스트</title></head><body>{body}</body></html>",
+    }
 
 
 def test_import_search_source_persistence_duplicate_edits_and_delete(service):
@@ -52,7 +63,9 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
     changed = capture(service, "<p>변경된 페이지</p>")
     # The ticket changed, and so did the document: the user's text stays unless the update replaces it.
     skipped = import_issue(service, changed)
-    assert (skipped["status"], skipped["doc_id"]) == ("skipped", doc["id"]) and "‘원본에서 업데이트’" in skipped["message"]
+    assert (skipped["status"], skipped["doc_id"]) == ("skipped", doc["id"]) and "‘원본에서 업데이트’" in skipped[
+        "message"
+    ]
     restarted = Service(Database(service.db.path), None)
     assert restarted.wiki_source_markdown({"id": doc["id"]})["markdown"] == markdown
     updated = import_issue(service, {**changed, "doc_id": doc["id"], "replace": True})
@@ -119,43 +132,89 @@ def test_ticket_links_only():
     for url, expected in [
         ("https://jira.test/browse/TEAM-123", ("https://jira.test", "", "TEAM-123")),
         ("https://jira.test/jira/browse/team_2-7/", ("https://jira.test", "/jira", "TEAM_2-7")),
-        ("http://JIRA.test:8080/jira/projects/TEAM/issues/TEAM-9?filter=allopenissues", ("http://jira.test:8080", "/jira", "TEAM-9")),
+        (
+            "http://JIRA.test:8080/jira/projects/TEAM/issues/TEAM-9?filter=allopenissues",
+            ("http://jira.test:8080", "/jira", "TEAM-9"),
+        ),
         ("https://jira.test:443/browse/TEAM-1?focusedCommentId=5#comment-5", ("https://jira.test", "", "TEAM-1")),
         ("  https://jira.test/browse/TEAM-1  ", ("https://jira.test", "", "TEAM-1")),
     ]:
         assert parse_issue_url(url) == expected, url
     for url in [
-        "https://jira.test/", "https://jira.test/browse/TEAM", "https://jira.test/browse/TEAM-1/extra",
-        "https://jira.test/issues/?jql=project%3DTEAM", "https://jira.test/projects/TEAM",
-        "https://jira.test/secure/RapidBoard.jspa?rapidView=7", "https://jira.test/browse/1TEAM-1",
-        "ftp://jira.test/browse/TEAM-1", "https://user:pw@jira.test/browse/TEAM-1", "https://@jira.test/browse/TEAM-1",
-        "javascript:alert(1)", "not a url", "https://jira.test:99999/browse/TEAM-1",
-        "https://jira.test/a/../browse/TEAM-1", "https://jira.test/%2e%2e/browse/TEAM-1", "https:///browse/TEAM-1",
-        "https://jira.test/" + "a" * 4096 + "/browse/TEAM-1", None,
+        "https://jira.test/",
+        "https://jira.test/browse/TEAM",
+        "https://jira.test/browse/TEAM-1/extra",
+        "https://jira.test/issues/?jql=project%3DTEAM",
+        "https://jira.test/projects/TEAM",
+        "https://jira.test/secure/RapidBoard.jspa?rapidView=7",
+        "https://jira.test/browse/1TEAM-1",
+        "ftp://jira.test/browse/TEAM-1",
+        "https://user:pw@jira.test/browse/TEAM-1",
+        "https://@jira.test/browse/TEAM-1",
+        "javascript:alert(1)",
+        "not a url",
+        "https://jira.test:99999/browse/TEAM-1",
+        "https://jira.test/a/../browse/TEAM-1",
+        "https://jira.test/%2e%2e/browse/TEAM-1",
+        "https:///browse/TEAM-1",
+        "https://jira.test/" + "a" * 4096 + "/browse/TEAM-1",
+        None,
     ]:
         assert parse_issue_url(url) is None, url
 
 
 def test_project_search_queries():
-    assert search_jql("TEAM", "keyword", ' C++ "로그인"  -오류 [a]\\b ') == 'project = "TEAM" AND text ~ "C 로그인 오류 a b" ORDER BY key ASC'
+    assert (
+        search_jql("TEAM", "keyword", ' C++ "로그인"  -오류 [a]\\b ')
+        == 'project = "TEAM" AND text ~ "C 로그인 오류 a b" ORDER BY key ASC'
+    )
     with pytest.raises(UserError, match="키워드"):
         search_jql("TEAM", "keyword", '+-"*')
-    assert search_jql("TEAM", "user", user='a"b\\c') == 'project = "TEAM" AND (assignee = "a\\"b\\\\c" OR reporter = "a\\"b\\\\c") ORDER BY key ASC'
-    assert search_jql("TEAM", "user", user="홍길동", role="assignee") == 'project = "TEAM" AND assignee = "홍길동" ORDER BY key ASC'
-    assert search_jql("TEAM", "user", user="tester", role="reporter").endswith('AND reporter = "tester" ORDER BY key ASC')
+    assert (
+        search_jql("TEAM", "user", user='a"b\\c')
+        == 'project = "TEAM" AND (assignee = "a\\"b\\\\c" OR reporter = "a\\"b\\\\c") ORDER BY key ASC'
+    )
+    assert (
+        search_jql("TEAM", "user", user="홍길동", role="assignee")
+        == 'project = "TEAM" AND assignee = "홍길동" ORDER BY key ASC'
+    )
+    assert search_jql("TEAM", "user", user="tester", role="reporter").endswith(
+        'AND reporter = "tester" ORDER BY key ASC'
+    )
 
 
 def test_ticket_document_sections(service):
-    issue = {"key": "TEAM-5", "names": {"customfield_1": "스프린트", "customfield_2": "점수", "customfield_3": "고객",
-                                        "customfield_4": "Rank", "customfield_5": "분류", "customfield_6": "태그"},
-             "fields": {"summary": "제목 <b>", "description": "원문 *설명*\n둘째 줄", "assignee": None,
-                        "customfield_1": ["com.atlassian.greenhopper.service.sprint.Sprint@1a2b[id=1,name=S1]"],
-                        "customfield_2": 3.0, "customfield_3": {"displayName": "홍길동"}, "customfield_4": "0|i0001:",
-                        "customfield_5": {"value": "하드웨어", "child": {"value": "센서"}}, "customfield_6": ["a", "b"],
-                        "subtasks": [{"key": "TEAM-6", "fields": {"summary": "하위"}}], "parent": {"key": "bad key"},
-                        "attachment": [{"filename": "a.png", "content": "javascript:alert(1)", "size": 3 * 1024 * 1024}]},
-             "renderedFields": {"environment": "<h1>Windows</h1>"}}
-    comments = [comment_item({"author": {"displayName": "김개발"}, "body": "원문 댓글", "created": "2026-09-01T12:00:00.000+0900"}, None)]
+    issue = {
+        "key": "TEAM-5",
+        "names": {
+            "customfield_1": "스프린트",
+            "customfield_2": "점수",
+            "customfield_3": "고객",
+            "customfield_4": "Rank",
+            "customfield_5": "분류",
+            "customfield_6": "태그",
+        },
+        "fields": {
+            "summary": "제목 <b>",
+            "description": "원문 *설명*\n둘째 줄",
+            "assignee": None,
+            "customfield_1": ["com.atlassian.greenhopper.service.sprint.Sprint@1a2b[id=1,name=S1]"],
+            "customfield_2": 3.0,
+            "customfield_3": {"displayName": "홍길동"},
+            "customfield_4": "0|i0001:",
+            "customfield_5": {"value": "하드웨어", "child": {"value": "센서"}},
+            "customfield_6": ["a", "b"],
+            "subtasks": [{"key": "TEAM-6", "fields": {"summary": "하위"}}],
+            "parent": {"key": "bad key"},
+            "attachment": [{"filename": "a.png", "content": "javascript:alert(1)", "size": 3 * 1024 * 1024}],
+        },
+        "renderedFields": {"environment": "<h1>Windows</h1>"},
+    }
+    comments = [
+        comment_item(
+            {"author": {"displayName": "김개발"}, "body": "원문 댓글", "created": "2026-09-01T12:00:00.000+0900"}, None
+        )
+    ]
     source, document = build_html(issue, "https://jira.test/jira", comments, total=4)
     assert source == "https://jira.test/jira/browse/TEAM-5"
     result = import_issue(service, {"source_url": source, "issue_key": "TEAM-5", "html": document})
@@ -193,8 +252,15 @@ def test_start_validates_before_opening_a_browser(service):
         ({**base, "login": plan({"id": "tester"})}, "로그인 정보 형식"),
         ({**base, "login": plan({"id": "", "password": "x"})}, "로그인 정보 형식"),
         ({**base, "login": {**plan({"id": "a", "password": "b"}), "mode": "manual"}}, "로그인 정보 형식"),
-        ({**base, "login": plan({"id": "a", "password": "b"}, methods=[{"id": "x", "label": "x", "detect": [], "steps": []}])},
-         "로그인 정보 형식"),
+        (
+            {
+                **base,
+                "login": plan(
+                    {"id": "a", "password": "b"}, methods=[{"id": "x", "label": "x", "detect": [], "steps": []}]
+                ),
+            },
+            "로그인 정보 형식",
+        ),
     ]:
         with pytest.raises(UserError, match=message):
             importer.start(params)
@@ -210,6 +276,7 @@ def test_start_validates_before_opening_a_browser(service):
     class Unconfigured:
         def public(self):
             return {"configured": False}
+
     service.llm = Unconfigured()
     with pytest.raises(UserError, match="LLM"):
         importer.start({**base, "analyze": True})
@@ -320,9 +387,11 @@ def wait(condition, seconds=60):
 def forget_session(importer, server):
     """The session the last job or window left in the site's profile is gone, as after the site signed the user out:
     the next job signs in with the saved account again."""
+
     async def clear():
         async with importer._browser(server.origin, headless=True) as context:
             await context.clear_cookies()
+
     asyncio.run(clear())
 
 
@@ -341,17 +410,33 @@ def test_real_browser_sso_login_scopes_and_no_files(browser, tmp_path):
     # Background login follows the SSO Login link and fills the SSO form: the auto plan
     # detects that method and reports it, so Electron can save it for the site.
     assert server.logins == [server.credentials]
-    assert job["login"] == {"site": "JIRA", "method": "sso-link", "label": "SSO 링크 · 표준 로그인 폼",
-                            "detected": True, "error": "", "hosts": ["localhost"]}
+    assert job["login"] == {
+        "site": "JIRA",
+        "method": "sso-link",
+        "label": "SSO 링크 · 표준 로그인 폼",
+        "detected": True,
+        "error": "",
+        "hosts": ["localhost"],
+    }
     assert "correct horse" not in json.dumps(importer.status())
     doc = service.wiki_get({"id": job["results"][0]["doc_id"]})
     assert doc["title"] == "[TEAM-1] 로그인 화면 오류"
     assert doc["source"]["source_url"] == f"{server.origin}/jira/browse/TEAM-1"
     content = doc["content"]
-    for expected in ["| 담당자 | 김개발 |", "### 재현 절차", "| Chrome | 실패 |", "```java\nint answer = 1;\n```",
-                     "### 인수 조건\n\n로그인 후 목록이 보여야 한다", "### 심각도\n\n심각",
-                     "- blocks: [TEAM-2]", f"[설계.txt]({server.origin}/jira/secure/attachment/1/design.txt) (2KB, 김개발",
-                     "## 댓글 (3)", "재현 **확인**", "마지막 댓글 검색어", "화면 캡처"]:
+    for expected in [
+        "| 담당자 | 김개발 |",
+        "### 재현 절차",
+        "| Chrome | 실패 |",
+        "```java\nint answer = 1;\n```",
+        "### 인수 조건\n\n로그인 후 목록이 보여야 한다",
+        "### 심각도\n\n심각",
+        "- blocks: [TEAM-2]",
+        f"[설계.txt]({server.origin}/jira/secure/attachment/1/design.txt) (2KB, 김개발",
+        "## 댓글 (3)",
+        "재현 **확인**",
+        "마지막 댓글 검색어",
+        "화면 캡처",
+    ]:
         assert expected in content, expected
     assert not any(word in content for word in ("secret", "javascript", "0|i0001", "lastViewed"))
     # The third comment came from the paginated comment API; attachments and images are never fetched.
@@ -389,7 +474,9 @@ def test_real_browser_sso_login_scopes_and_no_files(browser, tmp_path):
 
     # Only the database is written; no HTML, Markdown or attachment files.
     assert sorted(p.name for p in (tmp_path / "data").iterdir() if not p.name.startswith("wiki.db")) == []
-    assert not [p for p in tmp_path.rglob("*") if p.suffix in (".md", ".html", ".txt", ".png") and "profiles" not in p.parts]
+    assert not [
+        p for p in tmp_path.rglob("*") if p.suffix in (".md", ".html", ".txt", ".png") and "profiles" not in p.parts
+    ]
     assert len(service.wiki_list({})) == 3
 
 
@@ -411,8 +498,12 @@ def test_real_browser_session_login_window_errors_analysis_and_cancel(browser):
     with pytest.raises(UserError, match="로그인 창"):
         importer.start({"url": server.url, "scope": "issue", "analyze": False})
     wait(lambda: importer.status()["login_result"] is not None)
-    assert importer.status()["login_result"] == {"method": "sso-link", "label": "SSO 링크 · 표준 로그인 폼",
-                                                 "detected": True, "hosts": ["localhost"]}
+    assert importer.status()["login_result"] == {
+        "method": "sso-link",
+        "label": "SSO 링크 · 표준 로그인 폼",
+        "detected": True,
+        "hosts": ["localhost"],
+    }
     assert importer.login_close()["login_open"] is False
     assert server.logins == [server.credentials]
     assert importer.status()["login_result"]["method"] == "sso-link"  # Kept for Electron after the window closes.
@@ -446,7 +537,11 @@ def test_real_browser_session_login_window_errors_analysis_and_cancel(browser):
     importer.start({"url": server.url, "scope": "issue", "analyze": False, "login": plan(server.credentials)})
     with pytest.raises(UserError, match="진행 중인 가져오기"):
         importer.start({"url": server.url, "scope": "issue", "analyze": False})
-    wait(lambda: importer.status()["job"]["status"] == "scanning" and any("/rest/" in path for path in server.requests[-1:]))
+    wait(
+        lambda: (
+            importer.status()["job"]["status"] == "scanning" and any("/rest/" in path for path in server.requests[-1:])
+        )
+    )
     # A running job keeps showing its progress.
     assert "dismissed" not in importer.dismiss({"id": importer.status()["job"]["id"]})["job"]
     assert importer.cancel()["job"]["status"] == "cancelling"
@@ -505,11 +600,20 @@ def test_real_browser_a_routine_reads_only_the_tickets_updated_since(browser, mo
     full = [path for path in server.requests if "expand=renderedFields" in path]
     assert [path.split("?")[0].rsplit("/", 1)[1] for path in full] == ["TEAM-1"]
     assert sorted(path.split("?")[0].rsplit("/", 1)[1] for path in server.requests if "fields=updated" in path) == [
-        "TEAM-2", "TEAM-3"]
+        "TEAM-2",
+        "TEAM-3",
+    ]
     assert not [path for path in server.requests if "/comment" in path]
     # One ticket updated: that one is read in full and saved.
-    monkeypatch.setitem(jira_server.ISSUES, "TEAM-3", {**jira_server.ISSUES["TEAM-3"], "text": "세션이 60분 뒤 만료됩니다",
-                                                       "updated": "2026-10-06T11:00:00.000+0900"})
+    monkeypatch.setitem(
+        jira_server.ISSUES,
+        "TEAM-3",
+        {
+            **jira_server.ISSUES["TEAM-3"],
+            "text": "세션이 60분 뒤 만료됩니다",
+            "updated": "2026-10-06T11:00:00.000+0900",
+        },
+    )
     server.requests.clear()
     job = watch()
     assert [item["status"] for item in job["results"]] == ["skipped", "skipped", "updated"], str(job)

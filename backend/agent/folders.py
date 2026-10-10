@@ -1,4 +1,5 @@
 """Removing the private scratch folders of imports (Office pictures, file copies)."""
+
 import contextlib
 import os
 import shutil
@@ -55,8 +56,11 @@ def sweep_scratch(directory=None, older_than=600, now=None):
         if not entry.name.startswith(SCRATCH_PREFIXES):
             continue
         try:
-            if not entry.is_dir(follow_symlinks=False) or entry.is_symlink() or \
-                    now - entry.stat(follow_symlinks=False).st_mtime < older_than:
+            if (
+                not entry.is_dir(follow_symlinks=False)
+                or entry.is_symlink()
+                or now - entry.stat(follow_symlinks=False).st_mtime < older_than
+            ):
                 continue
             remove_tree(entry.path)
         except OSError:

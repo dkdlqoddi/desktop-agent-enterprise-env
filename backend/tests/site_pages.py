@@ -6,6 +6,7 @@ answers without content. A login with the right account goes to /home, which nam
 
 The same pages answer on a second origin, localhost on the same port, as another site: /lure and /lure-script lead
 there with a ‘로그인’ link and a button that sends the browser there, and /away redirects there as an SSO does."""
+
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -70,8 +71,15 @@ PAGES = {
 OTP_PAGE = """<!doctype html><form method="post" action="/otp-code"><input name="user" type="hidden" value="">
 <input name="code" type="password" autocomplete="one-time-code"><button>확인</button></form>"""
 # The ID and password fields each form posts.
-FIELDS = {"/cloud": ("username", "password"), "/adfs": ("UserName", "Password"), "/generic": ("user", "pw"),
-          "/custom": ("user", "pw"), "/pending": ("user", "pw"), "/otp": ("user", "pw"), "/domain": ("user", "pw")}
+FIELDS = {
+    "/cloud": ("username", "password"),
+    "/adfs": ("UserName", "Password"),
+    "/generic": ("user", "pw"),
+    "/custom": ("user", "pw"),
+    "/pending": ("user", "pw"),
+    "/otp": ("user", "pw"),
+    "/domain": ("user", "pw"),
+}
 
 
 class SitePages:
@@ -95,9 +103,11 @@ class SitePages:
         port = self.httpd.server_address[1]
         self.origin, self.other = f"http://127.0.0.1:{port}", f"http://localhost:{port}"
         self.pages = {
-            **PAGES, "/lure": f'<!doctype html><p>계정이 필요합니다.</p><a href="{self.other}/generic">로그인</a>',
+            **PAGES,
+            "/lure": f'<!doctype html><p>계정이 필요합니다.</p><a href="{self.other}/generic">로그인</a>',
             "/lure-script": f"""<!doctype html><p>계정이 필요합니다.</p>
-            <button type="button" onclick="location.href = '{self.other}/generic'">로그인</button>"""}
+            <button type="button" onclick="location.href = '{self.other}/generic'">로그인</button>""",
+        }
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
     def close(self):
@@ -108,8 +118,11 @@ class SitePages:
     def send(handler, status, body="", headers=None):
         data = body.encode()
         handler.send_response(status)
-        for name, value in {"Content-Type": "text/html; charset=utf-8", "Content-Length": str(len(data)),
-                            **(headers or {})}.items():
+        for name, value in {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Length": str(len(data)),
+            **(headers or {}),
+        }.items():
             handler.send_header(name, value)
         handler.end_headers()
         handler.wfile.write(data)
@@ -131,8 +144,14 @@ class SitePages:
         form = {key: values[0] for key, values in parse_qs(handler.rfile.read(length).decode()).items()}
         login, password = FIELDS[path]
         values = {"id": form.get(login), "password": form.get(password)}
-        self.posts.append({"path": path, **values, "search": form.get("search"),
-                           **({"domain": form.get("domain")} if path == "/domain" else {})})
+        self.posts.append(
+            {
+                "path": path,
+                **values,
+                "search": form.get("search"),
+                **({"domain": form.get("domain")} if path == "/domain" else {}),
+            }
+        )
         if path == "/pending":  # Waits for an approval that never comes, without showing the form again.
             return self.send(handler, 200, "<!doctype html><p>승인을 기다리고 있습니다…</p>")
         if path == "/otp" and values == self.credentials:

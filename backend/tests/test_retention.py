@@ -1,13 +1,13 @@
 """The retention policy of what the Wiki logs (Service.retain), applied at each start, and the daily upkeep that backs
 up the Wiki and applies the policy, started from the routine runner's look at what is due (routines.due)."""
+
 import os
 import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agent import service as service_module
-from agent import storage
+from agent import service as service_module, storage
 from agent.db import Database
 from agent.service import Service
 
@@ -23,27 +23,38 @@ def service(tmp_path):
 
 def add_runs(service, stamps):
     with service.db.connect() as db:
-        db.executemany("INSERT INTO runs (id,prompt_id,title,input,output,created_at) VALUES (?,NULL,'실행','입력','출력',?)",
-                       [(f"run-{index}", stamp) for index, stamp in enumerate(stamps)])
+        db.executemany(
+            "INSERT INTO runs (id,prompt_id,title,input,output,created_at) VALUES (?,NULL,'실행','입력','출력',?)",
+            [(f"run-{index}", stamp) for index, stamp in enumerate(stamps)],
+        )
 
 
 def add_conversation(service, ident, updated_at, messages):
     with service.db.connect() as db:
         db.execute("INSERT INTO conversations VALUES (?,?,?,?)", (ident, ident, updated_at, updated_at))
-        db.executemany("INSERT INTO messages (conversation_id,role,content,created_at) VALUES (?,?,?,?)",
-                       [(ident, "user" if index % 2 == 0 else "assistant", f"{ident} {index}", updated_at)
-                        for index in range(messages)])
+        db.executemany(
+            "INSERT INTO messages (conversation_id,role,content,created_at) VALUES (?,?,?,?)",
+            [
+                (ident, "user" if index % 2 == 0 else "assistant", f"{ident} {index}", updated_at)
+                for index in range(messages)
+            ],
+        )
 
 
 def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, monkeypatch):
     for name, value in (("RUNS_KEPT", 5), ("MESSAGES_KEPT", 4), ("CONVERSATIONS_KEPT", 2)):
         monkeypatch.setattr(service_module, name, value)
     # Three runs older than RUNS_DAYS and eight of the last days, of which the newest five stay.
-    add_runs(service, [ago(days=service_module.RUNS_DAYS + 1, minutes=index) for index in range(3)]
-             + [ago(hours=index) for index in range(8)])
+    add_runs(
+        service,
+        [ago(days=service_module.RUNS_DAYS + 1, minutes=index) for index in range(3)]
+        + [ago(hours=index) for index in range(8)],
+    )
     for index, ident in enumerate(("오늘", "어제", "지난주")):
         add_conversation(service, ident, ago(days=index * 3), messages=6)
-    old, recent = (service.wiki_save({"title": title, "content": "글"})["id"] for title in ("오래된 휴지통", "최근 휴지통"))
+    old, recent = (
+        service.wiki_save({"title": title, "content": "글"})["id"] for title in ("오래된 휴지통", "최근 휴지통")
+    )
     service.wiki_delete({"id": old})
     service.wiki_delete({"id": recent})
     with service.db.connect() as db:
@@ -51,12 +62,19 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
     service.backup("manual")  # Which still holds what the policy removes.
     assert service.retain() == {"runs": 6, "conversations": 1, "messages": 4, "documents": 1}
     with service.db.connect() as db:
-        assert [row[0] for row in db.execute("SELECT id FROM runs ORDER BY created_at DESC")] == \
-            [f"run-{index}" for index in range(3, 8)]
-        kept = {row[0]: [m[0] for m in db.execute("SELECT content FROM messages WHERE conversation_id=? ORDER BY seq",
-                                                   (row[0],))]
-                for row in db.execute("SELECT id FROM conversations")}
-    assert kept == {"오늘": [f"오늘 {index}" for index in range(2, 6)], "어제": [f"어제 {index}" for index in range(2, 6)]}
+        assert [row[0] for row in db.execute("SELECT id FROM runs ORDER BY created_at DESC")] == [
+            f"run-{index}" for index in range(3, 8)
+        ]
+        kept = {
+            row[0]: [
+                m[0] for m in db.execute("SELECT content FROM messages WHERE conversation_id=? ORDER BY seq", (row[0],))
+            ]
+            for row in db.execute("SELECT id FROM conversations")
+        }
+    assert kept == {
+        "오늘": [f"오늘 {index}" for index in range(2, 6)],
+        "어제": [f"어제 {index}" for index in range(2, 6)],
+    }
     assert [doc["id"] for doc in service.wiki_trash({})["documents"]] == [recent]
     # Nothing more to remove: the same again changes nothing.
     assert service.retain() == {"runs": 0, "conversations": 0, "messages": 0, "documents": 0}

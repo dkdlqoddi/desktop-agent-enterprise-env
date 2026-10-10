@@ -1,4 +1,5 @@
 """Background jobs that import a file, or every file of one kind in a folder, as HTML documents of the Wiki."""
+
 import hashlib
 import math
 import os
@@ -30,13 +31,17 @@ def skipped_folder(path):
         info = os.lstat(path)
     except OSError:
         return True
-    return (stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == IO_REPARSE_TAG_MOUNT_POINT
-            or getattr(info, "st_file_attributes", 0) & HIDDEN_SYSTEM == HIDDEN_SYSTEM)
+    return (
+        stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_reparse_tag", 0) == IO_REPARSE_TAG_MOUNT_POINT
+        or getattr(info, "st_file_attributes", 0) & HIDDEN_SYSTEM == HIDDEN_SYSTEM
+    )
 
 
 class FileImporter:
     """The import job of one kind of file. A subclass names the extensions it takes, how its jobs and messages call
     them, the source table that remembers each import, and the converter that makes a file's HTML page."""
+
     extensions = set()
     label = ""
     format_label = ""
@@ -58,6 +63,7 @@ class FileImporter:
 
     def start(self, params):
         from .service import routine_name, text
+
         raw = text(params.get("path"), "파일 또는 폴더 경로", 32767).strip('"')
         mode = params.get("mode")
         if mode not in ("file", "directory"):
@@ -84,14 +90,39 @@ class FileImporter:
             # `edited` counts the files skipped because their documents' text was changed in the Wiki, `ignored`
             # those a routine leaves out because their documents were purged from the trash (both also in
             # `skipped`); `batch` is the batch of files being imported, of `batches`.
-            self.job = {"id": str(uuid.uuid4()), "status": "scanning", "total": 0, "processed": 0,
-                        "imported": 0, "updated": 0, "skipped": 0, "edited": 0, "ignored": 0, "failed": 0,
-                        "analysis_failed": 0,
-                        "batch": 0, "batches": 0, "current_file": "", "notice": "", "waiting": "", "results": [],
-                        "error": "", "routine": routine_name(params)}
-            self.thread = threading.Thread(target=self._run, args=(
-                root, mode, bool(params.get("recursive", True)), bool(params.get("analyze", False)), target, replace),
-                daemon=True)
+            self.job = {
+                "id": str(uuid.uuid4()),
+                "status": "scanning",
+                "total": 0,
+                "processed": 0,
+                "imported": 0,
+                "updated": 0,
+                "skipped": 0,
+                "edited": 0,
+                "ignored": 0,
+                "failed": 0,
+                "analysis_failed": 0,
+                "batch": 0,
+                "batches": 0,
+                "current_file": "",
+                "notice": "",
+                "waiting": "",
+                "results": [],
+                "error": "",
+                "routine": routine_name(params),
+            }
+            self.thread = threading.Thread(
+                target=self._run,
+                args=(
+                    root,
+                    mode,
+                    bool(params.get("recursive", True)),
+                    bool(params.get("analyze", False)),
+                    target,
+                    replace,
+                ),
+                daemon=True,
+            )
             self.thread.start()
             return deepcopy(self.job)
 
@@ -124,11 +155,13 @@ class FileImporter:
         if mode == "file":
             return [root]
         found = []
+
         def scan_error(error):
             # The chosen folder must be read; a folder inside that cannot be, such as another user's, is left out.
             name = error.filename or root
             if os.path.normcase(os.path.abspath(name)) == os.path.normcase(os.path.abspath(root)):
                 raise UserError(f"폴더를 읽지 못했습니다: {name}")
+
         for current, dirs, files in os.walk(root, followlinks=False, onerror=scan_error):
             dirs[:] = sorted(d for d in dirs if not skipped_folder(os.path.join(current, d))) if recursive else []
             if self.cancel_event.is_set():
@@ -161,14 +194,29 @@ class FileImporter:
         imported from is skipped, another one updates the earlier import of the same path unless its converted `split`
         has the text that import saved. A file moved from where its bytes were imported takes their documents along,
         with its `stat` (sources.file_stat)."""
-        found = sources.plan(db, self.source_table, path, {"source_hash": checksum}, target, replace, split,
-                             automatic=self._automatic(), stat=stat)
-        if found.action == "skip" and found.reason == "same" and not db.execute(
-                "SELECT 1 FROM document_html WHERE doc_id=?", (found.rows[0]["doc_id"],)).fetchone():
+        found = sources.plan(
+            db,
+            self.source_table,
+            path,
+            {"source_hash": checksum},
+            target,
+            replace,
+            split,
+            automatic=self._automatic(),
+            stat=stat,
+        )
+        if (
+            found.action == "skip"
+            and found.reason == "same"
+            and not db.execute("SELECT 1 FROM document_html WHERE doc_id=?", (found.rows[0]["doc_id"],)).fetchone()
+        ):
             # Saved as Markdown by an earlier version: the same documents become the HTML page, unless the user changed
             # their text.
-            return sources.Plan("skip", found.rows, "edited") if sources.edited(found.rows) and not replace \
+            return (
+                sources.Plan("skip", found.rows, "edited")
+                if sources.edited(found.rows) and not replace
                 else sources.Plan("update", found.rows, "page")
+            )
         return found
 
     def _automatic(self):
@@ -177,6 +225,7 @@ class FileImporter:
 
     def _one(self, file, analyze, target=None, replace=False):
         from .service import now
+
         path = str(file.resolve())
         stat = sources.file_stat(file)
         with self.service.db.connect() as db:
@@ -193,8 +242,9 @@ class FileImporter:
             found = self._plan(db, path, checksum, target, replace, stat=stat)
             if found.action == "skip" and found.reason == "same":
                 # The same bytes: their size and time are recorded, so that the next import need not read them.
-                sources.touch(db, self.source_table, found.rows, {"source_size": stat[0], "source_mtime": stat[1]},
-                              path)
+                sources.touch(
+                    db, self.source_table, found.rows, {"source_size": stat[0], "source_mtime": stat[1]}, path
+                )
         if found.action == "skip":
             return sources.skipped(found, f"이미 가져온 동일한 {self.label}입니다.")
         if self.cancel_event.is_set():
@@ -219,9 +269,21 @@ class FileImporter:
                 return sources.skipped(found, f"이미 가져온 동일한 {self.label}입니다.")
             if self.cancel_event.is_set():
                 return None
-            ids, removed = sources.save(db, self.source_table, found, split, file.stem, timestamp,
-                                        {"source_path": path, "source_hash": checksum, "source_size": stat[0],
-                                         "source_mtime": stat[1], **self.details(file)})
+            ids, removed = sources.save(
+                db,
+                self.source_table,
+                found,
+                split,
+                file.stem,
+                timestamp,
+                {
+                    "source_path": path,
+                    "source_hash": checksum,
+                    "source_size": stat[0],
+                    "source_mtime": stat[1],
+                    **self.details(file),
+                },
+            )
         result = sources.outcome(found, split, ids, removed, "HTML 문서로 Wiki에 저장했습니다.", "HTML")
         if analyze:
             for ident in ids:
@@ -233,8 +295,11 @@ class FileImporter:
                     result.setdefault("analysis_error", str(error))
             if "analysis_error" in result:
                 done = "업데이트" if result["status"] == "updated" else "저장"
-                result["message"] = f"{done} 완료 · AI 분석 실패 (문서에서 재시도 가능)" if len(ids) == 1 else \
-                    f"{result['message']} AI 분석에 실패한 문서가 있습니다 (문서에서 재시도 가능)."
+                result["message"] = (
+                    f"{done} 완료 · AI 분석 실패 (문서에서 재시도 가능)"
+                    if len(ids) == 1
+                    else f"{result['message']} AI 분석에 실패한 문서가 있습니다 (문서에서 재시도 가능)."
+                )
         return result
 
     def notice(self, file):
@@ -275,13 +340,23 @@ class FileImporter:
                 except Exception as error:
                     if self.cancel_event.is_set():
                         break
-                    result = {"status": "failed", "message": diagnostics.report(
-                        error, "파일을 읽거나 Wiki에 저장하지 못했습니다. 권한과 디스크 공간을 확인해 주세요.",
-                        f"{self.label} 가져오기")}
+                    result = {
+                        "status": "failed",
+                        "message": diagnostics.report(
+                            error,
+                            "파일을 읽거나 Wiki에 저장하지 못했습니다. 권한과 디스크 공간을 확인해 주세요.",
+                            f"{self.label} 가져오기",
+                        ),
+                    }
                 if result is None:
                     break
                 self._record(file, result)
             self._set(status="cancelled" if self.cancel_event.is_set() else "completed", current_file="")
         except Exception as error:
-            self._set(status="cancelled" if self.cancel_event.is_set() else "error", current_file="",
-                      error=diagnostics.report(error, f"{self.label} 가져오기를 시작하지 못했습니다.", f"{self.label} 가져오기"))
+            self._set(
+                status="cancelled" if self.cancel_event.is_set() else "error",
+                current_file="",
+                error=diagnostics.report(
+                    error, f"{self.label} 가져오기를 시작하지 못했습니다.", f"{self.label} 가져오기"
+                ),
+            )

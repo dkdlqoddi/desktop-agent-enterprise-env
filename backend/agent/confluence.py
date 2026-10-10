@@ -1,4 +1,5 @@
 """Import browser captures as Markdown without intermediate files."""
+
 import hashlib
 from urllib.parse import urlsplit
 
@@ -30,21 +31,45 @@ def import_page(service, params):
     with service.db.connect() as db:
         # Lock before duplicate detection, including concurrent internal requests.
         db.execute("BEGIN IMMEDIATE")
-        found = sources.plan(db, "confluence_sources", source_url, {"source_url": source_url, "source_hash": checksum},
-                             target, replace, automatic=params.get("track_changes") is True)
+        found = sources.plan(
+            db,
+            "confluence_sources",
+            source_url,
+            {"source_url": source_url, "source_hash": checksum},
+            target,
+            replace,
+            automatic=params.get("track_changes") is True,
+        )
         # A watching routine (routines.py) learns what the page changed in the text imported before.
         before = sources.base(db, "confluence_sources", found, params.get("track_changes") is True)
         if found.action == "skip":
             # The text saved is this version's: it is recorded with it, unless the user changed the document's text,
             # which a routine then still compares at every run.
             if found.reason == "same":
-                sources.touch(db, "confluence_sources", found.rows,
-                              {"read_at": timestamp, **({"version": version[:40]} if version else {})}, source_url)
+                sources.touch(
+                    db,
+                    "confluence_sources",
+                    found.rows,
+                    {"read_at": timestamp, **({"version": version[:40]} if version else {})},
+                    source_url,
+                )
             result = sources.skipped(found, "동일한 페이지 내용이 이미 저장되어 있습니다.")
         else:
-            ids, removed = sources.save(db, "confluence_sources", found, split, title, timestamp,
-                                        {"source_url": source_url, "page_id": page_id, "source_hash": checksum,
-                                         "version": version[:40], "read_at": timestamp})
+            ids, removed = sources.save(
+                db,
+                "confluence_sources",
+                found,
+                split,
+                title,
+                timestamp,
+                {
+                    "source_url": source_url,
+                    "page_id": page_id,
+                    "source_hash": checksum,
+                    "version": version[:40],
+                    "read_at": timestamp,
+                },
+            )
             result = sources.outcome(found, split, ids, removed, "Markdown 문서를 Wiki에 저장했습니다.", "Markdown")
     # Compared once the import is committed: a long page takes a while, and other saves must not wait for it.
     change = sources.change(before, split)

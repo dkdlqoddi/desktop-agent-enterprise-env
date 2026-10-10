@@ -1,5 +1,6 @@
 """The import box's .txt files: each is read through the hidden Notepad (a stand-in here; test_notepad.py covers the
 reader) and becomes an HTML page. Python never decodes a file's bytes, which DRM software leaves encrypted."""
+
 import re
 import sys
 from html import unescape
@@ -53,8 +54,14 @@ def test_folder_import_saves_the_text_notepad_shows_as_html_documents(importer, 
     (folder / "같은 회의록.TXT").write_bytes((folder / "회의록.txt").read_bytes())
     (folder / "설명.md").write_text("# Markdown은 Electron이 가져옵니다", encoding="utf-8")
     (folder / "그림.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-    notepad.texts.update({"같은 회의록.TXT": "1. 일정 확정\n2. 담당: <김개발>", "보호.txt": UserError(ENCRYPTED),
-                          "빈 메모.txt": " \n", "일정.txt": "다음 주 월요일 배포"})
+    notepad.texts.update(
+        {
+            "같은 회의록.TXT": "1. 일정 확정\n2. 담당: <김개발>",
+            "보호.txt": UserError(ENCRYPTED),
+            "빈 메모.txt": " \n",
+            "일정.txt": "다음 주 월요일 배포",
+        }
+    )
     importer.start({"path": str(folder), "mode": "directory", "recursive": True})
     job = wait(importer)
     assert (job["status"], job["total"], job["imported"], job["skipped"], job["failed"]) == ("completed", 5, 2, 1, 2)
@@ -98,8 +105,10 @@ def test_text_import_takes_txt_files_only_and_never_reads_an_empty_one(importer,
 
 def test_text_import_needs_windows_notepad(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    assert capabilities() == {"available": False,
-                              "reason": "텍스트(.txt) 파일은 Windows에서 메모장으로 읽어 가져올 수 있습니다."}
+    assert capabilities() == {
+        "available": False,
+        "reason": "텍스트(.txt) 파일은 Windows에서 메모장으로 읽어 가져올 수 있습니다.",
+    }
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("SystemRoot", str(tmp_path))
     assert capabilities()["available"] is False and "을 찾지 못했습니다" in capabilities()["reason"]
@@ -119,8 +128,11 @@ def test_a_text_longer_than_a_wiki_document_is_saved_in_parts_cut_between_its_li
     result = wait(importer)["results"][0]
     docs = [importer.service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
     assert result["message"] == "글이 80,000자를 넘어 HTML 문서 3개로 나누어 Wiki에 저장했습니다."
-    assert [(doc["title"], doc["source"]["part"], doc["source"]["kind"]) for doc in docs] == \
-        [("로그 (1/3)", 1, "text"), ("로그 (2/3)", 2, "text"), ("로그 (3/3)", 3, "text")]
+    assert [(doc["title"], doc["source"]["part"], doc["source"]["kind"]) for doc in docs] == [
+        ("로그 (1/3)", 1, "text"),
+        ("로그 (2/3)", 2, "text"),
+        ("로그 (3/3)", 3, "text"),
+    ]
     # Every line arrives once, whole, and each part is a text page of its own.
     pages = [re.search(r'<div class="doc text"><pre>(.*)</pre></div>', doc["html"], re.S).group(1) for doc in docs]
     assert "".join(unescape(text) for text in pages) == notepad.texts["로그.txt"]

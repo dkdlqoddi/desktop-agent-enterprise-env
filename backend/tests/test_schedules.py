@@ -56,8 +56,16 @@ def prompt(service, template="오늘 할 일: {{ 할 일 }}"):
 
 def schedule(service, **values):
     source = values.pop("prompt", None) or prompt(service)
-    return service.dispatch("schedules.save", {"prompt_id": source["id"], "variables": {"할 일": "보고서"},
-                                               "frequency": "daily", "run_time": "09:00", **values})
+    return service.dispatch(
+        "schedules.save",
+        {
+            "prompt_id": source["id"],
+            "variables": {"할 일": "보고서"},
+            "frequency": "daily",
+            "run_time": "09:00",
+            **values,
+        },
+    )
 
 
 def make_due(service, ident):
@@ -81,16 +89,19 @@ def execute(service, ident, due):
     return service.runs_get({"id": result["run_id"]})
 
 
-@pytest.mark.parametrize("frequency,extra,after,expected", [
-    ("hourly", {"run_time": "00:15"}, datetime(2026, 9, 29, 10, 20), datetime(2026, 9, 29, 11, 15)),
-    ("hourly", {"run_time": "00:15"}, datetime(2026, 9, 29, 10, 10), datetime(2026, 9, 29, 10, 15)),
-    ("daily", {}, datetime(2026, 9, 29, 8, 59), datetime(2026, 9, 29, 9, 0)),
-    ("daily", {}, datetime(2026, 9, 29, 9, 0), datetime(2026, 9, 30, 9, 0)),  # strictly after
-    ("weekdays", {}, datetime(2026, 10, 2, 10, 0), datetime(2026, 10, 5, 9, 0)),  # Friday -> Monday
-    ("weekly", {"weekday": 0}, datetime(2026, 9, 29, 10, 0), datetime(2026, 10, 5, 9, 0)),
-    ("monthly", {"month_day": 31}, datetime(2026, 9, 29, 10, 0), datetime(2026, 9, 30, 9, 0)),  # last day
-    ("monthly", {"month_day": 31}, datetime(2026, 9, 30, 10, 0), datetime(2026, 10, 31, 9, 0)),
-])
+@pytest.mark.parametrize(
+    "frequency,extra,after,expected",
+    [
+        ("hourly", {"run_time": "00:15"}, datetime(2026, 9, 29, 10, 20), datetime(2026, 9, 29, 11, 15)),
+        ("hourly", {"run_time": "00:15"}, datetime(2026, 9, 29, 10, 10), datetime(2026, 9, 29, 10, 15)),
+        ("daily", {}, datetime(2026, 9, 29, 8, 59), datetime(2026, 9, 29, 9, 0)),
+        ("daily", {}, datetime(2026, 9, 29, 9, 0), datetime(2026, 9, 30, 9, 0)),  # strictly after
+        ("weekdays", {}, datetime(2026, 10, 2, 10, 0), datetime(2026, 10, 5, 9, 0)),  # Friday -> Monday
+        ("weekly", {"weekday": 0}, datetime(2026, 9, 29, 10, 0), datetime(2026, 10, 5, 9, 0)),
+        ("monthly", {"month_day": 31}, datetime(2026, 9, 29, 10, 0), datetime(2026, 9, 30, 9, 0)),  # last day
+        ("monthly", {"month_day": 31}, datetime(2026, 9, 30, 10, 0), datetime(2026, 10, 31, 9, 0)),
+    ],
+)
 def test_next_run_follows_local_wall_time(frequency, extra, after, expected):
     # Naive times are the computer's wall clock in any time zone; Windows has no time.tzset to pin one.
     values = {"frequency": frequency, "run_time": "09:00", "weekday": 0, "month_day": 1, **extra}
@@ -101,8 +112,14 @@ def test_save_validates_inputs_and_schedules_the_next_run(service):
     source = prompt(service)
     with pytest.raises(UserError, match="할 일"):
         service.dispatch("schedules.save", {"prompt_id": source["id"], "variables": {}, "frequency": "daily"})
-    for invalid in ({"frequency": "yearly"}, {"run_time": "24:00"}, {"weekday": 7},
-                    {"month_day": 0}, {"enabled": "yes"}, {"frequency": "once"}):
+    for invalid in (
+        {"frequency": "yearly"},
+        {"run_time": "24:00"},
+        {"weekday": 7},
+        {"month_day": 0},
+        {"enabled": "yes"},
+        {"frequency": "once"},
+    ):
         with pytest.raises(UserError):
             schedule(service, prompt=source, **invalid)
     with pytest.raises(UserError, match="지났습니다"):
@@ -134,7 +151,8 @@ def test_due_occurrence_runs_once_and_missed_ones_collapse(service):
     assert service.dispatch("routines.due", {}) == []
     due = make_due(service, saved["id"])
     assert service.dispatch("routines.due", {}) == [
-        {"id": saved["id"], "next_run_at": due, "needs": [], "schedule": True}]
+        {"id": saved["id"], "next_run_at": due, "needs": [], "schedule": True}
+    ]
     with ThreadPoolExecutor(2) as pool:
         results = list(pool.map(lambda _: claim(service, saved["id"], due), range(2)))
     assert sorted(result["queued"] for result in results) == [False, True]
@@ -164,12 +182,23 @@ def test_one_scheduler_lists_routines_and_schedules_and_tells_how_their_runs_end
     with service.db.connect() as db:
         db.execute("UPDATE routines SET next_run_at=? WHERE id=?", (earlier, routine["id"]))
     # One list, the earliest first.
-    assert service.dispatch("routines.due", {}) == [{"id": routine["id"], "next_run_at": earlier, "needs": []},
-                                                    {"id": saved["id"], "next_run_at": due, "needs": [], "schedule": True}]
+    assert service.dispatch("routines.due", {}) == [
+        {"id": routine["id"], "next_run_at": earlier, "needs": []},
+        {"id": saved["id"], "next_run_at": due, "needs": [], "schedule": True},
+    ]
     run = execute(service, saved["id"], due)
     events = service.dispatch("routines.events", {"after": cursor})
-    assert events["runs"] == [{"id": run["id"], "schedule_id": saved["id"], "name": "아침 정리", "notify": True,
-                               "status": "success", "error": "", "finished_at": run["created_at"]}]
+    assert events["runs"] == [
+        {
+            "id": run["id"],
+            "schedule_id": saved["id"],
+            "name": "아침 정리",
+            "notify": True,
+            "status": "success",
+            "error": "",
+            "finished_at": run["created_at"],
+        }
+    ]
     assert events["active"] == 0
     # The routine's run comes after it, in the order they ended; a manual run of the schedule is not told.
     service.dispatch("routines.execute", {"id": routine["id"], "next_run_at": earlier, "logins": []})
@@ -275,7 +304,9 @@ def test_prompt_changes_and_deletion_reach_schedules(service):
     run = execute(service, saved["id"], make_due(service, saved["id"]))
     assert (run["status"], run["error"]) == ("error", f"‘마감’ 입력란이 비어 있습니다. {SCHEDULE_INPUTS}")
     assert not service.llm.calls
-    with pytest.raises(UserError, match="‘마감’ 입력란이 비어 있습니다.$"):  # The form itself says only what is missing.
+    with pytest.raises(
+        UserError, match="‘마감’ 입력란이 비어 있습니다.$"
+    ):  # The form itself says only what is missing.
         schedule(service, prompt=source)
     filled = schedule(service, prompt=source, id=saved["id"], variables={"할 일": "보고서", "마감": "금요일"})
     assert service.dispatch("schedules.run", {"id": filled["id"]})["input"] == "보고서 / 금요일"
@@ -311,7 +342,11 @@ def test_active_runs_and_daily_statistics(service):
     assert len(stats["days"]) == 7
     assert stats["days"][-1] == {"date": datetime.now(KST).date().isoformat(), "success": 1, "error": 1, "scheduled": 1}
     assert {k: stats["totals"][k] for k in ("total", "success", "error", "scheduled")} == {
-        "total": 2, "success": 1, "error": 1, "scheduled": 1}
+        "total": 2,
+        "success": 1,
+        "error": 1,
+        "scheduled": 1,
+    }
     assert stats["totals"]["average_ms"] >= 0 and stats["active_schedules"] == 1
     other = service.prompts_save({"title": "다른 프롬프트", "template": "메모"})
     assert service.runs_stats({"days": 7, "prompt_id": other["id"]})["totals"]["total"] == 0
