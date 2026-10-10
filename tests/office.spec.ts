@@ -397,11 +397,22 @@ test('A file too long for one document opens as parts that lead to each other', 
     expect(seeded.stderr).toBe('');
     expect(seeded.stdout.trim()).toBe('3');
     await page.reload();
-    const rows = widget(page, 'documents').locator('.document-row');
-    await expect(rows.filter({ hasText: /긴 보고서 \([123]\/3\)/ })).toHaveCount(3);
-    await rows.filter({ hasText: '긴 보고서 (1/3)' }).click();
+    // The document list shows the import as one entry that counts its parts; its window leads from part to part.
+    const entry = widget(page, 'documents')
+      .locator('.document-row')
+      .filter({ hasText: /긴 보고서 \([123]\/3\)/ });
+    await expect(entry).toHaveCount(1);
+    await expect(entry).toContainText('3개로 나눔');
+    await entry.click();
     const parts = drawer(page).getByRole('navigation', { name: '나누어 저장한 문서' });
     const view = drawer(page).locator('[data-html-document]');
+    await expect(parts).toContainText('긴 글을 나누어 저장한 3개 중');
+    // The entry is the part updated last, any of the three here: back to the first one.
+    const opened = Number(/3개 중 (\d)번째/.exec((await parts.textContent()) ?? '')![1]);
+    for (let part = opened; part > 1; part--) {
+      await parts.getByRole('button', { name: '이전 부분' }).click();
+      await expect(parts).toContainText(`3개 중 ${part - 1}번째`);
+    }
     await expect(parts).toContainText('긴 글을 나누어 저장한 3개 중 1번째');
     await expect(view.locator('h2').first()).toHaveText('장 0');
     await expect(parts.getByRole('button', { name: '이전 부분' })).toBeDisabled();

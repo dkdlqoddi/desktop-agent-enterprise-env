@@ -1564,8 +1564,13 @@ class McpServer {
     let page;
     try {
       page = await this.call('documents.query', { limit: 100, ...(cursor && { cursor }) }, access);
-    } catch (error) {
-      if (cursor) throw new RpcError(-32602, `Invalid params: ${messageOf(error)}`);
+    } catch {
+      // A cursor this server did not give is an error of the request, said in this server's own words.
+      if (cursor)
+        throw new RpcError(
+          -32602,
+          'Invalid params: cursor is not one of this list. List the resources again from the start.',
+        );
       return { resources: [manual] };
     }
     const resources = page.documents.map((doc) => ({
