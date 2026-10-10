@@ -6,9 +6,34 @@ import {
 } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
+import path from 'node:path';
 
-// The packaged screens with the built-in backend, in a data folder of the test's own. The LLM
-// settings start empty unless a test passes them. `args` go to the app, such as a demo's.
+// PRIVATE_AGENT_E2E_SOURCE_BACKEND=1 runs the backend from source, backend/.venv's Python with backend/main.py, instead
+// of the PyInstaller build in dist/backend: the tests then need no npm run build:python. The packaged exe
+// (PRIVATE_AGENT_E2E_EXECUTABLE) always runs the backend built into it.
+const sourceBackend =
+  process.env.PRIVATE_AGENT_E2E_SOURCE_BACKEND === '1' && !process.env.PRIVATE_AGENT_E2E_EXECUTABLE;
+const venvPython = path.resolve(
+  'backend',
+  '.venv',
+  process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
+);
+
+// The backend the app under test runs, for a test that starts one of its own.
+export const backendCommand = () =>
+  sourceBackend
+    ? { executable: venvPython, args: [path.resolve('backend', 'main.py')] }
+    : {
+        executable: path.resolve(
+          'dist/backend',
+          'private-agent-backend',
+          `private-agent-backend${process.platform === 'win32' ? '.exe' : ''}`,
+        ),
+        args: [],
+      };
+
+// The packaged screens with the built-in backend (or the backend from source, as above), in a data folder of the
+// test's own. The LLM settings start empty unless a test passes them. `args` go to the app, such as a demo's.
 export const launch = (directory: string, env: Record<string, string> = {}, args: string[] = []) =>
   electron.launch({
     executablePath: process.env.PRIVATE_AGENT_E2E_EXECUTABLE,
@@ -23,15 +48,20 @@ export const launch = (directory: string, env: Record<string, string> = {}, args
       NO_PROXY: '127.0.0.1,localhost',
       no_proxy: '127.0.0.1,localhost',
       PRIVATE_AGENT_USER_DATA: directory,
-      PRIVATE_AGENT_USE_FROZEN: '1',
+      PRIVATE_AGENT_USE_FROZEN: sourceBackend ? '' : '1',
+      PRIVATE_AGENT_PYTHON: sourceBackend ? venvPython : '',
       PRIVATE_AGENT_DEV_URL: '',
-      // The built-in backend reads only the PRIVATE_AGENT_ names of the LLM settings.
+      // The built-in backend reads only the PRIVATE_AGENT_ names of the LLM settings; one run from source reads the
+      // plain names too (.env), but not where a PRIVATE_AGENT_ name is set, even empty.
       PRIVATE_AGENT_PROVIDER: '',
       PRIVATE_AGENT_API_FORMAT: '',
       PRIVATE_AGENT_BASE_URL: '',
       PRIVATE_AGENT_API_KEY: '',
       PRIVATE_AGENT_MODEL_NAME: '',
       PRIVATE_AGENT_LLM_HEADERS: '',
+      PRIVATE_AGENT_TEMPERATURE: '',
+      PRIVATE_AGENT_LLM_TIMEOUT: '',
+      PRIVATE_AGENT_CA_BUNDLE: '',
       ...env,
     },
   });
@@ -44,9 +74,9 @@ export async function chooseStorage(page: Page, directory: string) {
   await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible({ timeout: 30_000 });
 }
 
-// The app's Python backend: the child of the Electron main process that runs the built-in backend.
-// On Windows Playwright starts Electron through a shell, so `app.process()` is cmd.exe, the main
-// process's parent; the main process gives its own id.
+// The app's Python backend: the child of the Electron main process that runs the built-in backend, or Python with
+// backend/main.py from source. On Windows Playwright starts Electron through a shell, so `app.process()` is cmd.exe,
+// the main process's parent; the main process gives its own id.
 export async function backendPid(app: ElectronApplication) {
   const parent = await app.evaluate(() => process.pid);
   const output =
@@ -56,13 +86,15 @@ export async function backendPid(app: ElectronApplication) {
           [
             '-NoProfile',
             '-Command',
-            `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${parent}" | Where-Object { $_.Name -like 'private-agent-backend*' }).ProcessId`,
+            `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${parent}" | Where-Object { $_.Name -like 'private-agent-backend*' -or $_.CommandLine -like '*backend*main.py*' }).ProcessId`,
           ],
           { encoding: 'utf8' },
         )
-      : execFileSync('pgrep', ['-P', String(parent), '-f', 'private-agent-backend'], {
-          encoding: 'utf8',
-        });
+      : execFileSync(
+          'pgrep',
+          ['-P', String(parent), '-f', 'private-agent-backend|backend/main\\.py'],
+          { encoding: 'utf8' },
+        );
   const pids = output.split(/\s+/).filter(Boolean).map(Number);
   if (pids.length !== 1) throw new Error(`백엔드 프로세스를 찾지 못했습니다: ${output}`);
   return pids[0];

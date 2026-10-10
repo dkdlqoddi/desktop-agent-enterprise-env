@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { removeBuildInfo, writeBuildInfo } from './build-info.mjs';
 const require = createRequire(import.meta.url);
 const target = process.argv[2] || 'win';
 const targets = {
@@ -20,6 +21,14 @@ if (process.platform !== 'win32') {
   process.exit(1);
 }
 const env = { ...process.env, NEXT_TELEMETRY_DISABLED: '1' };
+// The commit the package is built from goes into it as electron/build-info.json, for the diagnostics the user copies.
+// Written before the build steps, so that a file they regenerate never counts as an uncommitted change, and removed
+// when this script ends, however it ends, so that a run from source never reports the last build.
+const build = writeBuildInfo();
+process.on('exit', removeBuildInfo);
+console.log(
+  build ? `빌드 커밋: ${build.commit}` : 'git 정보가 없어 빌드 커밋을 기록하지 않습니다.',
+);
 for (const args of [
   [require.resolve('next/dist/bin/next'), 'build'],
   ['scripts/build-python.mjs'],

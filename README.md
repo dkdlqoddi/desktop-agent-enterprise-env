@@ -18,7 +18,7 @@
 
 ## 개발 환경
 
-Node.js 22와 Python 3.10 이상을 사용합니다. 데스크톱 실행에는 그래픽 환경이 필요합니다. Windows Office·RTF 가져오기와 원본 반영에는 해당 Office 데스크톱 앱이 설치되어 있어야 합니다. Windows 텍스트 가져오기는 메모장을 사용합니다.
+Node.js 22.12 이상(`.nvmrc`)과 Python 3.10 이상을 사용합니다. 배포 파일은 Python 3.13(`.python-version`)으로 빌드합니다. 데스크톱 실행에는 그래픽 환경이 필요합니다. Windows Office·RTF 가져오기와 원본 반영에는 해당 Office 데스크톱 앱이 설치되어 있어야 합니다. Windows 텍스트 가져오기는 메모장을 사용합니다.
 
 ```bash
 npm ci
@@ -29,6 +29,15 @@ npm run dev
 ```
 
 Windows에서는 `run-dev.cmd`를 사용할 수 있습니다. 처음 실행할 때 Wiki 저장 폴더를 선택합니다. 웹 화면만 개발하려면 `npm run dev:web`를 실행합니다.
+
+`npm run dev`는 백엔드의 오류 출력과 앱·백엔드 로그를 터미널에도 보여 줍니다. `electron/`이나 `backend/main.py`·`backend/agent/`의 파일을 고치면 Electron과 백엔드를 다시 시작하고, 화면 코드는 Next.js가 바로 반영합니다. 다음 환경변수로 동작을 바꿀 수 있습니다.
+
+| 환경변수                    | 설명                                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `PRIVATE_AGENT_LOG_LEVEL`   | `debug`·`info`(기본)·`warning`·`error`. `debug`이면 앱 로그에 요청별 처리 시간도 남깁니다                                          |
+| `PRIVATE_AGENT_LOG_CONSOLE` | `1`이면 로그를 터미널(표준 오류)에도 씁니다. `npm run dev`의 기본값이며 `0`으로 끕니다                                             |
+| `PRIVATE_AGENT_DEV_WATCH`   | `0`이면 `npm run dev`가 파일 변경을 감시하지 않습니다                                                                              |
+| `PRIVATE_AGENT_DEBUGPY`     | 포트 번호. 소스로 실행한 백엔드가 `127.0.0.1`의 그 포트에서 debugpy 디버거 연결을 기다립니다. 앱이 1분 기다리니 그 안에 연결합니다 |
 
 ## LLM 연결
 
@@ -92,9 +101,13 @@ npm run build:python
 npm run test:e2e
 ```
 
-`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 브라우저 테스트에는 `setup:browser`가 필요합니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
+`check`는 TypeScript 검사, Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
+
+`npm run test:main:coverage`와 `npm run test:python:coverage`는 테스트 뒤에 커버리지 보고서를 출력합니다. 의존성을 바꾸면 `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 함께 커밋합니다(`npm run notices:check`가 최신인지 확인합니다).
 
 Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
+
+GitHub Actions의 `check.yml`은 푸시와 PR마다 Node.js 22·24에서 형식·타입 검사, Electron 테스트와 웹 빌드를, Ubuntu(Python 3.10·3.13)와 Windows(Python 3.13)에서 Python 테스트를 실행하고 서드파티 고지가 최신인지 확인합니다. `build.yml`은 `v*` 태그(`package.json`의 버전과 같아야 합니다)나 수동 실행으로 Windows exe를 만들어 `SHA256SUMS`와 함께 아티팩트로 올립니다. 저장소에 `WIN_CSC_LINK`·`WIN_CSC_KEY_PASSWORD` 시크릿이 있으면 exe에 코드 서명합니다. 의존성 업데이트는 `renovate.json`에 따라 매달 PR로 올라오며, 이를 위해 저장소 소유자가 Renovate GitHub 앱을 설치해야 합니다.
 
 ## 저장소 구조
 

@@ -19,8 +19,10 @@ function spawnFailure(error, executable, packaged) {
 }
 
 // One process of the Python backend. Requests go to it as JSON lines on its standard input and are answered by the line
-// of its standard output with the same id; the end of its error output is kept for the log (Diagnostics.capture).
-// `exited` hears of an end the process came to by itself and gives the message its requests still waiting fail with.
+// of its standard output with the same id; the end of its error output is kept for the log (Diagnostics.capture), and
+// with PRIVATE_AGENT_LOG_CONSOLE=1 (npm run dev) it is also written to this process's error output as it comes, so the
+// terminal shows the backend's tracebacks and log. `exited` hears of an end the process came to by itself and gives the
+// message its requests still waiting fail with.
 class BackendProcess {
   constructor({
     executable,
@@ -32,6 +34,7 @@ class BackendProcess {
     limit = LIMIT,
     exited = () => ENDED,
     spawn = childProcess.spawn,
+    echo = process.env.PRIVATE_AGENT_LOG_CONSOLE === '1' ? process.stderr : null,
   }) {
     Object.assign(this, { executable, diagnostics, packaged, limits, limit, exited });
     this.pending = new Map();
@@ -64,7 +67,10 @@ class BackendProcess {
     });
     child.stdin?.on('error', () => {});
     child.stderr?.setEncoding('utf8');
-    child.stderr?.on('data', (chunk) => diagnostics.capture(chunk));
+    child.stderr?.on('data', (chunk) => {
+      diagnostics.capture(chunk);
+      echo?.write(chunk);
+    });
     if (child.stdout)
       createInterface({ input: child.stdout }).on('line', (line) => this.answer(line));
   }
@@ -138,7 +144,7 @@ class BackendProcess {
         );
         reject(new Error('응답 제한 시간을 초과했습니다.'));
       }, limit);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method, started: Date.now() });
       this.child.stdin.write(JSON.stringify({ id, method, params }) + '\n', (error) => {
         if (error && this.pending.has(id)) {
           clearTimeout(timer);
@@ -160,6 +166,10 @@ class BackendProcess {
     if (!item) return;
     clearTimeout(item.timer);
     this.pending.delete(message.id);
+    // At PRIVATE_AGENT_LOG_LEVEL=debug: each request's method and time, never its parameters or its answer.
+    void this.diagnostics.debug?.(
+      `요청 ${item.method} ${Date.now() - item.started}ms${message.error ? ' (오류)' : ''}`,
+    );
     if (message.error) item.reject(new Error(message.error));
     else item.resolve(message.result);
   }

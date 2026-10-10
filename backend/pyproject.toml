@@ -21,10 +21,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<10", "pyinstaller>=6.12,<7"]
+# Development only, never in the backend executable: tests and their coverage (npm run test:python:coverage), the
+# PyInstaller build, and debugpy for PRIVATE_AGENT_DEBUGPY (backend/main.py).
+dev = ["pytest>=8.3,<10", "pyinstaller>=6.12,<7", "coverage>=7.10,<8", "debugpy>=1.8,<2"]
 
 [tool.setuptools.packages.find]
 include = ["agent*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# What a test needs beyond Python; backend/tests/conftest.py skips it elsewhere.
+markers = [
+    "windows(reason): runs only on Windows",
+    "office: needs desktop Office on Windows; runs only with PRIVATE_AGENT_OFFICE_TEST=1",
+    "browser: drives Playwright's Chromium (npm run setup:browser); skipped without it unless PRIVATE_AGENT_REQUIRE_BROWSER=1",
+]

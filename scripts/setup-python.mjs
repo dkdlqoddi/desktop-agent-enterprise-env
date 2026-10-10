@@ -37,6 +37,16 @@ if (
 ) {
   runPython(['-m', 'ensurepip', '--upgrade']);
 }
+// pip builds the backend's package in an isolated environment, with the setuptools its pyproject asks for; constraints
+// given with -c do not reach that environment, so a pip that knows --build-constraint gets the same file for it and the
+// build uses the pinned setuptools. An older pip, as an older Python's venv brings, builds with the newest one.
+const help = spawnSync(venvPython, ['-m', 'pip', 'install', '--help'], {
+  ...options,
+  encoding: 'utf8',
+});
+const buildConstraint = /--build-constraint\b/.test(help.stdout ?? '')
+  ? ['--build-constraint', 'backend/constraints.txt']
+  : [];
 runPython([
   '-m',
   'pip',
@@ -44,6 +54,7 @@ runPython([
   '--disable-pip-version-check',
   '-c',
   'backend/constraints.txt',
+  ...buildConstraint,
   '-e',
   './backend[dev]',
 ]);

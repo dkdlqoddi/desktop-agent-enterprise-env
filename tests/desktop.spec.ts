@@ -14,6 +14,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   addWidget,
+  backendCommand,
   backendPid,
   chooseStorage,
   connectLlm,
@@ -538,12 +539,8 @@ test('first-run storage migration retains existing Wiki and leaves the original 
   const destination = path.join(directory, 'selected-wiki');
   let app: ElectronApplication | undefined;
   try {
-    const binary = path.resolve(
-      'dist/backend',
-      'private-agent-backend',
-      `private-agent-backend${process.platform === 'win32' ? '.exe' : ''}`,
-    );
-    const seed = spawnSync(binary, [], {
+    const backend = backendCommand();
+    const seed = spawnSync(backend.executable, backend.args, {
       input:
         JSON.stringify({
           id: 'seed',
@@ -552,7 +549,7 @@ test('first-run storage migration retains existing Wiki and leaves the original 
         }) + '\n',
       encoding: 'utf8',
       timeout: 20000,
-      env: { ...process.env, PRIVATE_AGENT_DATA_DIR: directory },
+      env: { ...process.env, PRIVATE_AGENT_DATA_DIR: directory, PYTHONPATH: '', PYTHONUTF8: '1' },
     });
     expect(seed.status).toBe(0);
     expect(JSON.parse(seed.stdout).result.title).toBe('이전 버전의 기록');

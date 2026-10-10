@@ -65,6 +65,26 @@ def detach_standard_input():
         os.close(nul)
 
 
+def wait_for_debugger():
+    """With PRIVATE_AGENT_DEBUGPY=<port>, a backend run from source listens for a debugger on that port and waits for it
+    before it reads a request: Electron starts the backend, so this is how a debugger is there from the start. Attach
+    within the minute Electron gives the backend to answer. debugpy is a development extra, and a packaged backend
+    never listens: whoever attaches runs code in the backend, so the port is on 127.0.0.1 only."""
+    value = os.environ.get("PRIVATE_AGENT_DEBUGPY", "").strip()
+    if not value or getattr(sys, "frozen", False):
+        return
+    try:
+        port = int(value)
+        import debugpy
+    except (ValueError, ImportError) as exc:
+        print(f"PRIVATE_AGENT_DEBUGPY를 쓰지 못했습니다({exc}). npm run setup:python으로 debugpy를 설치하고 포트 번호를 "
+              "확인하세요.", file=sys.stderr, flush=True)
+        return
+    debugpy.listen(("127.0.0.1", port))
+    print(f"debugpy: 127.0.0.1:{port}에서 디버거 연결을 기다립니다.", file=sys.stderr, flush=True)
+    debugpy.wait_for_client()
+
+
 def main():
     if not getattr(sys, "frozen", False):
         load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -76,6 +96,7 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Electron names its settings folder's logs/; a backend started by hand writes no log.
     diagnostics.start(os.environ.get("PRIVATE_AGENT_LOG_DIR"))
+    wait_for_debugger()
     diagnostics.LOG.info("backend started · Python %s%s", sys.version.split()[0],
                          " · packaged" if getattr(sys, "frozen", False) else "")
     threading.Thread(target=sweep_leftovers, name="sweep-scratch", daemon=True).start()

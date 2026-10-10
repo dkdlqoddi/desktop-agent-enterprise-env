@@ -1,6 +1,5 @@
 import os
 import stat
-import sys
 import threading
 import time
 
@@ -20,7 +19,7 @@ def test_read_only_files_go_and_a_missing_folder_is_no_error(tmp_path):
     remove_tree(folder)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Only Windows refuses to delete an open file")
+@pytest.mark.windows("Only Windows refuses to delete an open file")
 def test_a_file_held_for_a_moment_goes_once_it_is_released(tmp_path):
     folder = tmp_path / "scratch"
     folder.mkdir()
@@ -32,7 +31,7 @@ def test_a_file_held_for_a_moment_goes_once_it_is_released(tmp_path):
     assert not folder.exists()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Only Windows refuses to delete an open file")
+@pytest.mark.windows("Only Windows refuses to delete an open file")
 def test_a_file_held_longer_is_left_after_the_wait(tmp_path):
     folder = tmp_path / "scratch"
     folder.mkdir()

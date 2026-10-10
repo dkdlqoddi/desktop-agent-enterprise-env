@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { watch } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -71,9 +72,14 @@ function end(child) {
 
 let desktop;
 let closing = false;
+let restarting = false;
+// The file watchers (watchSources), closed with the session: on Linux a recursive watcher keeps Node running even
+// after unref().
+const watchers = [];
 function stop(code = 0) {
   if (closing) return;
   closing = true;
+  for (const watcher of watchers) watcher.close();
   end(next);
   end(desktop);
   process.exitCode = code;
@@ -81,20 +87,103 @@ function stop(code = 0) {
 process.on('SIGINT', () => stop());
 process.on('SIGTERM', () => stop());
 next.on('exit', (code) => stop(code || 0));
+
+// The development app writes the backend's error output (its tracebacks) and every log entry, the app's and the
+// backend's, to this terminal as well (PRIVATE_AGENT_LOG_CONSOLE; set it to 0 to keep them to the log files).
+// Closing its window ends the session; an Electron this script restarts does not.
+function startDesktop() {
+  const child = spawn(electron, ['.'], {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      PRIVATE_AGENT_DEV_URL: url,
+      PRIVATE_AGENT_LOG_CONSOLE: process.env.PRIVATE_AGENT_LOG_CONSOLE ?? '1',
+      ...(userData ? { PRIVATE_AGENT_USER_DATA: userData } : {}),
+    },
+  });
+  child.on('exit', (code) => {
+    if (child === desktop && !restarting) stop(code || 0);
+  });
+  return child;
+}
+
+// Electron starts again, and the backend with it, when a file of the main process or of the backend changes: a reload
+// of the window would load neither again. The screens need nothing from here, as Next reloads them itself (Fast
+// Refresh). Changes within a moment of each other make one restart; the old Electron has ended, with its single-instance
+// lock, before the new one starts.
+let again = [];
+async function restartDesktop(files) {
+  again.push(...files);
+  if (restarting || closing || !desktop) return;
+  restarting = true;
+  while (again.length && !closing) {
+    console.log(`\n바뀐 파일: ${[...new Set(again)].join(', ')}. Electron을 다시 시작합니다.`);
+    again = [];
+    const old = desktop;
+    const exited =
+      old.exitCode !== null || old.signalCode !== null
+        ? Promise.resolve()
+        : new Promise((resolve) => old.once('exit', resolve));
+    end(old);
+    let timer;
+    await Promise.race([exited, new Promise((resolve) => (timer = setTimeout(resolve, 10_000)))]);
+    clearTimeout(timer);
+    if (!closing) desktop = startDesktop();
+  }
+  restarting = false;
+}
+
+// What is watched: everything the main process loads, and the backend's Python files (not its tests or its virtual
+// environment). PRIVATE_AGENT_DEV_WATCH=0 turns watching off, for a drive whose change events are unreliable (a network
+// drive, a folder shared into a virtual machine).
+const WATCHED = [
+  {
+    folder: 'electron',
+    recursive: true,
+    matches: (file) => /\.(cjs|js|json|html|css)$/.test(file),
+  },
+  {
+    folder: path.join('backend', 'agent'),
+    recursive: true,
+    matches: (file) => file.endsWith('.py'),
+  },
+  { folder: 'backend', recursive: false, matches: (file) => file === 'main.py' },
+];
+function watchSources() {
+  if (process.env.PRIVATE_AGENT_DEV_WATCH === '0') return;
+  let timer;
+  let changed = [];
+  for (const { folder, recursive, matches } of WATCHED) {
+    try {
+      const watcher = watch(path.join(root, folder), { recursive }, (_event, file) => {
+        if (closing || !file || !matches(String(file))) return;
+        changed.push(path.join(folder, String(file)));
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          const files = changed;
+          changed = [];
+          void restartDesktop(files);
+        }, 300);
+      });
+      watcher.on('error', (error) =>
+        console.error(`${folder}의 변경을 더 감시하지 못합니다: ${error.message}`),
+      );
+      watchers.push(watcher);
+    } catch (error) {
+      console.error(
+        `${folder}의 변경을 감시하지 못했습니다: ${error.message}. 바꾼 뒤에는 앱을 직접 다시 실행하세요(PRIVATE_AGENT_DEV_WATCH=0이면 감시하지 않습니다).`,
+      );
+    }
+  }
+}
+
 for (let attempt = 0; attempt < 120 && !closing; attempt++) {
   if (url)
     try {
       const response = await fetch(url);
       if (response.ok) {
-        desktop = spawn(electron, ['.'], {
-          stdio: 'inherit',
-          env: {
-            ...process.env,
-            PRIVATE_AGENT_DEV_URL: url,
-            ...(userData ? { PRIVATE_AGENT_USER_DATA: userData } : {}),
-          },
-        });
-        desktop.on('exit', (code) => stop(code || 0));
+        desktop = startDesktop();
+        watchSources();
         break;
       }
     } catch {

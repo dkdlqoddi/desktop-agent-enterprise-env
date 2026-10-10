@@ -20,6 +20,8 @@ from agent.web_login import LEARNED_LABEL, LoginError, sign_in, signed_in, valid
 from jira_server import JiraServer
 from site_pages import SitePages
 
+# Real Chromium (conftest.py skips the module without it).
+pytestmark = pytest.mark.browser
 CATALOG = json.loads((Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8"))["methods"]
 PASSWORD = "correct horse"
 ANALYSIS = {"category": "credentials", "cause": "SSO가 ID 또는 비밀번호를 거부했습니다.",

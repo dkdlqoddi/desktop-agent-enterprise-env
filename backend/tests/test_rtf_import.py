@@ -267,7 +267,7 @@ def test_folders_that_cannot_be_read_are_left_out_but_the_chosen_one_must_be(imp
         importer._scan(root / "locked", "directory", True)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Junctions and hidden system folders are Windows features")
+@pytest.mark.windows("Junctions and hidden system folders are Windows features")
 def test_junctions_and_hidden_system_folders_are_not_entered(importer, tmp_path):
     root, elsewhere = tmp_path / "documents", tmp_path / "elsewhere"
     (root / "System Volume Information").mkdir(parents=True)

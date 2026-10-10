@@ -19,6 +19,8 @@ from agent.web_login import Elsewhere, Hosts, LoginError, origin_of, sign_in, si
 from jira_server import JiraServer
 from site_pages import SitePages
 
+# Real Chromium (conftest.py skips the module without it).
+pytestmark = pytest.mark.browser
 CATALOG = json.loads((Path(__file__).resolve().parents[2] / "electron" / "login-methods.json").read_text(encoding="utf-8"))["methods"]
 METHODS = {method["id"]: method for method in CATALOG}
 PASSWORD = "correct horse"

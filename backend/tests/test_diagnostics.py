@@ -110,3 +110,31 @@ def test_an_import_that_breaks_unexpectedly_says_where_to_look(tmp_path, log):
     ident = ID.search(result["message"]).group(1)
     assert result["status"] == "failed" and result["message"].startswith("파일을 읽거나 Wiki에 저장하지 못했습니다.")
     assert f"RTF 문서 가져오기 · 오류 ID {ident}" in text(log) and "RuntimeError: converter bug" in text(log)
+
+
+@pytest.mark.parametrize("name,expected", [("debug", logging.DEBUG), (" WARNING ", logging.WARNING),
+                                           ("error", logging.ERROR), ("", logging.INFO), ("verbose", logging.INFO)])
+def test_the_log_level_is_named_by_private_agent_log_level(name, expected):
+    assert diagnostics.level(name) == expected
+
+
+def test_a_level_above_info_leaves_out_notes_and_the_terminal_gets_a_redacted_copy(tmp_path, monkeypatch, capsys):
+    # npm run dev sets PRIVATE_AGENT_LOG_CONSOLE=1: each entry also goes to the error output, which Electron shows.
+    monkeypatch.setenv("PRIVATE_AGENT_LOG_LEVEL", "warning")
+    monkeypatch.setenv("PRIVATE_AGENT_LOG_CONSOLE", "1")
+    folder = tmp_path / "logs"
+    try:
+        diagnostics.start(folder)
+        diagnostics.start(folder)  # Started again: still one file and one terminal copy.
+        diagnostics.LOG.info("backend started")
+        message = diagnostics.report(RuntimeError("token=abc123def failed"), "일반", "작업")
+        err = capsys.readouterr().err
+        assert "backend started" not in err and "backend started" not in text(folder / "backend.log")
+        ident = ID.search(message).group(1)
+        assert err.count(f"작업 · 오류 ID {ident}") == 1 and f"작업 · 오류 ID {ident}" in text(folder / "backend.log")
+        assert "abc123def" not in err and "token=[REDACTED]" in err
+    finally:
+        for handler in list(diagnostics.LOG.handlers):
+            diagnostics.LOG.removeHandler(handler)
+            handler.close()
+        diagnostics.LOG.setLevel(logging.INFO)
