@@ -617,10 +617,19 @@ def interrupt(response):
     with contextlib.suppress(OSError, ValueError, AttributeError, RuntimeError):
         if hasattr(raw, "shutdown"):
             raw.shutdown()
-            return
-        sock = getattr(getattr(raw, "connection", None), "sock", None)
-        if sock is not None:
-            sock.shutdown(socket.SHUT_RDWR)
+        else:
+            sock = getattr(getattr(raw, "connection", None), "sock", None)
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+    # On Windows a shutdown leaves a receive that already waits in another thread waiting; closing the socket's handle
+    # ends it (the receive fails at once). The socket object is detached first, so that the connection's own close
+    # does not close the handle a second time, and a new socket object around the handle closes it whatever file
+    # objects still refer to the old one.
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError, ValueError, AttributeError, RuntimeError):
+            sock = getattr(getattr(raw, "connection", None), "sock", None)
+            if sock is not None:
+                socket.socket(fileno=sock.detach()).close()
 
 
 class Reply(str):
