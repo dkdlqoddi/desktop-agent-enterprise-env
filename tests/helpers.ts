@@ -170,10 +170,25 @@ export type LlmRequest = {
   };
 };
 
+// An answer a stand-in LLM writes part by part, as an OpenAI-compatible server streams one to a request with stream:
+// each part is a server-sent event of its own, sent once its promise settles (so a test can hold the rest back), and
+// the answer ends with `finish` (length: the output limit cut it short). A request without stream gets the whole text
+// at once, when every part has come.
+export class StreamedReply {
+  constructor(
+    readonly parts: (string | Promise<string>)[],
+    readonly finish: 'stop' | 'length' = 'stop',
+  ) {}
+}
+export const streamed = (parts: (string | Promise<string>)[], finish?: 'stop' | 'length') =>
+  new StreamedReply(parts, finish);
+
 // A local stand-in for the LLM: `reply` answers each request by its system prompt, at once or
-// when its promise settles.
+// when its promise settles; a StreamedReply streams to a request asked with stream.
 export async function llmServer(
-  reply: (request: LlmRequest) => string | object | Promise<string | object>,
+  reply: (
+    request: LlmRequest,
+  ) => string | object | StreamedReply | Promise<string | object | StreamedReply>,
 ) {
   const requests: LlmRequest[] = [];
   const server = createServer(async (request, response) => {
@@ -191,6 +206,35 @@ export async function llmServer(
     if (content instanceof Error) {
       // The backend sends a request refused with 503 again, up to 4 times in all: Retry-After 0 spares the waits.
       response.writeHead(503, { 'Retry-After': '0' }).end();
+      return;
+    }
+    if (content instanceof StreamedReply) {
+      // A stopped answer's connection is closed by the backend while a part is held back: what follows is dropped.
+      response.on('error', () => {});
+      const gone = () => response.destroyed || request.socket.destroyed;
+      if (!payload.stream) {
+        const text = (await Promise.all(content.parts)).join('');
+        if (gone()) return;
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            choices: [{ message: { content: text }, finish_reason: content.finish }],
+          }),
+        );
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      response.flushHeaders();
+      const event = (data: object) => `data: ${JSON.stringify(data)}\n\n`;
+      for (const part of content.parts) {
+        const text = await part;
+        if (gone()) return;
+        response.write(event({ choices: [{ delta: { content: text }, finish_reason: null }] }));
+      }
+      if (gone()) return;
+      response.end(
+        event({ choices: [{ delta: {}, finish_reason: content.finish }] }) + 'data: [DONE]\n\n',
+      );
       return;
     }
     response.writeHead(200, { 'Content-Type': 'application/json' });

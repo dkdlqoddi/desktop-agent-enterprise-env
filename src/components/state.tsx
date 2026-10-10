@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   api,
+  type AssistantCancel,
   type DocumentQuery,
   type JobsSnapshot,
   type Method,
@@ -22,6 +23,7 @@ import {
 import { QueryCache, type PagedState, type QueryState, type Tag } from '@/lib/query';
 import { createStore, useStore, type Store } from '@/lib/store';
 import type { AdminSection, SiteDraft } from './admin';
+import { AnswerStream, pending, type AnswersState, type LiveAnswer } from './answers';
 import { JobsFeed, NO_JOBS, type ImportJobs, type JobsState } from './import-jobs';
 import type { Focus, ReaderTarget } from './reader';
 import type { SearchSession } from './search-panel';
@@ -85,6 +87,9 @@ export type AppStores = {
   jobs: Store<JobsState>;
   queries: QueryCache;
   feed: JobsFeed;
+  // The answers the screen asked for while the LLM writes them (./answers.ts), shared by the search box and the lists
+  // of conversations.
+  answers: AnswerStream;
   actions: Actions;
   // The search box's input, which Ctrl+K and 이 문서에 질문 focus.
   omnibox: { current: HTMLInputElement | null };
@@ -131,6 +136,9 @@ export function createAppStores(): AppStores {
   });
   const jobs = createStore<JobsState>(NO_JOBS);
   const queries = new QueryCache((method, params) => api(method, params));
+  const answers = new AnswerStream(createStore<AnswersState>({}), (requestId) =>
+    api<AssistantCancel>('assistant.cancel', { request_id: requestId }),
+  );
   const search: AppStores['search'] = { current: null };
   const omnibox: AppStores['omnibox'] = { current: null };
   const patch = (change: Partial<Session>) => session.set((current) => ({ ...current, ...change }));
@@ -263,6 +271,7 @@ export function createAppStores(): AppStores {
     jobs,
     queries,
     feed,
+    answers,
     actions,
     omnibox,
     search,
@@ -462,3 +471,40 @@ export function useApp(): AppState {
     analysis: useAnalysis(),
   };
 }
+
+// An answer being written (or just saved) for the search box's request `requestId`, as its parts come; null for none.
+// Only the component that draws the text should read it: it changes with every part.
+export const useLiveAnswer = (requestId: string | null) =>
+  useStore(useStores().answers.store, (answers) =>
+    requestId ? (answers[requestId] ?? null) : null,
+  );
+
+// What the lists of conversations show of the answers: which conversations are still answering, and the new ones not
+// saved yet, without the text, so a list draws again only when an answer starts, gets its conversation or ends.
+export type LiveConversation = Pick<
+  LiveAnswer,
+  'requestId' | 'conversationId' | 'question' | 'startedAt'
+> & { pending: boolean };
+const sameLive = (a: LiveConversation[], b: LiveConversation[]) =>
+  a.length === b.length &&
+  a.every(
+    (item, i) =>
+      item.requestId === b[i].requestId &&
+      item.conversationId === b[i].conversationId &&
+      item.pending === b[i].pending,
+  );
+export const useLiveConversations = () =>
+  useStore(
+    useStores().answers.store,
+    (answers) =>
+      Object.values(answers)
+        .map((answer): LiveConversation => ({
+          requestId: answer.requestId,
+          conversationId: answer.conversationId,
+          question: answer.question,
+          startedAt: answer.startedAt,
+          pending: pending(answer),
+        }))
+        .sort((a, b) => b.startedAt - a.startedAt),
+    sameLive,
+  );

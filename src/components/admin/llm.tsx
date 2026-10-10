@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, CircleAlert, LoaderCircle, Plus, Trash2, Unplug } from 'lucide-react';
 import { api, type LlmFormat, type LlmHeader, type Settings } from '@/lib/api';
 import { useActions, useSettings } from '../state';
@@ -24,14 +24,100 @@ const FORMATS: Record<LlmFormat, { label: string; endpoint: string; model: strin
 const ENDPOINTS = Object.values(FORMATS).map((format) => format.endpoint);
 type Secret = 'api_key';
 
+// The limits of the LLM's requests, with the backend's ranges and words (backend/agent/llm.py WHOLE and DEFAULTS):
+// checked here first, so a value out of range is told at its field before anything is saved. `auto` takes 0 too.
+const LIMITS = {
+  max_tokens: {
+    label: '최대 출력 토큰',
+    min: 256,
+    max: 1_000_000,
+    auto: true,
+    initial: 0,
+    message: '최대 출력 토큰은 0(자동) 또는 256~1,000,000으로 입력해 주세요.',
+    help: '답변 하나의 최대 길이입니다. 0이면 자동으로 서버의 기본값을 씁니다(Anthropic 형식은 16,000). 답변이 잘리면 늘려 주세요.',
+  },
+  context_window: {
+    label: '컨텍스트 크기 (토큰)',
+    min: 4_096,
+    max: 10_000_000,
+    auto: false,
+    initial: 64_000,
+    message: '컨텍스트 크기는 4,096~10,000,000 토큰으로 입력해 주세요.',
+    help: '모델이 한 번에 읽고 쓰는 토큰 수입니다(기본 64,000). 질문에 함께 보내는 문서 근거와 대화 기록이 이 크기에 맞춰 늘거나 줄어듭니다.',
+  },
+  concurrency: {
+    label: '동시 요청 수',
+    min: 1,
+    max: 8,
+    auto: false,
+    initial: 3,
+    message: '동시 요청 수는 1~8로 입력해 주세요.',
+    help: 'LLM 서버에 한꺼번에 보내는 요청 수입니다(1~8, 기본 3). 검색창의 질문이 AI 분석 같은 일괄 작업보다 먼저 갑니다. 서버가 요청 수를 제한하면 줄여 주세요.',
+  },
+} as const;
+type Limit = keyof typeof LIMITS;
+const LIMIT_NAMES = Object.keys(LIMITS) as Limit[];
+// Why a limit's value cannot be saved, or '' when it can. An empty field is NaN: never a value, so never saved.
+function limitProblem(name: Limit, value: number) {
+  const { min, max, auto, message } = LIMITS[name];
+  return Number.isInteger(value) && ((auto && value === 0) || (value >= min && value <= max))
+    ? ''
+    : message;
+}
+
 // The form as the settings start it: an empty endpoint starts at its format's own, and each custom header's value
 // empty, as the screens get only whether one is saved (has_value), never the value itself. Fields the settings gain
-// later go along as they are.
+// later go along as they are; the limits start at the backend's defaults when the settings do not name them.
 const formOf = (settings: Settings): Settings => ({
   ...settings,
   base_url: settings.base_url || FORMATS[settings.api_format].endpoint,
   headers: settings.headers.map((header) => ({ ...header, value: header.value ?? '' })),
+  max_tokens: settings.max_tokens ?? LIMITS.max_tokens.initial,
+  context_window: settings.context_window ?? LIMITS.context_window.initial,
+  concurrency: settings.concurrency ?? LIMITS.concurrency.initial,
 });
+
+// A limit of the LLM's requests: a whole number in its range, with what it does. The field refuses another value with
+// the backend's own words when the form is saved (reportValidity).
+function LimitField({
+  name,
+  value,
+  onChange,
+}: {
+  name: Limit;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const { label, min, max, auto, help } = LIMITS[name];
+  const problem = limitProblem(name, value);
+  useEffect(() => {
+    input.current?.setCustomValidity(problem);
+  }, [problem]);
+  const id = `llm-${name.replace('_', '-')}`;
+  return (
+    <div>
+      <label>
+        {label}
+        <input
+          ref={input}
+          type="number"
+          inputMode="numeric"
+          min={auto ? 0 : min}
+          max={max}
+          step={1}
+          value={Number.isNaN(value) ? '' : value}
+          placeholder={auto ? '0 = 자동' : undefined}
+          aria-describedby={`${id}-help`}
+          onChange={(e) => onChange(e.target.value === '' ? NaN : Number(e.target.value))}
+        />
+      </label>
+      <small id={`${id}-help`} className="field-help">
+        {help}
+      </small>
+    </div>
+  );
+}
 // The server an endpoint is on (scheme, host and port), which the saved API Key is kept for.
 function serverOf(value: string) {
   try {
@@ -64,6 +150,7 @@ export default function LlmSettings() {
   const settings = useSettings();
   const { setSettings, notify } = useActions();
   const formRef = useRef<HTMLFormElement>(null);
+  const advancedRef = useRef<HTMLDetailsElement>(null);
   const [form, setForm] = useState(() => formOf(settings));
   const [keys, setKeys] = useState<Record<Secret, string>>({ api_key: '' });
   const [busy, setBusy] = useState('');
@@ -100,6 +187,9 @@ export default function LlmSettings() {
   }
 
   async function save(test: boolean) {
+    // A limit out of range is told at its field, which the advanced settings may be hiding.
+    if (advancedRef.current && LIMIT_NAMES.some((name) => limitProblem(name, form[name] ?? NaN)))
+      advancedRef.current.open = true;
     // The endpoint and the model, and the advanced settings' ranges, are the form's own checks.
     if (!formRef.current?.reportValidity()) return;
     const problem = missing();
@@ -125,6 +215,9 @@ export default function LlmSettings() {
         temperature: form.temperature,
         timeout: form.timeout,
         ca_bundle: form.ca_bundle,
+        max_tokens: form.max_tokens,
+        context_window: form.context_window,
+        concurrency: form.concurrency,
       });
       setSettings(result);
       setForm(formOf(result));
@@ -155,9 +248,13 @@ export default function LlmSettings() {
     }
   }
 
+  // Whether the main process keeps the secrets encrypted by the OS (settings.get secure_storage). Without it a new API
+  // Key stays in memory until the app closes, and the headers' values are written to the settings file as they are
+  // (electron/main.cjs updateSettings), which the screen says rather than promise an encryption that does not happen.
+  const secure = settings.secure_storage;
   const storage = (stored: boolean, name: Secret, what: string) => (
     <>
-      {form.secure_storage
+      {secure
         ? '운영체제 보안 저장소로 암호화해 저장합니다.'
         : 'OS 보안 저장소를 쓸 수 없어 새로 넣은 값은 앱을 끌 때까지 메모리에만 보관합니다.'}
       {stored && (
@@ -328,11 +425,13 @@ export default function LlmSettings() {
           </button>
           <small>
             값의 {'{api_key}'}는 위 API Key로, {'{uuid}'}는 요청마다 새 ID로 바뀝니다. 기본 헤더와
-            이름이 같으면 이 값을 보냅니다. 값은 API Key처럼 암호화해 저장하고 화면에 다시 보이지
-            않으며, 바꿀 때는 ‘다시 입력’으로 새 값을 넣습니다.
+            이름이 같으면 이 값을 보냅니다.{' '}
+            {secure
+              ? '값은 API Key처럼 운영체제 보안 저장소로 암호화해 저장하고 화면에 다시 보이지 않으며, 바꿀 때는 ‘다시 입력’으로 새 값을 넣습니다.'
+              : 'OS 보안 저장소를 쓸 수 없어 값은 암호화하지 않고 앱 설정 폴더의 설정 파일(settings.json)에 그대로 저장합니다. 화면에는 다시 보이지 않으며, 바꿀 때는 ‘다시 입력’으로 새 값을 넣습니다.'}
           </small>
         </fieldset>
-        <details className="advanced">
+        <details className="advanced" ref={advancedRef}>
           <summary>고급 설정</summary>
           <div className="form-grid">
             <label>
@@ -359,6 +458,14 @@ export default function LlmSettings() {
                 onChange={(e) => update({ timeout: Number(e.target.value) })}
               />
             </label>
+            {LIMIT_NAMES.map((name) => (
+              <LimitField
+                key={name}
+                name={name}
+                value={form[name] ?? LIMITS[name].initial}
+                onChange={(value) => update({ [name]: value })}
+              />
+            ))}
           </div>
           <label>
             CA 인증서 경로

@@ -234,7 +234,8 @@ test('desktop: admin settings, prompt widget, one search box with answers, drawe
       expect(request.headers['api-key']).toBe('e2e-secret-key');
       expect(request.headers.authorization).toBeUndefined();
       expect(request.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
-      expect(request.payload.stream).toBe(false);
+      // The search box's answers stream as the LLM writes them; every other request takes its answer whole.
+      expect(request.payload.stream).toBe(request.system.includes('Answer questions about'));
       expect(request.payload.model).toBe('e2e-model');
     }
     const ids = new Set(llm.requests.map((request) => request.headers['x-request-id']));
@@ -566,6 +567,226 @@ test('first-run storage migration retains existing Wiki and leaves the original 
     // The history widget is one of the widgets that can be added later.
     await addWidget(page, '실행 기록');
     await expect(widget(page, 'history')).toContainText('아직 실행 기록이 없어요');
+  } finally {
+    await app?.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+// A Word document written back once into its file: the document, its import, and the copy of the file the write made
+// in the Wiki folder's 원본 백업 folder, as writeback.py records it.
+const WRITTEN_BACK = `
+import hashlib, pathlib, sqlite3, sys
+sys.path.insert(0, "backend")
+from agent.html_document import index_markdown, page
+wiki, source = pathlib.Path(sys.argv[1]), sys.argv[2]
+db = sqlite3.connect(wiki)
+html = page("보고서", "<h1>일정</h1><p>3월 15일까지 마칩니다.</p>", "word")
+content = index_markdown(html)
+db.execute("INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES ('word','보고서',?,'html',"
+           "'2026-10-01T00:00:00+00:00','2026-10-01T00:00:00+00:00')", (content,))
+db.execute("INSERT INTO document_html VALUES ('word', ?)", (html,))
+row = {"doc_id": "word", "source_path": source, "application": "Word",
+       "source_hash": hashlib.sha256(b"word").hexdigest(), "markdown": content,
+       "imported_at": "2026-10-01T00:00:00+00:00"}
+db.execute(f"INSERT INTO office_sources({','.join(row)}) VALUES ({','.join('?' * len(row))})", list(row.values()))
+folder = wiki.parent / "원본 백업"
+folder.mkdir(exist_ok=True)
+copy = folder / "20261001-090000 보고서.docx"
+copy.write_bytes(b"office bytes before the write")
+data = copy.read_bytes()
+db.execute("INSERT INTO writeback_backups(id,source_path,doc_id,name,checksum,size,kind,state,created_at) "
+           "VALUES ('b1',?,'word',?,?,?,'write','written','2026-10-01T00:00:00+00:00')",
+           (source, copy.name, hashlib.sha256(data).hexdigest(), len(data)))
+db.commit()
+`;
+
+test('LLM limits saved and read back; Wiki backups restored after a restart, a restore taken back; an Office file put back from its copy', async () => {
+  test.setTimeout(180_000);
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'private-agent-backups-')));
+  const wikiDirectory = path.join(directory, 'wiki');
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    let page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, wikiDirectory);
+    const request = async <T>(method: string, params: Record<string, unknown> = {}) => {
+      const reply = await page.evaluate(
+        ([name, values]) => window.privateAgent!.request(name, values),
+        [method, params] as const,
+      );
+      expect(reply.ok, `${method}: ${JSON.stringify(reply)}`).toBe(true);
+      return reply.result as T;
+    };
+    type Backups = { pending_restore: { file: string } | null };
+
+    // The LLM's limits: the backend's defaults, a value out of range refused at its field, new values saved and
+    // read back.
+    await openAdmin(page, 'LLM 연결');
+    await page.getByLabel(/API 엔드포인트/).fill('http://127.0.0.1:9/v1/chat/completions');
+    await page.getByLabel(/모델 이름/).fill('e2e-model');
+    const maxTokens = page.getByLabel('최대 출력 토큰', { exact: true });
+    const contextWindow = page.getByLabel('컨텍스트 크기 (토큰)', { exact: true });
+    const concurrency = page.getByLabel('동시 요청 수', { exact: true });
+    await page.locator('details.advanced summary').click();
+    await expect(maxTokens).toHaveValue('0');
+    await expect(contextWindow).toHaveValue('64000');
+    await expect(concurrency).toHaveValue('3');
+    await expect(maxTokens).toHaveAccessibleDescription(/0이면 자동/);
+    // The headers' values are said to be encrypted only where the OS keeps them so; elsewhere the settings file has
+    // them as they are, and the screen says that instead.
+    const { secure_storage: secure } = await request<{ secure_storage: boolean }>('settings.get');
+    await expect(page.locator('.llm-headers > small')).toContainText(
+      secure
+        ? '운영체제 보안 저장소로 암호화해 저장'
+        : '설정 파일(settings.json)에 그대로 저장합니다',
+    );
+    await maxTokens.fill('100');
+    await page.getByRole('button', { name: '저장하고 사용' }).click();
+    await expect(maxTokens).toHaveJSProperty(
+      'validationMessage',
+      '최대 출력 토큰은 0(자동) 또는 256~1,000,000으로 입력해 주세요.',
+    );
+    expect(await request('settings.get')).toMatchObject({ max_tokens: 0, model_name: '' });
+    await maxTokens.fill('4096');
+    await contextWindow.fill('128000');
+    await concurrency.fill('9');
+    await expect(concurrency).toHaveJSProperty(
+      'validationMessage',
+      '동시 요청 수는 1~8로 입력해 주세요.',
+    );
+    await concurrency.fill('2');
+    await page.getByRole('button', { name: '저장하고 사용' }).click();
+    await expect(page.getByText('LLM 연결 설정을 저장했습니다.')).toBeVisible();
+    const limits = { max_tokens: 4096, context_window: 128000, concurrency: 2 };
+    expect(await request('settings.get')).toMatchObject(limits);
+    expect(JSON.parse(await readFile(path.join(directory, 'settings.json'), 'utf8'))).toMatchObject(
+      limits,
+    );
+    await page.reload();
+    await openAdmin(page, 'LLM 연결');
+    await page.locator('details.advanced summary').click();
+    await expect(maxTokens).toHaveValue('4096');
+    await expect(contextWindow).toHaveValue('128000');
+    await expect(concurrency).toHaveValue('2');
+    await page.screenshot({ path: 'test-results/admin-llm-limits.png', fullPage: true });
+
+    // A backup made now is listed with its kind, time and size; a document saved after it is not in it.
+    await request('wiki.save', { title: '백업 전 문서', content: '백업에 들어가는 문서입니다.' });
+    await openAdmin(page, '저장 위치·정보');
+    await page.getByRole('button', { name: '지금 백업' }).click();
+    await expect(page.getByText(/^Wiki를 백업했습니다: wiki-manual-/)).toBeVisible();
+    const list = () => page.getByRole('list', { name: '백업 목록' });
+    const manual = () => list().getByRole('listitem').filter({ hasText: '직접' });
+    await expect(manual()).toHaveCount(1);
+    await expect(manual()).toContainText(/wiki-manual-\d{8}-\d{6}\.db · [\d,]+KB/);
+    await request('wiki.save', { title: '백업 뒤 문서', content: '복원하면 사라지는 문서입니다.' });
+
+    // Restoring asks first, saying the app restores the backup when it starts again; the confirming button is marked
+    // destructive, for AI tools below the full access level.
+    await manual()
+      .getByRole('button', { name: /백업 복원$/ })
+      .click();
+    const question = page.getByRole('group', { name: /앱을 다시 시작할 때 복원하며/ });
+    await expect(question.getByRole('button', { name: '복원', exact: true })).toHaveAttribute(
+      'data-destructive',
+      'true',
+    );
+    await question.getByRole('button', { name: '복원', exact: true }).click();
+    const pending = page.locator('.restore-pending');
+    await expect(pending).toContainText('앱을 다시 시작하면 Wiki를');
+    await expect(pending.getByRole('button', { name: '지금 다시 시작' })).toBeFocused();
+    await expect(manual()).toContainText('복원 예약됨');
+    await page.screenshot({ path: 'test-results/admin-backups.png', fullPage: true });
+    expect((await request<Backups>('wiki.backups')).pending_restore?.file).toMatch(/^wiki-manual-/);
+
+    // Taken back, nothing waits for the next start.
+    await pending.getByRole('button', { name: '복원 취소' }).click();
+    await expect(pending).toHaveCount(0);
+    expect((await request<Backups>('wiki.backups')).pending_restore).toBeNull();
+
+    // Asked again, then 지금 다시 시작: the app quits to start again as the same program. The new start is caught
+    // here, and the test starts the app itself.
+    await manual()
+      .getByRole('button', { name: /백업 복원$/ })
+      .click();
+    await question.getByRole('button', { name: '복원', exact: true }).click();
+    await expect(pending).toBeVisible();
+    await app.evaluate(({ app: electron }) => {
+      const caught = globalThis as unknown as { relaunched: unknown[]; quitAsked: boolean };
+      caught.relaunched = [];
+      caught.quitAsked = false;
+      electron.relaunch = (options?: unknown) => void caught.relaunched.push(options ?? null);
+      const quit = electron.quit.bind(electron);
+      electron.quit = () => {
+        caught.quitAsked = true;
+        electron.quit = quit;
+      };
+    });
+    await pending.getByRole('button', { name: '지금 다시 시작' }).click();
+    await expect
+      .poll(() => app!.evaluate(() => (globalThis as unknown as { quitAsked: boolean }).quitAsked))
+      .toBe(true);
+    const relaunched = await app.evaluate(
+      () => (globalThis as unknown as { relaunched: { execPath: string }[] }).relaunched,
+    );
+    expect(relaunched).toHaveLength(1);
+    expect(relaunched[0].execPath).toBe(await app.evaluate(() => process.execPath));
+    await app.close();
+
+    // The next start restores the Wiki before anything opens it, and the backups say how it went.
+    app = await launch(directory);
+    page = await app.firstWindow();
+    page.on('pageerror', (error) => errors.push(error.message));
+    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible({ timeout: 30_000 });
+    const titles = (await request<{ title: string }[]>('wiki.list')).map((doc) => doc.title);
+    expect(titles).toContain('백업 전 문서');
+    expect(titles).not.toContain('백업 뒤 문서');
+    await openAdmin(page, '저장 위치·정보');
+    await expect(page.locator('.restore-result')).toContainText('되돌렸습니다');
+    await expect(page.locator('.restore-pending')).toHaveCount(0);
+    await expect(list().getByRole('listitem').filter({ hasText: '복원 전' })).toHaveCount(1);
+
+    // An Office document written back keeps copies of its file: one goes back in the file's place, asking first, and
+    // the file as it was is kept as a copy too.
+    const file = path.join(directory, '보고서.docx');
+    await writeFile(file, 'office bytes after the write');
+    const python = path.resolve(
+      'backend',
+      '.venv',
+      process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
+    );
+    const seeded = spawnSync(
+      python,
+      ['-c', WRITTEN_BACK, path.join(wikiDirectory, 'wiki.db'), file],
+      { encoding: 'utf8', env: { ...process.env, PYTHONPATH: '' } },
+    );
+    expect(seeded.stderr).toBe('');
+    await page.reload();
+    await widget(page, 'documents').locator('.document-row').filter({ hasText: '보고서' }).click();
+    const source = drawer(page).locator('.document-source');
+    await source.locator('.writeback-backups summary').click();
+    const copies = source.getByRole('list', { name: '원본 백업 목록' });
+    await expect(copies.getByRole('listitem')).toHaveCount(1);
+    await expect(copies).toContainText('반영 전');
+    await page.screenshot({ path: 'test-results/document-source-backups.png' });
+    await copies.getByRole('button', { name: /원본 백업에서 복원$/ }).click();
+    const restoreAsk = source.getByRole('group', {
+      name: /원본 파일\(보고서\.docx\)을 .+ 바꿀까요/,
+    });
+    const restore = restoreAsk.getByRole('button', { name: '원본 백업에서 복원', exact: true });
+    await expect(restore).toHaveAttribute('data-destructive', 'true');
+    await restore.click();
+    await expect(page.getByText(/원본 파일 자리에 복원했습니다/)).toBeVisible();
+    expect(await readFile(file, 'utf8')).toBe('office bytes before the write');
+    await expect(copies.getByRole('listitem')).toHaveCount(2);
+    await expect(copies.getByRole('listitem').filter({ hasText: '복원 전' })).toHaveCount(1);
+    await expect(
+      copies.getByRole('listitem').filter({ hasText: '지금 원본 파일과 같음' }),
+    ).toContainText('반영 전');
+    expect(errors).toEqual([]);
   } finally {
     await app?.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

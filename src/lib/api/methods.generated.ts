@@ -150,6 +150,7 @@ export type ScreenMethod =
   | 'api.open_docs'
   | 'api.rotate_token'
   | 'api.update'
+  | 'app.relaunch'
   | 'diagnostics.copy'
   | 'diagnostics.open_folder'
   | 'import.choose'
