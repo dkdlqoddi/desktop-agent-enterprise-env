@@ -111,6 +111,12 @@ test('secrets quoted by what is logged are redacted, and the report leaves the u
     redact('the token count is 12; x-api-key: abc, next'),
     'the token count is 12; x-api-key: [REDACTED], next',
   );
+  // A bearer token after its header name, and every cookie of a cookie header, go whole.
+  assert.equal(
+    redact('Authorization: Bearer abcdef.ghijkl\nnext'),
+    'Authorization: [REDACTED]\nnext',
+  );
+  assert.equal(redact('cookie: sid=abc123; theme=dark'), 'cookie: [REDACTED]');
   assert.equal(anonymize('D:\\data\\wiki.db'), 'D:\\data\\wiki.db');
 });
 

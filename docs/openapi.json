@@ -1,0 +1,5981 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Private Agent Local API",
+    "version": "0.1.0",
+    "description": "AI 도구가 이 PC의 Private Agent를 쓰는 로컬 API입니다. MCP 서버는 /mcp에 있습니다. 매뉴얼: /docs"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:47615/api/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    },
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "system",
+      "description": "시스템 — 연결 확인과 매뉴얼, 그리고 모든 기능을 메서드 이름으로 부르는 범용 호출입니다."
+    },
+    {
+      "name": "search",
+      "description": "검색 — 검색창과 같은 검색입니다. auto는 PC 안의 단어 검색, prompt는 LLM이 질문을 분석해 문서와 섹션을 고르는 AI 검색(최대 4번 LLM 요청)입니다."
+    },
+    {
+      "name": "documents",
+      "description": "문서 — Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML 페이지도 함께 가집니다. 검색과 LLM은 본문을 읽습니다."
+    },
+    {
+      "name": "backups",
+      "description": "백업·복원 — Wiki(wiki.db)를 Wiki 폴더의 backups 폴더에 파일 하나로 백업합니다. 앱이 켜져 있으면 하루에 한 번 자동으로 백업하고(최근 7개 보관), 직접 만든 백업도 따로 최근 7개를 보관합니다. 복원은 앱을 다시 실행할 때 이루어지며, 그때까지의 Wiki는 복원 전 백업으로 남습니다."
+    },
+    {
+      "name": "assistant",
+      "description": "질문·대화·브리핑 — 질문은 검색창의 AI 답변과 같습니다: AI 검색으로 고른 문서의 발췌를 근거로 LLM이 답하고, 대화로 저장합니다."
+    },
+    {
+      "name": "tasks",
+      "description": "할 일·알림 — 날짜는 시간대가 있는 ISO 8601로 주고받습니다. 저장은 UTC로 합니다."
+    },
+    {
+      "name": "prompts",
+      "description": "프롬프트·실행 기록 — 프롬프트 템플릿의 {{변수}}를 채워 LLM에 보내고, 모든 실행을 기록합니다."
+    },
+    {
+      "name": "schedules",
+      "description": "예약 실행 — 앱이 켜져 있는 동안 정해진 시각에 프롬프트를 실행합니다. 켜 둘 수 있는 예약은 50개입니다."
+    },
+    {
+      "name": "routines",
+      "description": "자동 작업 — 미리 만들어 둔 작업을 골라 정한 주기마다 실행합니다: Confluence 페이지·JIRA 티켓 변경 확인, JIRA 검색 결과 알림, JIRA 프로젝트 진행 현황, 원본 최신 내용으로 업데이트(파일·폴더), 새 문서 AI 분석, 업무 보고 초안. 앱이 켜져 있는 동안 한 번에 하나씩 실행하며, JIRA·Confluence에는 사이트 계정으로 로그인합니다. 찾은 내용은 실행 기록과 Wiki 문서에 남습니다."
+    },
+    {
+      "name": "imports",
+      "description": "자료 가져오기 — 가져오기 상자와 같습니다: JIRA·Confluence 링크, Office·.rtf·이미지·.txt·.md 파일 또는 폴더의 전체 경로를 주면 알맞은 가져오기를 백그라운드로 시작합니다. 종류마다 한 번에 하나씩 진행합니다. 이미 가져온 경로·링크를 다시 가져오면 새 문서를 만들지 않고 그 문서를 원본의 바뀐 내용으로 업데이트합니다(같은 내용이면 건너뜀, 가져온 뒤 본문을 고친 문서는 replace일 때만)."
+    },
+    {
+      "name": "sites",
+      "description": "사이트 계정 — JIRA·Confluence 주소마다 로그인 계정과 방식을 저장합니다. 비밀번호는 OS 보안 저장소로 암호화하며 API로 돌려주지 않습니다."
+    },
+    {
+      "name": "settings",
+      "description": "설정 — OpenAI·Anthropic 형식과 사용자 지정 헤더로 LLM에 연결합니다. API Key는 바꿀 수만 있고 돌려받을 수 없으며, 헤더는 이름만 돌려줍니다."
+    },
+    {
+      "name": "app",
+      "description": "앱 제어 — 사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "get_health",
+        "tags": ["system"],
+        "summary": "연결 확인. 토큰 없이 부를 수 있습니다.",
+        "description": "메서드 health · 범위 public",
+        "x-scope": "public",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/manual": {
+      "get": {
+        "operationId": "get_manual",
+        "tags": ["system"],
+        "summary": "API 매뉴얼. 토큰 없이 부를 수 있습니다.",
+        "description": "범위 public",
+        "x-scope": "public",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "응답 형식",
+            "schema": {
+              "type": "string",
+              "description": "응답 형식",
+              "enum": ["json", "markdown"],
+              "default": "json"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/stats": {
+      "get": {
+        "operationId": "get_stats",
+        "tags": ["system"],
+        "summary": "문서·키워드·관계·프롬프트 수",
+        "description": "메서드 stats · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage": {
+      "get": {
+        "operationId": "get_storage",
+        "tags": ["system"],
+        "summary": "Wiki 저장 위치",
+        "description": "메서드 storage.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rpc": {
+      "post": {
+        "operationId": "post_rpc",
+        "tags": ["system"],
+        "summary": "모든 기능을 메서드 이름으로 호출합니다. 결과는 각 메서드의 결과입니다.",
+        "description": "범위 varies",
+        "x-scope": "varies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "description": "메서드 이름 (아래 ‘전체 메서드’ 참고)"
+                  },
+                  "params": {
+                    "type": "object",
+                    "description": "메서드에 넘길 값"
+                  }
+                },
+                "required": ["method"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search": {
+      "get": {
+        "operationId": "get_search",
+        "tags": ["search"],
+        "summary": "문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만 (나누어 받으면 여러 부분으로 저장한 가져오기는 parts가 있는 하나로)",
+        "description": "메서드 wiki.search · 범위 read · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "description": "검색어 또는 질문 (최대 2,000자). \"따옴표\"는 그대로 찾을 문구",
+            "schema": {
+              "type": "string",
+              "description": "검색어 또는 질문 (최대 2,000자). \"따옴표\"는 그대로 찾을 문구"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "auto: 검색창과 같은 단어 검색(추출 키워드와 그 한/영 별칭도 일치) · word: 모든 단어 포함 · keyword: 추출 키워드나 그 별칭(쉼표로 구분, 예: 데이터베이스 → database) · prompt: AI 검색(느림)",
+            "schema": {
+              "type": "string",
+              "description": "auto: 검색창과 같은 단어 검색(추출 키워드와 그 한/영 별칭도 일치) · word: 모든 단어 포함 · keyword: 추출 키워드나 그 별칭(쉼표로 구분, 예: 데이터베이스 → database) · prompt: AI 검색(느림)",
+              "enum": ["auto", "word", "keyword", "prompt"],
+              "default": "auto"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "한 번에 받을 개수 1~100. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+            "schema": {
+              "type": "integer",
+              "description": "한 번에 받을 개수 1~100. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다",
+            "schema": {
+              "type": "string",
+              "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "description": "출처 (manual = 직접 쓴 문서)",
+            "schema": {
+              "type": "string",
+              "description": "출처 (manual = 직접 쓴 문서)",
+              "enum": ["manual", "rtf", "office", "image", "text", "markdown", "confluence", "jira"]
+            }
+          },
+          {
+            "name": "analysis",
+            "in": "query",
+            "required": false,
+            "description": "AI 분석 여부",
+            "schema": {
+              "type": "string",
+              "description": "AI 분석 여부",
+              "enum": ["analyzed", "not_analyzed", "failed", "running"]
+            }
+          },
+          {
+            "name": "updated_from",
+            "in": "query",
+            "required": false,
+            "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601",
+            "schema": {
+              "type": "string",
+              "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601"
+            }
+          },
+          {
+            "name": "updated_to",
+            "in": "query",
+            "required": false,
+            "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601",
+            "schema": {
+              "type": "string",
+              "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_search",
+        "tags": ["search"],
+        "summary": "문서 검색 (긴 질문은 본문으로)",
+        "description": "메서드 wiki.search · 범위 read · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "검색어 또는 질문 (최대 2,000자)"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "description": "검색 방식",
+                    "enum": ["auto", "word", "keyword", "prompt"],
+                    "default": "auto"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "description": "한 번에 받을 개수 1~100. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "cursor": {
+                    "type": "string",
+                    "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다"
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "출처 (manual = 직접 쓴 문서)",
+                    "enum": [
+                      "manual",
+                      "rtf",
+                      "office",
+                      "image",
+                      "text",
+                      "markdown",
+                      "confluence",
+                      "jira"
+                    ]
+                  },
+                  "analysis": {
+                    "type": "string",
+                    "description": "AI 분석 여부",
+                    "enum": ["analyzed", "not_analyzed", "failed", "running"]
+                  },
+                  "updated_from": {
+                    "type": "string",
+                    "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601"
+                  },
+                  "updated_to": {
+                    "type": "string",
+                    "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601"
+                  }
+                },
+                "required": ["query"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents": {
+      "get": {
+        "operationId": "get_documents",
+        "tags": ["documents"],
+        "summary": "문서 목록 (거르기·나누어 받기)",
+        "description": "메서드 documents.query · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "description": "제목·요약·본문 앞부분·키워드에 들어 있는 글",
+            "schema": {
+              "type": "string",
+              "description": "제목·요약·본문 앞부분·키워드에 들어 있는 글"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "description": "출처 (manual = 직접 쓴 문서)",
+            "schema": {
+              "type": "string",
+              "description": "출처 (manual = 직접 쓴 문서)",
+              "enum": ["manual", "rtf", "office", "image", "text", "markdown", "confluence", "jira"]
+            }
+          },
+          {
+            "name": "analysis",
+            "in": "query",
+            "required": false,
+            "description": "AI 분석 여부",
+            "schema": {
+              "type": "string",
+              "description": "AI 분석 여부",
+              "enum": ["analyzed", "not_analyzed", "failed", "running"]
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "description": "추출 키워드 (정확히 일치)",
+            "schema": {
+              "type": "string",
+              "description": "추출 키워드 (정확히 일치)"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "최대 개수 1~500",
+            "schema": {
+              "type": "integer",
+              "description": "최대 개수 1~500",
+              "default": 50,
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "건너뛸 개수",
+            "schema": {
+              "type": "integer",
+              "description": "건너뛸 개수",
+              "default": 0,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_documents",
+        "tags": ["documents"],
+        "summary": "새 Markdown 문서 저장",
+        "description": "메서드 wiki.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "제목 (최대 200자)"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "본문 Markdown (최대 80,000자)"
+                  }
+                },
+                "required": ["title", "content"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{id}": {
+      "get": {
+        "operationId": "get_documents_id",
+        "tags": ["documents"],
+        "summary": "문서 하나",
+        "description": "메서드 documents.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          },
+          {
+            "name": "include_html",
+            "in": "query",
+            "required": false,
+            "description": "HTML 문서의 HTML 페이지도 받기 (클 수 있음)",
+            "schema": {
+              "type": "boolean",
+              "description": "HTML 문서의 HTML 페이지도 받기 (클 수 있음)",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put_documents_id",
+        "tags": ["documents"],
+        "summary": "문서 고치기. 제목과 본문을 모두 보냅니다. 본문이 바뀌면 AI 분석 결과를 지웁니다.",
+        "description": "메서드 wiki.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "제목 (최대 200자)"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "본문 Markdown (최대 80,000자)"
+                  },
+                  "expected_revision": {
+                    "type": "integer",
+                    "description": "읽은 문서의 revision. 그 뒤에 다른 곳에서 문서가 바뀌었으면 저장하지 않고 거절합니다"
+                  }
+                },
+                "required": ["title", "content"]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_documents_id",
+        "tags": ["documents"],
+        "summary": "문서를 휴지통으로 (30일 보관)",
+        "description": "메서드 wiki.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/delete": {
+      "post": {
+        "operationId": "post_documents_delete",
+        "tags": ["documents"],
+        "summary": "여러 문서를 휴지통으로 (모두 또는 전혀)",
+        "description": "메서드 wiki.delete_many · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "문서 ID 목록 (1~10,000개)"
+                  }
+                },
+                "required": ["ids"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/trash": {
+      "get": {
+        "operationId": "get_documents_trash",
+        "tags": ["documents"],
+        "summary": "휴지통의 문서 목록 (최근 삭제 순)",
+        "description": "메서드 wiki.trash · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/restore": {
+      "post": {
+        "operationId": "post_documents_restore",
+        "tags": ["documents"],
+        "summary": "휴지통의 문서 복원",
+        "description": "메서드 wiki.restore · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "문서 ID 목록 (1~10,000개)"
+                  }
+                },
+                "required": ["ids"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/purge": {
+      "post": {
+        "operationId": "post_documents_purge",
+        "tags": ["documents"],
+        "summary": "휴지통의 문서 영구 삭제: ids, 또는 all: true로 모두 (허용 범위 ‘전체’)",
+        "description": "메서드 wiki.purge · 범위 destructive",
+        "x-scope": "destructive",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "문서 ID 목록 (1~10,000개); all이 true면 생략"
+                  },
+                  "all": {
+                    "type": "boolean",
+                    "description": "휴지통을 모두 비우기",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/clear-analysis": {
+      "post": {
+        "operationId": "post_documents_clear_analysis",
+        "tags": ["documents"],
+        "summary": "여러 문서의 AI 분석 결과(요약·키워드·관계·목차) 지우기",
+        "description": "메서드 wiki.clear_analysis · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "문서 ID 목록 (1~10,000개)"
+                  }
+                },
+                "required": ["ids"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{id}/analyze": {
+      "post": {
+        "operationId": "post_documents_id_analyze",
+        "tags": ["documents"],
+        "summary": "문서 하나를 LLM으로 바로 분석 (끝날 때까지 기다림)",
+        "description": "메서드 wiki.analyze · 범위 write · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{id}/source-markdown": {
+      "get": {
+        "operationId": "get_documents_id_source_markdown",
+        "tags": ["documents"],
+        "summary": "가져온 문서의 Markdown 원문",
+        "description": "메서드 wiki.source_markdown · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{id}/source-html": {
+      "get": {
+        "operationId": "get_documents_id_source_html",
+        "tags": ["documents"],
+        "summary": "가져온 파일의 HTML 원문",
+        "description": "메서드 wiki.source_html · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{id}/source-status": {
+      "get": {
+        "operationId": "get_documents_id_source_status",
+        "tags": ["documents"],
+        "summary": "가져온 파일이 지금도 문서가 가져간 그대로인지: same·changed·missing·unreadable (페이지·티켓은 unknown)",
+        "description": "메서드 wiki.source_status · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{id}/write-back": {
+      "post": {
+        "operationId": "post_documents_id_write_back",
+        "tags": ["documents"],
+        "summary": "가져온 뒤 고친 내용을 원본 파일에 반영: 바뀐 줄만 원본의 서식을 살려 쓰고 저장 (Word·Excel 셀·PowerPoint·Visio 도형 글, 원본 백업 후 숨은 Office로). 백그라운드로 실행하고 GET /write-back으로 확인",
+        "description": "메서드 writeback.start · 범위 files",
+        "x-scope": "files",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/write-back": {
+      "get": {
+        "operationId": "get_write_back",
+        "tags": ["documents"],
+        "summary": "원본 반영 진행 상황과 결과",
+        "description": "메서드 writeback.status · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "description": "작업 ID (없으면 마지막 작업)",
+            "schema": {
+              "type": "string",
+              "description": "작업 ID (없으면 마지막 작업)"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/write-back/cancel": {
+      "post": {
+        "operationId": "post_write_back_cancel",
+        "tags": ["documents"],
+        "summary": "원본 반영 중지 (파일을 저장하기 전까지)",
+        "description": "메서드 writeback.cancel · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{doc_id}/backups": {
+      "get": {
+        "operationId": "get_documents_doc_id_backups",
+        "tags": ["documents"],
+        "summary": "원본 파일의 백업 목록: 원본에 반영하거나 복원하기 전의 파일을 파일마다 최근 5개 (최근 것부터). interrupted는 앱이 강제로 종료되어 끊긴 반영이 남긴 파일 상태(intact·partial·unknown)",
+        "description": "메서드 writeback.backups · 범위 files",
+        "x-scope": "files",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{doc_id}/backups/restore": {
+      "post": {
+        "operationId": "post_documents_doc_id_backups_restore",
+        "tags": ["documents"],
+        "summary": "원본 백업 하나를 원본 파일 자리에 복원 (그 문서의 파일을 백업한 것만, 지금 파일은 먼저 백업). 문서는 그대로이니 다시 읽으려면 원본에서 업데이트하세요",
+        "description": "메서드 writeback.restore_backup · 범위 files",
+        "x-scope": "files",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "backup": {
+                    "type": "string",
+                    "description": "복원할 백업의 id (GET /documents/{doc_id}/backups)"
+                  }
+                },
+                "required": ["backup"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis": {
+      "post": {
+        "operationId": "post_analysis",
+        "tags": ["documents"],
+        "summary": "여러 문서를 차례로 AI 분석 (백그라운드, GET /analysis로 확인)",
+        "description": "메서드 analysis.start · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "문서 ID 목록 (1~1,000개)"
+                  }
+                },
+                "required": ["ids"]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_analysis",
+        "tags": ["documents"],
+        "summary": "AI 분석 작업 진행 상황",
+        "description": "메서드 analysis.status · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/cancel": {
+      "post": {
+        "operationId": "post_analysis_cancel",
+        "tags": ["documents"],
+        "summary": "AI 분석 작업 중지 (분석 중인 문서 다음)",
+        "description": "메서드 analysis.cancel · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/dismiss": {
+      "post": {
+        "operationId": "post_analysis_dismiss",
+        "tags": ["documents"],
+        "summary": "끝난 AI 분석 작업 지우기",
+        "description": "메서드 analysis.dismiss · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "작업 ID"
+                  }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/graph": {
+      "get": {
+        "operationId": "get_graph",
+        "tags": ["documents"],
+        "summary": "지식 관계도: 키워드(최대 1,000개)·관계·문서",
+        "description": "메서드 wiki.graph · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups": {
+      "get": {
+        "operationId": "get_backups",
+        "tags": ["backups"],
+        "summary": "백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore)과 지난 복원 결과(last_restore)",
+        "description": "메서드 wiki.backups · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_backups",
+        "tags": ["backups"],
+        "summary": "Wiki 백업 지금 만들기. 만든 백업과 보관 개수를 넘어 지운 직접 백업(removed)을 돌려줌",
+        "description": "메서드 wiki.backup · 범위 write · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backups/restore": {
+      "post": {
+        "operationId": "post_backups_restore",
+        "tags": ["backups"],
+        "summary": "백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다",
+        "description": "메서드 wiki.restore_backup · 범위 destructive · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "destructive",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "복원할 백업 파일 이름 (GET /backups의 file). cancel이 true면 생략"
+                  },
+                  "cancel": {
+                    "type": "boolean",
+                    "description": "예약한 복원 취소",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ask": {
+      "post": {
+        "operationId": "post_ask",
+        "tags": ["assistant"],
+        "summary": "문서를 근거로 질문하기",
+        "description": "메서드 assistant.ask · 범위 write · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "description": "질문 (최대 2,000자)"
+                  },
+                  "conversation_id": {
+                    "type": "string",
+                    "description": "이어서 물을 대화 ID"
+                  },
+                  "document_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "이 문서들만 근거로 쓰기 (최대 6개)"
+                  }
+                },
+                "required": ["question"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ask/cancel": {
+      "post": {
+        "operationId": "post_ask_cancel",
+        "tags": ["assistant"],
+        "summary": "진행 중인 답변 중지: 받은 데까지 \"답변을 중지했습니다\" 표시와 함께 대화에 저장. cancelled는 중지할 답변이 있었는지",
+        "description": "메서드 assistant.cancel · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "conversation_id": {
+                    "type": "string",
+                    "description": "답변 중인 대화 ID"
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "description": "질문의 요청 ID (대화 ID를 아직 모르는 새 대화)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations": {
+      "get": {
+        "operationId": "get_conversations",
+        "tags": ["assistant"],
+        "summary": "최근 대화 50개, 또는 limit·cursor로 나누어 받기",
+        "description": "메서드 assistant.conversations · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "한 번에 받을 개수 1~200. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+            "schema": {
+              "type": "integer",
+              "description": "한 번에 받을 개수 1~200. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다",
+            "schema": {
+              "type": "string",
+              "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다"
+            }
+          },
+          {
+            "name": "updated_from",
+            "in": "query",
+            "required": false,
+            "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601",
+            "schema": {
+              "type": "string",
+              "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601"
+            }
+          },
+          {
+            "name": "updated_to",
+            "in": "query",
+            "required": false,
+            "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601",
+            "schema": {
+              "type": "string",
+              "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{id}": {
+      "get": {
+        "operationId": "get_conversations_id",
+        "tags": ["assistant"],
+        "summary": "대화의 메시지·근거·검색 과정",
+        "description": "메서드 assistant.history · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_conversations_id",
+        "tags": ["assistant"],
+        "summary": "대화 삭제",
+        "description": "메서드 assistant.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/briefing": {
+      "get": {
+        "operationId": "get_briefing",
+        "tags": ["assistant"],
+        "summary": "오늘의 브리핑 자료",
+        "description": "메서드 briefing.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "timezone_offset",
+            "in": "query",
+            "required": false,
+            "description": "현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대",
+            "schema": {
+              "type": "integer",
+              "description": "현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_briefing",
+        "tags": ["assistant"],
+        "summary": "LLM이 쓰는 오늘의 브리핑",
+        "description": "메서드 briefing.generate · 범위 read · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "timezone_offset": {
+                    "type": "integer",
+                    "description": "현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks": {
+      "get": {
+        "operationId": "get_tasks",
+        "tags": ["tasks"],
+        "summary": "할 일 목록",
+        "description": "메서드 tasks.query · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "상태",
+            "schema": {
+              "type": "string",
+              "description": "상태",
+              "enum": ["open", "done", "paused", "all"],
+              "default": "all"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_tasks",
+        "tags": ["tasks"],
+        "summary": "할 일 만들기",
+        "description": "메서드 tasks.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "할 일 (최대 200자)"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "메모 (최대 8,000자)"
+                  },
+                  "assignee": {
+                    "type": "string",
+                    "description": "담당자"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "상태",
+                    "enum": ["open", "done", "paused"]
+                  },
+                  "due_at": {
+                    "type": "string",
+                    "description": "마감: 시간대가 있는 ISO 8601 (예: 2026-10-02T18:00:00+09:00), 없으면 null"
+                  },
+                  "remind_at": {
+                    "type": "string",
+                    "description": "알림 시각: 시간대가 있는 ISO 8601, 없으면 null"
+                  },
+                  "repeat": {
+                    "type": "string",
+                    "description": "알림 반복 (반복하려면 remind_at 필요)",
+                    "enum": ["none", "daily", "weekly"]
+                  },
+                  "source_id": {
+                    "type": "string",
+                    "description": "출처 문서 ID"
+                  }
+                },
+                "required": ["title"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}": {
+      "put": {
+        "operationId": "put_tasks_id",
+        "tags": ["tasks"],
+        "summary": "할 일 고치기 (보낸 항목만 바뀜)",
+        "description": "메서드 tasks.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "할 일 (최대 200자)"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "메모 (최대 8,000자)"
+                  },
+                  "assignee": {
+                    "type": "string",
+                    "description": "담당자"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "상태",
+                    "enum": ["open", "done", "paused"]
+                  },
+                  "due_at": {
+                    "type": "string",
+                    "description": "마감: 시간대가 있는 ISO 8601 (예: 2026-10-02T18:00:00+09:00), 없으면 null"
+                  },
+                  "remind_at": {
+                    "type": "string",
+                    "description": "알림 시각: 시간대가 있는 ISO 8601, 없으면 null"
+                  },
+                  "repeat": {
+                    "type": "string",
+                    "description": "알림 반복 (반복하려면 remind_at 필요)",
+                    "enum": ["none", "daily", "weekly"]
+                  },
+                  "source_id": {
+                    "type": "string",
+                    "description": "출처 문서 ID"
+                  },
+                  "expected_updated_at": {
+                    "type": "string",
+                    "description": "이 시각 이후 바뀌었으면 거절 (동시 수정 방지)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_tasks_id",
+        "tags": ["tasks"],
+        "summary": "할 일 삭제",
+        "description": "메서드 tasks.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/batch": {
+      "post": {
+        "operationId": "post_tasks_batch",
+        "tags": ["tasks"],
+        "summary": "할 일 여러 개를 한 번에 저장",
+        "description": "메서드 tasks.save_many · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tasks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    },
+                    "description": "할 일 (1~20개)"
+                  }
+                },
+                "required": ["tasks"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/extract": {
+      "post": {
+        "operationId": "post_tasks_extract",
+        "tags": ["tasks"],
+        "summary": "글이나 문서에서 할 일 후보 추출 (저장하지 않음)",
+        "description": "메서드 tasks.extract · 범위 read · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "추출할 글 (최대 32,000자). source_id를 주면 생략"
+                  },
+                  "source_id": {
+                    "type": "string",
+                    "description": "추출할 문서 ID"
+                  },
+                  "timezone_offset": {
+                    "type": "integer",
+                    "description": "현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/snooze": {
+      "post": {
+        "operationId": "post_tasks_id_snooze",
+        "tags": ["tasks"],
+        "summary": "알림 미루기",
+        "description": "메서드 tasks.snooze · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "minutes": {
+                    "type": "integer",
+                    "description": "미룰 시간(분)",
+                    "enum": [10, 60, 1440],
+                    "default": 10
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reminders": {
+      "get": {
+        "operationId": "get_reminders",
+        "tags": ["tasks"],
+        "summary": "지금 알릴 할 일",
+        "description": "메서드 reminders.due · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reminders/{id}/ack": {
+      "post": {
+        "operationId": "post_reminders_id_ack",
+        "tags": ["tasks"],
+        "summary": "알림 확인 (반복 알림은 다음 회차로)",
+        "description": "메서드 reminders.ack · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "remind_at": {
+                    "type": "string",
+                    "description": "확인할 알림 시각 (할 일의 remind_at)"
+                  }
+                },
+                "required": ["remind_at"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reminders/status": {
+      "get": {
+        "operationId": "get_reminders_status",
+        "tags": ["tasks"],
+        "summary": "시스템 알림 지원 여부",
+        "description": "메서드 reminders.status · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prompts": {
+      "get": {
+        "operationId": "get_prompts",
+        "tags": ["prompts"],
+        "summary": "프롬프트 템플릿 목록",
+        "description": "메서드 prompts.list · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_prompts",
+        "tags": ["prompts"],
+        "summary": "프롬프트 템플릿 만들기",
+        "description": "메서드 prompts.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "제목 (최대 120자)"
+                  },
+                  "template": {
+                    "type": "string",
+                    "description": "프롬프트. {{변수}} 자리는 실행할 때 채웁니다 (최대 40,000자)"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "설명"
+                  },
+                  "category": {
+                    "type": "string",
+                    "description": "분류"
+                  },
+                  "system_prompt": {
+                    "type": "string",
+                    "description": "시스템 프롬프트"
+                  }
+                },
+                "required": ["title", "template"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prompts/{id}": {
+      "put": {
+        "operationId": "put_prompts_id",
+        "tags": ["prompts"],
+        "summary": "프롬프트 템플릿 고치기 (보낸 항목만 바뀜)",
+        "description": "메서드 prompts.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "제목 (최대 120자)"
+                  },
+                  "template": {
+                    "type": "string",
+                    "description": "프롬프트. {{변수}} 자리는 실행할 때 채웁니다 (최대 40,000자)"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "설명"
+                  },
+                  "category": {
+                    "type": "string",
+                    "description": "분류"
+                  },
+                  "system_prompt": {
+                    "type": "string",
+                    "description": "시스템 프롬프트"
+                  }
+                },
+                "required": ["title", "template"]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_prompts_id",
+        "tags": ["prompts"],
+        "summary": "프롬프트 템플릿 삭제",
+        "description": "메서드 prompts.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prompts/{prompt_id}/run": {
+      "post": {
+        "operationId": "post_prompts_prompt_id_run",
+        "tags": ["prompts"],
+        "summary": "프롬프트 실행",
+        "description": "메서드 prompts.run · 범위 write · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "prompt_id",
+            "in": "path",
+            "required": true,
+            "description": "프롬프트 ID",
+            "schema": {
+              "type": "string",
+              "description": "프롬프트 ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "variables": {
+                    "type": "object",
+                    "description": "{{변수}} 값 {\"변수\": \"값\"}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs": {
+      "get": {
+        "operationId": "get_runs",
+        "tags": ["prompts"],
+        "summary": "실행 기록 목록 (최근 순)",
+        "description": "메서드 runs.list · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "최대 개수 1~200",
+            "schema": {
+              "type": "integer",
+              "description": "최대 개수 1~200",
+              "default": 50,
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "prompt_id",
+            "in": "query",
+            "required": false,
+            "description": "프롬프트 ID",
+            "schema": {
+              "type": "string",
+              "description": "프롬프트 ID"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "query",
+            "required": false,
+            "description": "예약 ID",
+            "schema": {
+              "type": "string",
+              "description": "예약 ID"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "결과",
+            "schema": {
+              "type": "string",
+              "description": "결과",
+              "enum": ["success", "error"]
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "description": "실행 방식",
+            "schema": {
+              "type": "string",
+              "description": "실행 방식",
+              "enum": ["manual", "scheduled"]
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "description": "제목·입력·출력에 들어 있는 글",
+            "schema": {
+              "type": "string",
+              "description": "제목·입력·출력에 들어 있는 글"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "이 시각(created_at)보다 이전 기록만",
+            "schema": {
+              "type": "string",
+              "description": "이 시각(created_at)보다 이전 기록만"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/stats": {
+      "get": {
+        "operationId": "get_runs_stats",
+        "tags": ["prompts"],
+        "summary": "기간별 실행 통계",
+        "description": "메서드 runs.stats · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "기간(일)",
+            "schema": {
+              "type": "integer",
+              "description": "기간(일)",
+              "enum": [7, 14, 30],
+              "default": 14
+            }
+          },
+          {
+            "name": "prompt_id",
+            "in": "query",
+            "required": false,
+            "description": "프롬프트 ID",
+            "schema": {
+              "type": "string",
+              "description": "프롬프트 ID"
+            }
+          },
+          {
+            "name": "timezone_offset",
+            "in": "query",
+            "required": false,
+            "description": "현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대",
+            "schema": {
+              "type": "integer",
+              "description": "현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/active": {
+      "get": {
+        "operationId": "get_runs_active",
+        "tags": ["prompts"],
+        "summary": "지금 실행 중인 프롬프트",
+        "description": "메서드 runs.active · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}": {
+      "get": {
+        "operationId": "get_runs_id",
+        "tags": ["prompts"],
+        "summary": "실행 기록 하나 (입력·출력)",
+        "description": "메서드 runs.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_runs_id",
+        "tags": ["prompts"],
+        "summary": "실행 기록 삭제",
+        "description": "메서드 runs.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schedules": {
+      "get": {
+        "operationId": "get_schedules",
+        "tags": ["schedules"],
+        "summary": "예약 목록",
+        "description": "메서드 schedules.list · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_schedules",
+        "tags": ["schedules"],
+        "summary": "예약 만들기",
+        "description": "메서드 schedules.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt_id": {
+                    "type": "string",
+                    "description": "실행할 프롬프트 ID"
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "description": "반복 주기",
+                    "enum": ["once", "hourly", "daily", "weekdays", "weekly", "monthly"]
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "예약 이름 (비우면 프롬프트 제목)"
+                  },
+                  "variables": {
+                    "type": "object",
+                    "description": "프롬프트 변수 값 {\"변수\": \"값\"}"
+                  },
+                  "run_time": {
+                    "type": "string",
+                    "description": "실행 시각 HH:MM (hourly는 분만 사용)"
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "description": "weekly의 요일: 0=월요일 … 6=일요일"
+                  },
+                  "month_day": {
+                    "type": "integer",
+                    "description": "monthly의 날짜 1~31 (없는 날은 그 달의 마지막 날)"
+                  },
+                  "run_at": {
+                    "type": "string",
+                    "description": "once의 실행 일시: 시간대가 있는 ISO 8601"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "켜기"
+                  },
+                  "notify": {
+                    "type": "boolean",
+                    "description": "끝나면 알림"
+                  }
+                },
+                "required": ["prompt_id", "frequency"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schedules/{id}": {
+      "put": {
+        "operationId": "put_schedules_id",
+        "tags": ["schedules"],
+        "summary": "예약 고치기 (모든 항목을 보냅니다)",
+        "description": "메서드 schedules.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt_id": {
+                    "type": "string",
+                    "description": "실행할 프롬프트 ID"
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "description": "반복 주기",
+                    "enum": ["once", "hourly", "daily", "weekdays", "weekly", "monthly"]
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "예약 이름 (비우면 프롬프트 제목)"
+                  },
+                  "variables": {
+                    "type": "object",
+                    "description": "프롬프트 변수 값 {\"변수\": \"값\"}"
+                  },
+                  "run_time": {
+                    "type": "string",
+                    "description": "실행 시각 HH:MM (hourly는 분만 사용)"
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "description": "weekly의 요일: 0=월요일 … 6=일요일"
+                  },
+                  "month_day": {
+                    "type": "integer",
+                    "description": "monthly의 날짜 1~31 (없는 날은 그 달의 마지막 날)"
+                  },
+                  "run_at": {
+                    "type": "string",
+                    "description": "once의 실행 일시: 시간대가 있는 ISO 8601"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "켜기"
+                  },
+                  "notify": {
+                    "type": "boolean",
+                    "description": "끝나면 알림"
+                  }
+                },
+                "required": ["prompt_id", "frequency"]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_schedules_id",
+        "tags": ["schedules"],
+        "summary": "예약 삭제",
+        "description": "메서드 schedules.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schedules/{id}/toggle": {
+      "post": {
+        "operationId": "post_schedules_id_toggle",
+        "tags": ["schedules"],
+        "summary": "예약 켜기·끄기",
+        "description": "메서드 schedules.toggle · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "켜기"
+                  }
+                },
+                "required": ["enabled"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schedules/{id}/run": {
+      "post": {
+        "operationId": "post_schedules_id_run",
+        "tags": ["schedules"],
+        "summary": "예약을 지금 한 번 실행",
+        "description": "메서드 schedules.run · 범위 write · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/catalog": {
+      "get": {
+        "operationId": "get_routines_catalog",
+        "tags": ["routines"],
+        "summary": "자동 작업 종류와 입력 항목",
+        "description": "메서드 routines.catalog · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines": {
+      "get": {
+        "operationId": "get_routines",
+        "tags": ["routines"],
+        "summary": "자동 작업 목록",
+        "description": "메서드 routines.list · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_routines",
+        "tags": ["routines"],
+        "summary": "자동 작업 만들기",
+        "description": "메서드 routines.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "자동 작업 종류 (routines.catalog의 kind). 만들 때만 씁니다",
+                    "enum": [
+                      "confluence_watch",
+                      "jira_watch",
+                      "jira_filter",
+                      "jira_project",
+                      "source_refresh",
+                      "analyze_new",
+                      "work_report"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "이름 (최대 80자, 비우면 종류의 이름)"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "종류의 입력 항목 {key: 값} (routines.catalog의 fields). 목록 항목(urls·paths)은 문자열 배열"
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "description": "반복: interval(분 간격) · daily · weekdays · weekly · monthly",
+                    "enum": ["interval", "daily", "weekdays", "weekly", "monthly"]
+                  },
+                  "interval": {
+                    "type": "integer",
+                    "description": "interval의 간격(분)",
+                    "enum": [15, 30, 60, 120, 180, 360, 720, 1440]
+                  },
+                  "run_time": {
+                    "type": "string",
+                    "description": "daily·weekdays·weekly·monthly의 시각 HH:MM"
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "description": "weekly의 요일: 0=월요일 … 6=일요일"
+                  },
+                  "month_day": {
+                    "type": "integer",
+                    "description": "monthly의 날짜 1~31 (없는 날은 그 달의 마지막 날)"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "켜기"
+                  },
+                  "notify": {
+                    "type": "boolean",
+                    "description": "찾은 것이 있거나 실패하면 알림"
+                  }
+                },
+                "required": ["kind"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/runs": {
+      "get": {
+        "operationId": "get_routines_runs",
+        "tags": ["routines"],
+        "summary": "모든 자동 작업의 최근 실행",
+        "description": "메서드 routines.runs · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "최대 개수 1~30",
+            "schema": {
+              "type": "integer",
+              "description": "최대 개수 1~30",
+              "default": 10,
+              "minimum": 1,
+              "maximum": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}": {
+      "get": {
+        "operationId": "get_routines_id",
+        "tags": ["routines"],
+        "summary": "자동 작업 하나",
+        "description": "메서드 routines.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put_routines_id",
+        "tags": ["routines"],
+        "summary": "자동 작업 고치기 (보낸 항목만 바뀜)",
+        "description": "메서드 routines.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "자동 작업 종류 (routines.catalog의 kind). 만들 때만 씁니다",
+                    "enum": [
+                      "confluence_watch",
+                      "jira_watch",
+                      "jira_filter",
+                      "jira_project",
+                      "source_refresh",
+                      "analyze_new",
+                      "work_report"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "이름 (최대 80자, 비우면 종류의 이름)"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "종류의 입력 항목 {key: 값} (routines.catalog의 fields). 목록 항목(urls·paths)은 문자열 배열"
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "description": "반복: interval(분 간격) · daily · weekdays · weekly · monthly",
+                    "enum": ["interval", "daily", "weekdays", "weekly", "monthly"]
+                  },
+                  "interval": {
+                    "type": "integer",
+                    "description": "interval의 간격(분)",
+                    "enum": [15, 30, 60, 120, 180, 360, 720, 1440]
+                  },
+                  "run_time": {
+                    "type": "string",
+                    "description": "daily·weekdays·weekly·monthly의 시각 HH:MM"
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "description": "weekly의 요일: 0=월요일 … 6=일요일"
+                  },
+                  "month_day": {
+                    "type": "integer",
+                    "description": "monthly의 날짜 1~31 (없는 날은 그 달의 마지막 날)"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "켜기"
+                  },
+                  "notify": {
+                    "type": "boolean",
+                    "description": "찾은 것이 있거나 실패하면 알림"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_routines_id",
+        "tags": ["routines"],
+        "summary": "자동 작업 삭제",
+        "description": "메서드 routines.delete · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/toggle": {
+      "post": {
+        "operationId": "post_routines_id_toggle",
+        "tags": ["routines"],
+        "summary": "자동 작업 켜기·끄기",
+        "description": "메서드 routines.toggle · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "켜기"
+                  }
+                },
+                "required": ["enabled"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/run": {
+      "post": {
+        "operationId": "post_routines_id_run",
+        "tags": ["routines"],
+        "summary": "지금 한 번 실행 (백그라운드). 결과는 GET /routines/{id}/runs",
+        "description": "메서드 routines.run · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/cancel": {
+      "post": {
+        "operationId": "post_routines_id_cancel",
+        "tags": ["routines"],
+        "summary": "실행 중이거나 기다리는 실행 중지",
+        "description": "메서드 routines.cancel · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/runs": {
+      "get": {
+        "operationId": "get_routines_id_runs",
+        "tags": ["routines"],
+        "summary": "자동 작업의 실행 기록과 찾은 내용",
+        "description": "메서드 routines.runs · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "최대 개수 1~30",
+            "schema": {
+              "type": "integer",
+              "description": "최대 개수 1~30",
+              "default": 10,
+              "minimum": 1,
+              "maximum": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/imports": {
+      "post": {
+        "operationId": "post_imports",
+        "tags": ["imports"],
+        "summary": "가져오기 시작",
+        "description": "메서드 import.start · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "description": "JIRA 티켓·Confluence 페이지 링크, 또는 파일·폴더의 전체 경로"
+                  },
+                  "analyze": {
+                    "type": "boolean",
+                    "description": "가져온 뒤 LLM으로 AI 분석",
+                    "default": false
+                  },
+                  "recursive": {
+                    "type": "boolean",
+                    "description": "폴더: 하위 폴더 포함(기본 켬) · Confluence: 하위 페이지 포함(기본 끔)"
+                  },
+                  "folder_kind": {
+                    "type": "string",
+                    "description": "폴더에서 가져올 파일 종류",
+                    "enum": ["office", "rtf", "image", "text"],
+                    "default": "office"
+                  },
+                  "jira_scope": {
+                    "type": "string",
+                    "description": "JIRA: 이 티켓만, 같은 프로젝트의 키워드 검색, 사용자 검색",
+                    "enum": ["issue", "keyword", "user"],
+                    "default": "issue"
+                  },
+                  "keyword": {
+                    "type": "string",
+                    "description": "JIRA keyword 검색어"
+                  },
+                  "user": {
+                    "type": "string",
+                    "description": "JIRA user 검색 대상 (이름 또는 ID)"
+                  },
+                  "role": {
+                    "type": "string",
+                    "description": "JIRA user 검색에서 볼 역할",
+                    "enum": ["any", "assignee", "reporter"],
+                    "default": "any"
+                  },
+                  "doc_id": {
+                    "type": "string",
+                    "description": "업데이트할 문서 ID. 같은 경로·링크를 여러 번 가져온 문서가 있을 때 고릅니다 (비우면 마지막으로 가져온 문서)"
+                  },
+                  "replace": {
+                    "type": "boolean",
+                    "description": "가져온 뒤 본문을 고친 문서도 원본의 내용으로 바꾸기",
+                    "default": false
+                  }
+                },
+                "required": ["source"]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_imports",
+        "tags": ["imports"],
+        "summary": "모든 가져오기와 AI 분석 작업의 진행 상황",
+        "description": "메서드 import.status · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/imports/capabilities": {
+      "get": {
+        "operationId": "get_imports_capabilities",
+        "tags": ["imports"],
+        "summary": "Office·RTF·이미지·텍스트 가져오기를 쓸 수 있는지",
+        "description": "메서드 import.capabilities · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/imports/{kind}/cancel": {
+      "post": {
+        "operationId": "post_imports_kind_cancel",
+        "tags": ["imports"],
+        "summary": "가져오기 중지",
+        "description": "메서드 import.cancel · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "description": "가져오기 종류",
+            "schema": {
+              "type": "string",
+              "description": "가져오기 종류",
+              "enum": ["office", "rtf", "image", "text", "confluence", "jira"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/imports/{kind}/dismiss": {
+      "post": {
+        "operationId": "post_imports_kind_dismiss",
+        "tags": ["imports"],
+        "summary": "끝난 가져오기 작업 지우기",
+        "description": "메서드 import.dismiss · 범위 write",
+        "x-scope": "write",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "description": "가져오기 종류",
+            "schema": {
+              "type": "string",
+              "description": "가져오기 종류",
+              "enum": ["office", "rtf", "image", "text", "confluence", "jira"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "작업 ID"
+                  }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites": {
+      "get": {
+        "operationId": "get_sites",
+        "tags": ["sites"],
+        "summary": "사이트 계정과 로그인 방식 목록",
+        "description": "메서드 sites.list · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "post_sites",
+        "tags": ["sites"],
+        "summary": "사이트 계정 만들기",
+        "description": "메서드 sites.save · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "사이트 종류",
+                    "enum": ["jira", "confluence"]
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "이름"
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "사이트 주소. 다른 프로토콜·호스트·포트나 종류로 바꾸면 같은 요청에 password가 없을 때 저장된 비밀번호를 지움"
+                  },
+                  "login_id": {
+                    "type": "string",
+                    "description": "로그인 ID"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "비밀번호 (저장만 하고 다시 보여 주지 않음)"
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "로그인 방식 ID (auto, session, custom 또는 sites.list의 methods). 고른 방식을 먼저, 실패하면 SSO 링크·AD SSO(priority) 방식부터 나머지를 차례로 시도"
+                  },
+                  "custom": {
+                    "type": "object",
+                    "description": "사용자 지정 방식 {steps: [{action, target, value, text, optional, unless}]} (16단계까지). action: fill(텍스트 입력: value id·password·text, text는 직접 입력할 글자 200자까지) · click(버튼 클릭) · submit(로그인 버튼, 마지막에 하나, target이 없으면 Enter. 빠지면 Enter로 붙임). target: XPath(/html/…) 또는 CSS 선택자. click과 text 입력만 optional(있을 때만)·unless(이 요소가 보이면 건너뜀). 로그인 ID와 비밀번호 입력 단계가 있어야 함. 예전 형식 {before, id, next, password, submit}도 받음"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/match": {
+      "get": {
+        "operationId": "get_sites_match",
+        "tags": ["sites"],
+        "summary": "링크의 종류와 그 링크가 쓸 계정",
+        "description": "메서드 sites.match · 범위 read",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "description": "JIRA·Confluence 링크",
+            "schema": {
+              "type": "string",
+              "description": "JIRA·Confluence 링크"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "description": "이 종류의 계정으로 찾기 (JIRA 사이트·프로젝트 주소처럼 티켓 링크가 아닐 때)",
+            "schema": {
+              "type": "string",
+              "description": "이 종류의 계정으로 찾기 (JIRA 사이트·프로젝트 주소처럼 티켓 링크가 아닐 때)",
+              "enum": ["jira", "confluence"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/status": {
+      "get": {
+        "operationId": "get_sites_status",
+        "tags": ["sites"],
+        "summary": "열린 로그인 창과 진행 중인 로그인 확인",
+        "description": "메서드 sites.status · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/{id}": {
+      "put": {
+        "operationId": "put_sites_id",
+        "tags": ["sites"],
+        "summary": "사이트 계정 고치기 (보낸 항목만 바뀜)",
+        "description": "메서드 sites.save · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "사이트 종류",
+                    "enum": ["jira", "confluence"]
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "이름"
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "사이트 주소. 다른 프로토콜·호스트·포트나 종류로 바꾸면 같은 요청에 password가 없을 때 저장된 비밀번호를 지움"
+                  },
+                  "login_id": {
+                    "type": "string",
+                    "description": "로그인 ID"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "비밀번호 (저장만 하고 다시 보여 주지 않음)"
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "로그인 방식 ID (auto, session, custom 또는 sites.list의 methods). 고른 방식을 먼저, 실패하면 SSO 링크·AD SSO(priority) 방식부터 나머지를 차례로 시도"
+                  },
+                  "custom": {
+                    "type": "object",
+                    "description": "사용자 지정 방식 {steps: [{action, target, value, text, optional, unless}]} (16단계까지). action: fill(텍스트 입력: value id·password·text, text는 직접 입력할 글자 200자까지) · click(버튼 클릭) · submit(로그인 버튼, 마지막에 하나, target이 없으면 Enter. 빠지면 Enter로 붙임). target: XPath(/html/…) 또는 CSS 선택자. click과 text 입력만 optional(있을 때만)·unless(이 요소가 보이면 건너뜀). 로그인 ID와 비밀번호 입력 단계가 있어야 함. 예전 형식 {before, id, next, password, submit}도 받음"
+                  },
+                  "clear_password": {
+                    "type": "boolean",
+                    "description": "저장된 비밀번호 지우기"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_sites_id",
+        "tags": ["sites"],
+        "summary": "사이트 계정 삭제",
+        "description": "메서드 sites.delete · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/{id}/check": {
+      "post": {
+        "operationId": "post_sites_id_check",
+        "tags": ["sites"],
+        "summary": "저장된 계정으로 백그라운드 로그인 확인",
+        "description": "메서드 sites.check · 범위 admin · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/{id}/check/cancel": {
+      "post": {
+        "operationId": "post_sites_id_check_cancel",
+        "tags": ["sites"],
+        "summary": "진행 중인 로그인 확인 중지: 끝날 때까지 기다려 중지했는지(stopped) 알려 줌",
+        "description": "메서드 sites.check_cancel · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/{id}/login": {
+      "post": {
+        "operationId": "post_sites_id_login",
+        "tags": ["sites"],
+        "summary": "사용자가 직접 로그인할 창 열기",
+        "description": "메서드 sites.login · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites/{id}/login/close": {
+      "post": {
+        "operationId": "post_sites_id_login_close",
+        "tags": ["sites"],
+        "summary": "로그인 창 닫기",
+        "description": "메서드 sites.login_close · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID",
+            "schema": {
+              "type": "string",
+              "description": "ID"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "operationId": "get_settings",
+        "tags": ["settings"],
+        "summary": "LLM 연결 설정",
+        "description": "메서드 settings.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put_settings",
+        "tags": ["settings"],
+        "summary": "LLM 연결 설정 바꾸기 (보낸 항목만)",
+        "description": "메서드 settings.update · 범위 admin",
+        "x-scope": "admin",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "description": "LLM 연결 종류 (general)",
+                    "enum": ["general"]
+                  },
+                  "api_format": {
+                    "type": "string",
+                    "description": "요청 형식 (openai는 OpenAI 호환 서버 포함)",
+                    "enum": ["openai", "anthropic"]
+                  },
+                  "base_url": {
+                    "type": "string",
+                    "description": "API 엔드포인트 전체 URL. 다른 서버로 바꾸면 같은 요청에 api_key가 없을 때 저장된 API Key를 지움"
+                  },
+                  "api_key": {
+                    "type": "string",
+                    "description": "API Key (비우면 그대로)"
+                  },
+                  "clear_api_key": {
+                    "type": "boolean",
+                    "description": "저장된 API Key 지우기"
+                  },
+                  "model_name": {
+                    "type": "string",
+                    "description": "모델 이름"
+                  },
+                  "headers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "description": "custom header [{name, value}] 전체 목록. 값의 {api_key}는 API Key로, {uuid}는 요청마다 새 ID로 바뀜. value 없이 name만 보내면 저장된 값을 유지하며, base_url을 다른 서버로 바꿀 때는 모든 값을 함께 보내야 함"
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "description": "Temperature 0~2 (Anthropic 형식에는 보내지 않음)"
+                  },
+                  "timeout": {
+                    "type": "integer",
+                    "description": "응답 제한 시간(초) 5~300, 기본 300. 일시적인 오류(HTTP 429·5xx, 연결 끊김)의 재시도도 이 안에서 함"
+                  },
+                  "ca_bundle": {
+                    "type": "string",
+                    "description": "CA 인증서(PEM) 경로: 사설·자체 서명 인증서를 쓰는 서버일 때"
+                  },
+                  "max_tokens": {
+                    "type": "integer",
+                    "description": "답변의 최대 출력 토큰: 0(자동, 기본: 서버 기본값, Anthropic 형식은 16,000) 또는 256~1,000,000"
+                  },
+                  "context_window": {
+                    "type": "integer",
+                    "description": "모델의 컨텍스트 크기(토큰) 4,096~10,000,000, 기본 64,000. 질문에 넣는 근거와 대화 기록의 양이 이에 맞춰짐"
+                  },
+                  "concurrency": {
+                    "type": "integer",
+                    "description": "LLM에 동시에 보내는 요청 수 1~8, 기본 3 (질문이 일괄 분석보다 먼저)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings/test": {
+      "post": {
+        "operationId": "post_settings_test",
+        "tags": ["settings"],
+        "summary": "사용 중인 LLM 연결 테스트",
+        "description": "메서드 settings.test · 범위 read · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preferences": {
+      "get": {
+        "operationId": "get_preferences",
+        "tags": ["settings"],
+        "summary": "검색·대시보드 설정",
+        "description": "메서드 preferences.get · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "put_preferences",
+        "tags": ["settings"],
+        "summary": "검색·대시보드 설정 바꾸기",
+        "description": "메서드 preferences.save · 범위 write",
+        "x-scope": "write",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ai_answer": {
+                    "type": "boolean",
+                    "description": "검색할 때 AI 답변 만들기"
+                  },
+                  "web_assist": {
+                    "type": "boolean",
+                    "description": "로그인·접속 실패 시 AI 분석: LLM이 로그인 화면을 찾아 다시 시도하거나 다시 접속하고 원인을 알려 줌. 바꾸기는 전체 허용 범위에서만"
+                  },
+                  "widgets": {
+                    "type": ["array", "null"],
+                    "items": {
+                      "type": "object"
+                    },
+                    "description": "대시보드 위젯 배치 [{id, type, view, size: s|m|l|xl, height: auto|s|m|l}]: type은 내용(tasks·documents 등), view는 형식(list·stats·chart 등), id는 배치 안에서 하나. null이면 기본 템플릿"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app": {
+      "get": {
+        "operationId": "get_app",
+        "tags": ["app"],
+        "summary": "앱·창·현재 화면·저장소·LLM 상태",
+        "description": "메서드 app.status · 범위 read",
+        "x-scope": "read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/window": {
+      "post": {
+        "operationId": "post_app_window",
+        "tags": ["app"],
+        "summary": "창 다루기",
+        "description": "메서드 app.window · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "description": "동작",
+                    "enum": [
+                      "show",
+                      "minimize",
+                      "maximize",
+                      "restore",
+                      "fullscreen",
+                      "set_bounds",
+                      "set_zoom"
+                    ]
+                  },
+                  "width": {
+                    "type": "integer",
+                    "description": "set_bounds: 너비 (최소 1060)"
+                  },
+                  "height": {
+                    "type": "integer",
+                    "description": "set_bounds: 높이 (최소 720)"
+                  },
+                  "x": {
+                    "type": "integer",
+                    "description": "set_bounds: 화면 왼쪽에서의 위치"
+                  },
+                  "y": {
+                    "type": "integer",
+                    "description": "set_bounds: 화면 위쪽에서의 위치"
+                  },
+                  "zoom": {
+                    "type": "number",
+                    "description": "set_zoom: 확대 비율 0.5~2"
+                  }
+                },
+                "required": ["action"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/navigate": {
+      "post": {
+        "operationId": "post_app_navigate",
+        "tags": ["app"],
+        "summary": "화면 이동",
+        "description": "메서드 app.navigate · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "view": {
+                    "type": "string",
+                    "description": "화면",
+                    "enum": ["home", "tasks", "library", "automation", "activity", "admin"]
+                  },
+                  "tab": {
+                    "type": "string",
+                    "description": "탭 — library: documents·import·knowledge · automation: prompt·schedules·routines · activity: history·conversations · tasks: reminders"
+                  },
+                  "section": {
+                    "type": "string",
+                    "description": "view=admin의 관리 항목",
+                    "enum": ["llm", "sites", "templates", "preferences", "api", "manual", "about"]
+                  }
+                },
+                "required": ["view"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/search": {
+      "post": {
+        "operationId": "post_app_search",
+        "tags": ["app"],
+        "summary": "앱 검색창에서 검색 (AI 답변 설정을 따름)",
+        "description": "메서드 app.search · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "검색어 또는 질문"
+                  }
+                },
+                "required": ["query"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/open-document": {
+      "post": {
+        "operationId": "post_app_open_document",
+        "tags": ["app"],
+        "summary": "문서 창에서 문서 열기",
+        "description": "메서드 app.open_document · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "ID"
+                  },
+                  "terms": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "본문에서 표시할 검색어"
+                  }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/open-run": {
+      "post": {
+        "operationId": "post_app_open_run",
+        "tags": ["app"],
+        "summary": "문서 창에서 실행 기록 열기",
+        "description": "메서드 app.open_run · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "ID"
+                  }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/new-document": {
+      "post": {
+        "operationId": "post_app_new_document",
+        "tags": ["app"],
+        "summary": "내용을 채운 새 문서 편집 창 열기 (저장은 사용자가 누름)",
+        "description": "메서드 app.new_document · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "제목"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "본문 Markdown"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/close-reader": {
+      "post": {
+        "operationId": "post_app_close_reader",
+        "tags": ["app"],
+        "summary": "문서 창 닫기",
+        "description": "메서드 app.close_reader · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/screen": {
+      "get": {
+        "operationId": "get_app_screen",
+        "tags": ["app"],
+        "summary": "지금 화면의 글과 누를 수 있는 항목",
+        "description": "메서드 app.read_screen · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/screenshot": {
+      "get": {
+        "operationId": "get_app_screenshot",
+        "tags": ["app"],
+        "summary": "앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64",
+        "description": "메서드 app.screenshot · 범위 control",
+        "x-scope": "control",
+        "parameters": [
+          {
+            "name": "max_width",
+            "in": "query",
+            "required": false,
+            "description": "최대 너비(px) 320~3840",
+            "schema": {
+              "type": "integer",
+              "description": "최대 너비(px) 320~3840",
+              "default": 1280,
+              "minimum": 320,
+              "maximum": 3840
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "응답 형식",
+            "schema": {
+              "type": "string",
+              "description": "응답 형식",
+              "enum": ["png", "json"],
+              "default": "png"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/click": {
+      "post": {
+        "operationId": "post_app_click",
+        "tags": ["app"],
+        "summary": "버튼·탭·링크·스위치를 이름으로 누르기",
+        "description": "메서드 app.click · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "보이는 이름 또는 aria-label"
+                  },
+                  "role": {
+                    "type": "string",
+                    "description": "항목 종류",
+                    "enum": ["button", "tab", "link", "checkbox", "switch", "option"]
+                  },
+                  "exact": {
+                    "type": "boolean",
+                    "description": "이름이 정확히 같은 것만",
+                    "default": false
+                  },
+                  "index": {
+                    "type": "integer",
+                    "description": "같은 이름이 여럿일 때 몇 번째(0부터)"
+                  }
+                },
+                "required": ["name"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/fill": {
+      "post": {
+        "operationId": "post_app_fill",
+        "tags": ["app"],
+        "summary": "입력란을 이름으로 채우기",
+        "description": "메서드 app.fill · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "description": "입력란의 이름(label·aria-label·placeholder)"
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "넣을 값 (비우면 입력란을 지움)"
+                  },
+                  "submit": {
+                    "type": "boolean",
+                    "description": "채운 뒤 그 양식을 제출",
+                    "default": false
+                  }
+                },
+                "required": ["label"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/notify": {
+      "post": {
+        "operationId": "post_app_notify",
+        "tags": ["app"],
+        "summary": "앱 안내 또는 시스템 알림 보이기",
+        "description": "메서드 app.notify · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "description": "알릴 글 (최대 500자)"
+                  },
+                  "system": {
+                    "type": "boolean",
+                    "description": "시스템 알림으로 보이기",
+                    "default": false
+                  },
+                  "error": {
+                    "type": "boolean",
+                    "description": "오류로 보이기",
+                    "default": false
+                  }
+                },
+                "required": ["message"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/reload": {
+      "post": {
+        "operationId": "post_app_reload",
+        "tags": ["app"],
+        "summary": "앱 화면 새로고침",
+        "description": "메서드 app.reload · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app/clipboard": {
+      "post": {
+        "operationId": "post_app_clipboard",
+        "tags": ["app"],
+        "summary": "클립보드에 글 복사",
+        "description": "메서드 clipboard.write · 범위 control",
+        "x-scope": "control",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "description": "복사할 글"
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "Success": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "result": {}
+        },
+        "required": ["ok", "result"]
+      },
+      "Failure": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["code", "message"]
+          }
+        },
+        "required": ["ok", "error"]
+      }
+    }
+  }
+}

@@ -35,9 +35,18 @@ LOG_ID = re.compile(r"\s*\(오류 ID [0-9a-f]{8}\)")
 SECRETS = (
     (re.compile(r"\bpa_[A-Za-z0-9_-]{6,}"), "pa_[REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "sk-[REDACTED]"),
+    # A header whose whole value is secret, to the end of its line: "Authorization: Bearer <token>" keeps nothing of
+    # the token, and a cookie header hides every cookie, not the first alone.
     (
         re.compile(
-            r"\b(password|passwd|pwd|api[_-]?key|x-api-key|authorization|token|secret|cookie)\b"
+            r"\b(authorization|proxy-authorization|cookie|set-cookie)\b(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\r\n]+)",
+            re.I,
+        ),
+        r"\1\2[REDACTED]",
+    ),
+    (
+        re.compile(
+            r"\b(password|passwd|pwd|api[_-]?key|x-api-key|token|secret)\b"
             r"(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)",
             re.I,
         ),
