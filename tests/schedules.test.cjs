@@ -1,17 +1,36 @@
+// Prompt schedules run through the routines' one scheduler (electron/routines.cjs): their occurrences come due in the
+// same list as the routines', are taken with routines.execute and queued by the backend, and their runs are told on
+// 'schedule:event' with the notification the schedule asks for.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { PromptScheduler } = require('../electron/schedules.cjs');
+const { RoutineRunner } = require('../electron/routines.cjs');
 
 const due = [
-  { id: 'morning', name: '아침 정리', next_run_at: '2026-01-01T00:00:00+00:00', notify: true },
-  { id: 'weekly', name: '주간 보고', next_run_at: '2026-01-01T00:05:00+00:00', notify: false },
+  { id: 'morning', next_run_at: '2026-01-01T00:00:00+00:00', needs: [], schedule: true },
+  {
+    id: 'watch',
+    next_run_at: '2026-01-01T00:05:00+00:00',
+    needs: [{ kind: 'jira', url: 'https://jira.test/browse/TEAM-1' }],
+  },
 ];
-function setup({ focused = false, results = {} } = {}) {
+const ended = (values) => ({
+  id: 'run-morning',
+  schedule_id: 'morning',
+  name: '아침 정리',
+  notify: true,
+  status: 'success',
+  error: '',
+  finished_at: '2026-01-01T00:01:00+00:00',
+  ...values,
+});
+
+function setup({ focused = false, runs = [] } = {}) {
   const calls = [];
-  const events = [];
+  const routineEvents = [];
+  const scheduleEvents = [];
   const notifications = [];
-  const clicks = [];
+  const opened = [];
   class FakeNotification extends EventEmitter {
     static isSupported() {
       return true;
@@ -26,99 +45,96 @@ function setup({ focused = false, results = {} } = {}) {
       this.emit('close');
     }
   }
-  const scheduler = new PromptScheduler({
+  const runner = new RoutineRunner({
     Notification: FakeNotification,
     ready: () => true,
     focused: () => focused,
-    send: (event) => events.push(event),
-    onClick: (runId) => clicks.push(runId),
+    send: (event) => routineEvents.push(event),
+    schedule: (event) => scheduleEvents.push(event),
+    changed: () => {},
+    onClick: (id) => opened.push(['routine', id]),
+    openRun: (id) => opened.push(['run', id]),
+    record: async () => {},
+    logins: (needs) => needs.map((need) => ({ ...need, login: { site_id: `site-${need.kind}` } })),
+    follow: 10,
     rpc: async (method, params) => {
       calls.push({ method, params });
-      if (method === 'schedules.due') return due;
-      const schedule = due.find((item) => item.id === params.id);
-      return (
-        results[params.id] || {
-          ran: true,
-          schedule: { id: schedule.id, name: schedule.name, notify: schedule.notify },
-          run: { id: `run-${schedule.id}`, status: 'success', error: '' },
-        }
-      );
+      if (method === 'routines.due') return due;
+      if (method === 'routines.execute') return { queued: true };
+      if (method === 'routines.events') {
+        if (params?.after === undefined) return { cursor: 'start', runs: [], active: 0 };
+        return { cursor: runs.at(-1)?.finished_at ?? params.after, runs, active: 0 };
+      }
+      throw new Error(method);
     },
   });
-  return { scheduler, calls, events, notifications, clicks };
+  return { runner, calls, routineEvents, scheduleEvents, notifications, opened };
 }
 
-test('runs each due schedule in order, reports it, and notifies only when asked', async () => {
+test('a due schedule is taken in the same list as the routines, with no logins', async () => {
   const state = setup();
-  await state.scheduler.tick();
+  await state.runner.tick();
   assert.deepEqual(
-    state.calls.map((call) => [call.method, call.params?.next_run_at]),
+    state.calls
+      .filter((call) => call.method === 'routines.execute')
+      .map((call) => [call.params.id, call.params.schedule, call.params.logins.length]),
     [
-      ['schedules.due', undefined],
-      ['schedules.execute', due[0].next_run_at],
-      ['schedules.execute', due[1].next_run_at],
+      ['morning', true, 0],
+      ['watch', false, 1],
     ],
   );
+  state.runner.stop();
+});
+
+test('a finished scheduled run is told to the window and notified only when its schedule asks', async () => {
+  const state = setup({
+    runs: [ended(), ended({ id: 'run-quiet', name: '조용한 예약', notify: false })],
+  });
+  await state.runner.tick();
+  assert.deepEqual(state.scheduleEvents, [
+    {
+      type: 'finished',
+      schedule_id: 'morning',
+      name: '아침 정리',
+      notify: true,
+      run_id: 'run-morning',
+      status: 'success',
+      error: '',
+    },
+    {
+      type: 'finished',
+      schedule_id: 'morning',
+      name: '조용한 예약',
+      notify: false,
+      run_id: 'run-quiet',
+      status: 'success',
+      error: '',
+    },
+  ]);
+  // Not a routine's run: nothing on 'routine:event'.
+  assert.equal(state.routineEvents.length, 0);
   assert.deepEqual(
-    state.events.map((event) => [event.type, event.run_id, event.status]),
-    [
-      ['finished', 'run-morning', 'success'],
-      ['finished', 'run-weekly', 'success'],
-    ],
+    state.notifications.map((item) => [item.options.title, item.options.body]),
+    [['Private Agent · 예약 실행 완료', '아침 정리']],
   );
-  assert.equal(state.notifications.length, 1);
-  assert.equal(state.notifications[0].options.body, '아침 정리');
+  // A click opens the run.
   state.notifications[0].emit('click');
-  assert.deepEqual(state.clicks, ['run-morning']);
-  state.scheduler.stop();
+  assert.deepEqual(state.opened, [['run', 'run-morning']]);
+  state.runner.stop();
 });
 
-test('failures carry the error, and a focused window gets no system notification', async () => {
-  const failed = {
-    ran: true,
-    schedule: { id: 'morning', name: '아침 정리', notify: true },
-    run: { id: 'run-failed', status: 'error', error: '연결할 수 없습니다.' },
-  };
-  const background = setup({ results: { morning: failed } });
-  await background.scheduler.tick();
-  assert.match(background.notifications[0].options.title, /실패/);
-  assert.equal(background.notifications[0].options.body, '아침 정리: 연결할 수 없습니다.');
-  background.scheduler.stop();
-  const focused = setup({ focused: true, results: { morning: failed } });
-  await focused.scheduler.tick();
+test('a failure carries its error, and a focused window gets no system notification', async () => {
+  const failed = ended({ id: 'run-failed', status: 'error', error: '연결할 수 없습니다.' });
+  const background = setup({ runs: [failed] });
+  await background.runner.tick();
+  assert.deepEqual(
+    background.notifications.map((item) => [item.options.title, item.options.body]),
+    [['Private Agent · 예약 실행 실패', '아침 정리: 연결할 수 없습니다.']],
+  );
+  background.runner.stop();
+  const focused = setup({ focused: true, runs: [failed] });
+  await focused.runner.tick();
   assert.equal(focused.notifications.length, 0);
-  assert.equal(focused.events[0].error, '연결할 수 없습니다.');
-  focused.scheduler.stop();
-});
-
-test('skips occurrences claimed elsewhere and never overlaps ticks', async () => {
-  const state = setup({ results: { morning: { ran: false } } });
-  const first = state.scheduler.tick();
-  await state.scheduler.tick(); // Busy: returns without a second lookup.
-  await first;
-  assert.equal(state.calls.filter((call) => call.method === 'schedules.due').length, 1);
-  assert.deepEqual(
-    state.events.map((event) => event.schedule_id),
-    ['weekly'],
-  );
-  state.scheduler.stop();
-});
-
-test('stopping during a lookup runs nothing', async () => {
-  const state = setup();
-  let resolve;
-  state.scheduler.rpc = (method) => {
-    state.calls.push({ method });
-    return new Promise((r) => {
-      resolve = r;
-    });
-  };
-  const tick = state.scheduler.tick();
-  state.scheduler.stop();
-  resolve(due);
-  await tick;
-  assert.deepEqual(
-    state.calls.map((call) => call.method),
-    ['schedules.due'],
-  );
+  assert.equal(focused.scheduleEvents[0].error, '연결할 수 없습니다.');
+  focused.runner.stop();
 });

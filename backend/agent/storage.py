@@ -167,7 +167,9 @@ def inspect(path, budget=None):
             late = budget is not None and time.monotonic() > deadline
             found.update(state="unchecked" if late else "damaged", detail="\n".join(rows))
     except sqlite3.OperationalError as error:
-        if budget is None or "interrupt" not in str(error).lower():
+        # Out of time, the interrupt ends the check as "interrupted", or as the failure of a virtual table (the search
+        # index, document_fts) whose constructor it stopped: past the deadline, either is the time's doing.
+        if budget is None or (time.monotonic() <= deadline and "interrupt" not in str(error).lower()):
             raise
         found["state"] = "unchecked"
     except sqlite3.DatabaseError as error:

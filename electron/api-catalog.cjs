@@ -93,13 +93,20 @@ const METHODS = {
   stats: method('read', '문서·키워드·관계·프롬프트 수'),
   'storage.get': method('read', 'Wiki 저장 위치'),
 
-  'wiki.search': method('read', '문서 검색 (mode=prompt는 LLM이 고름)', { slow: true }),
+  'wiki.search': method(
+    'read',
+    '문서 검색 (mode=prompt는 LLM이 고름). prompt가 아니면 limit·cursor로 나누어 받고 출처·AI 분석·수정 시각으로 거르기',
+    { slow: true },
+  ),
   'documents.query': method(
     'read',
     '문서 목록: 검색어·출처·AI 분석 여부·키워드로 거르고 나누어 받기',
   ),
   'documents.get': method('read', '문서 하나: 본문(Markdown)·출처·키워드·관계·목차'),
-  'wiki.list': method('read', '전체 문서 목록 (본문 앞 200자)'),
+  'wiki.list': method(
+    'read',
+    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로) source·analysis·updated_from·updated_to로 거르기',
+  ),
   'wiki.get': method('read', '문서 하나 (HTML 문서는 HTML 페이지 포함)'),
   'wiki.source_markdown': method('read', '가져온 문서의 Markdown 원문'),
   'wiki.source_html': method('read', '가져온 파일의 HTML 원문'),
@@ -158,7 +165,7 @@ const METHODS = {
 
   'assistant.ask': method('write', '문서를 근거로 LLM이 답변 (대화로 저장)', { slow: true }),
   'assistant.cancel': method('write', '진행 중인 답변 중지 (받은 데까지 대화에 저장)'),
-  'assistant.conversations': method('read', '최근 대화 50개'),
+  'assistant.conversations': method('read', '최근 대화 50개, 또는 limit·cursor로 나누어 받기'),
   'assistant.history': method('read', '대화의 메시지와 근거'),
   'assistant.delete': method('write', '대화 삭제'),
   'briefing.get': method('read', '오늘의 브리핑 자료 (할 일·알림·최근 문서)'),
@@ -338,6 +345,25 @@ const DOCUMENT_BODY = {
   title: string('제목 (최대 200자)', { required: true }),
   content: string('본문 Markdown (최대 80,000자)', { required: true }),
 };
+// A list in pages (wiki.list, wiki.search, assistant.conversations): with limit or cursor the answer is one page and
+// next_cursor, which the next request sends back as cursor (null after the last page). Without either the answer is
+// the whole list, as before, so neither has a default.
+const PAGE = (max) => ({
+  limit: integer(
+    `한 번에 받을 개수 1~${max}. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)`,
+    { minimum: 1, maximum: max },
+  ),
+  cursor: string('앞 응답의 next_cursor. 그 뒤부터 이어 받습니다'),
+});
+const UPDATED = {
+  updated_from: string('이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601'),
+  updated_to: string('이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601'),
+};
+const DOCUMENT_FILTERS = {
+  source: string('출처 (manual = 직접 쓴 문서)', { enum: SOURCE_KINDS }),
+  analysis: string('AI 분석 여부', { enum: ['analyzed', 'not_analyzed', 'failed', 'running'] }),
+  ...UPDATED,
+};
 const TASK_FIELDS = {
   title: string('할 일 (최대 200자)'),
   notes: string('메모 (최대 8,000자)'),
@@ -468,21 +494,31 @@ const GROUPS = [
     description:
       '검색창과 같은 검색입니다. auto는 PC 안의 단어 검색, prompt는 LLM이 질문을 분석해 문서와 섹션을 고르는 AI 검색(최대 4번 LLM 요청)입니다.',
     routes: [
-      route('GET', '/search', 'wiki.search', '문서 검색', {
-        query: string('검색어 또는 질문 (최대 2,000자). "따옴표"는 그대로 찾을 문구', {
-          required: true,
-        }),
-        mode: string(
-          'auto: 검색창과 같은 단어 검색 · word: 모든 단어 포함 · keyword: 추출 키워드(쉼표로 구분) · prompt: AI 검색(느림)',
-          { enum: ['auto', 'word', 'keyword', 'prompt'], default: 'auto' },
-        ),
-      }),
+      route(
+        'GET',
+        '/search',
+        'wiki.search',
+        '문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만 (나누어 받으면 여러 부분으로 저장한 가져오기는 parts가 있는 하나로)',
+        {
+          query: string('검색어 또는 질문 (최대 2,000자). "따옴표"는 그대로 찾을 문구', {
+            required: true,
+          }),
+          mode: string(
+            'auto: 검색창과 같은 단어 검색 · word: 모든 단어 포함 · keyword: 추출 키워드(쉼표로 구분) · prompt: AI 검색(느림)',
+            { enum: ['auto', 'word', 'keyword', 'prompt'], default: 'auto' },
+          ),
+          ...PAGE(100),
+          ...DOCUMENT_FILTERS,
+        },
+      ),
       route('POST', '/search', 'wiki.search', '문서 검색 (긴 질문은 본문으로)', {
         query: string('검색어 또는 질문 (최대 2,000자)', { required: true }),
         mode: string('검색 방식', {
           enum: ['auto', 'word', 'keyword', 'prompt'],
           default: 'auto',
         }),
+        ...PAGE(100),
+        ...DOCUMENT_FILTERS,
       }),
     ],
   },
@@ -679,7 +715,13 @@ const GROUPS = [
           request_id: string('질문의 요청 ID (대화 ID를 아직 모르는 새 대화)'),
         },
       ),
-      route('GET', '/conversations', 'assistant.conversations', '최근 대화 50개'),
+      route(
+        'GET',
+        '/conversations',
+        'assistant.conversations',
+        '최근 대화 50개, 또는 limit·cursor로 나누어 받기',
+        { ...PAGE(200), ...UPDATED },
+      ),
       route('GET', '/conversations/{id}', 'assistant.history', '대화의 메시지·근거·검색 과정', {
         id: ID,
       }),

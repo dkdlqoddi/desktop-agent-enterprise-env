@@ -7,13 +7,19 @@ Confluence page or JIRA tickets again and tells what changed, follows a JIRA sea
 brings files and folders up to date, analyzes new documents or drafts a work report. What it found is kept with the run
 (routine_runs), written into Wiki documents and told in a notification.
 
-Electron's main process, which alone has the site accounts' passwords, asks `routines.due` for the routines whose time
-has come and hands each one to `routines.execute` with the login plans of the sites it needs; the user's ‘지금 실행’ comes
-through `routines.run` the same way. Runs wait in a queue and run one at a time on a thread of their own: they share the
-importers, which do one job at a time, and the LLM. A site job of a routine waits while the user's own import runs, and
-leaves the import box once it ended. A run that sent the ID and password and still could not sign in turns its routine
-off, so a wrong password is not sent on every run. `routines.events` tells Electron about the runs that ended, for the
-notifications and the site accounts' login results.
+Electron's main process, which alone has the site accounts' passwords, asks `routines.due` what has come due: the
+routines and the prompt schedules (schedules.py) alike, in one list, as this is the app's one scheduler. It hands each
+one to `routines.execute`, a routine with the login plans of the sites it needs; the user's ‘지금 실행’ of a routine comes
+through `routines.run` the same way. Runs wait in one queue for one of WORKERS workers, so that a long run (a big
+Confluence tree) does not hold up the short ones (a scheduled prompt, a file refresh). Runs that share something take
+turns (Routines.lanes): the runs of one routine or one recipe, the runs that use one importer, which does one job at a
+time for every site of its kind, and the scheduled prompts, which go one at a time. Their LLM requests are batch work,
+which leaves the requests a user waits for a slot of their own and goes after them (llm.Slots). Each run has a time limit
+(Recipe.timeout, PROMPT_TIMEOUT): one still going then is stopped with the importer's job it follows and its LLM request,
+and fails with a message that names the limit, and its worker goes on to the next run. A site job of a routine waits
+while the user's own import runs, and leaves the import box once it ended. A run that sent the ID and password and still
+could not sign in turns its routine off, so a wrong password is not sent on every run. `routines.events` tells Electron
+about the runs that ended, the scheduled prompts' too, for the notifications and the site accounts' login results.
 """
 import contextlib
 import hashlib
@@ -33,7 +39,7 @@ from .changes import excerpt
 from .confluence_import import is_page_url
 from .file_import import skipped_folder
 from .jira import parse_issue_url, project_of, site_of
-from .llm import BusyError, UserError
+from .llm import TRUNCATED_NOTE, BusyError, Cancel, UserError, cancellable, reply, shown
 from .schedules import next_run
 from .service import now, text
 from .web_login import origin_of, validate_plan, with_scheme
@@ -45,6 +51,19 @@ MAX_ACTIVE = 30  # Routines on at once: each may sign in to a site on its own sc
 MAX_RUNS = 30  # Runs kept per routine.
 BUSY_WAIT = 30 * 60  # Seconds a run waits for an import of the user's (or another job) to end.
 POLL = 1.0  # Seconds between looks at a job a run started.
+# Runs at once. A run waiting for a busy importer (BUSY_WAIT) holds its worker too, so a third worker keeps a long site
+# run and such a wait from holding up the short runs.
+WORKERS = 3
+# Seconds a run that was stopped (by the user, at its time limit or as the app closes) has to end, its importer's job
+# with it, before its worker leaves it to end by itself and goes on to the next run.
+GRACE = 120
+# The time limit of a scheduled prompt's run: one LLM request of at most 300 seconds (the settings' limit, its retries
+# included), and its wait for a slot behind the user's requests.
+PROMPT_TIMEOUT = 30 * 60
+PROMPTS = "prompts"  # The lane (Routines.lanes) of the scheduled prompts' runs, which go one at a time.
+TIMED_OUT = "제한 시간({limit}) 안에 끝나지 않아 실행을 중지했습니다. 응답하지 않는 사이트나 파일, LLM이 없는지 확인해 주세요."
+PROMPT_TIMED_OUT = "제한 시간({limit}) 안에 끝나지 않아 실행을 중지했습니다. LLM 연결 상태를 확인해 주세요."
+PROMPT_STOPPED = "앱이 종료되어 실행이 중단되었습니다."
 ACTIVE_JOB = ("scanning", "login", "running", "cancelling")
 STOPPED = "앱이 종료되어 자동 작업이 중단되었습니다."
 PAUSED = ("로그인하지 못해 자동 작업을 껐습니다. 관리 → 사이트 계정에서 계정을 확인한 뒤 다시 켜 주세요. "
@@ -76,6 +95,16 @@ people or dates. Start directly with the first heading."""
 
 class Cancelled(Exception):
     """The user stopped the run, or the app is closing."""
+
+
+class Stop(Cancel):
+    """How a run is stopped: by the user, at its time limit or as the app closes. Set, it ends the run at its next step
+    (Run.check), the importer's job the run follows (Run.job) and the run's LLM requests, as llm.Cancel ends those of a
+    question. `reason` is what the run's record then says: '' for the user's stop or the app's end."""
+
+    def __init__(self):
+        super().__init__()
+        self.reason = ""
 
 
 # --- Values of the forms -------------------------------------------------------------------------------------------
@@ -197,6 +226,22 @@ def when(stamp, pattern="%m/%d %H:%M"):
     return found.strftime(pattern) if found else ""
 
 
+def span(seconds):
+    """A time limit as the messages say it: 3시간, 1시간 30분, 30분."""
+    hours, minutes = divmod(round(seconds / 60), 60)
+    return " ".join(filter(None, (f"{hours}시간" if hours else "", f"{minutes}분" if minutes else ""))) or f"{seconds:g}초"
+
+
+def clip(value, limit):
+    """`value` within `limit` characters. The note that ends an LLM answer stopped at its output limit (llm.shown, as a
+    prompt run's answer has it) stays at its end, in room kept for it: no cut takes it away."""
+    if len(value) <= limit:
+        return value
+    if value.endswith(TRUNCATED_NOTE):
+        return f"{value[:max(0, limit - len(TRUNCATED_NOTE) - 2)].rstrip()}\n\n{TRUNCATED_NOTE}"
+    return value[:limit]
+
+
 def fit(parts, limit=DOCUMENT_CHARS):
     """Markdown parts joined within `limit` characters: what does not fit is left out, with a note."""
     out, used = [], 0
@@ -264,7 +309,8 @@ class Run:
             return False
 
     def ask(self, system, content):
-        """The LLM's answer, or UserError why there is none."""
+        """The LLM's answer, or UserError why there is none. One the LLM stopped at its output limit ends with the note
+        that says so, as a prompt run's answer does (llm.shown), wherever the run puts it (clip)."""
         self.check()
         if not self.llm_on():
             raise UserError(NO_LLM)
@@ -273,7 +319,7 @@ class Run:
         self.check()
         if not isinstance(answer, str) or not answer.strip():
             raise UserError("LLM이 답변을 돌려주지 않았습니다. 잠시 후 다시 실행해 주세요.")
-        return answer.strip()[:40000]
+        return clip(shown(reply(answer.strip(), getattr(answer, "truncated", False))), 40000)
 
     # -- sites ---------------------------------------------------------------------
 
@@ -305,7 +351,8 @@ class Run:
         """Start an importer's job with start() once the importer is free, follow it to its end and return it; None
         when start() found it is not needed any more. The job then leaves the import box, which shows again the user's
         own finished import it took the place of. Stopping the run stops the job, and a job the user stopped in the
-        import box stops the run."""
+        import box stops the run. A job still going GRACE seconds after the run was stopped (its importer hangs) is left
+        to end by itself: the run ends without it."""
         deadline = time.monotonic() + BUSY_WAIT
         while True:
             self.check()
@@ -324,18 +371,24 @@ class Run:
         job = started.get("job") if isinstance(started, dict) and "job" in started else started
         ident = job["id"]
         self.step(f"{what} · 진행 중")
+        stopped = None
         while True:
             current = self.job_of(importer, ident)
             if current is None or current["status"] not in ACTIVE_JOB:
                 break
             if self.cancel.is_set():
                 importer.cancel()
+                if stopped is None:
+                    stopped = time.monotonic()
+                elif time.monotonic() - stopped > GRACE:
+                    break
             time.sleep(POLL)
         with contextlib.suppress(Exception):  # Only the import box's list.
             importer.dismiss({"id": ident})
         if kept:
             with importer.lock:
-                if importer.job and importer.job["id"] == ident:
+                # Only a job that ended: one still stopping stays the importer's, which its thread goes on writing.
+                if importer.job and importer.job["id"] == ident and importer.job["status"] not in ACTIVE_JOB:
                     importer.job = kept
         self.check()
         if current and current["status"] == "cancelled":
@@ -414,6 +467,13 @@ class Recipe:
     fields = ()
     schedule = {"frequency": "interval", "interval": 60, "run_time": "09:00", "weekday": 0, "month_day": 1}
     notify = True
+    # The longest a run may take, a wait for a busy importer (BUSY_WAIT) included, generous for the most a run does: one
+    # still going then is stopped with the importer's job it follows and fails with a message that names the limit, so
+    # that a job that hangs never holds a worker for good (Routines.supervise).
+    timeout = 60 * 60
+    # The importers its runs use. One does one job at a time for every site of its kind (or every file of its kinds), so
+    # the runs that use it take turns, which also keeps two runs on one site apart (Routines.lanes).
+    uses = ()
 
     def public(self):
         return {"kind": self.kind, "title": self.title, "summary": self.summary, "description": self.description,
@@ -511,6 +571,8 @@ class ConfluenceWatch(Recipe):
               field("summarize", "AI로 바뀐 내용 요약", "switch", default=True),
               field("analyze", "바뀐 문서 AI 분석", "switch", help="요약·키워드를 다시 추출합니다."))
     schedule = {**Recipe.schedule, "frequency": "interval", "interval": 60}
+    timeout = 3 * 3600  # A whole tree of pages, each analyzed again when asked.
+    uses = ("confluence",)
 
     def check(self, config):
         if not is_page_url(config["url"]):
@@ -575,6 +637,8 @@ class JiraWatch(Recipe):
               field("summarize", "AI로 바뀐 내용 요약", "switch", default=True),
               field("analyze", "바뀐 문서 AI 분석", "switch", help="요약·키워드를 다시 추출합니다."))
     schedule = {**Recipe.schedule, "frequency": "interval", "interval": 30}
+    timeout = 2 * 3600  # Up to 30 tickets on several sites, a busy importer waited for on each.
+    uses = ("jira",)
 
     def check(self, config):
         for url in config["urls"]:
@@ -658,6 +722,8 @@ class JiraFilter(Recipe):
               field("import", "새로 나오거나 바뀐 티켓을 Wiki로 가져오기", "switch", default=True),
               field("analyze", "가져온 티켓 AI 분석", "switch"))
     schedule = {**Recipe.schedule, "frequency": "interval", "interval": 30}
+    timeout = 2 * 3600  # A search and up to MAX_IMPORTS tickets imported.
+    uses = ("jira",)
 
     def check(self, config):
         config["jql"] = " ".join(config["jql"].split())
@@ -764,6 +830,8 @@ class JiraProject(Recipe):
               field("import", "진행 중인 티켓을 Wiki로 가져오기", "switch"),
               field("analyze", "가져온 티켓 AI 분석", "switch"))
     schedule = {**Recipe.schedule, "frequency": "weekdays", "run_time": "09:00"}
+    timeout = 2 * 3600  # Up to 1,000 open tickets read, MAX_IMPORTS imported and a summary written.
+    uses = ("jira",)
 
     def check(self, config):
         if config["project"]:
@@ -843,7 +911,7 @@ class JiraProject(Recipe):
                  *[f"> {note}" for note in notes],
                  "## 한눈에 보기\n\n" + table(["항목", "값"], [[item["label"], str(item["value"])] for item in metrics])]
         if ai:
-            parts.append(f"## AI 진행 요약\n\n{ai[:20000]}")
+            parts.append(f"## AI 진행 요약\n\n{clip(ai, 20000)}")
         if not run.first and (started or finished):
             parts.append("## 지난 실행 이후\n\n" + "\n".join(
                 [f"- 진행 시작: [{issue['key']}] {cell(issue['summary'], 100)} ({issue['assignee'] or '미지정'})"
@@ -931,6 +999,8 @@ class SourceRefresh(Recipe):
               field("recursive", "하위 폴더 포함", "switch", default=True),
               field("analyze", "업데이트한 문서 AI 분석", "switch"))
     schedule = {**Recipe.schedule, "frequency": "daily", "run_time": "08:00"}
+    timeout = 6 * 3600  # Every file of up to 20 folders, Office files one at a time, read again on a first run.
+    uses = ("files",)
 
     def check(self, config):
         if not config["paths"]:
@@ -1059,6 +1129,7 @@ class AnalyzeNew(Recipe):
               field("retry", "분석에 실패했던 문서도 다시 분석", "switch"))
     schedule = {**Recipe.schedule, "frequency": "interval", "interval": 120}
     notify = False
+    timeout = 3 * 3600  # Up to 100 documents, an LLM analysis each.
 
     def run(self, run):
         if not run.llm_on():
@@ -1103,6 +1174,7 @@ class WorkReport(Recipe):
               field("focus", "보고에 담을 내용·형식 (선택)", "textarea", limit=1000,
                     placeholder="예) 팀장 보고용. 성과는 숫자 위주로, 고객 이슈는 따로"))
     schedule = {**Recipe.schedule, "frequency": "weekly", "weekday": 4, "run_time": "17:00"}
+    timeout = 30 * 60  # One LLM request and the records it reads.
 
     def run(self, run):
         if not run.llm_on():
@@ -1148,11 +1220,11 @@ class WorkReport(Recipe):
         ident = run.write(f"업무 보고 초안 · {stamp} ({label})", fit([
             f"# 업무 보고 초안 · {stamp} ({label})",
             f"> {when(since, '%m/%d %H:%M')}부터의 문서 {len(records)}개, 끝낸 할 일 {len(done)}개, 마감이 다가오는 할 일 "
-            f"{len(due)}개, 자동 작업 결과 {len(found)}건으로 LLM이 쓴 초안입니다. 확인한 뒤 고쳐 쓰세요.", draft[:60000]]))
+            f"{len(due)}개, 자동 작업 결과 {len(found)}건으로 LLM이 쓴 초안입니다. 확인한 뒤 고쳐 쓰세요.", clip(draft, 60000)]))
         run.state["reports"] = ([{"id": ident}] + [doc for doc in run.state.get("reports") or []])[:20]
         return outcome(f"{label} 업무 보고 초안을 썼습니다 · 참고한 문서 {len(records)}개", True,
                        [{"title": f"업무 보고 초안 · {stamp} ({label})", "status": "new", "doc_id": ident,
-                         "message": f"문서 {len(records)}개 · 끝낸 할 일 {len(done)}개"}], text=draft[:20000])
+                         "message": f"문서 {len(records)}개 · 끝낸 할 일 {len(done)}개"}], text=clip(draft, 20000))
 
 
 RECIPES = {recipe.kind: recipe for recipe in (
@@ -1200,10 +1272,12 @@ class Routines:
         self.service, self.db = service, service.db
         self.lock = threading.RLock()
         self.wake = threading.Condition(self.lock)
-        self.queue = []  # [(run id, routine id, logins)]
-        self.current = None  # {"run", "routine", "cancel", "step"}
+        # The runs waiting for a worker, in the order they came: a routine's {"run", "routine", "logins", "lanes"} or a
+        # scheduled prompt's {"run", "schedule", "before", "lanes"}, `before` being how its schedule's last run went.
+        self.queue = []
+        self.running = {}  # The runs being run, by run ID: their entries of the queue with the Stop that stops them.
         self.notes = {}  # The step each routine's run is at.
-        self.thread = None
+        self.workers = []
         self.stopped = False
         self.methods = {
             "routines.catalog": self.catalog, "routines.list": self.list, "routines.get": self.get,
@@ -1246,8 +1320,8 @@ class Routines:
                 f"SELECT id,title FROM documents WHERE id IN ({marks}) AND deleted_at IS NULL ORDER BY updated_at DESC",
                 docs)]
         with self.lock:
-            queued = any(item[1] == row["id"] for item in self.queue)
-            running = bool(self.current and self.current["routine"] == row["id"])
+            queued = any(item.get("routine") == row["id"] for item in self.queue)
+            running = any(item.get("routine") == row["id"] for item in self.running.values())
             routine.update(queued=queued, running=running, step=self.notes.get(row["id"], "") if running else "")
         return routine
 
@@ -1386,22 +1460,30 @@ class Routines:
                 if self.pending(row["id"]):
                     raise UserError("이미 실행 중이거나 실행을 기다리고 있습니다.")
                 run = self.queue_run(db, row, "manual")
-            self.enqueue(run, row["id"], logins)
+            self.enqueue({"run": run, "routine": row["id"], "logins": logins, "lanes": self.lanes(row)})
         return self.get({"id": row["id"]})
 
     def due(self, _=None):
+        """What has come due, the earliest first, in one list: the routines, each with the sites a run signs in to
+        (needs), and the prompt schedules (schedules.py), each marked `schedule`. Electron hands each to execute()."""
         # Electron asks this every 30 seconds while the app runs: the Wiki's daily backup and retention policy are
         # started from here (Service.upkeep), in the background, rather than by a scheduler of their own.
         self.service.upkeep()
         with self.db.connect() as db:
-            rows = db.execute("""SELECT * FROM routines WHERE enabled=1 AND next_run_at<=?
-                ORDER BY next_run_at LIMIT 10""", (now(),)).fetchall()
-        return [{"id": row["id"], "next_run_at": row["next_run_at"], "needs": self.needs_of(row)} for row in rows]
+            rows = db.execute("""SELECT id,next_run_at,kind,config,0 AS schedule FROM routines
+                WHERE enabled=1 AND next_run_at<=:now
+                UNION ALL SELECT id,next_run_at,NULL,NULL,1 FROM schedules WHERE enabled=1 AND next_run_at<=:now
+                ORDER BY next_run_at LIMIT 20""", {"now": now()}).fetchall()
+        return [{"id": row["id"], "next_run_at": row["next_run_at"], "needs": [], "schedule": True} if row["schedule"]
+                else {"id": row["id"], "next_run_at": row["next_run_at"], "needs": self.needs_of(row)} for row in rows]
 
     def execute(self, p):
-        """Internal: take one due occurrence of a routine and queue its run. Occurrences missed while the app was closed
-        collapse into this one; one that comes while the routine still runs is skipped."""
+        """Internal: take one due occurrence (due) and queue its run: a prompt schedule's with `schedule`, else a
+        routine's with the login plans Electron gave. Occurrences missed while the app was closed collapse into this
+        one; one that comes while the last run still waits or runs is skipped."""
         ident, expected = text(p.get("id"), "ID", 80), text(p.get("next_run_at"), "실행 시각", 64)
+        if p.get("schedule") is True:
+            return self.execute_schedule(ident, expected)
         logins = self.logins(p.get("logins", []))
         with self.lock:
             with self.db.connect() as db:
@@ -1415,27 +1497,56 @@ class Routines:
                 if self.pending(ident):
                     return {"queued": False}
                 run = self.queue_run(db, row, "schedule")
-            self.enqueue(run, ident, logins)
+            self.enqueue({"run": run, "routine": ident, "logins": logins, "lanes": self.lanes(row)})
+        return {"queued": True, "run_id": run}
+
+    def execute_schedule(self, ident, expected):
+        """Take the due occurrence `expected` of a prompt schedule (Schedules.claim) and queue its run."""
+        with self.lock:  # The claim and the queue together, as for a routine.
+            busy = self.holding(f"schedule:{ident}")
+            row = self.service.schedules.claim(ident, expected, start=not busy)
+            if row is None or busy:
+                return {"queued": False}
+            run = str(uuid.uuid4())
+            self.enqueue({"run": run, "schedule": ident, "before": (row["last_status"], row["last_error"]),
+                          "lanes": frozenset({f"schedule:{ident}", PROMPTS})})
         return {"queued": True, "run_id": run}
 
     def cancel(self, p, running=True):
         """Stop the routine's run: a queued one leaves the queue, a running one (with `running`) stops at its next step
         and stops the job it waits for."""
-        ident = text(p.get("id"), "ID", 80)
-        dropped = []
-        with self.lock:
-            for item in [item for item in self.queue if item[1] == ident]:
-                self.queue.remove(item)
-                dropped.append(item[0])
-            if running and self.current and self.current["routine"] == ident:
-                self.current["cancel"].set()
-        if dropped:
-            with self.db.connect() as db:
-                stamp = now()
-                db.executemany("UPDATE routine_runs SET status='cancelled',finished_at=? WHERE id=?",
-                               [(stamp, run) for run in dropped])
-                db.execute("UPDATE routines SET last_status='cancelled' WHERE id=? AND last_status='queued'", (ident,))
+        self.withdraw(f"routine:{text(p.get('id'), 'ID', 80)}", running)
         return {"ok": True}
+
+    def withdraw_schedule(self, ident):
+        """The prompt schedule `ident` was paused or deleted: its run still waiting for its turn does not start, and the
+        schedule shows how its last run went again. One running goes on."""
+        self.withdraw(f"schedule:{ident}")
+
+    def withdraw(self, lane, running=False):
+        """Take the runs that hold `lane` out of the queue, and with `running` stop the one that runs: at its next step,
+        with the job it waits for. A routine's run taken out is recorded as cancelled; a prompt schedule's, which was
+        never recorded, leaves its schedule showing how its last run went, as before it came due."""
+        with self.lock:
+            dropped = [item for item in self.queue if lane in item["lanes"]]
+            self.queue = [item for item in self.queue if lane not in item["lanes"]]
+            if running:
+                for item in self.running.values():
+                    if lane in item["lanes"]:
+                        item["stop"].set()
+        if not dropped:
+            return
+        with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for item in dropped:
+                if item.get("routine"):
+                    # Dated within the write, as each run's end is (perform), for routines.events.
+                    db.execute("UPDATE routine_runs SET status='cancelled',finished_at=? WHERE id=?", (now(), item["run"]))
+                    db.execute("UPDATE routines SET last_status='cancelled' WHERE id=? AND last_status='queued'",
+                               (item["routine"],))
+                else:
+                    db.execute("UPDATE schedules SET last_status=?,last_error=? WHERE id=? AND last_status='running'",
+                               (*item["before"], item["schedule"]))
 
     def runs(self, p):
         """The latest runs of a routine with what they found, or of every routine without `id`."""
@@ -1478,17 +1589,27 @@ class Routines:
 
     def events(self, p):
         """Internal: the runs that ended after `after` (a finished_at), for Electron's notifications and the site
-        accounts' login results; without `after` only the cursor to start from. `active` counts queued and running."""
+        accounts' login results; without `after` only the cursor to start from. `active` counts queued and running.
+        The scheduled prompts' runs come with them, as the history keeps them (created_at is when one ended): each with
+        its `schedule_id`, a routine's with its `routine_id`. Both are dated within the write that records them, so
+        none is dated before one already told (Service.record_run, perform)."""
         after = p.get("after")
         with self.lock:
-            active = len(self.queue) + (1 if self.current else 0)
+            active = len(self.queue) + len(self.running)
         with self.db.connect() as db:
             if not isinstance(after, str):
-                cursor = db.execute("SELECT max(finished_at) FROM routine_runs").fetchone()[0]
+                cursor = db.execute("""SELECT max(stamp) FROM (SELECT max(finished_at) AS stamp FROM routine_runs
+                    UNION ALL SELECT max(created_at) FROM runs WHERE kind='scheduled')""").fetchone()[0]
                 return {"cursor": cursor or "", "runs": [], "active": active}
             rows = db.execute("""SELECT r.*,t.name,t.notify,t.kind FROM routine_runs r JOIN routines t
                 ON t.id=r.routine_id WHERE r.finished_at>? ORDER BY r.finished_at LIMIT 50""", (after,)).fetchall()
-        runs = []
+            prompts = db.execute("""SELECT r.id,r.schedule_id,r.title,r.status,r.error,r.created_at,s.name,s.notify
+                FROM runs r LEFT JOIN schedules s ON s.id=r.schedule_id WHERE r.kind='scheduled' AND r.created_at>?
+                ORDER BY r.created_at LIMIT 50""", (after,)).fetchall()
+        # A schedule deleted since has no name left but its prompt's, and asks for no notification.
+        runs = [{"id": row["id"], "schedule_id": row["schedule_id"], "name": row["name"] or row["title"],
+                 "notify": bool(row["notify"]), "status": row["status"], "error": row["error"],
+                 "finished_at": row["created_at"]} for row in prompts]
         for row in rows:
             try:
                 details = json.loads(row["details"])
@@ -1498,16 +1619,19 @@ class Routines:
                          "notify": bool(row["notify"]), "status": row["status"], "changed": bool(row["changed"]),
                          "summary": row["summary"], "error": row["error"], "finished_at": row["finished_at"],
                          "logins": details.get("logins") or [], "quiet": details.get("quiet") is True})
-        return {"cursor": rows[-1]["finished_at"] if rows else after, "runs": runs, "active": active}
+        # The first 50 of both by when they ended: the cursor stops at the last one told, and the rest come next.
+        runs = sorted(runs, key=lambda run: run["finished_at"])[:50]
+        return {"cursor": runs[-1]["finished_at"] if runs else after, "runs": runs, "active": active}
 
     def shutdown(self, _=None):
-        """The app is closing: stop the run and forget the queue; the importers' own shutdown ends their jobs."""
+        """The app is closing: stop the runs and forget the queue; the importers' own shutdown ends their jobs. A
+        scheduled prompt's run that never started is shown as cut off at the next start (Schedules)."""
         with self.lock:
             self.stopped = True
-            dropped = [item[0] for item in self.queue]
+            dropped = [item["run"] for item in self.queue if item.get("routine")]
             self.queue.clear()
-            if self.current:
-                self.current["cancel"].set()
+            for item in self.running.values():
+                item["stop"].set()
             self.wake.notify_all()
         if dropped:
             with self.db.connect() as db:
@@ -1532,9 +1656,22 @@ class Routines:
         return found
 
     def pending(self, ident):
+        """Whether a run of the routine `ident` waits or runs."""
+        return self.holding(f"routine:{ident}")
+
+    def holding(self, lane):
+        """Whether a run that waits or runs holds `lane` (lanes)."""
         with self.lock:
-            return any(item[1] == ident for item in self.queue) or bool(
-                self.current and self.current["routine"] == ident)
+            return any(lane in item["lanes"] for item in (*self.queue, *self.running.values()))
+
+    @staticmethod
+    def lanes(row):
+        """What a run of the routine `row` holds while it runs, which no other run holds meanwhile: the routine, its
+        recipe and the importers the recipe uses (Recipe.uses). A scheduled prompt's run holds its schedule and PROMPTS
+        (execute_schedule), so those go one at a time as each is a whole LLM request, beside the routines."""
+        recipe = RECIPES.get(row["kind"])
+        return frozenset({f"routine:{row['id']}", f"recipe:{row['kind']}",
+                          *(f"importer:{name}" for name in (recipe.uses if recipe else ()))})
 
     @staticmethod
     def queue_run(db, row, started_by):
@@ -1544,14 +1681,16 @@ class Routines:
         db.execute("UPDATE routines SET last_status='queued' WHERE id=?", (row["id"],))
         return run
 
-    def enqueue(self, run, routine, logins):
+    def enqueue(self, item):
         with self.lock:
             if self.stopped:
                 return
-            self.queue.append((run, routine, logins))
-            if self.thread is None or not self.thread.is_alive():
-                self.thread = threading.Thread(target=self.work, name="routines", daemon=True)
-                self.thread.start()
+            self.queue.append(item)
+            self.workers = [worker for worker in self.workers if worker.is_alive()]
+            while len(self.workers) < WORKERS:
+                worker = threading.Thread(target=self.work, name="routines", daemon=True)
+                worker.start()
+                self.workers.append(worker)
             self.wake.notify_all()
 
     def note(self, routine, value):
@@ -1559,25 +1698,58 @@ class Routines:
             self.notes[routine] = value[:200]
 
     def work(self):
+        """A worker: it takes the first run of the queue that holds no lane a running run holds, and runs it. The others
+        wait in the order they came, each until what it shares with a running run is free."""
         while True:
             with self.lock:
-                while not self.queue and not self.stopped:
+                while True:
+                    if self.stopped:
+                        return
+                    held = set().union(*(item["lanes"] for item in self.running.values()))
+                    item = next((item for item in self.queue if not item["lanes"] & held), None)
+                    if item:
+                        break
                     self.wake.wait()
-                if self.stopped:
-                    return
-                run, routine, logins = self.queue.pop(0)
-                cancel = threading.Event()
-                self.current = {"run": run, "routine": routine, "cancel": cancel}
+                self.queue.remove(item)
+                item["stop"] = Stop()
+                self.running[item["run"]] = item
             try:
-                self.perform(run, routine, logins, cancel)
+                if item.get("schedule"):
+                    self.prompt(item)
+                else:
+                    self.perform(item)
             except Exception as error:  # The run's record could not be written; the next one may be.
                 diagnostics.report(error, "", "자동 작업 기록")
             finally:
                 with self.lock:
-                    self.current = None
-                    self.notes.pop(routine, None)
+                    self.running.pop(item["run"], None)
+                    self.notes.pop(item.get("routine"), None)
+                    self.wake.notify_all()  # What it held is free for a run that waits for it.
 
-    def perform(self, ident, routine, logins, cancel):
+    @staticmethod
+    def supervise(attempt, limit, stop, reason):
+        """Run `attempt` on a thread of its own for at most `limit` seconds: past it, stop it (`stop`) with `reason`,
+        which the run's record gives. Once stopped (by the user, the app's end or the limit) it has GRACE seconds to
+        end; one that still has not, as when an importer hangs, is left to end by itself, unheard, so that the worker
+        goes on to the next run. Whether it ended."""
+        thread = threading.Thread(target=attempt, name="routine run", daemon=True)
+        thread.start()
+        deadline, ending = time.monotonic() + limit, None
+        while thread.is_alive():
+            current = time.monotonic()
+            if ending is None and not stop.is_set() and current >= deadline:
+                stop.reason = reason
+                stop.set()
+            if ending is None and stop.is_set():
+                ending = current + GRACE
+            if ending is not None and current >= ending:
+                return False
+            thread.join(max(0.01, min(1.0, (deadline if ending is None else ending) - current)))
+        return True
+
+    def perform(self, item):
+        """Run a routine's run on a thread of its own within its recipe's time limit, and record how it went."""
+        ident, routine, stop = item["run"], item["routine"], item["stop"]
         with self.db.connect() as db:
             row = db.execute("SELECT * FROM routines WHERE id=?", (routine,)).fetchone()
             if row is None:
@@ -1586,24 +1758,42 @@ class Routines:
             db.execute("UPDATE routine_runs SET status='running',started_at=? WHERE id=?", (stamp, ident))
             db.execute("UPDATE routines SET last_status='running' WHERE id=?", (routine,))
         recipe = RECIPES.get(row["kind"])
-        found, error, status, run = {}, "", "success", None
-        try:
-            run = Run(self, row, logins, cancel)
-            if recipe is None:
-                raise UserError("이 버전에서 지원하지 않는 자동 작업입니다.")
-            # A field an older version did not have takes its default.
-            run.config = {spec["key"]: run.config.get(spec["key"], spec["default"]) for spec in recipe.fields}
-            found = recipe.run(run)
-            run.check()
-        except Cancelled:
-            status = "cancelled"
-        except Exception as failure:
+        attempted = {}
+
+        def attempt():
+            try:
+                # The run's LLM requests stop with it (llm.CANCEL), as its importers' jobs do (Run.job).
+                with cancellable(stop):
+                    run = attempted["run"] = Run(self, row, item["logins"], stop)
+                    if recipe is None:
+                        raise UserError("이 버전에서 지원하지 않는 자동 작업입니다.")
+                    # A field an older version did not have takes its default.
+                    run.config = {spec["key"]: run.config.get(spec["key"], spec["default"]) for spec in recipe.fields}
+                    attempted["found"] = recipe.run(run)
+                    run.check()
+            except Exception as failure:
+                attempted["failure"] = failure
+
+        limit = recipe.timeout if recipe else Recipe.timeout
+        ended = self.supervise(attempt, limit, stop, TIMED_OUT.format(limit=span(limit)))
+        # A run left to end by itself is over for its record: stopped at its limit, or by the user or the app's end.
+        failure = attempted.get("failure") if ended else Cancelled()
+        found, error, status = {}, "", "success"
+        if failure is None:
+            found = attempted.get("found") or {}
+        elif isinstance(failure, Cancelled) or stop.is_set():
+            # A stop also ends what the run waited for, such as an LLM request (llm.Cancelled), with an error of its own.
+            status, error = ("error", stop.reason) if stop.reason else ("cancelled", "")
+        else:
             status = "error"
             error = str(failure) if isinstance(failure, UserError) else diagnostics.report(
                 failure, "자동 작업을 실행하지 못했습니다. 설정과 연결 상태를 확인해 주세요.", f"자동 작업 {row['kind']}")
-        run = run or Run.__new__(Run)
+        run = attempted.get("run") or Run.__new__(Run)
         state, docs, sites, lockout = (getattr(run, name, default) for name, default in (
             ("state", {}), ("docs", []), ("sites", []), ("lockout", "")))
+        if not ended:
+            # Copies of what a run that goes on by itself holds, which it may still change: the documents it wrote.
+            state, docs, sites, lockout = {"docs": dict(state.get("docs") or {})}, list(docs), list(sites), ""
         completed = status == "success"
         if completed:
             state["ran"] = True
@@ -1617,11 +1807,13 @@ class Routines:
         changed = bool(found.get("changed")) and status == "success"
         payload = json.dumps(details, ensure_ascii=False)
         if len(payload) > 400_000:  # Items and text beyond this are not kept.
-            details["items"], details["text"] = details.get("items", [])[:20], details.get("text", "")[:20000]
+            details["items"], details["text"] = details.get("items", [])[:20], clip(details.get("text", ""), 20000)
             payload = json.dumps(details, ensure_ascii=False)
-        finished = now()
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            # Dated within the write: runs that several workers record at once are dated in the order they are
+            # recorded, so routines.events never moves its cursor past one not yet written.
+            finished = now()
             if status == "error" and not lockout:
                 # The same failure as the last run's (a site that stays down) is told once, not at every interval: an
                 # unexpected one's message ends with a log ID of its own each time. A routine turned off because its
@@ -1656,3 +1848,40 @@ class Routines:
                        (*values.values(), routine))
             db.execute("""DELETE FROM routine_runs WHERE routine_id=? AND id NOT IN (SELECT id FROM routine_runs
                 WHERE routine_id=? ORDER BY created_at DESC LIMIT ?)""", (routine, routine, MAX_RUNS))
+
+    def prompt(self, item):
+        """Run a prompt schedule's run (schedules.py) with the inputs its schedule has now, within PROMPT_TIMEOUT, and
+        keep it as a prompt run is kept: in the run history, which the history widget lists, and as the schedule's last
+        run. A schedule deleted while its run waited, with its prompt maybe, has none."""
+        ident, stop = item["schedule"], item["stop"]
+        with self.db.connect() as db:
+            row = db.execute("SELECT * FROM schedules WHERE id=?", (ident,)).fetchone()
+        if row is None:
+            return
+        prompt = self.service.prompt_row(row["prompt_id"])
+        variables = json.loads(row["variables"])
+        attempted, started, begun = {}, now(), time.monotonic()
+
+        def attempt():
+            # Its LLM request stops with the run (llm.CANCEL): its wait for a slot at once, the request at its end.
+            with cancellable(stop):
+                attempted["run"] = self.service.attempt_prompt(prompt, variables, "scheduled", ident, item["run"])
+
+        ended = self.supervise(attempt, PROMPT_TIMEOUT, stop, PROMPT_TIMED_OUT.format(limit=span(PROMPT_TIMEOUT)))
+        run = attempted.get("run") if ended else None
+        if run is None:
+            # Left to end by itself, unrecorded: the run is recorded now with why it stopped, and no longer shown as
+            # running.
+            with self.service.active_lock:
+                self.service.active.pop(item["run"], None)
+            try:
+                sent = self.service.prompt_messages(prompt, variables)[-1]["content"]
+            except UserError:
+                sent = ""
+            run = {"id": item["run"], "prompt_id": prompt["id"], "title": prompt["title"], "input": sent, "output": "",
+                   "status": "error", "error": stop.reason or PROMPT_STOPPED, "kind": "scheduled", "schedule_id": ident,
+                   "started_at": started, "duration_ms": round((time.monotonic() - begun) * 1000)}
+        elif run["status"] == "error" and stop.is_set():
+            # The LLM request that its time limit stopped, or the app's end: only those stop a scheduled prompt's run.
+            run["error"] = stop.reason or PROMPT_STOPPED
+        self.service.schedules.finish(ident, self.service.record_run(run))

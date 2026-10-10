@@ -223,7 +223,8 @@ export type WikiDocument = {
   outline?: OutlineNode[];
   keywords: string[];
   relations?: Relation[];
-  // Full documents only: the documents an import too long for one was saved as, in order (this one included).
+  // Full documents, and the entries of a page of the list or a search (DocumentPage): the documents an import too long
+  // for one was saved as, in order (this one included). A page lists only the live ones and [] for other documents.
   parts?: { id: string; title: string; part: number }[];
   // Where an imported document came from, and when it last took its text from there (imported_at). An import too
   // long for one document is saved as `parts` documents; this one is number `part`. Full documents also say whether
@@ -380,7 +381,23 @@ export type SearchResult = {
   steps: SearchStep[];
   total: number;
   ai?: boolean;
+  // Set when the search was asked for a page (DocumentQuery limit or cursor).
+  next_cursor?: string | null;
 };
+// What a document list (wiki.list) or a search other than prompt (wiki.search) is asked for besides its query: with
+// limit or cursor one page of it, whose next_cursor the next request sends back as cursor; and only the documents of
+// one source (manual: written here), one state of AI analysis, or updated from updated_from up to updated_to (ISO 8601
+// with a time zone; the end left out). Without limit and cursor the whole list comes as before.
+export type DocumentQuery = {
+  limit?: number;
+  cursor?: string;
+  source?: 'manual' | NonNullable<WikiDocument['source']>['kind'];
+  analysis?: 'analyzed' | 'not_analyzed' | 'failed' | 'running';
+  updated_from?: string;
+  updated_to?: string;
+};
+// A page of the document list (wiki.list with limit or cursor): null next_cursor after the last page.
+export type DocumentPage = { documents: WikiDocument[]; next_cursor: string | null };
 
 export type StorageInfo = {
   initialized: boolean;
@@ -856,6 +873,8 @@ export type Citation = {
   terms?: string[];
 };
 export type Conversation = { id: string; title: string; updated_at: string };
+// A page of the conversations (assistant.conversations with limit or cursor); see DocumentPage.
+export type ConversationPage = { conversations: Conversation[]; next_cursor: string | null };
 // An answer from the search box; an automatic search also lists every document it found. Asked with
 // { stream: true, request_id }, the same answer also reaches onAssistantDelta while the LLM writes it. An answer the
 // user stopped (assistant.cancel) or the LLM's output limit cut short keeps what came, with a note at its end.

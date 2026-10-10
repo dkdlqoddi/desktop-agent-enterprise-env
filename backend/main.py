@@ -22,7 +22,7 @@ from agent.storage import Refused
 # Requests that wait on the LLM or a browser can take minutes. They get their own lane, so the quick
 # reads a screen makes all at once (lists, statuses) are never refused behind them.
 SLOW = frozenset({"settings.test", "prompts.run", "wiki.analyze", "assistant.ask", "briefing.generate",
-                  "tasks.extract", "schedules.run", "schedules.execute", "confluence.check", "jira.check",
+                  "tasks.extract", "schedules.run", "confluence.check", "jira.check",
                   # A backup and the copy of one to restore read and write the whole Wiki.
                   "wiki.backup", "wiki.restore_backup"})
 # Requests a user waits for on the screen (or an AI tool for its answer): their LLM requests go before those of batch
