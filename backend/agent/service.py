@@ -84,6 +84,10 @@ SOURCES = (("rtf_sources", "rtf", "source_path,imported_at,part,parts"),
 
 # The most documents one request on the document list's selection may name.
 MAX_SELECTED = 10000
+# How long a deleted document waits in the trash before it is purged at a start of the backend.
+TRASH_DAYS = 30
+# Documents that are not in the trash, as every list, search and analysis reads them.
+LIVE = "deleted_at IS NULL"
 
 # What a schedule's run that cannot fill in its template's inputs asks the user to do.
 SCHEDULE_INPUTS = "예약을 열어 입력 내용을 확인하고 저장해 주세요."
@@ -127,6 +131,9 @@ class Service:
         # An interrupted extraction must remain retryable on the next startup.
         with db.connect() as conn:
             conn.execute("UPDATE documents SET status='pending', error='' WHERE status='indexing'")
+            # The trash is emptied of what has waited TRASH_DAYS: the rest stays for the user to restore.
+            conn.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?",
+                         ((datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).isoformat(),))
 
     def shutdown(self, _=None):
         """The app is closing: stop the automatic routines, the imports, a write to an original file before it saves,
@@ -158,6 +165,8 @@ class Service:
             "settings.get": lambda p: self.llm.public(),
             "settings.update": lambda p: self.llm.update(p),
             "settings.load": lambda p: self.llm.load(p),
+            # The main process alone (never a screen or an AI tool: electron/main.cjs ALLOWED leaves it out).
+            "settings.secrets": lambda p: self.llm.secrets(),
             "settings.test": lambda p: {"message": self.llm.complete([{"role": "user", "content": "연결 테스트입니다. '연결 성공'이라고 짧게 답해 주세요."}])},
             "stats": self.stats, "prompts.list": self.prompts_list, "prompts.save": self.prompts_save,
             "prompts.delete": self.prompts_delete, "prompts.run": self.prompts_run,
@@ -166,6 +175,7 @@ class Service:
             "wiki.list": self.wiki_list, "wiki.get": self.wiki_get, "wiki.save": self.wiki_save,
             "wiki.delete": self.wiki_delete, "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
             "wiki.delete_many": self.wiki_delete_many, "wiki.clear_analysis": self.wiki_clear_analysis,
+            "wiki.trash": self.wiki_trash, "wiki.restore": self.wiki_restore, "wiki.purge": self.wiki_purge,
             "wiki.search": self.wiki_search, "wiki.graph": self.wiki_graph,
             "wiki.source_markdown": self.wiki_source_markdown, "wiki.source_html": self.wiki_source_html,
             "wiki.source_status": self.wiki_source_status,
@@ -241,11 +251,12 @@ class Service:
         if not isinstance(ai_answer, bool):
             fail("AI 답변 설정을 확인해 주세요.")
             ai_answer = True
-        # Whether the LLM helps when a site does not open or sign in (web_assist.py).
-        assist = value.get("web_assist", True)
+        # Whether the LLM helps when a site does not open or sign in (web_assist.py). Off unless the user turns it
+        # on: it sends the words of a login or error page, and the names of hosts behind it, to the LLM server.
+        assist = value.get("web_assist", False)
         if not isinstance(assist, bool):
             fail("로그인·접속 실패 시 AI 분석 설정을 확인해 주세요.")
-            assist = True
+            assist = False
         return {"widgets": layout, "ai_answer": ai_answer, "web_assist": assist}
 
     def preferences_get(self, _):
@@ -270,9 +281,11 @@ class Service:
     def stats(self, _):
         with self.db.connect() as db:
             return {"prompts": db.execute("SELECT count(*) FROM prompts").fetchone()[0],
-                    "documents": db.execute("SELECT count(*) FROM documents").fetchone()[0],
-                    "keywords": db.execute("SELECT count(DISTINCT keyword) FROM keywords").fetchone()[0],
-                    "relations": db.execute("SELECT count(*) FROM (SELECT DISTINCT source,target,label FROM relations)").fetchone()[0]}
+                    "documents": db.execute(f"SELECT count(*) FROM documents WHERE {LIVE}").fetchone()[0],
+                    "keywords": db.execute(f"""SELECT count(DISTINCT k.keyword) FROM keywords k
+                        JOIN documents d ON d.id=k.doc_id AND d.{LIVE}""").fetchone()[0],
+                    "relations": db.execute(f"""SELECT count(*) FROM (SELECT DISTINCT r.source,r.target,r.label
+                        FROM relations r JOIN documents d ON d.id=r.doc_id AND d.{LIVE})""").fetchone()[0]}
 
     def prompts_list(self, _):
         with self.db.connect() as db:
@@ -472,8 +485,9 @@ class Service:
     def wiki_list(self, _):
         with self.db.connect() as db:
             # List entries carry a short excerpt, never the full text of every document.
-            return self.attach(db, [dict(row) for row in db.execute("""SELECT id,title,substr(content,1,200) AS excerpt,
-                summary,status,error,revision,index_mode,format,created_at,updated_at FROM documents ORDER BY updated_at DESC""")])
+            return self.attach(db, [dict(row) for row in db.execute(f"""SELECT id,title,substr(content,1,200) AS excerpt,
+                summary,status,error,revision,index_mode,format,created_at,updated_at FROM documents WHERE {LIVE}
+                ORDER BY updated_at DESC""")])
 
     def wiki_get(self, p):
         return self.document(p.get("id"), html=True)
@@ -482,7 +496,7 @@ class Service:
         """A document with its source, keywords, relations and outline. `html` adds the HTML page it shows
         while its format is html; content stays the Markdown text that search and the LLM read."""
         with self.db.connect() as db:
-            row = db.execute("SELECT * FROM documents WHERE id=?", (text(ident, "ID", 80),)).fetchone()
+            row = db.execute(f"SELECT * FROM documents WHERE id=? AND {LIVE}", (text(ident, "ID", 80),)).fetchone()
             if not row:
                 raise UserError("문서를 찾을 수 없습니다.")
             result = self.attach(db, [dict(row)])[0]
@@ -522,7 +536,12 @@ class Service:
             raise UserError("문서 버전(expected_revision)을 확인해 주세요.")
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT title,content,revision FROM documents WHERE id=?", (ident,)).fetchone()
+            row = db.execute("SELECT title,content,revision,deleted_at FROM documents WHERE id=?", (ident,)).fetchone()
+            if row is not None and row["deleted_at"]:
+                if expected is not None:
+                    raise UserError("편집하는 동안 문서가 휴지통으로 옮겨졌습니다. 내용을 복사해 두고 휴지통에서 복원한 뒤 "
+                                    "다시 열어 주세요.")
+                raise UserError("휴지통에 있는 문서입니다. 복원한 뒤 고쳐 주세요.")
             if row is None:
                 if expected is not None:
                     raise UserError("편집하는 동안 문서가 삭제되었습니다. 내용을 복사해 새 문서로 저장해 주세요.")
@@ -548,18 +567,57 @@ class Service:
         return self.wiki_get({"id": ident})
 
     def wiki_delete(self, p):
+        """Move a document to the trash, where it waits TRASH_DAYS for the user to restore it (wiki.restore)."""
+        ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            db.execute("DELETE FROM documents WHERE id=?", (text(p.get("id"), "ID", 80),))
-        return {"ok": True}
+            moved = db.execute(f"UPDATE documents SET deleted_at=? WHERE id=? AND {LIVE}", (now(), ident)).rowcount
+        return {"ok": True, "deleted": moved, "ids": [ident] if moved else []}
 
     def wiki_delete_many(self, p):
-        """Delete the documents chosen in the list, all or none of them."""
+        """Move the documents chosen in the list to the trash, all or none of them."""
+        from .search import chunks
+        ids, moved, stamp = document_ids(p.get("ids")), [], now()
+        with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for chunk in chunks(ids):
+                marks = ",".join("?" * len(chunk))
+                moved += [row[0] for row in db.execute(f"SELECT id FROM documents WHERE id IN ({marks}) AND {LIVE}", chunk)]
+            for chunk in chunks(moved):
+                db.execute(f"UPDATE documents SET deleted_at=? WHERE id IN ({','.join('?' * len(chunk))})", [stamp, *chunk])
+        return {"deleted": len(moved), "ids": moved}
+
+    def wiki_trash(self, _):
+        """The documents in the trash, the last deleted first, with where each came from."""
+        with self.db.connect() as db:
+            # Documents deleted together (the same instant) in the order of their titles, so a list reads the same twice.
+            docs = self.attach(db, [dict(row) for row in db.execute("""SELECT id,title,substr(content,1,200) AS excerpt,
+                summary,format,index_mode,deleted_at,updated_at FROM documents WHERE deleted_at IS NOT NULL
+                ORDER BY deleted_at DESC, title, id""")])
+        return {"documents": docs, "days": TRASH_DAYS}
+
+    def wiki_restore(self, p):
+        """Bring the chosen documents back from the trash, with their analysis, sources and tasks as they were."""
         from .search import chunks
         ids = document_ids(p.get("ids"))
         with self.db.connect() as db:
-            deleted = sum(db.execute(f"DELETE FROM documents WHERE id IN ({','.join('?' * len(chunk))})", chunk).rowcount
-                          for chunk in chunks(ids))
-        return {"deleted": deleted}
+            restored = sum(db.execute(f"UPDATE documents SET deleted_at=NULL WHERE id IN ({','.join('?' * len(chunk))}) "
+                                      "AND deleted_at IS NOT NULL", chunk).rowcount for chunk in chunks(ids))
+        return {"restored": restored}
+
+    def wiki_purge(self, p):
+        """Delete the chosen documents of the trash for good, or all of them (`all`): nothing brings them back."""
+        from .search import chunks
+        everything = p.get("all", False)
+        if not isinstance(everything, bool):
+            raise UserError("휴지통을 모두 비울지(all) 확인해 주세요.")
+        ids = [] if everything else document_ids(p.get("ids"))
+        with self.db.connect() as db:
+            if everything:
+                purged = db.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL").rowcount
+            else:
+                purged = sum(db.execute(f"DELETE FROM documents WHERE id IN ({','.join('?' * len(chunk))}) "
+                                        "AND deleted_at IS NOT NULL", chunk).rowcount for chunk in chunks(ids))
+        return {"purged": purged}
 
     def wiki_clear_analysis(self, p):
         """Take back the AI analysis of the chosen documents (summary, keywords, relations, table of contents and a
@@ -572,7 +630,7 @@ class Service:
             db.execute("BEGIN IMMEDIATE")
             for chunk in chunks(ids):
                 marks = ",".join("?" * len(chunk))
-                for row in db.execute(f"""SELECT id,status FROM documents WHERE id IN ({marks})
+                for row in db.execute(f"""SELECT id,status FROM documents WHERE id IN ({marks}) AND {LIVE}
                         AND (status!='pending' OR index_mode!='' OR summary!='')""", chunk):
                     if row["status"] == "indexing":
                         busy += 1
@@ -591,7 +649,8 @@ class Service:
         ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
             for table, _, _ in SOURCES:
-                row = db.execute(f"SELECT s.markdown,d.title FROM {table} s JOIN documents d ON d.id=s.doc_id WHERE s.doc_id=?", (ident,)).fetchone()
+                row = db.execute(f"SELECT s.markdown,d.title FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.{LIVE} "
+                                 "WHERE s.doc_id=?", (ident,)).fetchone()
                 if row:
                     return {"markdown": row["markdown"], "filename": markdown_filename(row["title"])}
         raise UserError("이 문서에는 가져온 Markdown 원문이 없습니다.")
@@ -600,8 +659,8 @@ class Service:
         """The HTML page a file was imported as, for the raw HTML view and its download."""
         from .html_document import html_filename
         with self.db.connect() as db:
-            row = db.execute("SELECT h.html,d.title FROM document_html h JOIN documents d ON d.id=h.doc_id WHERE h.doc_id=?",
-                             (text(p.get("id"), "ID", 80),)).fetchone()
+            row = db.execute(f"SELECT h.html,d.title FROM document_html h JOIN documents d ON d.id=h.doc_id AND d.{LIVE} "
+                             "WHERE h.doc_id=?", (text(p.get("id"), "ID", 80),)).fetchone()
         if not row:
             raise UserError("이 문서에는 가져온 HTML 원문이 없습니다.")
         return {"html": row["html"], "filename": html_filename(row["title"])}
@@ -612,9 +671,9 @@ class Service:
         'unknown': only an import, which signs in, can read it."""
         ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            source = self.attach(db, [{"id": ident}])[0]["source"]
+            found = db.execute(f"SELECT 1 FROM documents WHERE id=? AND {LIVE}", (ident,)).fetchone()
+            source = self.attach(db, [{"id": ident}])[0]["source"] if found else None
             if not source:
-                found = db.execute("SELECT 1 FROM documents WHERE id=?", (ident,)).fetchone()
                 raise UserError("가져온 문서가 아닙니다." if found else "문서를 찾을 수 없습니다.")
             if "source_path" not in source:
                 return {"state": "unknown"}
@@ -686,22 +745,24 @@ class Service:
     def wiki_graph(self, _):
         with self.db.connect() as db:
             # Lists show up to 1,000 keywords; the graph views draw the most frequent of them.
+            live = f"JOIN documents d ON d.id=k.doc_id AND d.{LIVE}"
             nodes = {r["keyword"]: {"id": r["keyword"], "label": r["keyword"], "count": r["count"], "docs": []}
-                     for r in db.execute("""SELECT keyword,count(*) AS count FROM keywords GROUP BY keyword
-                         ORDER BY count DESC,keyword LIMIT 1000""")}
-            for r in db.execute("SELECT doc_id,keyword FROM keywords"):
+                     for r in db.execute(f"""SELECT k.keyword,count(*) AS count FROM keywords k {live}
+                         GROUP BY k.keyword ORDER BY count DESC,k.keyword LIMIT 1000""")}
+            for r in db.execute(f"SELECT k.doc_id,k.keyword FROM keywords k {live}"):
                 if r["keyword"] in nodes:
                     nodes[r["keyword"]]["docs"].append(r["doc_id"])
             edges = {}
-            for r in db.execute("SELECT doc_id,source,target,label FROM relations"):
+            for r in db.execute(f"SELECT k.doc_id,k.source,k.target,k.label FROM relations k {live}"):
                 if r["source"] in nodes and r["target"] in nodes:
                     edges.setdefault((r["source"], r["target"], r["label"]), {"source": r["source"],
                         "target": r["target"], "label": r["label"], "docs": []})["docs"].append(r["doc_id"])
             edges = sorted(({**edge, "count": len(edge["docs"])} for edge in edges.values()),
                            key=lambda edge: (-edge["count"], edge["source"], edge["target"], edge["label"]))
-            documents = [dict(r) for r in db.execute("""SELECT id,title FROM documents
-                WHERE id IN (SELECT doc_id FROM keywords) ORDER BY updated_at DESC""")]
-            total = db.execute("SELECT count(DISTINCT keyword) FROM keywords").fetchone()[0]
-            relations = db.execute("SELECT count(*) FROM (SELECT DISTINCT source,target,label FROM relations)").fetchone()[0]
+            documents = [dict(r) for r in db.execute(f"""SELECT id,title FROM documents
+                WHERE id IN (SELECT doc_id FROM keywords) AND {LIVE} ORDER BY updated_at DESC""")]
+            total = db.execute(f"SELECT count(DISTINCT k.keyword) FROM keywords k {live}").fetchone()[0]
+            relations = db.execute(f"""SELECT count(*) FROM (SELECT DISTINCT k.source,k.target,k.label
+                FROM relations k {live})""").fetchone()[0]
             return {"nodes": list(nodes.values()), "edges": edges, "documents": documents,
                     "total_keywords": total, "total_relations": relations}

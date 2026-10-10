@@ -22,8 +22,32 @@ BACKUPS = 1
 MAX_TRACE = 20_000
 # The ID a logged failure's message ends with, as report() and worker_failure() write it.
 LOG_ID = re.compile(r"\s*\(오류 ID [0-9a-f]{8}\)")
+# Secrets as they could appear in an exception's message (a URL, a header, a JSON body): the app's own API tokens
+# (pa_…), OpenAI-style keys, bearer tokens and anything named as a password, key, token or cookie. Written down as
+# [REDACTED] (electron/diagnostics.cjs does the same for the app's log and the copied report).
+SECRETS = (
+    (re.compile(r"\bpa_[A-Za-z0-9_-]{6,}"), "pa_[REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "sk-[REDACTED]"),
+    (re.compile(r"\b(password|passwd|pwd|api[_-]?key|x-api-key|authorization|token|secret|cookie)\b"
+                r"(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)", re.I), r"\1\2[REDACTED]"),
+    (re.compile(r"\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}", re.I), r"\1 [REDACTED]"),
+)
 
 DISK_FULL = "디스크 공간이 부족해 저장하지 못했습니다. 공간을 확보한 뒤 다시 시도해 주세요."
+
+
+def redact(text):
+    """`text` with the secrets it may hold (SECRETS) written as [REDACTED]."""
+    for pattern, replacement in SECRETS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+class Redacting(logging.Formatter):
+    """Writes every entry with its secrets redacted: a traceback quotes the values an exception carried."""
+
+    def format(self, record):
+        return redact(super().format(record))
 
 
 def start(directory):
@@ -37,7 +61,7 @@ def start(directory):
                                                        backupCount=BACKUPS, encoding="utf-8", delay=True)
     except OSError:
         return
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    handler.setFormatter(Redacting("%(asctime)s %(levelname)s %(message)s"))
     LOG.addHandler(handler)
 
 

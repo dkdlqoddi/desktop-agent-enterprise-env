@@ -559,5 +559,6 @@ class JiraImporter(BrowserImporter):
                 self.login_result = result
 
     async def _verify(self, context, page, url, origin, login, assist):
-        return await sign_in(context, page, url, login, product="JIRA", assist=assist,
+        # A check tells whether the account and the method sign in: never the session a run or the window left.
+        return await sign_in(context, page, url, login, product="JIRA", assist=assist, fresh=True,
                              arrived=lambda value: signed_in(value, origin), **self._timeouts())

@@ -28,7 +28,7 @@ import {
   type SiteWindows,
   type WebDiagnosis,
 } from '@/lib/api';
-import { hasScheme, httpUrl, isConfluencePageUrl, jiraIssueKey } from '@/lib/links';
+import { httpUrl, isConfluencePageUrl, jiraIssueKey } from '@/lib/links';
 import { useApp } from '../app';
 import Confirm from '../confirm';
 import Diagnosis from '../diagnosis';
@@ -50,9 +50,10 @@ const PLACEHOLDERS: Record<SiteKind, { url: string; name: string; hint: string }
     hint: '페이지 링크를 붙여 넣으면 사이트 주소만 남깁니다.',
   },
 };
-// An address typed without its scheme opens as in the browser's address bar (backend/agent/browser_import.py _reach).
+// An address typed without its scheme is an https address; the site is never opened over http by a fallback
+// (electron/sites.cjs normalizeUrl, backend/agent/browser_import.py _reach).
 const SCHEMELESS =
-  'http:// 또는 https://를 빼면 https로 먼저 접속해 보고, 안 되면 http로 접속합니다.';
+  'https://를 빼면 https 주소로 저장합니다. http만 쓰는 사이트는 http://를 붙여 입력하세요. 그 사이트에는 비밀번호가 암호화되지 않은 연결로 전송됩니다.';
 // Choices around the preset methods: detect and remember, the user's own steps, or no typing.
 const AUTO = {
   id: 'auto',
@@ -76,16 +77,40 @@ const SESSION = {
 const FALLBACK = '실패하면 다른 표준 로그인 방식부터 다른 방식을 차례로 시도합니다.';
 // The method of the fields the LLM found, as electron/sites.cjs names it.
 const LEARNED = { id: 'learned', label: 'AI가 찾은 로그인 화면' };
+
+// Whether the LLM endpoint is on this PC or the local network: what the login analysis sends it stays there then.
+function localEndpoint(value: string) {
+  try {
+    const host = new URL(value).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return (
+      host === 'localhost' ||
+      host === '::1' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(host) ||
+      /^(f[cd][0-9a-f]{2}|fe80):/.test(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// The host of the LLM endpoint, for the caution about what the login analysis sends it.
+function hostOf(value: string) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value;
+  }
+}
 const VALUES = { id: '로그인 ID', password: '비밀번호', text: '직접 입력' } as const;
 // Steps before the login button: a method has 16 at most, the login button included.
 const MAX_STEPS = 15;
 
-// The origin a saved password belongs to, as electron/sites.cjs originOf: scheme://host[:port], or //host[:port] for an
-// address typed without its scheme; '' while it is none.
+// The origin a saved password belongs to, as electron/sites.cjs originOf: scheme://host[:port], https for an address
+// typed without its scheme; '' while it is none.
 function originOf(value: string) {
-  const url = httpUrl(value);
-  if (!url) return '';
-  return hasScheme(value) ? url.origin : `//${url.host}`;
+  return httpUrl(value)?.origin ?? '';
 }
 
 // How an account signs in, in words: the chosen method, or what automatic detection found.
@@ -227,7 +252,8 @@ function orderOf(methods: LoginMethod[], saved: string | null, learned: LoginSte
 }
 
 export default function SitesSection({ draft }: { draft?: { url: string; kind?: SiteKind } }) {
-  const { notify, configured, preferences, savePreferences } = useApp();
+  const { notify, configured, preferences, savePreferences, settings } = useApp();
+  const external = configured && !localEndpoint(settings.base_url);
   const [state, setState] = useState<SitesState | null>(null);
   const [windows, setWindows] = useState<SiteWindows | null>(null);
   const [editing, setEditing] = useState<Draft | null>(
@@ -337,10 +363,10 @@ export default function SitesSection({ draft }: { draft?: { url: string; kind?: 
         <span>
           <strong>로그인·접속 실패 시 AI 분석</strong>
           <small>
-            저장된 방식이 맞지 않는 로그인 화면은 LLM이 입력란을 찾아 한 번 로그인하고, 열리지 않은
-            페이지는 다시 열지 판단합니다. 끝내 실패하면 원인과 해결 방법을 알려 줍니다. LLM에는
-            화면의 주소(쿼리 제외)·제목·보이는 글·입력란 설명과 오류를 보내며, ID·비밀번호와
-            입력란의 값은 보내지 않습니다.
+            기본은 꺼짐입니다. 켜면 저장된 방식이 맞지 않는 로그인 화면은 LLM이 입력란을 찾아 한 번
+            로그인하고, 열리지 않은 페이지는 다시 열지 판단합니다. 끝내 실패하면 원인과 해결 방법을
+            알려 줍니다. LLM에는 화면의 주소(쿼리 제외)·제목·보이는 글·입력란 설명과 오류를 보내며,
+            ID·비밀번호와 입력란의 값은 보내지 않습니다.
             {!configured && ' LLM을 연결하면 동작합니다.'}
           </small>
         </span>
@@ -358,6 +384,14 @@ export default function SitesSection({ draft }: { draft?: { url: string; kind?: 
           <span aria-hidden="true" />
         </span>
       </label>
+      {preferences.web_assist && external && (
+        <p className="banner warn" role="status">
+          <CircleAlert size={15} />
+          LLM 엔드포인트가 외부 서버({hostOf(settings.base_url)})입니다. 로그인·오류 화면의 글과 그
+          주소에 있는 내부 호스트 이름이 그 서버로 전송됩니다. 사내 LLM이 아니라면 이 옵션을 끄는
+          편이 안전합니다.
+        </p>
+      )}
       {state.error && (
         <p className="banner warn" role="alert">
           <CircleAlert size={15} />
@@ -457,6 +491,30 @@ export default function SitesSection({ draft }: { draft?: { url: string; kind?: 
                     {' · '}
                     {loginSummary(site)}
                   </p>
+                  {site.login_hosts.length > 0 && (
+                    <p className="site-login">
+                      <ShieldCheck size={13} />
+                      로그인 주소 고정: {site.login_hosts.join(', ')} · 이 주소 밖의 로그인 화면에는
+                      입력하지 않습니다.{' '}
+                      <button
+                        type="button"
+                        className="text-button"
+                        title="사이트의 로그인 화면이 바뀌었을 때: 다음 로그인에서 새 주소를 다시 저장합니다"
+                        onClick={() =>
+                          void api<Site>('sites.save', { id: site.id, reset_login_hosts: true })
+                            .then((saved) => {
+                              replace(saved);
+                              notify(
+                                '로그인 주소를 초기화했습니다. 다음 로그인에서 다시 저장합니다.',
+                              );
+                            })
+                            .catch((error) => notify((error as Error).message, true))
+                        }
+                      >
+                        로그인 주소 초기화
+                      </button>
+                    </p>
+                  )}
                   {site.last_error && !result && <p className="inline-error">{site.last_error}</p>}
                   {site.last_error && !result && site.last_diagnosis && (
                     <Diagnosis diagnosis={site.last_diagnosis} />

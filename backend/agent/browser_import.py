@@ -7,8 +7,9 @@ and sends the site's login plan (web_login.py) with each request. The importers 
 what they share. With the LLM connected and the option on, a job or a login check that cannot open the site or sign
 in gets the LLM's help and its analysis of why (web_assist.py).
 
-A site address saved without its scheme (portal.example.com) is opened as the browser's address bar opens it: over https, or
-over http when https does not answer. The scheme found is kept for the host while the app runs.
+A site address saved without its scheme (portal.example.com) is opened over https, never over http: a site that only
+answers over http is saved with http:// written out, the user's own choice. The browser keeps Chromium's renderer
+sandbox on: the pages it opens are other people's.
 """
 import asyncio
 import contextlib
@@ -16,31 +17,31 @@ import hashlib
 import os
 import shutil
 import sys
+import re
 import threading
 import traceback
 from copy import deepcopy
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from . import diagnostics
 from .llm import BusyError, UserError
 from .service import text
-from .web_assist import Assist, error_page
-from .web_login import has_scheme, origin_of, place_of, redirected, validate_plan, with_scheme
+from .web_assist import Assist
+from .web_login import origin_of, redirected, validate_plan, with_scheme
 
 ACTIVE = ("scanning", "login", "running", "cancelling")
 BUSY_ERROR = "진행 중인 가져오기 또는 로그인 창을 먼저 닫아 주세요."
 CHECK_FAILED = "로그인을 확인하지 못했습니다. 주소와 네트워크 연결을 확인해 주세요."
 CHECK_STOPPED = "로그인 확인을 중지했습니다."
-BROWSER_ARGS = ["--disable-notifications", "--no-sandbox", "--disable-setuid-sandbox"]
+BROWSER_ARGS = ["--disable-notifications"]
+# What Chromium says when it cannot start its sandbox: Linux without unprivileged user namespaces (a container, CI).
+NO_SANDBOX = re.compile(r"sandbox|namespace", re.I)
 # On some PCs a browser start now and then fails between starts that work, likely interrupted by security software;
 # such a start is tried once more after a pause.
 START_ATTEMPTS = 2
 START_PAUSE = 2  # Seconds
 # Jobs Electron may still read by ID after the next one started: it keeps how each job signed in for the site.
 RECENT_JOBS = 8
-# A site address without its scheme: how long its try over https, then over http, may take to get an answer.
-REACH_SECONDS = 15
 
 
 def use_shared_browsers():
@@ -119,20 +120,6 @@ async def open_page(page, url, product, assist=None):
         return await assist.reconnect(page, url, error, failure)
 
 
-async def reached(page, url, seconds):
-    """The address the browser came to opening `url`, once the site answered within `seconds`: with its page, a redirect
-    or an error status, as the address bar takes an answer. None when it did not answer in time or the connection, its
-    certificate or the name failed; the browser's error page, which shows a moment later, is waited for, so it does not
-    interrupt the next page opened."""
-    try:
-        await page.goto(url, wait_until="commit", timeout=seconds * 1000)
-    except Exception as error:
-        if not redirected(error):
-            await error_page(page)
-            return None
-    return page.url
-
-
 async def close_popup(page, popup):
     """Background work never keeps extra windows."""
     if popup != page:
@@ -179,8 +166,6 @@ class BrowserImporter:
         self.check_seconds = 720
         self.close_seconds = 20
         self.login_headless = False
-        self.reach_seconds = REACH_SECONDS
-        self.schemes = {}
 
     # -- RPC ----------------------------------------------------------------
 
@@ -361,8 +346,7 @@ class BrowserImporter:
 
     def _site(self, params):
         """Any page of the site, e.g. the site address saved for a login, and its origin. An address without its scheme
-        stays so, with its origin over https, which also names its browser profile; the browser finds the scheme it
-        opens with (_reach)."""
+        stays so, with its origin over https, which also names its browser profile and is how it opens (_reach)."""
         url = text(params.get("url"), f"{self.product} 주소", 4096)
         origin = origin_of(with_scheme(url))
         if not origin:
@@ -370,21 +354,10 @@ class BrowserImporter:
         return url, origin
 
     async def _reach(self, page, url):
-        """The site address `url` as the browser opens it, and its origin. One without its scheme opens as in the
-        address bar: over https, or over http when https does not answer or the site sends the browser on to http. The
-        scheme found is kept for the host; when neither answers, https stays, and the steps after this fail as for any
-        address that does not open."""
-        if has_scheme(url):
-            return url, origin_of(url)
-        host = urlsplit(with_scheme(url)).netloc.lower()
-        scheme = self.schemes.get(host)
-        if scheme is None:
-            for tried in ("https", "http"):
-                address = await reached(page, with_scheme(url, tried), self.reach_seconds)
-                if address is not None:
-                    scheme = self.schemes[host] = "http" if "http" in (tried, place_of(address)[0]) else "https"
-                    break
-        url = with_scheme(url, scheme or "https")
+        """The site address `url` as the browser opens it, and its origin. One without its scheme opens over https and
+        never over http, whatever the site answers: the account would go over a plain connection otherwise. A site
+        that only answers over http is saved with http:// written out, which is the user's own choice."""
+        url = with_scheme(url)
         return url, origin_of(url)
 
     def _update(self, job, **values):
@@ -472,10 +445,19 @@ class BrowserImporter:
         return self.profile_root / hashlib.sha256(origin.encode()).hexdigest()
 
     async def _launch(self, playwright, profile, headless):
-        # Full Chromium also for new-headless background runs; no browser downloads.
-        return await playwright.chromium.launch_persistent_context(
-            str(profile), channel="chromium", headless=headless, accept_downloads=False, args=BROWSER_ARGS,
-            permissions=["notifications"], viewport={"width": 1920, "height": 1080})
+        # Full Chromium also for new-headless background runs; no browser downloads. The pages it opens are other
+        # people's, so the renderer sandbox stays on: Playwright turns it off by itself unless chromium_sandbox is True.
+        options = {"channel": "chromium", "headless": headless, "accept_downloads": False, "args": BROWSER_ARGS,
+                   "permissions": ["notifications"], "viewport": {"width": 1920, "height": 1080}}
+        try:
+            return await playwright.chromium.launch_persistent_context(str(profile), chromium_sandbox=True, **options)
+        except Exception as error:
+            # Windows, where the app is packaged, always has the sandbox. Linux without unprivileged user namespaces
+            # (a container, CI) cannot start it: a development run goes on without, and the log says so.
+            if sys.platform == "win32" or not NO_SANDBOX.search(str(error)):
+                raise
+            diagnostics.LOG.warning("%s 브라우저를 샌드박스 없이 시작합니다: %s", self.product, first_line(error))
+            return await playwright.chromium.launch_persistent_context(str(profile), chromium_sandbox=False, **options)
 
     async def _login_window(self, url, origin, login):
         try:

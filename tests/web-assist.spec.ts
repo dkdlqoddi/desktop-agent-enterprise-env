@@ -62,7 +62,10 @@ test('the LLM signs in where no login method fits, and explains a failed login a
     await addWidget(page, '가져오기');
 
     await openAdmin(page, '사이트 계정');
+    // Off until the user turns it on: it sends the words of login pages to the LLM server.
     const option = page.getByRole('switch', { name: /로그인·접속 실패 시 AI 분석/ });
+    await expect(option).not.toBeChecked();
+    await option.click();
     await expect(option).toBeChecked();
     await page.getByRole('button', { name: '사이트 추가' }).click();
     const form = page.getByRole('form', { name: '사이트 추가' });

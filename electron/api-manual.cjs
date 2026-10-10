@@ -408,7 +408,7 @@ function markdown(doc, group) {
   lines.push(
     '## 전체 메서드',
     '',
-    `\`POST ${API_PREFIX}/rpc\`에 \`{"method": "<이름>", "params": {…}}\`로 보내거나, MCP 도구 \`call_api\`로 부릅니다.`,
+    `\`POST ${API_PREFIX}/rpc\`에 \`{"method": "<이름>", "params": {…}}\`로 보내거나, MCP 도구 \`call_api\`(조회 메서드는 \`query_api\`)로 부릅니다.`,
     '',
     '| 메서드 | 범위 | 설명 | REST |',
     '| --- | --- | --- | --- |',
@@ -555,7 +555,7 @@ ul{padding-left:20px}@media (max-width:820px){.layout{grid-template-columns:1fr}
     )
     .join(' · ')}</p></section>
 ${routes}
-<section id="methods"><h2>전체 메서드</h2><p><code>POST ${escape(API_PREFIX)}/rpc</code>에 <code>{"method": "…", "params": {…}}</code>로 보내거나 MCP 도구 <code>call_api</code>로 부릅니다.</p><table><thead><tr><th>메서드</th><th>범위</th><th>설명</th></tr></thead><tbody>${doc.methods
+<section id="methods"><h2>전체 메서드</h2><p><code>POST ${escape(API_PREFIX)}/rpc</code>에 <code>{"method": "…", "params": {…}}</code>로 보내거나 MCP 도구 <code>call_api</code>(조회 메서드는 <code>query_api</code>)로 부릅니다.</p><table><thead><tr><th>메서드</th><th>범위</th><th>설명</th></tr></thead><tbody>${doc.methods
     .map(
       (item) =>
         `<tr><td><code>${escape(item.name)}</code></td><td>${escape(item.scope)}${item.slow ? ' · slow' : ''}</td><td>${escape(item.summary)}${item.routes.length ? `<div class="muted">${item.routes.map((route) => `<code>${escape(route)}</code>`).join(' ')}</div>` : ''}</td></tr>`,

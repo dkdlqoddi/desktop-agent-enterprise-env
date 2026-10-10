@@ -1,7 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
 // A destructive action that asks in place instead of opening a dialog: the button turns into the
-// question with the same action and 취소.
+// question with the same action and 취소. The keyboard lands on 취소, so Enter pressed once more does nothing, and
+// the action's button is marked data-destructive: an AI tool clicks it only at the "full" access level
+// (app-control.ts guard).
 export default function Confirm({
   label,
   question,
@@ -60,7 +62,7 @@ export default function Confirm({
         type="button"
         className="button danger small"
         disabled={busy || disabled}
-        autoFocus
+        data-destructive
         onClick={async () => {
           setBusy(true);
           try {
@@ -73,7 +75,13 @@ export default function Confirm({
       >
         {label}
       </button>
-      <button type="button" className="button secondary small" disabled={busy} onClick={answer}>
+      <button
+        type="button"
+        className="button secondary small"
+        disabled={busy}
+        autoFocus
+        onClick={answer}
+      >
         취소
       </button>
     </span>

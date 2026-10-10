@@ -56,9 +56,11 @@ function serverOf(file) {
   return unc ? unc[1].toLowerCase() : '';
 }
 
-// The paths of this PC a method of an AI tool would read: those of an import, and a routine's to bring up to date.
+// The paths of this PC a method of an AI tool would read: those of an import, a routine's to bring up to date, and
+// the CA certificate the LLM requests would read (settings.update).
 function pathsOf(method, params) {
   const text = (value) => (typeof value === 'string' ? [unquote(value.trim())] : []);
+  if (method === 'settings.update') return text(params.ca_bundle);
   if (method === 'import.start')
     return typeof params.source === 'string' && !LINK.test(params.source.trim())
       ? text(params.source)
@@ -155,23 +157,32 @@ function createApiMethods({ handle, linkKind, extensions }) {
     if (LINK.test(source) || linked) {
       const kind = linked;
       let result;
+      // The caller's access level goes along: a link of a site the user did not register is for the "full" level.
       if (kind === 'jira')
-        result = await handle('jira.start', {
-          url: source,
-          scope: choice(params.jira_scope, 'JIRA 범위(jira_scope)', JIRA_SCOPES, 'issue'),
-          keyword: optionalText(params.keyword, '검색 키워드', 200),
-          user: optionalText(params.user, '사용자', 256),
-          role: params.role ?? 'any',
-          analyze,
-          ...update,
-        });
+        result = await handle(
+          'jira.start',
+          {
+            url: source,
+            scope: choice(params.jira_scope, 'JIRA 범위(jira_scope)', JIRA_SCOPES, 'issue'),
+            keyword: optionalText(params.keyword, '검색 키워드', 200),
+            user: optionalText(params.user, '사용자', 256),
+            role: params.role ?? 'any',
+            analyze,
+            ...update,
+          },
+          { access },
+        );
       else if (kind === 'confluence')
-        result = await handle('confluence.start', {
-          url: source,
-          recursive: params.recursive ?? false,
-          analyze,
-          ...update,
-        });
+        result = await handle(
+          'confluence.start',
+          {
+            url: source,
+            recursive: params.recursive ?? false,
+            analyze,
+            ...update,
+          },
+          { access },
+        );
       else
         throw new Error(
           '가져올 수 없는 링크입니다. JIRA 티켓, Confluence 페이지 링크를 입력해 주세요.',

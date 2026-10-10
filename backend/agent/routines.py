@@ -293,7 +293,8 @@ class Run:
         if plan and (login.get("method") or login.get("error")):
             self.sites.append({"site_id": plan["site_id"], "ok": bool(login.get("method")) and not login.get("error"),
                                "method": login.get("method"), "detected": bool(login.get("detected")),
-                               "learned": login.get("learned"), "error": login.get("error") or "",
+                               "learned": login.get("learned"), "hosts": login.get("hosts") or [],
+                               "error": login.get("error") or "",
                                "diagnosis": job.get("diagnosis") if login.get("error") else None})
         if plan and login.get("error") and login.get("sent"):
             self.lockout = login["error"]
@@ -1034,7 +1035,7 @@ class SourceRefresh(Recipe):
                     path = str(root.resolve())
                     inside = path.rstrip("\\/") + os.sep
                     rows = db.execute(f"""SELECT s.doc_id,s.source_path,d.title FROM {table_name} s
-                        JOIN documents d ON d.id=s.doc_id WHERE s.part=1 AND (s.source_path=? OR
+                        JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL WHERE s.part=1 AND (s.source_path=? OR
                         substr(s.source_path,1,?)=?)""", (path, len(inside), inside))
                     found += [{"doc_id": row["doc_id"], "path": row["source_path"], "title": row["title"]}
                               for row in rows if not Path(row["source_path"]).exists()]
@@ -1063,7 +1064,7 @@ class AnalyzeNew(Recipe):
         marks = ",".join("?" * len(statuses))
         with run.db.connect() as db:
             # Documents never tried come before failed ones, so failures cannot keep the rest waiting.
-            rows = db.execute(f"""SELECT id,title FROM documents WHERE index_mode='' AND status IN ({marks})
+            rows = db.execute(f"""SELECT id,title FROM documents WHERE deleted_at IS NULL AND index_mode='' AND status IN ({marks})
                 ORDER BY status='error', updated_at DESC LIMIT ?""", (*statuses, config["limit"])).fetchall()
         analyzed, items = 0, []
         for index, row in enumerate(rows, 1):
@@ -1075,7 +1076,7 @@ class AnalyzeNew(Recipe):
             except UserError as error:
                 items.append({"title": row["title"], "status": "failed", "doc_id": row["id"], "message": str(error)})
         with run.db.connect() as db:
-            left = db.execute(f"SELECT count(*) FROM documents WHERE index_mode='' AND status IN ({marks})",
+            left = db.execute(f"SELECT count(*) FROM documents WHERE deleted_at IS NULL AND index_mode='' AND status IN ({marks})",
                               statuses).fetchone()[0]
         summary = f"{analyzed}개 분석 · 남은 문서 {left:,}개" if rows else f"분석할 새 문서가 없습니다 · 남은 문서 {left:,}개"
         if items:
@@ -1109,7 +1110,8 @@ class WorkReport(Recipe):
         run.step("기간 동안의 기록을 모으는 중")
         with run.db.connect() as db:
             docs = [dict(row) for row in db.execute("""SELECT id,title,summary,substr(content,1,800) AS excerpt,
-                created_at,updated_at FROM documents WHERE updated_at>=? ORDER BY updated_at DESC LIMIT 80""", (since,))]
+                created_at,updated_at FROM documents WHERE deleted_at IS NULL AND updated_at>=?
+                ORDER BY updated_at DESC LIMIT 80""", (since,))]
             done = [dict(row) for row in db.execute("""SELECT title,assignee,completed_at FROM tasks
                 WHERE status='done' AND completed_at>=? ORDER BY completed_at DESC LIMIT 60""", (since,))]
             soon = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
@@ -1237,7 +1239,8 @@ class Routines:
         if docs and db is not None:
             marks = ",".join("?" * len(docs))
             routine["documents"] = [dict(r) for r in db.execute(
-                f"SELECT id,title FROM documents WHERE id IN ({marks}) ORDER BY updated_at DESC", docs)]
+                f"SELECT id,title FROM documents WHERE id IN ({marks}) AND deleted_at IS NULL ORDER BY updated_at DESC",
+                docs)]
         with self.lock:
             queued = any(item[1] == row["id"] for item in self.queue)
             running = bool(self.current and self.current["routine"] == row["id"])
@@ -1442,7 +1445,8 @@ class Routines:
                 item["doc_id"] for run in found for item in run["items"] if item.get("doc_id")}
             if ids:
                 marks = ",".join("?" * len(ids))
-                existing = {row[0] for row in db.execute(f"SELECT id FROM documents WHERE id IN ({marks})", list(ids))}
+                existing = {row[0] for row in db.execute(
+                    f"SELECT id FROM documents WHERE id IN ({marks}) AND deleted_at IS NULL", list(ids))}
         for run in found:
             run["documents"] = [doc for doc in run["documents"] if doc["id"] in existing]
             for item in run["items"]:

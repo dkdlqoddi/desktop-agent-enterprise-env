@@ -201,6 +201,8 @@ export type OutlineNode = {
 export type WikiDocument = {
   id: string;
   title: string;
+  // Set while the document waits in the trash (wiki.trash); lists and searches leave it out until it is restored.
+  deleted_at?: string | null;
   // The Markdown text that search, PageIndex and the LLM read (and the editor edits).
   content?: string;
   excerpt?: string;
@@ -258,8 +260,15 @@ export type WikiDocument = {
 export type LlmProvider = 'general';
 // The request format; openai also covers OpenAI-compatible servers.
 export type LlmFormat = 'openai' | 'anthropic';
-// A custom header: {api_key} in its value becomes the API Key, {uuid} a new ID per request.
-export type LlmHeader = { name: string; value: string };
+// A custom header: {api_key} in its value becomes the API Key, {uuid} a new ID per request. The value is a secret of
+// its own (a gateway's token): the screens get whether one is saved (has_value) and whether it takes the key, never
+// the value; a header sent without `value` keeps the saved one.
+export type LlmHeader = {
+  name: string;
+  value: string;
+  has_value?: boolean;
+  uses_api_key?: boolean;
+};
 export type Settings = {
   provider: LlmProvider;
   api_format: LlmFormat;
@@ -280,6 +289,11 @@ export type Settings = {
   load_error: string;
 };
 export type Stats = { prompts: number; documents: number; keywords: number; relations: number };
+// The trash (wiki.trash): the deleted documents, the last deleted first, and how many days each waits before it
+// is purged by itself.
+export type Trash = { documents: WikiDocument[]; days: number };
+// What a deletion answers: the ids moved to the trash, for 되돌리기 (wiki.restore).
+export type Deleted = { deleted: number; ids: string[] };
 export type Graph = {
   nodes: { id: string; label: string; count: number; docs: string[] }[];
   edges: (Relation & { count: number; docs: string[] })[];
@@ -548,6 +562,9 @@ export type Site = {
   custom: LoginSteps;
   // The fields the LLM found on a login screen no method fitted, tried while detected_method is 'learned'.
   learned: LoginSteps | null;
+  // The hosts the account was typed into besides the site's own (its identity provider), kept by the first login
+  // that signed in: the account goes to no other host until they are reset (sites.save reset_login_hosts).
+  login_hosts: string[];
   verified_at: string | null;
   last_error: string;
   // The LLM's analysis of the last failed login.

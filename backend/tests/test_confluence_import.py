@@ -258,6 +258,14 @@ def remember_session(importer, server):
     asyncio.run(visit())
 
 
+def forget_session(importer, server):
+    """The session the last job left in the site's profile is gone, as after the site signed the user out."""
+    async def clear():
+        async with importer._browser(server.origin, headless=True) as context:
+            await context.clear_cookies()
+    asyncio.run(clear())
+
+
 def test_real_browser_pages_subpages_failures_session_and_cancel(browser, tmp_path):
     server, service, importer, captures = browser
     job = run(importer, server.url)
@@ -343,12 +351,12 @@ def test_real_browser_an_update_from_the_document_window(browser):
 def test_real_browser_a_saved_account_signs_in_through_the_sso_in_the_background(browser):
     server, service, importer, captures = browser
     server.sso = True
-    # A session left in the profile is cleared: every job signs in with the saved account.
-    remember_session(importer, server)
+    # A new profile holds no session: the job signs in with the saved account, through the SSO on the other host.
     job = run(importer, f"{server.origin}/confluence/display/SPACE/Page+1", recursive=True, login=plan())
     assert job["status"] == "completed", str(job)
     assert job["auto_login"] is True
-    assert job["login"] == {"site": "Confluence", "method": "generic", "label": SSO_FORM, "detected": True, "error": ""}
+    assert job["login"] == {"site": "Confluence", "method": "generic", "label": SSO_FORM, "detected": True, "error": "",
+                            "hosts": ["localhost"]}
     assert server.logins == [USER]
     assert (job["processed"], job["imported"]) == (4, 4), str(job["results"])
     assert job["results"][0]["url"] == server.url and "brush: java" in captures[0]["html"]
@@ -357,7 +365,9 @@ def test_real_browser_a_saved_account_signs_in_through_the_sso_in_the_background
     assert len([path for path in server.requests if "pageId=3" in path]) == 1
     assert "correct horse" not in json.dumps(importer.status())
 
-    # A wrong password shows the login form again: said at once, not after the time limit.
+    # A wrong password shows the login form again: said at once, not after the time limit. The session the job before
+    # left would sign in by itself, so it goes first.
+    forget_session(importer, server)
     importer.login_seconds = 60
     started = time.monotonic()
     job = run(importer, server.url, login=plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]]))
@@ -381,7 +391,8 @@ def test_real_browser_the_login_check_reports_the_method_without_importing(brows
     server.sso = True
     # Checked on the site's start page, which names the signed-in user.
     assert service.dispatch("confluence.check", {"url": server.site, "login": plan()}) == {
-        "ok": True, "method": "generic", "label": SSO_FORM, "detected": True, "message": f"로그인했습니다 · {SSO_FORM}"}
+        "ok": True, "method": "generic", "label": SSO_FORM, "detected": True, "hosts": ["localhost"],
+        "message": f"로그인했습니다 · {SSO_FORM}"}
     server.sso, server.form = False, True
     assert importer.check({"url": server.site, "login": plan()})["method"] == "atlassian"
     # A refused login is the check's result; without the LLM's help there is no analysis.
@@ -417,17 +428,21 @@ def test_real_browser_rendered_pages_and_the_visible_login_window(browser):
     assert "렌더링된 본문 1" in captures[0]["html"] and "접힌 세부 내용" in captures[0]["html"]
 
     # The login window runs the same automatic login (headless here) for a one-time sign-in approval, and reports the
-    # method it detected for the site.
+    # method it detected for the site. The session the job before left would sign in by itself, so it goes first.
+    forget_session(importer, server)
     status = importer.login({"url": server.url, "login": plan()})
     assert (status["login_open"], status["login_result"]) == (True, None)
     with pytest.raises(UserError, match="로그인 창"):
         importer.start({"url": server.url, "recursive": False, "analyze": False})
     wait(lambda: importer.status()["login_result"] is not None)
-    assert importer.status()["login_result"] == {"method": "generic", "label": SSO_FORM, "detected": True}
+    assert importer.status()["login_result"] == {"method": "generic", "label": SSO_FORM, "detected": True,
+                                                 "hosts": ["localhost"]}
     assert importer.login_close()["login_open"] is False
     assert len(server.logins) == 2 and importer.status()["login_error"] == ""
 
-    # A saved account the SSO refuses leaves the window to the user, who is told so.
+    # A saved account the SSO refuses leaves the window to the user, who is told so (the session the window before
+    # left would sign in by itself, so it goes first).
+    forget_session(importer, server)
     importer.login({"url": server.url, "login": plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]])})
     wait(lambda: importer.status()["login_error"] != "")
     assert importer.status()["login_error"].startswith("자동 입력하지 못했습니다. 창에서 직접 로그인해 주세요. 로그인하지 못했습니다.")
@@ -438,6 +453,7 @@ def test_real_browser_rendered_pages_and_the_visible_login_window(browser):
 def test_real_browser_with_the_llm_a_failed_login_and_a_page_that_does_not_open_come_with_an_analysis(browser):
     server, service, importer, captures = browser
     llm = service.llm = AnalyzingLLM()
+    service.preferences_save({"web_assist": True})  # Off until the user turns it on.
     analysis = {**ANALYSIS, "label": "ID·비밀번호", "attempt": ""}
     server.sso = True
     job = run(importer, server.url, login=plan({"id": "tester", "password": "wrong"}, "fixed", [METHODS["generic"]]))

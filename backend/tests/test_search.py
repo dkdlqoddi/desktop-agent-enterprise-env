@@ -171,7 +171,10 @@ def test_the_search_text_follows_every_change_and_fills_in_what_an_earlier_versi
     with service.db.connect() as db:
         assert dict(db.execute("SELECT doc_id,content FROM document_search").fetchall()) == {
             doc["id"]: "abc 세 번째", "old": "ärger"}
+    # In the trash the document is not searched; its search text goes with it when the trash is emptied.
     service.wiki_delete({"id": "old"})
+    assert not service.wiki_search({"query": "ärger", "mode": "auto"})["documents"]
+    service.wiki_purge({"ids": ["old"]})
     with service.db.connect() as db:
         assert db.execute("SELECT count(*) FROM document_search").fetchone()[0] == 1
 

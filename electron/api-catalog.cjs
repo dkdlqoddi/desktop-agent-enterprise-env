@@ -16,13 +16,13 @@ const ACCESS_LEVELS = [
     id: 'write',
     label: '조회·변경·앱 제어',
     description:
-      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며, JIRA·Confluence 링크 가져오기·AI 분석·질문과 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
+      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문과 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 등록하지 않은 사이트의 링크, 휴지통 비우기, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
   },
   {
     id: 'full',
     label: '전체',
     description:
-      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력까지 모두 허용합니다.',
+      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다.',
   },
 ];
 const DEFAULT_ACCESS = 'read';
@@ -34,6 +34,8 @@ const SCOPES = {
   // Importing this PC's files: the app reads them with the user's own rights.
   files: { label: '파일 가져오기', levels: ['full'] },
   admin: { label: '설정', levels: ['full'] },
+  // Emptying the trash: nothing brings a purged document back.
+  destructive: { label: '영구 삭제', levels: ['full'] },
 };
 
 const allows = (access, scope) => !!SCOPES[scope]?.levels.includes(access);
@@ -113,8 +115,11 @@ const METHODS = {
   'writeback.cancel': method('write', '원본 반영 중지 (파일을 저장하기 전까지)'),
   'writeback.dismiss': method('write', '끝난 원본 반영 작업 지우기'),
   'wiki.save': method('write', '문서 만들기·고치기 (본문이 바뀌면 AI 분석 결과를 지움)'),
-  'wiki.delete': method('write', '문서 삭제'),
-  'wiki.delete_many': method('write', '여러 문서 삭제'),
+  'wiki.delete': method('write', '문서를 휴지통으로 (30일 보관, wiki.restore로 복원)'),
+  'wiki.delete_many': method('write', '여러 문서를 휴지통으로 (모두 또는 전혀)'),
+  'wiki.trash': method('read', '휴지통의 문서 목록'),
+  'wiki.restore': method('write', '휴지통의 문서 복원'),
+  'wiki.purge': method('destructive', '휴지통의 문서 영구 삭제 (ids, 또는 all: true로 비우기)'),
   'wiki.analyze': method('write', '문서 하나를 LLM으로 분석 (요약·키워드·관계·목차)', {
     slow: true,
   }),
@@ -488,10 +493,30 @@ const GROUPS = [
           ),
         },
       ),
-      route('DELETE', '/documents/{id}', 'wiki.delete', '문서 삭제', { id: ID }),
-      route('POST', '/documents/delete', 'wiki.delete_many', '여러 문서 삭제 (모두 또는 전혀)', {
+      route('DELETE', '/documents/{id}', 'wiki.delete', '문서를 휴지통으로 (30일 보관)', {
+        id: ID,
+      }),
+      route(
+        'POST',
+        '/documents/delete',
+        'wiki.delete_many',
+        '여러 문서를 휴지통으로 (모두 또는 전혀)',
+        { ids: IDS(10000) },
+      ),
+      route('GET', '/documents/trash', 'wiki.trash', '휴지통의 문서 목록 (최근 삭제 순)'),
+      route('POST', '/documents/restore', 'wiki.restore', '휴지통의 문서 복원', {
         ids: IDS(10000),
       }),
+      route(
+        'POST',
+        '/documents/purge',
+        'wiki.purge',
+        '휴지통의 문서 영구 삭제: ids, 또는 all: true로 모두 (허용 범위 ‘전체’)',
+        {
+          ids: array('문서 ID 목록 (1~10,000개); all이 true면 생략', { type: 'string' }),
+          all: boolean('휴지통을 모두 비우기', { default: false }),
+        },
+      ),
       route(
         'POST',
         '/documents/clear-analysis',

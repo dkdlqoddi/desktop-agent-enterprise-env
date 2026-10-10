@@ -55,7 +55,10 @@ def general(**values):
 def test_the_key_goes_in_its_format_s_header_or_where_the_headers_put_it(monkeypatch):
     calls = answer(monkeypatch, Response(body=OPENAI_REPLY))
     llm = general(headers=[{"name": "OpenAI-Organization", "value": "org-1"}, {"name": " ", "value": ""}])
-    assert llm.public()["headers"] == [{"name": "OpenAI-Organization", "value": "org-1"}]
+    # The screens and AI tools read the headers' names and whether each has a value, never the values, which the
+    # main process alone reads to keep them encrypted.
+    assert llm.public()["headers"] == [{"name": "OpenAI-Organization", "has_value": True, "uses_api_key": False}]
+    assert llm.secrets() == {"api_key": "sk-test", "headers": [{"name": "OpenAI-Organization", "value": "org-1"}]}
     llm.complete(HELLO)
     assert calls[-1]["headers"] == {"Authorization": "Bearer sk-test", "OpenAI-Organization": "org-1"}
     assert calls[-1]["json"] == {"model": "test-model", "messages": HELLO, "temperature": 0.5, "stream": False}
@@ -76,6 +79,10 @@ def test_the_key_goes_in_its_format_s_header_or_where_the_headers_put_it(monkeyp
     llm.complete(HELLO)
     assert calls[-1]["headers"] == {}
     assert "sk-test" not in json.dumps(llm.public())
+    llm.update({"headers": [{"name": "X-Team", "value": "team-secret-123"}, {"name": "api-key", "value": "{api_key}"}]})
+    assert "team-secret-123" not in json.dumps(llm.public())
+    assert llm.public()["headers"] == [{"name": "X-Team", "has_value": True, "uses_api_key": False},
+                                       {"name": "api-key", "has_value": True, "uses_api_key": True}]
 
 
 def test_a_header_sent_without_its_value_keeps_the_saved_one(monkeypatch):
@@ -84,15 +91,16 @@ def test_a_header_sent_without_its_value_keeps_the_saved_one(monkeypatch):
     llm = general(headers=[{"name": "X-Team", "value": "team-secret-123"},
                            {"name": "api-key", "value": "{api_key}"}])
     read = {**llm.public(), "headers": [{"name": header["name"]} for header in llm.public()["headers"]]}
-    settings = llm.update({**read, "model_name": "other-model"})
-    assert settings["headers"] == [{"name": "X-Team", "value": "team-secret-123"},
-                                   {"name": "api-key", "value": "{api_key}"}]
+    llm.update({**read, "model_name": "other-model"})
+    assert llm.secrets()["headers"] == [{"name": "X-Team", "value": "team-secret-123"},
+                                        {"name": "api-key", "value": "{api_key}"}]
     llm.complete(HELLO)
     assert (calls[-1]["headers"]["X-Team"], calls[-1]["json"]["model"]) == ("team-secret-123", "other-model")
     # By its name in any case; a new header without a value is empty, and the screen's values are taken as sent.
-    assert llm.update({"headers": [{"name": "x-team"}, {"name": "X-New"}]})["headers"] == [
-        {"name": "x-team", "value": "team-secret-123"}, {"name": "X-New", "value": ""}]
-    assert llm.update({"headers": [{"name": "X-Team", "value": ""}]})["headers"] == [{"name": "X-Team", "value": ""}]
+    llm.update({"headers": [{"name": "x-team"}, {"name": "X-New"}]})
+    assert llm.secrets()["headers"] == [{"name": "x-team", "value": "team-secret-123"}, {"name": "X-New", "value": ""}]
+    llm.update({"headers": [{"name": "X-Team", "value": ""}]})
+    assert llm.secrets()["headers"] == [{"name": "X-Team", "value": ""}]
 
 
 def test_the_key_and_the_header_values_stay_with_the_server_they_were_saved_for(monkeypatch):
@@ -102,7 +110,7 @@ def test_the_key_and_the_header_values_stay_with_the_server_they_were_saved_for(
     llm = general(headers=headers)
     # Another path of the same server keeps them.
     settings = llm.update({"base_url": "https://LLM.example:443/v2/chat/completions", "headers": names})
-    assert (settings["has_api_key"], settings["headers"]) == (True, headers)
+    assert (settings["has_api_key"], llm.secrets()["headers"]) == (True, headers)
     # Another server, e.g. a mistyped one: the saved key is not sent there, nor are header values not sent again.
     for change in ({"base_url": "https://other.example/v1/chat/completions"},
                    {"base_url": "https://other.example/v1/chat/completions", "headers": [{"name": "X-Team"}]}):
@@ -287,8 +295,10 @@ def test_llm_defaults_from_the_environment_never_stop_the_backend(monkeypatch):
     monkeypatch.setenv("PRIVATE_AGENT_LLM_TIMEOUT", "30")
     monkeypatch.setenv("PRIVATE_AGENT_PROVIDER", "general")
     monkeypatch.setenv("PRIVATE_AGENT_LLM_HEADERS", '{"X-Team": "ai"}')
-    settings = LLM().public()
-    assert (settings["model_name"], settings["timeout"], settings["provider"], settings["headers"]) == ("app-model", 30.0, "general", [{"name": "X-Team", "value": "ai"}])
+    llm = LLM()
+    settings = llm.public()
+    assert (settings["model_name"], settings["timeout"], settings["provider"], llm.secrets()["headers"]) == (
+        "app-model", 30.0, "general", [{"name": "X-Team", "value": "ai"}])
     # A packaged backend reads only those: another program's API_KEY or BASE_URL is not this app's.
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setenv("API_KEY", "someone-elses")

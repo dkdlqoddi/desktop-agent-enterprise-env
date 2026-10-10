@@ -92,12 +92,18 @@ test('workspace: focused navigation, quick actions, document filtering and respo
     await drawer(page).getByRole('button', { name: '취소', exact: true }).click();
     await ask.getByRole('button', { name: '버리고 닫기' }).click();
     await expect(drawer(page).locator('.document-content')).toContainText('업무 흐름을 개선');
-    // An inline question answered gives the keyboard back to the button it came from.
+    // An inline question lands the keyboard on 취소, so Enter once more does nothing; answered, it gives the
+    // keyboard back to the button it came from.
     await drawer(page).getByRole('button', { name: '삭제', exact: true }).click();
-    await drawer(page)
-      .getByRole('group', { name: '이 문서와 분석 결과를 삭제할까요?' })
-      .getByRole('button', { name: '취소' })
-      .click();
+    const question = drawer(page).getByRole('group', {
+      name: '이 문서를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다.',
+    });
+    await expect(question.getByRole('button', { name: '취소' })).toBeFocused();
+    await expect(question.getByRole('button', { name: '삭제', exact: true })).toHaveAttribute(
+      'data-destructive',
+      'true',
+    );
+    await question.getByRole('button', { name: '취소' }).click();
     await expect(drawer(page).getByRole('button', { name: '삭제', exact: true })).toBeFocused();
     await drawer(page).getByRole('button', { name: '닫기', exact: true }).click();
     await expect(widget(page, 'documents').locator('.document-row')).toHaveCount(1);

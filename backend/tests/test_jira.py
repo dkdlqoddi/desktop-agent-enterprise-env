@@ -60,6 +60,7 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
     assert (replaced["title"], replaced["content"], replaced["revision"]) == ("수정", "변경된 페이지", 3)
     assert len(service.wiki_list({})) == 1
     service.wiki_delete({"id": doc["id"]})
+    service.wiki_purge({"ids": [doc["id"]]})
     with service.db.connect() as db:
         assert not db.execute("SELECT 1 FROM jira_sources WHERE doc_id=?", (doc["id"],)).fetchone()
 
@@ -315,6 +316,15 @@ def wait(condition, seconds=60):
         time.sleep(0.05)
 
 
+def forget_session(importer, server):
+    """The session the last job or window left in the site's profile is gone, as after the site signed the user out:
+    the next job signs in with the saved account again."""
+    async def clear():
+        async with importer._browser(server.origin, headless=True) as context:
+            await context.clear_cookies()
+    asyncio.run(clear())
+
+
 def run(server, importer, **params):
     """The finished job. Assertions show it as str(job): pytest shortens a dict to its first keys, without the error."""
     importer.start({"url": server.url, "scope": "issue", "analyze": False, "login": plan(server.credentials), **params})
@@ -331,7 +341,7 @@ def test_real_browser_sso_login_scopes_and_no_files(browser, tmp_path):
     # detects that method and reports it, so Electron can save it for the site.
     assert server.logins == [server.credentials]
     assert job["login"] == {"site": "JIRA", "method": "sso-link", "label": "SSO 링크 · 표준 로그인 폼",
-                            "detected": True, "error": ""}
+                            "detected": True, "error": "", "hosts": ["localhost"]}
     assert "correct horse" not in json.dumps(importer.status())
     doc = service.wiki_get({"id": job["results"][0]["doc_id"]})
     assert doc["title"] == "[TEAM-1] 로그인 화면 오류"
@@ -347,9 +357,15 @@ def test_real_browser_sso_login_scopes_and_no_files(browser, tmp_path):
     assert any("/comment?startAt=2" in path for path in server.requests)
     assert not any("/secure/attachment/" in path for path in server.requests)
 
-    # A fixed method (the one saved for the site) signs in the same way without detection.
+    # The session the first job left in the profile is still signed in: the next job types no password (a site with a
+    # second factor is signed in to once, in the login window, and the background keeps using that session).
     job = run(server, importer, login=plan(server.credentials, "fixed", [CATALOG[0]]))
-    assert (job["skipped"], len(server.logins)) == (1, 2)  # Every job signs in with a fresh session.
+    assert (job["skipped"], len(server.logins)) == (1, 1)
+    assert (job["login"]["method"], job["login"]["detected"]) == (None, False)
+    # A fixed method (the one saved for the site) signs in the same way without detection, once the session is gone.
+    forget_session(importer, server)
+    job = run(server, importer, login=plan(server.credentials, "fixed", [CATALOG[0]]))
+    assert (job["skipped"], len(server.logins)) == (1, 2)
     assert (job["login"]["method"], job["login"]["detected"]) == ("sso-link", False)
 
     job = run(server, importer, scope="keyword", keyword="로그인")
@@ -395,7 +411,7 @@ def test_real_browser_session_login_window_errors_analysis_and_cancel(browser):
         importer.start({"url": server.url, "scope": "issue", "analyze": False})
     wait(lambda: importer.status()["login_result"] is not None)
     assert importer.status()["login_result"] == {"method": "sso-link", "label": "SSO 링크 · 표준 로그인 폼",
-                                                 "detected": True}
+                                                 "detected": True, "hosts": ["localhost"]}
     assert importer.login_close()["login_open"] is False
     assert server.logins == [server.credentials]
     assert importer.status()["login_result"]["method"] == "sso-link"  # Kept for Electron after the window closes.
@@ -406,7 +422,9 @@ def test_real_browser_session_login_window_errors_analysis_and_cancel(browser):
     assert "AI 분석에 실패" in job["results"][0]["analysis_error"]
     assert len(server.logins) == 1
 
-    # A rejected password is recognized as soon as the SSO shows its form again, long before the timeout.
+    # A rejected password is recognized as soon as the SSO shows its form again, long before the timeout. The session
+    # the window left would sign in by itself, so it goes first.
+    forget_session(importer, server)
     started = time.monotonic()
     job = run(server, importer, login=plan({"id": "tester", "password": "wrong"}))
     assert job["status"] == "error" and "로그인하지 못했습니다" in job["error"], str(job)

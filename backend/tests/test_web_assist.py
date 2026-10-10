@@ -270,8 +270,8 @@ def test_the_login_screen_a_site_redirects_to_is_signed_in_with_the_llms_help(pa
     # account is typed there.
     result = assisted_at(pages, "/away", ReadingLLM(), pages.other)
     assert result == {"method": "learned", "label": LEARNED_LABEL, "detected": True, "learned": {
-        "before": ["#open-login"], "id": "#user-name", "next": "", "password": "#user-pass", "submit": "#do-login"}}, \
-        str(result)
+        "before": ["#open-login"], "id": "#user-name", "next": "", "password": "#user-pass", "submit": "#do-login"},
+        "hosts": ["localhost"]}, str(result)
     assert pages.posts == [{"path": "/custom", "id": "tester", "password": PASSWORD, "search": None}]
 
 
@@ -300,6 +300,7 @@ def test_the_account_is_sent_once_and_what_the_llm_could_not_do_is_listed(server
 def jira(tmp_path, server):
     llm = ReadingLLM()
     service = Service(Database(tmp_path / "data" / "wiki.db"), llm)
+    service.preferences_save({"web_assist": True})  # Off until the user turns it on.
     importer = service.jira
     importer.profile_root = tmp_path / "profiles"
     importer.optional_seconds, importer.form_seconds, importer.login_seconds = 1, 5, 20
@@ -423,8 +424,11 @@ def test_the_account_is_taken_out_of_addresses_too_and_the_option_turns_the_help
     assist._failed(request)
     assert list(assist.loads) == [{"address": "https://sso.corp.test/users/[ID]/login", "error": "net::ERR_FAILED"}]
 
-    # The option on 관리 → 사이트 계정 turns the help off for every site's browser.
+    # The option on 관리 → 사이트 계정 turns the help on, for every site's browser: it is off until the user does,
+    # as it sends the words of login pages to the LLM server.
     service = Service(Database(tmp_path / "wiki.db"), ReadingLLM())
+    assert service.assist_on() is False
+    service.preferences_save({"web_assist": True})
     assert service.assist_on() is True
     service.preferences_save({"web_assist": False})
     assert service.assist_on() is False

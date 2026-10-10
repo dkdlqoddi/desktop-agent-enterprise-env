@@ -80,7 +80,7 @@ test('Confluence: site account with detected login method, import box, subpages,
     expect((await sitesOf(page)).sites[0].detected_method).toBe('generic');
     await page.screenshot({ path: 'test-results/admin-sites.png', fullPage: true });
 
-    // The import signs in with that account in the background.
+    // The import opens the page with the session the login check left in the site's profile: nothing is typed.
     await goHome(page);
     await input.fill(server.url);
     await expect(importer.locator('.site-line')).toContainText(
@@ -91,8 +91,8 @@ test('Confluence: site account with detected login method, import box, subpages,
     await expect(job).toContainText('가져오기가 끝났습니다', { timeout: 60_000 });
     await expect(job).toContainText('저장 1');
     await expect(job).toContainText('범위 이 페이지만');
-    await expect(job).toContainText('로그인 Confluence · 일반 로그인 폼 · 자동 탐색');
-    expect(server.logins).toHaveLength(2);
+    await expect(job).toContainText('로그인 Confluence · 저장된 로그인 세션 사용');
+    expect(server.logins).toHaveLength(1);
     await page.screenshot({ path: 'test-results/confluence-import.png', fullPage: true });
 
     // Subpages: the documents widget refreshes when the background job ends.
@@ -114,11 +114,18 @@ test('Confluence: site account with detected login method, import box, subpages,
     await expect(input).toBeVisible();
     await expect(job).toHaveCount(0);
 
-    // The visible login window, opened from the admin page, fills the saved login too.
+    // The visible login window, opened from the admin page, shows the site signed in with the session the login
+    // check left in the profile: it types the saved login only where that session is gone.
     await openAdmin(page, '사이트 계정');
+    const requests = server.requests.length;
     await site.getByRole('button', { name: '로그인 창 열기' }).click();
     await expect(site.getByRole('status')).toContainText('로그인 창이 열려 있습니다');
-    await expect.poll(() => server.logins.length, { timeout: 30_000 }).toBe(4);
+    await expect
+      .poll(() => server.requests.slice(requests).some((path) => path.startsWith('/confluence')), {
+        timeout: 30_000,
+      })
+      .toBe(true);
+    expect(server.logins).toHaveLength(1);
     await site.getByRole('button', { name: '로그인 창 닫기' }).click();
     await expect(site.getByRole('button', { name: '로그인 창 열기' })).toBeVisible();
     expect(await readdir(wikiDirectory)).not.toContain('confluence');

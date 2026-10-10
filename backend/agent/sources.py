@@ -18,6 +18,8 @@ from .parts import imported, insert, joined, part_title, saved_message
 
 EDITED = ("가져온 뒤 본문을 고친 문서라 원본의 내용으로 바꾸지 않았습니다. 바꾸려면 문서 창에서 ‘원본에서 업데이트’를 "
           "눌러 주세요.")
+# An automatic routine never brings back a document the user put in the trash (Plan "skip", reason "trashed").
+TRASHED = "휴지통에 있는 문서라 자동 작업이 가져오지 않았습니다. 휴지통에서 복원하거나 비운 뒤에는 다시 가져옵니다."
 # A file whose bytes changed but not its text (Plan "keep"), by whether its HTML page changed.
 KEPT = {"same": "원본 파일의 글이 그대로라 문서와 AI 분석을 그대로 두었습니다.",
         "format": "원본 파일의 글이 그대로라 문서와 AI 분석은 그대로 두고, 바뀐 서식·그림만 HTML 문서에 반영했습니다."}
@@ -45,7 +47,7 @@ def rows(db, table, content):
     they have now, and whether their text is still the one imported. The texts are compared where they are, as a long
     import holds up to 100 documents of them."""
     where = " AND ".join(f"s.{column}=?" for column in content)
-    return db.execute(f"""SELECT s.doc_id, s.part, s.parts, s.title, d.title AS now_title,
+    return db.execute(f"""SELECT s.doc_id, s.part, s.parts, s.title, d.title AS now_title, d.deleted_at,
         d.content != s.markdown AS changed FROM {table} s JOIN documents d ON d.id=s.doc_id
         WHERE {where} ORDER BY s.part""", list(content.values())).fetchall()
 
@@ -104,8 +106,9 @@ def change(before, split):
 class Plan(NamedTuple):
     action: str  # "insert", "update", "skip" or "keep"
     rows: list  # the documents an update replaces, or those a skipped or kept import's content is saved as
-    # skip: "same" (the content is saved) or "edited" (the user changed the text). update: "restore" (the source is as
-    # it was and its text replaces the user's), "page" (a file an earlier version saved as Markdown) or "" (it changed).
+    # skip: "same" (the content is saved), "edited" (the user changed the text) or "trashed" (the documents are in the
+    # trash, and an automatic routine leaves them there). update: "restore" (the source is as it was and its text
+    # replaces the user's), "page" (a file an earlier version saved as Markdown) or "" (it changed).
     # keep (a file's bytes changed but not its text): "same", or "format" when its HTML page changed.
     reason: str = ""
 
@@ -126,14 +129,24 @@ def unchanged(db, table, previous, split):
     return reason
 
 
-def plan(db, table, source, content, target=None, replace=False, split=None):
+def plan(db, table, source, content, target=None, replace=False, split=None, automatic=False):
     """What an import of `content` (values of the table's key) from `source` does. The same content is skipped, unless
     it is the import being updated and `replace` brings back its text the user changed. Other content updates the
     earlier import of the same source, unless the user changed its text and `replace` is not set, or is new. A source
     keyed by its bytes whose new content `split` (when given) has the text it was imported with (a file saved again
-    as it was, other line breaks, a DRM header) keeps its documents and their analysis and only records the new hash."""
+    as it was, other line breaks, a DRM header) keeps its documents and their analysis and only records the new hash.
+    Documents of it that are in the trash come back when the user imports it again; an `automatic` import (a routine)
+    leaves them there and is skipped."""
     previous = earlier(db, table, source, target)
     same = rows(db, table, content)
+    trashed = [row for row in (same or previous) if row["deleted_at"]]
+    if trashed:
+        if automatic:
+            return Plan("skip", trashed, "trashed")
+        ids = [row["doc_id"] for row in trashed]
+        db.execute(f"UPDATE documents SET deleted_at=NULL WHERE id IN ({','.join('?' * len(ids))})", ids)
+        previous = earlier(db, table, source, target)
+        same = rows(db, table, content)
     if same:
         if replace and previous and same[0]["doc_id"] in {row["doc_id"] for row in previous} and edited(previous):
             return Plan("update", previous, "restore")
@@ -150,7 +163,7 @@ def skipped(found, same):
     """The result of an import planned to be skipped, with why (`reason`, as Plan has it); `same` says that its content
     is saved already."""
     return {"status": "skipped", "doc_id": found.rows[0]["doc_id"],
-            "message": EDITED if found.reason == "edited" else same, "reason": found.reason}
+            "message": {"edited": EDITED, "trashed": TRASHED}.get(found.reason, same), "reason": found.reason}
 
 
 def save(db, table, found, split, title, timestamp, values):

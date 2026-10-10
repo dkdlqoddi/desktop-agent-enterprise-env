@@ -83,7 +83,7 @@ class Assistant:
     def tasks_list(self, _):
         with self.db.connect() as db:
             return [dict(r) for r in db.execute("""SELECT t.*, d.title AS source_title FROM tasks t
-                LEFT JOIN documents d ON d.id=t.source_id
+                LEFT JOIN documents d ON d.id=t.source_id AND d.deleted_at IS NULL
                 ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
                 t.due_at IS NULL, t.due_at, t.created_at DESC""")]
 
@@ -105,7 +105,7 @@ class Assistant:
         source_id = values.get("source_id") or None
         if source_id:
             source_id = text(source_id, "출처 ID", 80)
-            if not db.execute("SELECT 1 FROM documents WHERE id=?", (source_id,)).fetchone():
+            if not db.execute("SELECT 1 FROM documents WHERE id=? AND deleted_at IS NULL", (source_id,)).fetchone():
                 raise UserError("출처 문서가 삭제되었습니다. 출처를 해제한 뒤 저장해 주세요.")
         notified = old["notified_at"] if old else None
         snoozed = old["snoozed_until"] if old else None
@@ -383,7 +383,7 @@ class Assistant:
         active = [t for t in tasks if t["status"] == "open"]
         with self.db.connect() as db:
             recent = [dict(r) for r in db.execute("""SELECT id,title,summary,updated_at FROM documents
-                ORDER BY updated_at DESC LIMIT 5""")]
+                WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 5""")]
         return {"generated_at": stamp, "local_date": local.date().isoformat(),
             "counts": {"open": len(active), "done": sum(t["status"] == "done" for t in tasks),
                        "paused": sum(t["status"] == "paused" for t in tasks)},

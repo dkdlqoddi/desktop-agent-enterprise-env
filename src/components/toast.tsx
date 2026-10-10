@@ -7,11 +7,14 @@ export default function Toast({
   message,
   error,
   notice = false,
+  action,
   onClose,
 }: {
   message: string;
   error: boolean;
   notice?: boolean;
+  // A way back from what the message tells, e.g. 되돌리기 after a deletion.
+  action?: { label: string; run: () => Promise<void> | void };
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -21,7 +24,7 @@ export default function Toast({
     // Moving between hosts remounts the node; showing it again stacks it above the new host.
     // A dialog removed in the same commit leaves it detached until the next render moves it.
     if (ref.current?.isConnected) ref.current.showPopover();
-  }, [message, error, notice, host]);
+  }, [message, error, notice, action, host]);
   const toast = (
     <div
       ref={ref}
@@ -35,6 +38,19 @@ export default function Toast({
     >
       {error ? <Info size={19} /> : notice ? <CircleAlert size={19} /> : <Check size={19} />}
       <span>{message}</span>
+      {action && (
+        <button
+          type="button"
+          className="toast-action"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+            void action.run();
+          }}
+        >
+          {action.label}
+        </button>
+      )}
       <button type="button" aria-label="알림 닫기" onClick={onClose}>
         <X size={16} />
       </button>

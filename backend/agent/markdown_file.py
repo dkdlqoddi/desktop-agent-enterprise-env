@@ -44,7 +44,8 @@ def import_file(service, params):
         db.execute("BEGIN IMMEDIATE")
         # The file is told apart by its bytes, as the document window checks it; one whose text stayed (only its line
         # breaks or byte order mark changed) keeps its document and analysis and records its new bytes.
-        found = sources.plan(db, "markdown_sources", path, {"source_hash": checksum}, target, replace, split)
+        found = sources.plan(db, "markdown_sources", path, {"source_hash": checksum}, target, replace, split,
+                             automatic=bool(params.get("routine")))
         if found.action == "skip":
             result = sources.skipped(found, "이미 가져온 동일한 Markdown 파일입니다.")
         else:

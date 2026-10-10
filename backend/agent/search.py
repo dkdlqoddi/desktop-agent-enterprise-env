@@ -268,6 +268,9 @@ def source_label(source):
 # The documents with the text search compares of their content: the row of document_search made for the document's
 # revision, else (a document an earlier version saved, not indexed yet) made from the content now.
 INDEXED = "documents d LEFT JOIN document_search s ON s.doc_id=d.id"
+# Documents in the trash are not searched; their keywords count for nothing.
+LIVE = "d.deleted_at IS NULL"
+KEYWORDS = f"keywords k JOIN documents d ON d.id=k.doc_id AND {LIVE}"
 BODY = "CASE WHEN s.revision=d.revision THEN s.content ELSE search_text(d.content) END"
 
 
@@ -287,11 +290,11 @@ class Search:
         stats = {}
         columns = f"d.id,d.title,d.summary,{BODY} AS body,d.updated_at"
         with self.db.connect() as db:
-            total = db.execute("SELECT count(*) FROM documents").fetchone()[0]
+            total = db.execute(f"SELECT count(*) FROM documents d WHERE {LIVE}").fetchone()[0]
             if not strict and (terms or keywords):
                 clauses = [f"keyword IN ({','.join('?' * len(terms + keywords))})"]
                 clauses += ["keyword LIKE ? ESCAPE '\\'"] * len(terms)
-                for row in db.execute("SELECT doc_id,keyword FROM keywords WHERE " + " OR ".join(clauses),
+                for row in db.execute(f"SELECT k.doc_id,k.keyword FROM {KEYWORDS} WHERE " + " OR ".join(clauses),
                                       terms + keywords + [like(t) for t in terms]):
                     hits[row["doc_id"]].update(("keyword", k) for k in keywords if k == row["keyword"])
                     hits[row["doc_id"]].update(("exact" if t == row["keyword"] else "partial", t)
@@ -299,7 +302,7 @@ class Search:
             if not strict and terms:
                 where = " OR ".join("n.summary LIKE ? ESCAPE '\\'" for _ in terms)
                 for row in db.execute(f"""SELECT n.doc_id, group_concat(n.summary, ' ') AS text FROM doc_nodes n
-                        JOIN documents d ON d.id=n.doc_id AND d.revision=n.revision WHERE {where}
+                        JOIN documents d ON d.id=n.doc_id AND d.revision=n.revision AND {LIVE} WHERE {where}
                         GROUP BY n.doc_id""", [like(t) for t in terms]):
                     nodes[row["doc_id"]] = search_text(row["text"])
 
@@ -314,11 +317,11 @@ class Search:
                 field = f"(search_text(d.title) LIKE ? ESCAPE '\\' OR {BODY} LIKE ? ESCAPE '\\'" + \
                         ("" if strict else " OR d.summary LIKE ? ESCAPE '\\'") + ")"
                 args = [like(t) for t in terms for _ in range(2 if strict else 3)]
-                for row in db.execute(f"SELECT {columns} FROM {INDEXED} WHERE " +
-                                      (" AND " if strict else " OR ").join([field] * len(terms)), args):
+                for row in db.execute(f"SELECT {columns} FROM {INDEXED} WHERE {LIVE} AND (" +
+                                      (" AND " if strict else " OR ").join([field] * len(terms)) + ")", args):
                     measure(row)
             for chunk in chunks(i for i in set(hits) | set(nodes) if i not in stats):
-                for row in db.execute(f"SELECT {columns} FROM {INDEXED} WHERE d.id IN ({','.join('?' * len(chunk))})",
+                for row in db.execute(f"SELECT {columns} FROM {INDEXED} WHERE {LIVE} AND d.id IN ({','.join('?' * len(chunk))})",
                                       chunk):
                     measure(row)
         if not stats:
@@ -357,7 +360,7 @@ class Search:
         with self.db.connect() as db:
             rows = {}
             for chunk in chunks(ranked):
-                for row in db.execute(f"SELECT * FROM documents WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+                for row in db.execute(f"SELECT * FROM documents d WHERE {LIVE} AND id IN ({','.join('?' * len(chunk))})", chunk):
                     rows[row["id"]] = dict(row)
             docs = self.service.attach(db, [rows[ident] for ident in ranked if ident in rows])
             for doc in docs:
@@ -419,7 +422,7 @@ class Search:
         proposed = [k for k in dict.fromkeys(map(canonical, terms + [query.replace('"', " ")])) if k]
         with self.db.connect() as db:
             keys = [row[0] for row in db.execute(
-                f"SELECT DISTINCT keyword FROM keywords WHERE keyword IN ({','.join('?' * len(proposed))})", proposed)
+                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({','.join('?' * len(proposed))})", proposed)
             ] if proposed else []
         ranked = self.lexical(terms, keys, phrase=fold(query.replace('"', "")) if len(terms) > 1 else "")
         highlights = list(dict.fromkeys(terms + keys))
@@ -435,9 +438,9 @@ class Search:
         frequent ones."""
         with self.db.connect() as db:
             near = [row[0] for word in words(sentence)[:8] for row in db.execute(
-                "SELECT DISTINCT keyword FROM keywords WHERE keyword LIKE ? ESCAPE '\\' LIMIT 20", (like(word),))]
-            common = [row[0] for row in db.execute("""SELECT keyword FROM keywords GROUP BY keyword
-                ORDER BY count(*) DESC, keyword LIMIT ?""", (limit,))]
+                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword LIKE ? ESCAPE '\\' LIMIT 20", (like(word),))]
+            common = [row[0] for row in db.execute(f"""SELECT k.keyword FROM {KEYWORDS} GROUP BY k.keyword
+                ORDER BY count(*) DESC, k.keyword LIMIT ?""", (limit,))]
         return list(dict.fromkeys(near + common))[:limit]
 
     def analyze(self, question, previous=""):
@@ -452,7 +455,7 @@ class Search:
                     if k][:MAX_TERMS]
         with self.db.connect() as db:
             known = {row[0] for row in db.execute(
-                f"SELECT DISTINCT keyword FROM keywords WHERE keyword IN ({','.join('?' * len(proposed))})", proposed)
+                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({','.join('?' * len(proposed))})", proposed)
             } if proposed else set()
         keys = [k for k in dict.fromkeys(proposed) if k in known]
         # A keyword the Wiki does not have may still occur in the text.

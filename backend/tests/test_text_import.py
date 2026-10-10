@@ -74,10 +74,11 @@ def test_folder_import_saves_the_text_notepad_shows_as_html_documents(importer, 
     assert service.wiki_source_html({"id": doc["id"]})["filename"] == "같은 회의록.html"
     assert service.wiki_search({"query": "월요일", "mode": "auto"})["documents"][0]["title"] == "일정"
 
-    # The same file again is skipped; deleting the document deletes its source.
+    # The same file again is skipped; a document purged from the trash takes its source with it.
     importer.start({"path": str(folder / "회의록.txt"), "mode": "file"})
     assert wait(importer)["results"][0]["message"] == "이미 가져온 동일한 텍스트입니다."
     service.wiki_delete({"id": doc["id"]})
+    service.wiki_purge({"ids": [doc["id"]]})
     with service.db.connect() as db:
         assert db.execute("SELECT count(*) FROM text_sources").fetchone()[0] == 1
 

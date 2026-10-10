@@ -47,6 +47,27 @@ def capture(body, title="Confluence 테스트"):
             "html": f"<html><head><title>{title}</title></head><body>{body}</body></html>"}
 
 
+def test_a_source_in_the_trash_comes_back_for_the_user_and_stays_there_for_a_routine(importer, tmp_path):
+    service = importer.service
+    rtf = tmp_path / "보고.rtf"
+    rtf.write_text("첫 번째", encoding="utf-8")
+    ident = run(importer, rtf)["doc_id"]
+    service.wiki_delete({"id": ident})
+    # An automatic routine's import leaves it in the trash and says so.
+    skipped = run(importer, rtf, routine="원본 갱신")
+    assert (skipped["status"], skipped["reason"], skipped["doc_id"]) == ("skipped", "trashed", ident)
+    assert "휴지통" in skipped["message"]
+    assert [d["id"] for d in service.dispatch("wiki.trash", {})["documents"]] == [ident]
+    # The user's import brings it back: as it is when nothing changed, else updated.
+    assert run(importer, rtf)["reason"] == "same"
+    assert service.wiki_get({"id": ident})["content"] == "첫 번째"
+    service.wiki_delete({"id": ident})
+    rtf.write_text("두 번째", encoding="utf-8")
+    assert run(importer, rtf)["status"] == "updated"
+    assert service.wiki_get({"id": ident})["content"] == "두 번째"
+    assert service.dispatch("wiki.trash", {})["documents"] == []
+
+
 def test_an_import_of_the_same_file_again_updates_its_document_in_place(importer, tmp_path):
     service = importer.service
     rtf = tmp_path / "주간 보고.rtf"

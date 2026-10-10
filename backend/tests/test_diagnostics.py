@@ -72,6 +72,20 @@ def test_a_worker_failure_is_logged_only_with_a_traceback(log):
     assert f"Word 변환 · 오류 ID {ident}" in text(log) and "KeyError: 'w:t'" in text(log)
 
 
+def test_secrets_an_exception_carries_are_redacted_in_the_log(log):
+    error = RuntimeError('POST https://llm.example/v1?api_key=sk-abcdef123456 failed: {"password": "p@ss word", '
+                         '"headers": {"Authorization": "Bearer eyJhbGciOi.payload", "token": "pa_1234567890abcdef"}}')
+    message = diagnostics.report(error, "일반", "LLM 요청")
+    assert "sk-abcdef123456" not in message
+    logged = text(log)
+    for secret in ("sk-abcdef123456", "p@ss word", "eyJhbGciOi.payload", "pa_1234567890abcdef"):
+        assert secret not in logged, secret
+    assert "[REDACTED]" in logged and "llm.example" in logged
+    # The patterns as such: the name of the secret stays, its value goes; ordinary words with those letters stay.
+    assert diagnostics.redact("x-api-key: abc123, cookie=sid=1; next") == "x-api-key: [REDACTED], cookie=[REDACTED]; next"
+    assert diagnostics.redact("the token count is 12") == "the token count is 12"
+
+
 def test_without_a_folder_nothing_is_written(tmp_path):
     diagnostics.start(None)
     assert not any(isinstance(handler, logging.FileHandler) for handler in diagnostics.LOG.handlers)

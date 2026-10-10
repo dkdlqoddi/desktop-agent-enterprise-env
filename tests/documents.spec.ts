@@ -155,26 +155,53 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     await expect(documents.locator('.document-row strong')).toHaveText(['주간 회의록']);
     await expect(filters.getByRole('radio')).toHaveText(['전체5', 'AI 분석 완료1', '분석 전4']);
 
-    // Deleting several documents asks once, in place.
+    // Deleting several documents asks once, in place, and moves them to the trash, from where they come back.
     await filters.getByRole('radio', { name: /전체/ }).click();
     await documents.getByRole('checkbox', { name: '실패할 메모 선택' }).check();
     await documents.getByRole('checkbox', { name: '설계 검토 선택' }).check();
     await toolbar.getByRole('button', { name: '삭제', exact: true }).click();
     await toolbar
-      .getByRole('group', { name: '선택한 문서 2개와 분석 결과를 삭제할까요?' })
+      .getByRole('group', {
+        name: '선택한 문서 2개를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다.',
+      })
       .getByRole('button', { name: '삭제', exact: true })
       .click();
-    await expect(page.getByText('문서 2개를 삭제했습니다.')).toBeVisible();
+    await expect(page.getByText('문서 2개를 휴지통으로 옮겼습니다.')).toBeVisible();
     await expect(documents.locator('.document-row strong')).toHaveText([
       '회고 메모',
       '배포 체크리스트',
+      '주간 회의록',
+    ]);
+    await documents.getByRole('button', { name: '휴지통 2' }).click();
+    const trash = documents.getByRole('list', { name: '휴지통' });
+    await expect(trash.locator('li strong')).toHaveText(['설계 검토', '실패할 메모']);
+    await trash
+      .locator('li')
+      .filter({ hasText: '설계 검토' })
+      .getByRole('button', { name: '복원' })
+      .click();
+    await expect(page.getByText('‘설계 검토’ 문서를 복원했습니다.')).toBeVisible();
+    await expect(trash.locator('li strong')).toHaveText(['실패할 메모']);
+    await documents.getByRole('button', { name: '휴지통 비우기' }).click();
+    await documents
+      .getByRole('group', { name: '휴지통의 문서 1개를 영구 삭제할까요? 되돌릴 수 없습니다.' })
+      .getByRole('button', { name: '휴지통 비우기' })
+      .click();
+    await expect(page.getByText('문서 1개를 영구 삭제했습니다.')).toBeVisible();
+    await expect(documents.getByText('휴지통이 비어 있습니다.')).toBeVisible();
+    // The restored document is back where it was: restoring changes nothing about it.
+    await documents.getByRole('button', { name: '휴지통', exact: true }).click();
+    await expect(documents.locator('.document-row strong')).toHaveText([
+      '회고 메모',
+      '배포 체크리스트',
+      '설계 검토',
       '주간 회의록',
     ]);
     await expect(
       page
         .getByRole('navigation', { name: '화면' })
         .getByRole('button', { name: '지식 보관함', exact: true }),
-    ).toContainText('3');
+    ).toContainText('4');
     await page.screenshot({ path: 'test-results/documents-library.png', fullPage: true });
 
     // The document window says the same, and offers the analysis again or for the first time.

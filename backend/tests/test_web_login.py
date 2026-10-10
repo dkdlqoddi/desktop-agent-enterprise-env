@@ -74,7 +74,9 @@ def attempt(server, login, url=None, *, arrived=None, product="JIRA 티켓", opt
 
 def test_auto_mode_detects_the_sso_link_method(server):
     result, _, url = attempt(server, plan())
-    assert result == {"method": "sso-link", "label": METHODS["sso-link"]["label"], "detected": True}
+    # The SSO form is on another host than the site: Electron keeps it as the site's login host (login_hosts).
+    assert result == {"method": "sso-link", "label": METHODS["sso-link"]["label"], "detected": True,
+                      "hosts": ["localhost"]}
     assert url == server.url
     assert server.logins == [server.credentials]
 
@@ -149,7 +151,7 @@ def test_after_a_refused_login_the_next_method_that_fits_signs_in(server):
     login = plan(mode="fixed", methods=[chosen, *(method for method in CATALOG if method["id"] != "atlassian")])
     result, _, url = attempt(server, login, seconds=30)
     assert result == {"method": "sso-link", "label": METHODS["sso-link"]["label"], "detected": False,
-                      "tried": ["JIRA·Confluence 기본 로그인: 로그인 화면이 다시 표시됨"]}, str(result)
+                      "hosts": ["localhost"], "tried": ["JIRA·Confluence 기본 로그인: 로그인 화면이 다시 표시됨"]}, str(result)
     assert (url, server.form_logins, server.logins) == (server.url, [server.credentials], [server.credentials] * 2)
 
 
@@ -277,6 +279,13 @@ def test_plan_validation():
         assert PASSWORD not in str(raised.value)
     # A submit step may leave its button out (Enter), and optional/unless may be empty.
     assert validate_plan(steps(step, password, {"action": "submit", "target": "", "unless": None, "optional": None}))
+    # The site's login hosts, lower case and at most 20 of them; none when Electron gives none.
+    assert validate_plan({**good, "hosts": ["IdP.Corp.Test", "idp.corp.test", "[::1]:8443"]})["hosts"] == [
+        "idp.corp.test", "[::1]:8443"]
+    assert validate_plan(good)["hosts"] == [] and validate_plan({**good, "hosts": None})["hosts"] == []
+    for hosts in ("idp.corp.test", ["idp corp"], [""], ["x" * 254], [3], ["a"] * 21):
+        with pytest.raises(UserError, match="사이트 로그인 정보 형식"):
+            validate_plan({**good, "hosts": hosts})
     # Up to 16 steps, with texts the user wrote, which may be optional, as clicks may.
     domain = {"action": "fill", "value": "text", "text": "EXAMPLE", "target": "#domain", "optional": True, "unless": "#x"}
     found = validate_plan(steps(*[{"action": "click", "target": "#notice", "optional": True}] * 12, domain, step,
@@ -303,50 +312,36 @@ def test_an_address_without_its_scheme_reads_as_the_address_bar_reads_it():
         assert origin_of(with_scheme(value)) is None, value
 
 
-class Answering:
-    """A page whose sites answer as `answers` says, by scheme: the address the browser comes to, or the error of one
-    that does not answer."""
+class Refusing:
+    """A page whose site answers over neither scheme: every address opened is recorded, and refused."""
 
-    def __init__(self, answers):
-        self.answers, self.url, self.opened = answers, "about:blank", []
+    def __init__(self):
+        self.url, self.opened = "about:blank", []
 
     async def goto(self, url, **options):
         self.opened.append(url)
-        answer = self.answers[url.split("://", 1)[0]]
-        if isinstance(answer, Exception):
-            self.url = "chrome-error://chromewebdata/"
-            raise answer
-        self.url = answer
+        self.url = "chrome-error://chromewebdata/"
+        raise Exception(f"net::ERR_CONNECTION_REFUSED at {url}")
 
     def is_closed(self):
         return False
 
 
-def test_a_site_address_without_its_scheme_opens_over_https_or_else_over_http(tmp_path):
+def test_a_site_address_without_its_scheme_opens_over_https_and_never_over_http(tmp_path):
     jira = Service(Database(tmp_path / "wiki.db"), None).jira
-    refused = Exception("net::ERR_CONNECTION_REFUSED at https://jira.test/jira")
+    page = Refusing()
 
-    def reach(url, answers):
-        page = Answering(answers)
-        return asyncio.run(jira._reach(page, url)), page.opened
+    def reach(url):
+        return asyncio.run(jira._reach(page, url))
 
-    # One that names its scheme opens as it is.
-    assert reach("http://jira.test/jira", {}) == (("http://jira.test/jira", "http://jira.test"), [])
-    # https first, as the address bar; its answer may be a redirect to the login page or an error status.
-    assert reach("jira.test/jira", {"https": "https://sso.test/login"}) == (
-        ("https://jira.test/jira", "https://jira.test"), ["https://jira.test/jira"])
-    # The scheme found is kept for the host: no try the next time.
-    assert reach("jira.test/other", {}) == (("https://jira.test/other", "https://jira.test"), [])
-    # https does not answer: http.
-    assert reach("wiki.test:8080/wiki", {"https": refused, "http": "http://wiki.test:8080/wiki/"}) == (
-        ("http://wiki.test:8080/wiki", "http://wiki.test:8080"), ["https://wiki.test:8080/wiki", "http://wiki.test:8080/wiki"])
-    # https answers, but the site sends the browser on to http: it is a site of http.
-    assert reach("portal.test", {"https": "http://home.portal.test/home"})[0] == (
-        "http://portal.test", "http://portal.test")
-    # Neither answers: https, which then fails as any address that does not open; nothing is kept for the host.
-    assert reach("down.test", {"https": refused, "http": refused}) == (
-        ("https://down.test", "https://down.test"), ["https://down.test", "http://down.test"])
-    assert jira.schemes == {"jira.test": "https", "wiki.test:8080": "http", "portal.test": "http"}
+    # One that names its scheme opens as it is: http only when the user wrote http://.
+    assert reach("http://jira.test/jira") == ("http://jira.test/jira", "http://jira.test")
+    # Without one, https: the account must never go over a plain connection because https did not answer.
+    assert reach("jira.test/jira") == ("https://jira.test/jira", "https://jira.test")
+    assert reach("wiki.test:8080/wiki") == ("https://wiki.test:8080/wiki", "https://wiki.test:8080")
+    assert reach("//portal.test") == ("https://portal.test", "https://portal.test")
+    # Nothing is tried first to find a scheme: the site is opened once, by the steps that follow.
+    assert page.opened == []
 
 
 class Page:
@@ -412,6 +407,22 @@ def test_the_account_is_typed_only_where_the_site_led_and_over_https():
     portal.require("http://portal.example.com/auth/login")
     with pytest.raises(LoginError):
         portal.require("http://www.example.com/login")
+    # The hosts the account went to besides the site's own are what Electron keeps as the site's login hosts.
+    assert {"jira.test", "idp.corp.test"} <= hosts.used and not {"evil.test", "evil2.test"} & hosts.used
+    # With them pinned, the account goes to the site and those alone: a host the site leads to anew (an open
+    # redirect, a moved login screen) is refused until the user resets the hosts, and the LLM's clicks may not lead
+    # there either.
+    page = Page()
+    pinned = Hosts(page, "https://jira.test/jira", pinned=["IdP.Corp.Test"])
+    page.listener(Navigation("https://idp.corp.test/adfs"))
+    page.listener(Navigation("https://new-idp.test/login"))
+    pinned.require("https://jira.test/jira/login.jsp")
+    pinned.require("https://idp.corp.test/adfs/ls")
+    with pytest.raises(LoginError, match="저장된 로그인 주소에 없는 곳\\(new-idp.test\\)"):
+        pinned.require("https://new-idp.test/login")
+    with pytest.raises(Elsewhere):
+        pinned.lead("https://new-idp.test/login")
+    assert pinned.used == {"jira.test", "idp.corp.test"}
 
 
 # ---------------------------------------------------------------------------
@@ -643,6 +654,7 @@ class FailingLLM:
 @pytest.fixture
 def importer(tmp_path, server):
     service = Service(Database(tmp_path / "data" / "wiki.db"), FailingLLM())
+    service.preferences_save({"web_assist": True})  # The LLM's help with logins: off until the user turns it on.
     importer = service.jira
     importer.profile_root = tmp_path / "profiles"
     importer.optional_seconds, importer.form_seconds, importer.login_seconds = 1, 10, 20
@@ -663,7 +675,7 @@ def test_login_check_on_the_site_address(importer, server):
     dashboard = f"{server.origin}/jira/"
     result = service.dispatch("jira.check", {"url": dashboard, "login": plan()})
     assert result == {"ok": True, "method": "sso-link", "label": METHODS["sso-link"]["label"], "detected": True,
-                      "message": f"로그인했습니다 · {METHODS['sso-link']['label']}"}
+                      "hosts": ["localhost"], "message": f"로그인했습니다 · {METHODS['sso-link']['label']}"}
     assert server.logins == [server.credentials]
     # JIRA's own form on the same site, checked with the method the user chose.
     server.style = "form"
@@ -686,23 +698,23 @@ def test_login_check_on_the_site_address(importer, server):
     assert time.monotonic() - started < 20 and jira.checking is False
 
 
-def test_a_login_check_of_a_site_address_without_its_scheme_finds_it_over_http(importer, server, monkeypatch):
-    # The JIRA of the tests answers over http alone: its address typed without a scheme is tried over https, then
-    # opened over http, and the scheme found serves the next check of the host at once.
+def test_a_login_check_of_a_site_address_without_its_scheme_never_falls_back_to_http(importer, server, monkeypatch):
+    # The JIRA of the tests answers over http alone: its address typed without a scheme is opened over https, which
+    # fails, and never over http; written with http:// it is the user's choice, and the check signs in.
     service, jira = importer
-    tried = []
+    opened = []
+    goto = browser_import.open_page
 
-    async def spy(page, url, seconds):
-        tried.append(url)
-        return await reached(page, url, seconds)
-    reached = browser_import.reached
-    monkeypatch.setattr(browser_import, "reached", spy)
+    async def spy(page, url, product, assist=None):
+        opened.append(url)
+        return await goto(page, url, product, assist)
+    monkeypatch.setattr(browser_import, "open_page", spy)
     bare = f"{server.origin.removeprefix('http://')}/jira/"
-    for _ in range(2):
-        result = service.dispatch("jira.check", {"url": bare, "login": plan()})
-        assert (result["ok"], result["method"]) == (True, "sso-link"), str(result)
-    assert tried == [f"https://{bare}", f"http://{bare}"]
-    assert jira.schemes == {server.origin.removeprefix("http://"): "http"}
+    result = service.dispatch("jira.check", {"url": bare, "login": plan()})
+    assert result["ok"] is False and "접속하지 못했습니다" in result["message"], str(result)
+    assert not any(url.startswith("http://") for url in opened), opened
+    result = service.dispatch("jira.check", {"url": f"http://{bare}", "login": plan()})
+    assert (result["ok"], result["method"]) == (True, "sso-link"), str(result)
     with pytest.raises(UserError, match="JIRA 주소"):
         jira.check({"url": "jira test/jira", "login": plan()})
 
@@ -811,7 +823,9 @@ class WaitingLLM:
 
 def test_a_check_stopped_while_the_llm_analyzes_its_failure_does_not_wait_for_the_answer(tmp_path, server):
     llm = WaitingLLM()
-    jira = Service(Database(tmp_path / "data" / "wiki.db"), llm).jira
+    service = Service(Database(tmp_path / "data" / "wiki.db"), llm)
+    service.preferences_save({"web_assist": True})
+    jira = service.jira
     jira.profile_root = tmp_path / "profiles"
     jira.optional_seconds, jira.form_seconds, jira.login_seconds = 1, 10, 20
     try:
@@ -840,7 +854,7 @@ def test_login_window_reports_the_method_and_blocks_other_work(importer, server)
             call()
     wait(lambda: jira.status()["login_result"] is not None)
     assert jira.status()["login_result"] == {"method": "sso-link", "label": METHODS["sso-link"]["label"],
-                                             "detected": True}
+                                             "detected": True, "hosts": ["localhost"]}
     assert jira.login_close()["login_open"] is False
     # Without a login plan the window only opens the page for the user, keeping the profile's session: the
     # dashboard opens signed in. The next window starts without a result.
@@ -851,9 +865,10 @@ def test_login_window_reports_the_method_and_blocks_other_work(importer, server)
     assert not any(path.startswith("/jira/login.jsp") for path in server.requests[seen:])
     assert jira.login_close()["login_open"] is False
     assert server.logins == [server.credentials]
-    # The page reached after signing in was the dashboard: a job then opens its ticket.
+    # The window left the profile signed in: a job then opens its ticket with that session, typing nothing.
     job_status = jira.start({"url": server.url, "scope": "issue", "analyze": False, "login": plan()})
     assert job_status["job"]["auto_login"] is True
     wait(lambda: jira.status()["job"]["status"] not in ("scanning", "login", "running", "cancelling"))
     job = jira.status()["job"]
-    assert (job["status"], job["imported"], job["login"]["method"]) == ("completed", 1, "sso-link"), str(job)
+    assert (job["status"], job["imported"], job["login"]["method"]) == ("completed", 1, None), str(job)
+    assert server.logins == [server.credentials]

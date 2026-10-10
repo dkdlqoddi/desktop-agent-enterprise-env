@@ -203,6 +203,8 @@ test("reaches other computers' shared folders from AI tools only where the user 
   await refused('import.start', { source: '"//Attacker/share/x.docx"' });
   await refused('office.start', { path: '\\\\?\\UNC\\attacker\\share\\x.docx', mode: 'file' });
   await refused('files.import_text', { path: '\\\\attacker\\share\\x.md' });
+  // The CA certificate of the LLM settings is read for every request, from wherever it is.
+  await refused('settings.update', { ca_bundle: '"\\\\attacker\\share\\ca.pem"' });
   await refused('routines.save', {
     kind: 'source_refresh',
     config: { paths: ['C:\\docs', '\\\\attacker\\share'] },
@@ -222,6 +224,11 @@ test("reaches other computers' shared folders from AI tools only where the user 
   const looked = lists.length;
   await check('import.start', { source: 'C:\\Users\\me\\plan.docx' }, 'full');
   await check('import.start', { source: 'https://jira.example/browse/A-1' }, 'full');
+  await check(
+    'settings.update',
+    { ca_bundle: 'C:\\certs\\private-ca.pem', model_name: 'm' },
+    'full',
+  );
   await check('wiki.search', { query: '\\\\attacker\\share' }, 'full');
   assert.equal(lists.length, looked);
   // Below "full" the method's own check refuses first, before anything is looked up.

@@ -23,11 +23,18 @@ opened once more when the LLM expects that to work.
 The ID and the password are typed only into a page the sign-in may give them to (Hosts): the site's own host, the
 hosts the site sent the browser on to by itself or through the login method's clicks, never a host a click the LLM
 chose led to; over https, unless the site's own address is http. The password goes only into a password field, and
-the ID and the user's texts only into text fields.
+the ID and the user's texts only into text fields. The hosts the account was typed into besides the site's own (its
+identity provider) come back as `hosts`: Electron keeps them with the site (login_hosts), and from then on the plan
+names them and the account goes to no other host, whatever the site sends the browser on to (an open redirect on
+the site, a changed page), until the user resets them.
 
-An address may be given without its scheme (portal.example.com, jira.example.com/jira): a site's address is then opened as the
-browser's address bar opens it, over https or else over http (browser_import.BrowserImporter._reach), and the scheme it
-opened with counts as its own; a link is opened over https (with_scheme).
+A session the browser profile keeps may still be signed in, from the last run or from the login window, where a site
+that asks for a second factor is signed in to by hand: the sign-in then types nothing (`session`). Only a login check
+(`fresh`) always signs in anew, as it is to tell whether the account and the method work.
+
+An address may be given without its scheme (portal.example.com, jira.example.com/jira): it is then opened over https
+(with_scheme), never over http, so the account never goes over a plain connection by a fallback; a site that only
+answers over http is saved with http:// written out, the user's own choice.
 """
 import asyncio
 import contextlib
@@ -38,6 +45,11 @@ from .llm import UserError
 
 MODES = ("auto", "fixed")
 MAX_METHODS, MAX_DETECT, MAX_STEPS = 12, 4, 16
+MAX_HOSTS = 20  # Identity-provider hosts kept with a site (login_hosts).
+# A host name (or an [IPv6] address) as a plan names the hosts the account may be typed into.
+HOST = re.compile(r"[A-Za-z0-9.\-\[\]:]{1,253}")
+SESSION_SECONDS = 8  # How long a page opened with the profile's session gets to show that it is signed in.
+SESSION_LABEL = "저장된 로그인 세션 사용"  # What the import box shows for a sign-in that typed nothing.
 MAX_TEXT = 200  # A text the user wrote for a field, e.g. a domain.
 POLL = 0.25  # Seconds between checks of the page.
 SETTLE = 0.5  # A login screen may still be rendering when the first method's element shows.
@@ -118,8 +130,8 @@ def has_scheme(value):
 
 def with_scheme(value, scheme="https"):
     """An address as a URL: one given without a scheme (portal.example.com, also //portal.example.com) gets `scheme`, by default
-    https, which the address bar tries first. Anything else comes back as it is: a URL, or a value that is no
-    address."""
+    https, the only scheme a site address without one is opened over. Anything else comes back as it is: a URL, or a
+    value that is no address."""
     if not isinstance(value, str) or has_scheme(value) or not BARE.fullmatch(value.strip()):
         return value
     return f"{scheme}://{value.strip().removeprefix('//')}"
@@ -170,12 +182,16 @@ class Hosts:
     site's own), every host the browser goes on to without a click the LLM chose (the site's redirects, form posts and
     scripts, and the clicks of the login methods, e.g. JIRA → AD SSO → ADFS), the hosts a click the LLM chose leads to
     through the site's own redirects. A host the LLM's click took the browser to by itself is none of them: the page may have misled the LLM, e.g. with a link to another site that
-    says "로그인". The account goes only to https pages, unless the site's own address is http (the user's choice)."""
+    says "로그인". The account goes only to https pages, unless the site's own address is http (the user's choice).
+    With `pinned` hosts (the site's login_hosts, learned from the first logins) the account goes only to the site's
+    own host and those, however the browser got to another: `used` are the hosts it was typed into this time."""
 
-    def __init__(self, page, url):
+    def __init__(self, page, url, pinned=()):
         scheme, self.home = place_of(url)
         self.secure = scheme == "https"
         self.known = {self.home} if self.home else set()
+        self.pinned = {host.lower() for host in pinned}
+        self.used = set()
         self.page, self.clicking = page, False
         # The navigations a click the LLM chose started toward another host, and the redirects that followed them.
         self.misled = set()
@@ -186,7 +202,7 @@ class Hosts:
             self.page.remove_listener("request", self._request)
 
     def trusts(self, host):
-        return host in self.known
+        return host in self.known and (not self.pinned or host == self.home or host in self.pinned)
 
     def _request(self, request):
         with contextlib.suppress(Exception):  # A frame that went away meanwhile.
@@ -225,11 +241,16 @@ class Hosts:
         if not host:
             raise LoginError("로그인 화면의 주소를 확인할 수 없어 ID·비밀번호를 입력하지 않았습니다.")
         if not self.trusts(host):
+            if host in self.known:  # Where the site led, but not where it has signed in before.
+                raise LoginError(f"로그인 화면이 이 사이트에 저장된 로그인 주소에 없는 곳({host})에 있어 ID·비밀번호를 "
+                                 "입력하지 않았습니다. 사이트의 로그인 화면이 바뀐 것이 맞다면 관리 → 사이트 계정에서 "
+                                 "‘로그인 주소 초기화’ 뒤 로그인 확인을 해 주세요.")
             raise LoginError(f"로그인 화면이 사이트 주소와 다른 곳({host})에 있어 ID·비밀번호를 입력하지 않았습니다. "
                              "관리 → 사이트 계정에서 주소와 로그인 방식을 확인해 주세요.")
         if self.secure and scheme != "https":
             raise LoginError(f"로그인 화면이 암호화되지 않은 주소(http://{host})에 있어 ID·비밀번호를 입력하지 "
                              "않았습니다. 관리 → 사이트 계정에서 주소와 로그인 방식을 확인해 주세요.")
+        self.used.add(host)
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +332,14 @@ def validate_plan(value):
     site_id, site_name = value.get("site_id", ""), value.get("site_name", "")
     if not isinstance(site_id, str) or len(site_id) > 80 or not isinstance(site_name, str) or len(site_name) > 120:
         _fail()
+    # The hosts the account may be typed into besides the site's own, once Electron keeps them for the site.
+    hosts = value.get("hosts") or []
+    if not isinstance(hosts, list) or len(hosts) > MAX_HOSTS \
+            or not all(isinstance(host, str) and HOST.fullmatch(host) for host in hosts):
+        _fail()
     return {"site_id": site_id, "site_name": site_name.strip(), "mode": value["mode"],
-            "methods": list(found.values()), "credentials": {"id": login_id, "password": password}}
+            "methods": list(found.values()), "credentials": {"id": login_id, "password": password},
+            "hosts": list(dict.fromkeys(host.lower() for host in hosts))}
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +409,15 @@ async def _cleared(locator, mark):
 # ---------------------------------------------------------------------------
 # Sign-in
 # ---------------------------------------------------------------------------
+
+
+async def _has_session(context, url):
+    """Whether the profile holds cookies for the site at `url`: a session an earlier sign-in or the login window may
+    have left. Without any, nothing is signed in, and the page is opened once, by the sign-in itself."""
+    try:
+        return bool(await context.cookies(url))
+    except Exception:
+        return False
 
 
 async def _open(page, url, product, assist=None):
@@ -752,8 +788,8 @@ async def _assisted(context, page, url, plan, arrived, product, assist, notes, h
 
 
 async def sign_in(context, page, url, plan, *, arrived, product, optional_seconds=3, form_seconds=30,
-                  login_seconds=100, assist=None, watched=False):
-    """Open url with a fresh session and sign in with the plan's methods.
+                  login_seconds=100, assist=None, watched=False, fresh=False):
+    """Sign in with the plan's methods, unless the profile's session is signed in already (`fresh` signs in anyway).
 
     arrived(page) tells the signed-in page apart. Every login detects which method's login screen shows, in plan
     order (the user's choice or the saved method, standard SSO, then the others), and moves on to
@@ -764,8 +800,9 @@ async def sign_in(context, page, url, plan, *, arrived, product, optional_second
     again. In a window the user watches (`watched`), a login that does not arrive in time ends the sign-in: the user may
     be in the middle of an approval. A login screen on a page the account must not be typed into (Hosts) ends the
     sign-in before anything is typed there. Returns {"method", "label", "detected"}, with method None when the page
-    needed no login, `learned` when the LLM found the fields, and `tried` when other methods were tried first; raises
-    LoginError, with `sent` when a login was sent.
+    needed no login (a public page, or the profile's session signed in), `learned` when the LLM found the fields,
+    `tried` when other methods were tried first and `hosts` when the account went to hosts besides the site's own;
+    raises LoginError, with `sent` when a login was sent.
     """
     mode, credentials = plan["mode"], plan["credentials"]
     # The method the user chose for the site, which fixed mode sends first.
@@ -773,12 +810,21 @@ async def sign_in(context, page, url, plan, *, arrived, product, optional_second
     tried, notes = [], []
     sent = {}  # The outcome of each login sent that did not sign in, by its fields.
     assisted = False
-    hosts = Hosts(page, url)
+    hosts = Hosts(page, url, plan.get("hosts") or ())
 
     def signed(result):
-        return {**result, "tried": list(notes)} if notes and result["method"] else result
+        elsewhere = sorted(hosts.used - {hosts.home})
+        found = {**result, **({"hosts": elsewhere} if elsewhere else {})}
+        return {**found, "tried": list(notes)} if notes and result["method"] else found
 
     try:
+        if not fresh and await _has_session(context, url):
+            # The session the profile keeps may be signed in still: the last run's, or the login window's, where a
+            # site that asks for a second factor is signed in to by hand. The account is sent only when it is not.
+            await _open(page, url, product, assist)
+            await _ready(page, arrived, min(form_seconds, SESSION_SECONDS))
+            if await _arrived(arrived, page):
+                return {"method": None, "label": SESSION_LABEL, "detected": False}
         while True:
             candidates = [method for method in plan["methods"] if all(method is not other for other in tried)]
             method = None

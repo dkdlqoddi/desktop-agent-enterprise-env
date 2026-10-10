@@ -101,15 +101,22 @@ export default function LlmSettings() {
       headers: form.headers.map((header, i) => (i === index ? { ...header, ...patch } : header)),
     });
   const format = FORMATS[form.api_format];
-  // The saved key stays with the server it was saved for: on another one it is cleared unless typed again.
-  const moved = settings.has_api_key && serverOf(form.base_url) !== serverOf(settings.base_url);
+  // The saved key and the saved header values stay with the server they were saved for: on another one they are
+  // cleared unless typed again.
+  const movedServer = serverOf(form.base_url) !== serverOf(settings.base_url);
+  const moved = settings.has_api_key && movedServer;
+  const movedHeaders =
+    movedServer && form.headers.some((header) => header.has_value && !header.value);
 
   // What the form still needs before it can be saved and used, as a message; '' when complete.
   function missing() {
+    if (movedHeaders)
+      return 'API 엔드포인트의 서버가 바뀌었습니다. 등록된 헤더 값을 다시 입력하거나 그 헤더를 빼 주세요.';
     const keyed = keys.api_key.trim() || (settings.has_api_key && !moved);
-    return !keyed && form.headers.some((header) => header.value.includes('{api_key}'))
-      ? '헤더의 {api_key} 자리에 넣을 API Key를 입력해 주세요.'
-      : '';
+    const needsKey = form.headers.some(
+      (header) => header.value.includes('{api_key}') || (!header.value && header.uses_api_key),
+    );
+    return !keyed && needsKey ? '헤더의 {api_key} 자리에 넣을 API Key를 입력해 주세요.' : '';
   }
 
   async function save(test: boolean) {
@@ -128,7 +135,12 @@ export default function LlmSettings() {
         api_format: form.api_format,
         base_url: form.base_url,
         model_name: form.model_name,
-        headers: form.headers,
+        // A saved value the user did not retype stays: the header goes by its name alone.
+        headers: form.headers.map((header) =>
+          header.value || !header.has_value
+            ? { name: header.name, value: header.value }
+            : { name: header.name },
+        ),
         api_key: keys.api_key,
         temperature: form.temperature,
         timeout: form.timeout,
@@ -267,11 +279,12 @@ export default function LlmSettings() {
             {storage(form.has_api_key, 'api_key', '키')}
           </small>
         </label>
-        {moved && (
+        {(moved || movedHeaders) && (
           <p className="banner warn" role="status">
             <CircleAlert size={15} />
-            API 엔드포인트의 서버가 바뀌어, 저장하면 등록된 키를 지웁니다. 이 서버에 쓸 키를 다시
-            입력해 주세요.
+            API 엔드포인트의 서버가 바뀌어, 저장하면 등록된 {moved ? '키' : ''}
+            {moved && movedHeaders ? '와 ' : ''}
+            {movedHeaders ? '헤더 값' : ''}을 지웁니다. 이 서버에 쓸 값을 다시 입력해 주세요.
           </p>
         )}
         <label>
@@ -300,7 +313,7 @@ export default function LlmSettings() {
                 spellCheck={false}
                 data-secret
                 onChange={(e) => setHeader(index, { value: e.target.value })}
-                placeholder="값"
+                placeholder={header.has_value ? '등록된 값 사용 중 · 바꾸려면 새 값 입력' : '값'}
               />
               <button
                 type="button"
@@ -322,7 +335,8 @@ export default function LlmSettings() {
           </button>
           <small>
             값의 {'{api_key}'}는 위 API Key로, {'{uuid}'}는 요청마다 새 ID로 바뀝니다. 기본 헤더와
-            이름이 같으면 이 값을 보냅니다. 비밀 값은 API Key 칸에 넣고 {'{api_key}'}로 쓰세요.
+            이름이 같으면 이 값을 보냅니다. 값은 API Key처럼 암호화해 저장하고 화면에 다시 보이지
+            않습니다.
           </small>
         </fieldset>
         <details className="advanced">

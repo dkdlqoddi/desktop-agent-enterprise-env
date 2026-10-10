@@ -28,7 +28,7 @@ def import_page(service, params):
         # Lock before duplicate detection, including concurrent internal requests.
         db.execute("BEGIN IMMEDIATE")
         found = sources.plan(db, "confluence_sources", source_url, {"source_url": source_url, "source_hash": checksum},
-                             target, replace)
+                             target, replace, automatic=params.get("track_changes") is True)
         # A watching routine (routines.py) learns what the page changed in the text imported before.
         before = sources.base(db, "confluence_sources", found, params.get("track_changes") is True)
         if found.action == "skip":

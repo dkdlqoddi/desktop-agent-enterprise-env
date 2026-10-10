@@ -3,7 +3,10 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { readJsonFile, writeFileSafely } = require('./files.cjs');
 
-// The backend opens site addresses as the browser's address bar does, over https or else over http (browser_import.py _reach).
+// A site address typed without its scheme is saved over https: the backend never opens a site over http unless http://
+// is written out, so a saved password never goes over a plain connection by a fallback (browser_import.py _reach).
+// The hosts the account was typed into besides the site's own (its identity provider) are kept once they signed in
+// (login_hosts): from then on the backend types the account into no other host, until the user resets them.
 // sites.json keeps the login ID and the OS-encrypted password; the password never reaches the renderer,
 // and without secure storage it is kept in memory for this session only. An account is only ever used for
 // links of its own address: its password is typed into that site and no other, so a site moved to another
@@ -29,6 +32,17 @@ const SPECIAL_LABELS = {
 const MAX_NAME = 80;
 const MAX_LOGIN_ID = 256;
 const MAX_PASSWORD = 1024;
+// Identity-provider hosts kept with a site, as backend/agent/web_login.py takes them (MAX_HOSTS, HOST).
+const MAX_HOSTS = 20;
+const HOST = /^[a-z0-9.\-[\]:]{1,253}$/i;
+
+function hostsOf(value) {
+  if (!Array.isArray(value)) return [];
+  const found = value
+    .filter((host) => typeof host === 'string' && HOST.test(host))
+    .map((host) => host.toLowerCase());
+  return [...new Set(found)].slice(0, MAX_HOSTS);
+}
 const MAX_SELECTOR = 500;
 const MAX_BEFORE = 5;
 // Steps of a login method, its last one the submit; a text the user wrote for a field (backend/agent/web_login.py).
@@ -48,7 +62,7 @@ const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 const BARE =
   /^(?:\/\/)?(?:[\p{L}\p{N}\p{M}_-]+(?:\.[\p{L}\p{N}\p{M}_-]+)*|\[[0-9a-f:.]+\])(?::\d{1,5})?(?:[/?#][^\s\\]*)?$/iu;
 const ADDRESS_ERROR =
-  '사이트 주소를 확인해 주세요. 예) portal.example.com, https://jira.example.com/jira (http:// 또는 https://는 빼도 됩니다)';
+  '사이트 주소를 확인해 주세요. 예) portal.example.com, https://jira.example.com/jira (https://는 빼도 됩니다. http만 쓰는 사이트는 http://를 붙여 주세요)';
 const UNREADABLE =
   '사이트 계정 파일(sites.json)을 읽지 못했습니다. 저장된 계정을 덮어쓰지 않도록 이번 실행에서는 계정을 바꿀 수 없습니다. 앱을 다시 실행해 주세요.';
 const UNMOVED =
@@ -76,24 +90,30 @@ function addressOf(value) {
   }
 }
 
-// The origin a site's password belongs to: scheme://host[:port], or //host[:port] for an address without a scheme,
-// which may open over either; '' without an address (an account carried over from an earlier version).
+// The origin a site's password belongs to: scheme://host[:port], https for an address without a scheme; '' without
+// an address (an account carried over from an earlier version).
 function originOf(value) {
   const found = value ? addressOf(value) : null;
-  return found ? (found.bare ? `//${found.url.host}` : found.url.origin) : '';
+  return found ? found.url.origin : '';
 }
 
 /** The site's base address: origin and context path of a JIRA or Confluence link, without
  *  query or trailing slash.
- *  An address typed without its scheme stays without (host instead of origin). Throws on anything
- *  but a plain http(s) address. */
+ *  An address typed without its scheme is an https address: the site is never opened over http unless
+ *  http:// is written out. Throws on anything but a plain http(s) address. */
 function normalizeUrl(value, kind) {
   const found = typeof value === 'string' && value.length <= 2048 ? addressOf(value) : null;
   if (!found) throw new SiteError(ADDRESS_ERROR);
-  const { url, bare } = found;
-  const start = bare ? url.host : url.origin;
+  const { url } = found;
   const prefix = url.pathname.split(APP_ROUTE)[0].replace(/\/+$/, '');
-  return start + prefix;
+  return url.origin + prefix;
+}
+
+// A site address an earlier version saved without its scheme (host/path) is the https address it opened first:
+// the password stays with it, as its origin is the same.
+function withScheme(value) {
+  const found = addressOf(value);
+  return found?.bare ? `https://${value.trim().replace(/^\/\//, '')}` : value;
 }
 
 function selector(value, name) {
@@ -298,7 +318,7 @@ class SiteStore {
       kind: record.kind,
       name:
         typeof record.name === 'string' && record.name ? record.name : DEFAULT_NAMES[record.kind],
-      url: typeof record.url === 'string' ? record.url : '',
+      url: typeof record.url === 'string' ? withScheme(record.url) : '',
       login_id: typeof record.login_id === 'string' ? record.login_id : '',
       password: '',
       encrypted_password: '',
@@ -310,6 +330,7 @@ class SiteStore {
           : null,
       custom,
       learned,
+      login_hosts: hostsOf(record.login_hosts),
       verified_at: typeof record.verified_at === 'string' ? record.verified_at : null,
       last_error: typeof record.last_error === 'string' ? record.last_error : '',
       last_diagnosis: diagnosisOf(record.last_diagnosis),
@@ -394,6 +415,7 @@ class SiteStore {
       detected_label: site.detected_method ? this.methodLabel(site.detected_method) : '',
       custom: structuredClone(site.custom),
       learned: site.learned ? structuredClone(site.learned) : null,
+      login_hosts: [...site.login_hosts],
       verified_at: site.verified_at,
       last_error: site.last_error,
       last_diagnosis: site.last_diagnosis ? structuredClone(site.last_diagnosis) : null,
@@ -477,6 +499,7 @@ class SiteStore {
       credentials: { id: site.login_id, password: site.password },
       mode: site.method === 'auto' ? 'auto' : 'fixed',
       methods: structuredClone(methods),
+      hosts: [...site.login_hosts],
     };
   }
 
@@ -563,6 +586,9 @@ class SiteStore {
         throw new SiteError('같은 종류와 주소의 사이트가 이미 있습니다.');
       const changed =
         existing && (existing.kind !== kind || existing.url !== url || existing.method !== method);
+      // The identity-provider hosts belong to the site, its address and its method as they are: a change starts
+      // over, as does the user (reset_login_hosts) when the site's login screen moved.
+      const reset = changed || params.reset_login_hosts === true;
       const changes = {
         kind,
         name,
@@ -585,12 +611,14 @@ class SiteStore {
           last_error: '',
           last_diagnosis: null,
         }),
+        ...(reset && { login_hosts: [] }),
       };
       const site = {
         ...(existing ?? {
           id: randomUUID(),
           detected_method: null,
           learned: null,
+          login_hosts: [],
           verified_at: null,
           last_error: '',
           last_diagnosis: null,
@@ -629,14 +657,18 @@ class SiteStore {
   }
 
   /** How an automatic login went: a detected method, or the fields the LLM found (learned), is kept for
-   *  the next login of an auto site; a failure keeps its message and the LLM's analysis of it. */
-  record(id, { ok, method, detected, learned, error, diagnosis } = {}) {
+   *  the next login of an auto site; a failure keeps its message and the LLM's analysis of it. The hosts the account
+   *  was typed into besides the site's own (hosts) are kept once, by the first login that signed in: the account
+   *  goes to no other host from then on. */
+  record(id, { ok, method, detected, learned, hosts, error, diagnosis } = {}) {
     return this.update(async () => {
       const site = this.get(id);
       if (!site) return null;
       const changes = {};
       if (ok) {
         changes.verified_at = new Date().toISOString();
+        const typed = hostsOf(hosts);
+        if (typed.length && !site.login_hosts.length) changes.login_hosts = typed;
         const found = method === LEARNED.id ? learnedOf(learned) : null;
         if (detected && site.method === 'auto') {
           if (found) Object.assign(changes, { learned: found, detected_method: LEARNED.id });

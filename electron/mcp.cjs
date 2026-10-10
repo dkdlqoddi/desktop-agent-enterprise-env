@@ -40,7 +40,7 @@ const INSTRUCTIONS = `Private Agent is the user's personal work assistant on thi
 - Tools that use the LLM (ask_wiki, run_prompt, extract_tasks, search_documents mode "prompt", get_briefing with generate) can take minutes. If one returns a job_id, call get_result with it.
 - Automatic routines run ready-made jobs on a schedule (Confluence page and JIRA ticket watches, JIRA searches and project reports, source updates, analysis, work reports). list_routines shows them and routine_results what their runs found.
 - app_* tools control the desktop app the user is looking at. Use them when the user wants to see something in the app; avoid surprising them. While the user writes (a document in the panel, or a form they changed and have not saved), the app refuses to reload or leave the screen: wait for them, do not work around it.
-- Anything without its own tool is available through call_api; api_manual lists every method.`;
+- Anything without its own tool is available through query_api (read-only methods) and call_api (any method); api_manual lists every method.`;
 
 // A JSON-RPC error of the protocol itself; failures of a tool are tool results with isError instead.
 class RpcError extends Error {
@@ -837,11 +837,11 @@ const TOOLS = [
     'delete_documents',
     '문서 삭제',
     'write',
-    'Delete wiki documents by id, all or none. This cannot be undone; confirm with the user first.',
+    'Move wiki documents to the trash by id, all or none. The user can restore them from the trash for 30 days (call_api wiki.restore brings them back; wiki.purge, at the "full" level, deletes for good). Confirm with the user first.',
     { ids: array('Document ids (1-10,000).', { type: 'string' }, { required: true }) },
     async (args, ctx) => {
       const { deleted } = await ctx.call('wiki.delete_many', { ids: args.ids });
-      return `Deleted ${deleted} document(s).`;
+      return `Moved ${deleted} document(s) to the trash (restorable for 30 days).`;
     },
     { annotations: destroys },
   ),
@@ -1090,7 +1090,8 @@ const TOOLS = [
       const done = await ctx.call('app.click', args);
       return withData(`Clicked a ${done.role}. Its name on the screen:`, done.clicked);
     },
-    { annotations: changes },
+    // A click may be on a button that deletes; the ones that carry a deletion out need the "full" level.
+    { annotations: { ...changes, destructiveHint: true } },
   ),
   tool(
     'app_fill',
@@ -1109,7 +1110,7 @@ const TOOLS = [
         done.filled,
       );
     },
-    { annotations: changes },
+    { annotations: { ...changes, destructiveHint: true } },
   ),
   tool(
     'app_notify',
@@ -1125,10 +1126,31 @@ const TOOLS = [
     { annotations: changes },
   ),
   tool(
+    'query_api',
+    'API 조회',
+    'read',
+    'Call a read-only Private Agent API method by name with its parameters: those marked 조회 in api_manual (documents.query, wiki.get, wiki.source_markdown, runs.stats, sites.list, settings.get, …). Never changes anything: a method that would is refused here; call_api takes those.',
+    {
+      method: string('Method name, e.g. "runs.stats".', { required: true }),
+      params: object('Parameters of the method.'),
+      wait_seconds: WAIT,
+    },
+    async (args, ctx) => {
+      if (METHODS[args.method]?.scope !== 'read')
+        throw new ToolError(
+          `${args.method} is not a read-only method (or not a method at all): see api_manual, and use call_api for methods that change something.`,
+        );
+      const result = await ctx.call(args.method, args.params ?? {});
+      // Any method's answer, documents and all: the JSON is data.
+      return withData(`Result of ${args.method} (JSON):`, json(result));
+    },
+    { slow: (args) => !!METHODS[args.method]?.slow, annotations: llm(readOnly) },
+  ),
+  tool(
     'call_api',
     'API 호출',
     'read',
-    "Call any Private Agent API method by name with its parameters, as the app's own screens do: for everything without a dedicated tool (prompts.save, schedules.save, sites.list, settings.get, wiki.source_markdown, runs.stats, …). See api_manual for the methods and their parameters. Allowed methods depend on the access level the user set.",
+    "Call any Private Agent API method by name with its parameters, as the app's own screens do: for everything without a dedicated tool (prompts.save, schedules.save, wiki.delete, settings.update, …). See api_manual for the methods and their parameters. Allowed methods depend on the access level the user set. Some methods delete or change settings: prefer query_api for reading.",
     {
       method: string('Method name, e.g. "prompts.save".', { required: true }),
       params: object('Parameters of the method.'),
@@ -1146,7 +1168,9 @@ const TOOLS = [
     },
     {
       slow: (args) => !!METHODS[args.method]?.slow,
-      annotations: { ...changes, openWorldHint: true },
+      // Among the methods it takes are wiki.delete_many and settings.update: a client that asks before
+      // destructive calls asks here.
+      annotations: { ...changes, destructiveHint: true, openWorldHint: true },
     },
   ),
   tool(

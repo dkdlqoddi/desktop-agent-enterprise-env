@@ -1,6 +1,7 @@
 """Automatic routines (routines.py): the catalog and the forms' checks, schedules and the queue, the runs of each recipe
 on files and documents in the Wiki, and the JIRA and Confluence routines in a real browser against the local
 sites (jira_server.py, confluence_server.py)."""
+import asyncio
 import json
 import threading
 import time
@@ -73,6 +74,14 @@ def wait(condition, seconds=60):
 def save(service, kind, **values):
     """Make a routine as the app's screen does: Electron lets it read this PC's files."""
     return service.dispatch("routines.save", {"kind": kind, "allow_files": True, **values})
+
+
+def forget_session(importer, server):
+    """The session the last run left in the site's profile is gone, as after the site signed the user out."""
+    async def clear():
+        async with importer._browser(server.origin, headless=True) as context:
+            await context.clear_cookies()
+    asyncio.run(clear())
 
 
 def finish(service, ident, logins=()):
@@ -420,7 +429,7 @@ def test_real_browser_jira_watch_search_and_project_report(jira, monkeypatch):
     # The login method it found is told to Electron with the run.
     events = service.dispatch("routines.events", {"after": ""})
     assert events["runs"][0]["logins"] == [{"site_id": "site-1", "ok": True, "method": "sso-link", "detected": True,
-                                            "learned": None, "error": "", "diagnosis": None}]
+                                            "learned": None, "hosts": ["localhost"], "error": "", "diagnosis": None}]
 
     monkeypatch.setitem(jira_server.ISSUES, "TEAM-1", {**jira_server.ISSUES["TEAM-1"], "status": "In Progress",
                                                        "category": "indeterminate", "updated": "2026-10-06T10:00:00.000+0900"})
@@ -504,7 +513,9 @@ def test_real_browser_jira_watch_search_and_project_report(jira, monkeypatch):
     assert "빠짐" not in run["summary"], run
     monkeypatch.setattr(jira_import, "MAX_FOUND", 500)
 
-    # A refused login after the password was sent turns the routine off.
+    # A refused login after the password was sent turns the routine off. The session the runs before left in the
+    # profile would sign in by itself, so it goes first.
+    forget_session(service.jira, server)
     wrong = [{"kind": "jira", "url": server.url, "login": plan({"id": "tester", "password": "wrong"})}]
     run = finish(service, watch["id"], wrong)
     assert run["status"] == "error", run

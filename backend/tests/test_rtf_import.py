@@ -96,6 +96,7 @@ def test_single_file_saves_the_html_page_and_searches_its_text_without_llm(impor
     assert importer.service.wiki_source_html({"id": ident})["html"] == PAGE
     assert importer.service.wiki_source_markdown({"id": ident})["markdown"] == TEXT
     importer.service.wiki_delete({"id": ident})
+    importer.service.wiki_purge({"ids": [ident]})
     with importer.service.db.connect() as db:
         assert db.execute("SELECT count(*) FROM rtf_sources").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM document_html").fetchone()[0] == 0
@@ -159,11 +160,13 @@ def test_a_file_longer_than_a_document_is_saved_as_html_documents_in_parts(impor
         assert (doc["source"]["part"], doc["source"]["parts"], doc["source"]["source_path"]) == (number, 3, str(rtf))
         assert [part["id"] for part in doc["parts"]] == result["doc_ids"]
     assert "".join(doc["content"] for doc in docs).count("번째 문단") == 150
-    # The same file is a duplicate while any of its parts is left.
+    # The same file is a duplicate while any of its parts is left; a part in the trash comes back with the import.
     service.wiki_delete({"id": docs[0]["id"]})
     importer.start({"path": str(rtf), "mode": "file"})
-    assert wait(importer)["results"][0] == {"path": str(rtf), "status": "skipped", "doc_id": docs[1]["id"],
+    assert wait(importer)["results"][0] == {"path": str(rtf), "status": "skipped", "doc_id": docs[0]["id"],
                                             "message": "이미 가져온 동일한 RTF 문서입니다.", "reason": "same"}
+    assert service.wiki_get({"id": docs[0]["id"]})["title"] == "긴 문서 (1/3)"
+    assert service.dispatch("wiki.trash", {})["documents"] == []
     # Beyond the most parts, the rest is left out and the result and the last part say so.
     monkeypatch.setattr("agent.parts.MAX_PARTS", 2)
     other = tmp_path / "더 긴 문서.rtf"

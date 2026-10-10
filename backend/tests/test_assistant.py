@@ -65,6 +65,10 @@ def test_tasks_persist_and_source_deletion_retains_task(service):
     restored = Service(Database(service.db.path), FakeLLM())
     assert call(restored, 'tasks.list')[0]['source_title'] == doc['title']
     restored.wiki_delete({'id': doc['id']})
+    # In the trash, the task keeps its source, whose title shows again once the document is restored.
+    retained = call(restored, 'tasks.list')[0]
+    assert (retained['source_id'], retained['source_title']) == (doc['id'], None)
+    restored.wiki_purge({'ids': [doc['id']]})
     retained = call(restored, 'tasks.list')[0]
     assert retained['source_id'] is None
     assert retained['title'] == created['title']

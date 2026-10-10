@@ -208,7 +208,7 @@ class Writeback:
         order, each with doc_id, markdown (the text imported), imported_at, written (what write-backs put into the file
         since, as JSON), content (the text now) and revision."""
         with self.service.db.connect() as db:
-            if not db.execute("SELECT 1 FROM documents WHERE id=?", (ident,)).fetchone():
+            if not db.execute("SELECT 1 FROM documents WHERE id=? AND deleted_at IS NULL", (ident,)).fetchone():
                 raise UserError("문서를 찾을 수 없습니다.")
             table, kind = "office_sources", "office"
             row = db.execute(f"SELECT * FROM {table} WHERE doc_id=?", (ident,)).fetchone()
@@ -217,7 +217,7 @@ class Writeback:
             columns = sources.key(table)
             where = " AND ".join(f"s.{column}=?" for column in columns)
             parts = db.execute(f"""SELECT s.doc_id, s.markdown, s.imported_at, s.written, d.content, d.revision
-                FROM {table} s JOIN documents d ON d.id=s.doc_id WHERE {where} ORDER BY s.part""",
+                FROM {table} s JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL WHERE {where} ORDER BY s.part""",
                                [row[column] for column in columns]).fetchall()
         return table, kind, dict(row), [dict(part) for part in parts]
 

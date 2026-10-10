@@ -83,7 +83,8 @@ class BatchAnalysis:
         try:
             while (ident := self._next(cancel)) is not None:
                 with self.service.db.connect() as db:
-                    row = db.execute("SELECT title,status FROM documents WHERE id=?", (ident,)).fetchone()
+                    row = db.execute("SELECT title,status FROM documents WHERE id=? AND deleted_at IS NULL",
+                                     (ident,)).fetchone()
                 title = row["title"] if row else ""
                 if row is None:
                     outcome, message = "skipped", "삭제된 문서입니다."

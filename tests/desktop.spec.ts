@@ -291,9 +291,20 @@ test('desktop: admin settings, prompt widget, one search box with answers, drawe
     await expect(page.getByRole('button', { name: '이 위치에 저장하고 시작' })).toHaveCount(0);
     const info = await page.evaluate(() => window.privateAgent?.request('settings.get'));
     expect(JSON.stringify(info)).not.toContain('e2e-secret-key');
-    const llmSettings = info?.result as { provider: string; headers: object[] };
+    const llmSettings = info?.result as {
+      provider: string;
+      headers: object[];
+      secure_storage: boolean;
+    };
     expect(llmSettings.provider).toBe('general');
-    expect(llmSettings.headers).toContainEqual({ name: 'api-key', value: '{api_key}' });
+    // The screens read the headers' names and whether each has a value, never the values; the values survive a
+    // restart, encrypted where the OS keeps secrets, else in the file as before.
+    expect(llmSettings.headers).toContainEqual({
+      name: 'api-key',
+      has_value: true,
+      uses_api_key: true,
+    });
+    if (llmSettings.secure_storage) expect(saved).not.toContain('{api_key}');
     const forbidden = await page.evaluate(() => window.privateAgent?.request('arbitrary.command'));
     expect(forbidden?.ok).toBe(false);
 

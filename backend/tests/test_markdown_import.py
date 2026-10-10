@@ -82,6 +82,7 @@ def test_legacy_html_upgrade_preserves_edits_and_metadata_and_removes_html_colum
     again = Service(Database(path), FakeLLM())
     assert again.wiki_get({"id": original["id"]})["revision"] == 2
     again.wiki_delete({"id": original["id"]})
+    again.wiki_purge({"ids": [original["id"]]})
     with again.db.connect() as db:
         assert db.execute(f"SELECT count(*) FROM {kind}_sources").fetchone()[0] == 1
 

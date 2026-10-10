@@ -106,7 +106,8 @@ def test_delete_many_removes_the_chosen_documents_together(service):
     first, second, kept = document(service), document(service, "회고"), document(service, "남길 문서")
     service.wiki_analyze({"id": first["id"]})
     # Repeated and unknown IDs are no error; only the documents that were there count.
-    assert service.wiki_delete_many({"ids": [first["id"], second["id"], first["id"], "gone"]}) == {"deleted": 2}
+    moved = service.wiki_delete_many({"ids": [first["id"], second["id"], first["id"], "gone"]})
+    assert (moved["deleted"], sorted(moved["ids"])) == (2, sorted([first["id"], second["id"]]))
     assert [doc["id"] for doc in service.wiki_list({})] == [kept["id"]]
     assert service.wiki_graph({})["nodes"] == []
     for bad in (None, [], kept["id"], ["x"] * 10001):
@@ -115,6 +116,47 @@ def test_delete_many_removes_the_chosen_documents_together(service):
     with pytest.raises(UserError, match="ID"):
         service.wiki_delete_many({"ids": [kept["id"], 1]})
     assert len(service.wiki_list({})) == 1
+
+
+def test_a_deleted_document_waits_in_the_trash_until_it_is_restored_or_purged(service):
+    doc, other = document(service), document(service, "남는 문서", "다른 내용")
+    service.wiki_analyze({"id": doc["id"]})
+    service.dispatch("tasks.save", {"title": "확인", "source_id": doc["id"]})
+    assert service.wiki_delete({"id": doc["id"]}) == {"ok": True, "deleted": 1, "ids": [doc["id"]]}
+    # Gone from everything that shows documents, but not from the database.
+    assert [d["id"] for d in service.wiki_list({})] == [other["id"]]
+    assert not service.wiki_search({"query": "캐시", "mode": "word"})["documents"]
+    assert service.stats({}) == {"prompts": 4, "documents": 1, "keywords": 0, "relations": 0}
+    assert service.wiki_graph({})["nodes"] == []
+    with pytest.raises(UserError, match="찾을 수 없습니다"):
+        service.wiki_get({"id": doc["id"]})
+    trash = service.dispatch("wiki.trash", {})
+    assert [d["id"] for d in trash["documents"]] == [doc["id"]] and trash["days"] == 30
+    assert trash["documents"][0]["deleted_at"] and trash["documents"][0]["keywords"] == ["api", "python", "캐시"]
+    # Deleting it again, or restoring a document that is not in the trash, changes nothing.
+    assert service.wiki_delete({"id": doc["id"]})["deleted"] == 0
+    assert service.dispatch("wiki.restore", {"ids": [other["id"]]}) == {"restored": 0}
+    # Restored with its analysis, keywords and task as they were.
+    assert service.dispatch("wiki.restore", {"ids": [doc["id"]]}) == {"restored": 1}
+    back = service.wiki_get({"id": doc["id"]})
+    assert (back["keywords"], back["status"]) == (["api", "python", "캐시"], "ready")
+    assert service.wiki_search({"query": "캐시", "mode": "word"})["documents"][0]["id"] == doc["id"]
+    assert service.dispatch("tasks.list", {})[0]["source_title"] == doc["title"]
+    # Purged: nothing brings it back.
+    service.wiki_delete({"id": doc["id"]})
+    assert service.dispatch("wiki.purge", {"ids": [doc["id"]]}) == {"purged": 1}
+    assert service.dispatch("wiki.trash", {})["documents"] == []
+    assert service.dispatch("wiki.restore", {"ids": [doc["id"]]}) == {"restored": 0}
+    with pytest.raises(UserError, match="all"):
+        service.dispatch("wiki.purge", {"all": "yes"})
+    # The whole trash at once; what has waited 30 days goes by itself at the next start.
+    service.wiki_delete({"id": other["id"]})
+    assert service.dispatch("wiki.purge", {"all": True}) == {"purged": 1}
+    old = document(service, "오래된 문서")
+    service.wiki_delete({"id": old["id"]})
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET deleted_at='2020-01-01T00:00:00+00:00' WHERE id=?", (old["id"],))
+    assert Service(Database(service.db.path), FakeLLM()).dispatch("wiki.trash", {})["documents"] == []
 
 
 def test_clear_analysis_returns_documents_to_before_their_analysis(tmp_path):
@@ -205,6 +247,11 @@ def test_an_edit_never_overwrites_text_that_changed_while_it_was_open(service):
                            "expected_revision": doc["revision"]})
     assert service.wiki_get({"id": doc["id"]})["content"] == "다른 곳에서 고친 내용"
     service.wiki_delete({"id": doc["id"]})
+    with pytest.raises(UserError, match="휴지통으로 옮겨졌습니다"):
+        service.wiki_save({"id": doc["id"], "title": "t", "content": "c", "expected_revision": doc["revision"]})
+    with pytest.raises(UserError, match="휴지통에 있는 문서"):
+        service.wiki_save({"id": doc["id"], "title": "t", "content": "c"})
+    service.wiki_purge({"ids": [doc["id"]]})
     with pytest.raises(UserError, match="삭제되었습니다"):
         service.wiki_save({"id": doc["id"], "title": "t", "content": "c", "expected_revision": doc["revision"]})
     for bad in ("1", 1.5, True):
@@ -350,16 +397,17 @@ def test_failed_llm_request_preserves_existing_configuration(monkeypatch):
 
 def test_dashboard_preferences_merge_validate_and_persist(tmp_path):
     service = Service(Database(tmp_path / "wiki.db"), None)
-    assert service.dispatch("preferences.get", {}) == {"widgets": None, "ai_answer": True, "web_assist": True}
+    # The LLM's help with logins is off until the user turns it on: it sends login pages to the LLM server.
+    assert service.dispatch("preferences.get", {}) == {"widgets": None, "ai_answer": True, "web_assist": False}
     layout = [{"id": "briefing", "size": "l"}, {"id": "tasks", "size": "m", "extra": "dropped"}]
     saved = service.dispatch("preferences.save", {"widgets": layout})
     assert saved["widgets"] == [{"id": "briefing", "size": "l"}, {"id": "tasks", "size": "m"}]
     # The admin page saves each AI option alone; the layout and the other option stay.
     assert service.dispatch("preferences.save", {"ai_answer": False})["widgets"] == saved["widgets"]
-    assert service.dispatch("preferences.save", {"web_assist": False})["ai_answer"] is False
+    assert service.dispatch("preferences.save", {"web_assist": True})["ai_answer"] is False
     restarted = Service(Database(tmp_path / "wiki.db"), None)
     assert restarted.dispatch("preferences.get", {}) == {"widgets": saved["widgets"], "ai_answer": False,
-                                                         "web_assist": False}
+                                                         "web_assist": True}
     for bad in ([{"id": "Tasks", "size": "m"}], [{"id": "tasks", "size": "huge"}],
                 [{"id": "tasks", "size": "m"}, {"id": "tasks", "size": "s"}], "tasks", [{"id": "x", "size": "m"}] * 41,
                 [{"id": "tasks-2", "type": "Tasks", "size": "m"}], [{"id": "tasks-2", "view": 3, "size": "m"}],
@@ -376,7 +424,7 @@ def test_dashboard_preferences_merge_validate_and_persist(tmp_path):
     # A damaged record falls back to the defaults instead of breaking the dashboard.
     with service.db.connect() as db:
         db.execute("UPDATE metadata SET value='{broken' WHERE key='preferences'")
-    assert service.dispatch("preferences.get", {}) == {"widgets": None, "ai_answer": True, "web_assist": True}
+    assert service.dispatch("preferences.get", {}) == {"widgets": None, "ai_answer": True, "web_assist": False}
     assert service.dispatch("preferences.save", {"widgets": None})["widgets"] is None
 
 

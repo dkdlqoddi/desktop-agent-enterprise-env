@@ -158,7 +158,8 @@ class FileImporter:
         """What importing the file at `path` with the bytes `checksum` does (sources.plan): a file the same bytes were
         imported from is skipped, another one updates the earlier import of the same path unless its converted `split`
         has the text that import saved."""
-        found = sources.plan(db, self.source_table, path, {"source_hash": checksum}, target, replace, split)
+        found = sources.plan(db, self.source_table, path, {"source_hash": checksum}, target, replace, split,
+                             automatic=bool(self.job and self.job.get("routine")))
         if found.action == "skip" and found.reason == "same" and not db.execute(
                 "SELECT 1 FROM document_html WHERE doc_id=?", (found.rows[0]["doc_id"],)).fetchone():
             # Saved as Markdown by an earlier version: the same documents become the HTML page, unless the user changed

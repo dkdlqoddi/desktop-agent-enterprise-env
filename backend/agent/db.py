@@ -212,6 +212,12 @@ class Database:
             # A snoozed reminder is due again at snoozed_until; remind_at keeps the time a repeat counts from.
             if "snoozed_until" not in {r[1] for r in db.execute("PRAGMA table_info(tasks)")}:
                 db.execute("ALTER TABLE tasks ADD COLUMN snoozed_until TEXT")
+            # A deleted document waits in the trash (deleted_at) until it is restored, purged or 30 days pass
+            # (service.TRASH_DAYS): the lists, the search, the graph and the analysis leave it out, and everything that
+            # refers to it (keywords, sources, tasks) comes back with it.
+            if "deleted_at" not in {r[1] for r in db.execute("PRAGMA table_info(documents)")}:
+                db.execute("ALTER TABLE documents ADD COLUMN deleted_at TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_documents_deleted ON documents(deleted_at)")
             if not db.execute("SELECT 1 FROM metadata WHERE key='seeded'").fetchone():
                 from .service import now
                 for index, prompt in enumerate(SEEDS):

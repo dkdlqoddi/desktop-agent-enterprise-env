@@ -59,6 +59,7 @@ def test_import_search_html_edit_restart_and_delete(importer, tmp_path, extensio
     assert restarted.wiki_get({"id": ident})["content"] == "사용자 편집"
     assert restarted.wiki_source_html({"id": ident}) == {"html": PAGE, "filename": "수정.html"}
     restarted.wiki_delete({"id": ident})
+    restarted.wiki_purge({"ids": [ident]})
     with restarted.db.connect() as db:
         assert db.execute("SELECT count(*) FROM office_sources").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM document_html").fetchone()[0] == 0

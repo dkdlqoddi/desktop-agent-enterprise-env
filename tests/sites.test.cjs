@@ -168,8 +168,29 @@ test('site addresses are the base path of JIRA and Confluence links', () => {
     ['https://wiki.test/x/AbC', 'https://wiki.test'],
     ['https://jira.test:8443/', 'https://jira.test:8443'],
     ['  https://jira.test/jira/  ', 'https://jira.test/jira'],
+    // Without its scheme, an https address: the site is never opened over http by a fallback.
+    ['jira.test/jira/browse/TEAM-1', 'https://jira.test/jira'],
+    ['//wiki.test:8080/wiki/display/S/P', 'https://wiki.test:8080/wiki'],
+    ['http://wiki.test:8080/wiki/display/S/P', 'http://wiki.test:8080/wiki'],
   ])
     assert.equal(normalizeUrl(value), expected, value);
+});
+
+test('a site address saved without its scheme by an earlier version is its https address', async (t) => {
+  const { options, store } = await fixture(t);
+  const saved = await store.save(jira);
+  const raw = JSON.parse(await fs.readFile(options.file, 'utf8'));
+  raw.sites[0].url = 'jira.test/jira';
+  await fs.writeFile(options.file, JSON.stringify(raw));
+  const again = new SiteStore(options);
+  await again.load();
+  const site = again.get(saved.id);
+  assert.equal(site.url, 'https://jira.test/jira');
+  // The same origin as before: the password stays, also through a save.
+  assert.equal(site.password, 'p@ss word');
+  assert.equal((await again.save({ id: saved.id, name: 'Renamed' })).has_password, true);
+  assert.equal(again.match('https://jira.test/jira/browse/TEAM-2', 'jira')?.id, saved.id);
+  assert.equal(again.match('http://jira.test/jira/browse/TEAM-2', 'jira'), null);
 });
 
 test('a link belongs to the same-kind site with the longest address, and only to a site with one', async (t) => {
@@ -301,8 +322,6 @@ test('a site moved to another origin or kind keeps its password only when it is 
     'https://other.test/jira',
     'http://jira.test/jira',
     'https://jira.test:8443/jira',
-    // Without its scheme it may open over http: a move too.
-    'jira.test/jira',
   ]) {
     await store.save({ id: site.id, url: 'https://jira.test/jira' });
     await store.save({ id: site.id, password: 'p@ss word' });
@@ -311,6 +330,11 @@ test('a site moved to another origin or kind keeps its password only when it is 
     assert.equal(store.plan(store.get(site.id)), null);
   }
   assert.doesNotMatch(await fs.readFile(options.file, 'utf8'), /encrypted_password/);
+  // Without its scheme it is the same https site: no move.
+  await store.save({ id: site.id, url: 'https://jira.test/jira' });
+  await store.save({ id: site.id, password: 'p@ss word' });
+  const bare = await store.save({ id: site.id, url: 'jira.test/jira' });
+  assert.deepEqual([bare.url, bare.has_password], ['https://jira.test/jira', true]);
   // Typed again with the move, it is the one kept.
   const typed = await store.save({ id: site.id, url: 'https://jira3.test/', password: 'new pass' });
   assert.equal(typed.has_password, true);
@@ -320,6 +344,42 @@ test('a site moved to another origin or kind keeps its password only when it is 
   });
   // Another kind at the same address too.
   assert.equal((await store.save({ id: site.id, kind: 'confluence' })).has_password, false);
+});
+
+test('the hosts an account was typed into are kept once and reset with the site or by the user', async (t) => {
+  const { options, store } = await fixture(t);
+  const site = await store.save(jira);
+  assert.deepEqual(store.plan(store.get(site.id)).hosts, []);
+  // The first login that signed in names where the account went besides the site: kept, lower case, and from then
+  // on the plan names them. A later login does not widen them.
+  let recorded = await store.record(site.id, {
+    ok: true,
+    method: 'sso-link',
+    detected: true,
+    hosts: ['IdP.Corp.Test', 'idp.corp.test', 'bad host', ''],
+  });
+  assert.deepEqual(recorded.login_hosts, ['idp.corp.test']);
+  assert.deepEqual(store.plan(store.get(site.id)).hosts, ['idp.corp.test']);
+  recorded = await store.record(site.id, { ok: true, method: 'sso-link', hosts: ['other.test'] });
+  assert.deepEqual(recorded.login_hosts, ['idp.corp.test']);
+  // A failed login keeps them; so does a restart.
+  await store.record(site.id, { ok: false, error: '실패', hosts: ['evil.test'] });
+  const again = new SiteStore(options);
+  await again.load();
+  assert.deepEqual(again.get(site.id).login_hosts, ['idp.corp.test']);
+  assert.deepEqual(again.public(again.get(site.id)).login_hosts, ['idp.corp.test']);
+  // The user resets them when the site's login screen moved; a site moved to another address or method starts over.
+  assert.deepEqual((await again.save({ id: site.id, reset_login_hosts: true })).login_hosts, []);
+  await again.record(site.id, { ok: true, method: 'sso-link', hosts: ['idp.corp.test'] });
+  assert.deepEqual((await again.save({ id: site.id, name: 'Renamed' })).login_hosts, [
+    'idp.corp.test',
+  ]);
+  assert.deepEqual((await again.save({ id: site.id, method: 'generic' })).login_hosts, []);
+  await again.record(site.id, { ok: true, method: 'generic', hosts: ['idp.corp.test'] });
+  assert.deepEqual(
+    (await again.save({ id: site.id, url: 'https://other.test/jira', password: 'x' })).login_hosts,
+    [],
+  );
 });
 
 test('a change that cannot be written to sites.json changes nothing', async (t) => {

@@ -91,6 +91,9 @@ const ALLOWED = new Set([
   'wiki.save',
   'wiki.delete',
   'wiki.delete_many',
+  'wiki.trash',
+  'wiki.restore',
+  'wiki.purge',
   'wiki.analyze',
   'wiki.clear_analysis',
   'wiki.search',
@@ -181,7 +184,8 @@ const ALLOWED = new Set([
   'diagnostics.copy',
   'diagnostics.open_folder',
 ]);
-// The LLM settings settings.json keeps as they are, and the secrets it keeps encrypted beside them: the API Key.
+// The LLM settings settings.json keeps as they are (the custom headers by their names alone), and the secrets it keeps
+// encrypted beside them: the API Key, and the headers' values (encrypted_headers).
 const LLM_FIELDS = [
   'provider',
   'api_format',
@@ -442,6 +446,25 @@ async function launchBackend(dataDirectory) {
         '저장된 LLM 설정(settings.json)을 읽지 못했습니다. 저장된 설정을 덮어쓰지 않도록 이번 실행에서는 설정을 바꿀 수 없습니다. 앱을 다시 실행해 주세요.';
     }
   }
+  // Header values an earlier version saved in plain text go into the encrypted form now; a file that cannot be written
+  // stays as it is, and the next save moves them.
+  if (canEncrypt() && (savedSettings.headers ?? []).some((header) => header?.value)) {
+    const headers = headerValues(savedSettings);
+    const stripped = {
+      ...savedSettings,
+      headers: headers.map(({ name }) => ({ name })),
+      encrypted_headers: safeStorage.encryptString(JSON.stringify(headers)).toString('base64'),
+    };
+    try {
+      await writeFileSafely(
+        path.join(app.getPath('userData'), 'settings.json'),
+        JSON.stringify(stripped, null, 2),
+      );
+      savedSettings = stripped;
+    } catch {
+      /* Kept as it was. */
+    }
+  }
   const values = { ...savedSettings };
   for (const name of LLM_SECRETS) {
     delete values[`encrypted_${name}`];
@@ -457,9 +480,37 @@ async function launchBackend(dataDirectory) {
       } // Settings UI lets the user re-enter a key after OS keychain changes.
     }
   }
+  delete values.encrypted_headers;
+  values.headers = headerValues(savedSettings);
   // One value at a time: a value that is no longer valid keeps its default instead of failing the start. Sent to this
   // backend itself: other requests wait for it.
   await child.request('settings.load', values);
+}
+
+// The custom headers with their values, as the backend takes them: the names settings.json lists, each with the value
+// kept encrypted beside them (encrypted_headers) or, without secure storage, written with its name as every earlier
+// version kept it. A value that cannot be decrypted (the OS key changed) is empty: the admin page takes it again.
+function headerValues(saved) {
+  const names = Array.isArray(saved.headers) ? saved.headers : [];
+  let stored = [];
+  if (typeof saved.encrypted_headers === 'string')
+    try {
+      stored = JSON.parse(
+        safeStorage.decryptString(Buffer.from(saved.encrypted_headers, 'base64')),
+      );
+    } catch {
+      stored = [];
+    }
+  const valueOf = (name) =>
+    (Array.isArray(stored) ? stored : []).find(
+      (item) => typeof item?.name === 'string' && item.name.toLowerCase() === name.toLowerCase(),
+    )?.value ?? '';
+  return names
+    .filter((header) => header && typeof header.name === 'string')
+    .map((header) => ({
+      name: header.name,
+      value: typeof header.value === 'string' && header.value ? header.value : valueOf(header.name),
+    }));
 }
 
 async function updateSettings(params) {
@@ -474,8 +525,13 @@ async function updateSettings(params) {
   // A key the backend drops by itself, when the endpoint moves to another server, goes here too.
   const before = await rpc('settings.get');
   const result = await rpc('settings.update', values);
+  // The headers' values as the backend keeps them now (those sent, those kept under their names): the file lists
+  // the names and keeps the values encrypted beside them, as the API Key; without secure storage they stay with
+  // their names as every earlier version kept them, so a restart never loses them.
+  const secrets = await rpc('settings.secrets');
   const next = { ...savedSettings };
   for (const key of LLM_FIELDS) next[key] = result[key];
+  next.headers = secrets.headers.map(({ name }) => ({ name }));
   for (const name of LLM_SECRETS) {
     const dropped = before[`has_${name}`] && !result[`has_${name}`];
     if (!Object.hasOwn(values, name) && !dropped) continue;
@@ -483,6 +539,14 @@ async function updateSettings(params) {
     next[`${name}_cleared`] = !values[name];
     if (values[name] && canEncrypt())
       next[`encrypted_${name}`] = safeStorage.encryptString(values[name]).toString('base64');
+  }
+  delete next.encrypted_headers;
+  if (secrets.headers.some((header) => header.value)) {
+    if (canEncrypt())
+      next.encrypted_headers = safeStorage
+        .encryptString(JSON.stringify(secrets.headers))
+        .toString('base64');
+    else next.headers = secrets.headers.map(({ name, value }) => ({ name, value }));
   }
   const file = path.join(app.getPath('userData'), 'settings.json');
   await writeFileSafely(file, JSON.stringify(next, null, 2));
@@ -582,6 +646,7 @@ function watchSiteJob(kind, jobId, siteId) {
           method: login.method,
           detected: !!login.detected,
           learned: login.learned,
+          hosts: login.hosts,
           error: login.error || '',
           diagnosis: login.error ? job.diagnosis : null,
         })
@@ -618,7 +683,12 @@ function watchSiteLogin(kind, siteId) {
       recorded = true;
       if (sameSite(siteId, opened))
         await sites
-          .record(siteId, { ok: true, method: result.method, detected: !!result.detected })
+          .record(siteId, {
+            ok: true,
+            method: result.method,
+            detected: !!result.detected,
+            hosts: result.hosts,
+          })
           .catch(() => {});
     }
     if (status.login_open) loginWatches[kind] = setTimeout(() => void poll(), 1000);
@@ -634,12 +704,56 @@ function routineLogins(needs) {
 
 // A routine that reads this PC's files imports them as the import box does: an AI tool may make, change, start or turn
 // on one only with the "full" access level, as those imports do. The backend decides again on the routine as it saves
-// it, told whether the caller may (mayReadFiles).
+// it, told whether the caller may (mayReadFiles). The same level is needed for a routine that opens a site the user
+// did not register (checkLinkAccess).
 const mayReadFiles = (access) => !access || allows(access, 'files');
 async function checkRoutineAccess(method, params, access) {
   if (mayReadFiles(access)) return;
   const saved = typeof params.id === 'string' ? await rpc('routines.get', { id: params.id }) : null;
   if (readsFiles(method, params, saved)) throw forbidden(access, 'files');
+  for (const need of await routineNeedsOf(method, params, saved))
+    checkLinkAccess(sites.match(need.url, need.kind), access);
+}
+
+// The sites a routine opens, as the backend's recipes name them (routines.needs): for one being saved, from the links
+// of its form (the url fields, by the site kind of their group) over the saved routine's values the form leaves out.
+async function routineNeedsOf(method, params, saved) {
+  if (method !== 'routines.save') return saved ? await rpc('routines.needs', { id: saved.id }) : [];
+  const kind = saved?.kind ?? params.kind;
+  const recipe = (await rpc('routines.catalog')).find((item) => item.kind === kind);
+  if (!recipe) return [];
+  const given = params.config && typeof params.config === 'object' ? params.config : {};
+  const config = { ...(saved?.config ?? {}) };
+  for (const [key, value] of Object.entries(given)) if (value !== null) config[key] = value;
+  const needs = [];
+  for (const field of recipe.fields ?? []) {
+    if (!['url', 'urls'].includes(field.type)) continue;
+    const siteKind = SITE_KINDS.includes(field.group) ? field.group : recipe.sites?.[0];
+    if (!siteKind) continue;
+    const value = config[field.key];
+    const lines = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.replace(/\r\n/g, '\n').split('\n')
+        : [];
+    for (const line of lines) {
+      const url = typeof line === 'string' ? line.trim() : '';
+      if (url) needs.push({ kind: siteKind, url });
+    }
+  }
+  return needs;
+}
+
+// The backend opens a link in the browser profile of its site, with the session kept there: an AI tool may have a
+// link opened only of a site the user registered (관리 → 사이트 계정), or at the "full" level, which reads this PC's files
+// already. The screens open any link the user typed.
+function checkLinkAccess(site, access) {
+  if (!access || site || allows(access, 'files')) return;
+  throw new ApiError(
+    403,
+    'forbidden',
+    '등록된 사이트(관리 → 사이트 계정)의 JIRA·Confluence 링크만 AI 도구가 가져올 수 있습니다. 다른 사이트의 링크는 허용 범위 ‘전체’에서만 가져올 수 있으며, 가져오기 상자에서는 어떤 링크든 직접 가져올 수 있습니다.',
+  );
 }
 
 async function checkSite(id) {
@@ -701,6 +815,7 @@ async function runSiteCheck(site, plan) {
     method: result.method,
     detected: !!result.detected,
     learned: result.learned,
+    hosts: result.hosts,
   });
   return {
     ok: true,
@@ -1044,7 +1159,7 @@ async function writeBridge() {
 const LOCAL_TIME = new Set(['briefing.get', 'briefing.generate', 'runs.stats', 'tasks.extract']);
 
 // Scopes whose methods change what the screens show.
-const CHANGING_SCOPES = new Set(['write', 'files', 'admin']);
+const CHANGING_SCOPES = new Set(['write', 'files', 'admin', 'destructive']);
 
 // One method called by an AI tool: refused when the access level the user chose does not allow it, otherwise
 // handled exactly like the screens' request of the same name.
@@ -1238,7 +1353,9 @@ async function handle(method, params, { access } = {}) {
   else if (method === 'sites.status') result = await siteStatus();
   // An import of a site's page or ticket goes with the login plan of the site account that matches its link.
   else if (method === 'confluence.start') {
-    const plan = sites.plan(sites.match(params.url, 'confluence'));
+    const site = sites.match(params.url, 'confluence');
+    checkLinkAccess(site, access);
+    const plan = sites.plan(site);
     result = await rpc(method, {
       url: params.url,
       recursive: params.recursive,
@@ -1249,7 +1366,9 @@ async function handle(method, params, { access } = {}) {
     });
     if (plan && result?.job?.id) watchSiteJob('confluence', result.job.id, plan.site_id);
   } else if (method === 'jira.start') {
-    const plan = sites.plan(sites.match(params.url, 'jira'));
+    const site = sites.match(params.url, 'jira');
+    checkLinkAccess(site, access);
+    const plan = sites.plan(site);
     result = await rpc(method, {
       url: params.url,
       scope: params.scope,

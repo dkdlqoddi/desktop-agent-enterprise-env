@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   Eraser,
@@ -13,8 +13,9 @@ import {
   Sparkles,
   Ticket,
   Trash2,
+  Undo2,
 } from 'lucide-react';
-import { api, date, plain, type WikiDocument } from '@/lib/api';
+import { api, date, plain, type Deleted, type Trash, type WikiDocument } from '@/lib/api';
 import { AnalysisJobView, AnalysisLabel, analyzed } from '../analysis';
 import { useApp } from '../app';
 import Confirm from '../confirm';
@@ -38,13 +39,33 @@ const FILTERS = { all: '전체', analyzed: 'AI 분석 완료', plain: '분석 �
 type Filter = keyof typeof FILTERS;
 
 export default function DocumentsWidget() {
-  const { documents, openDocument, newDocument, navigate, view } = useApp();
+  const { documents, openDocument, newDocument, navigate, view, version, refresh } = useApp();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   // Documents chosen for the library's bulk actions; the actions take those the filters show.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const anchor = useRef<string | null>(null);
   const library = view === 'library';
+  // The trash, shown in place of the list in the library; loaded again with every reload of the documents.
+  const [trash, setTrash] = useState(false);
+  const [bin, setBin] = useState<Trash | null>(null);
+  useEffect(() => {
+    if (!library) return;
+    let live = true;
+    api<Trash>('wiki.trash')
+      .then((found) => {
+        if (live) setBin(found);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [library, version]);
+  const binned = bin?.documents.length ?? 0;
+  const reloadTrash = async () => {
+    setBin(await api<Trash>('wiki.trash'));
+    await refresh();
+  };
   const done = documents.filter(analyzed).length;
   const counts = { all: documents.length, analyzed: done, plain: documents.length - done };
   // The filter also finds documents by where they came from: a folder, a file name, a JIRA key or a page address.
@@ -80,7 +101,7 @@ export default function DocumentsWidget() {
           <Plus size={14} />새 문서
         </button>
       </WidgetHead>
-      {documents.length > 0 && library && (
+      {(documents.length > 0 || binned > 0) && library && (
         <div className="document-tools">
           <label className="document-filter">
             <Search size={16} />
@@ -109,10 +130,20 @@ export default function DocumentsWidget() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className={`button secondary small${trash ? ' active' : ''}`}
+            aria-pressed={trash}
+            onClick={() => setTrash(!trash)}
+          >
+            <Trash2 size={14} />
+            휴지통{binned ? ` ${binned}` : ''}
+          </button>
         </div>
       )}
-      <AnalysisJobView />
-      {!documents.length && (
+      {trash && library && <TrashView bin={bin} onChanged={reloadTrash} />}
+      {!(trash && library) && <AnalysisJobView />}
+      {!(trash && library) && !documents.length && (
         <EmptyState
           icon={FileText}
           title="첫 번째 지식을 담아 보세요"
@@ -125,7 +156,7 @@ export default function DocumentsWidget() {
           메모를 작성하거나 파일과 링크를 가져오세요.
         </EmptyState>
       )}
-      {!!documents.length && !filtered.length && (
+      {!(trash && library) && !!documents.length && !filtered.length && (
         <p className="widget-note">
           {query
             ? '일치하는 문서가 없습니다. 다른 검색어를 입력해 보세요.'
@@ -134,7 +165,7 @@ export default function DocumentsWidget() {
               : '모든 문서를 AI로 분석했습니다.'}
         </p>
       )}
-      {library && filtered.length > 0 && (
+      {library && !trash && filtered.length > 0 && (
         <BulkActions
           chosen={chosen}
           all={chosen.length === filtered.length}
@@ -142,7 +173,7 @@ export default function DocumentsWidget() {
           onClear={() => setSelected(new Set())}
         />
       )}
-      <ul className="document-list">
+      <ul className="document-list" hidden={trash && library}>
         {visible.map((doc) => (
           <DocumentRow
             key={doc.id}
@@ -171,6 +202,95 @@ export default function DocumentsWidget() {
 const sourceOf = (doc: WikiDocument) =>
   !doc.source ? '' : 'source_url' in doc.source ? doc.source.source_url : doc.source.source_path;
 
+// The trash: the deleted documents wait `days` days to be restored, or to be deleted for good by the user.
+function TrashView({ bin, onChanged }: { bin: Trash | null; onChanged: () => Promise<void> }) {
+  const { notify } = useApp();
+  const [busy, setBusy] = useState('');
+  async function run(key: string, action: () => Promise<string>) {
+    setBusy(key);
+    try {
+      const message = await action();
+      await onChanged();
+      notify(message);
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setBusy('');
+    }
+  }
+  if (!bin) return <p className="widget-note">휴지통을 불러오는 중입니다.</p>;
+  if (!bin.documents.length) return <p className="widget-note">휴지통이 비어 있습니다.</p>;
+  return (
+    <>
+      <p className="trash-head">
+        <span>
+          삭제한 문서는 {bin.days}일 뒤 자동으로 지워집니다. 복원하면 AI 분석 결과와 할 일의 출처도
+          돌아옵니다.
+        </span>
+        <Confirm
+          label="휴지통 비우기"
+          icon={<Trash2 size={14} />}
+          question={`휴지통의 문서 ${bin.documents.length}개를 영구 삭제할까요? 되돌릴 수 없습니다.`}
+          disabled={!!busy}
+          onConfirm={() =>
+            run('all', async () => {
+              const { purged } = await api<{ purged: number }>('wiki.purge', { all: true });
+              return `문서 ${purged}개를 영구 삭제했습니다.`;
+            })
+          }
+        />
+      </p>
+      <ul className="document-list" aria-label="휴지통">
+        {bin.documents.map((doc) => {
+          const Icon = doc.source ? ICONS[doc.source.kind] : FileText;
+          return (
+            <li key={doc.id} className="trash-row">
+              <Icon size={15} aria-hidden="true" />
+              <span className="document-title">
+                <strong>{doc.title}</strong>
+                <small>{doc.summary || plain(doc.excerpt ?? '')}</small>
+              </span>
+              <time dateTime={doc.deleted_at ?? undefined}>
+                {doc.deleted_at ? date(doc.deleted_at) : ''}
+              </time>
+              <span className="trash-actions">
+                <button
+                  type="button"
+                  className="button secondary small"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void run(doc.id, async () => {
+                      await api('wiki.restore', { ids: [doc.id] });
+                      return `‘${doc.title}’ 문서를 복원했습니다.`;
+                    })
+                  }
+                >
+                  <Undo2 size={14} />
+                  복원
+                </button>
+                <Confirm
+                  label="영구 삭제"
+                  icon={<Trash2 size={14} />}
+                  iconOnly
+                  name={`${doc.title} 영구 삭제`}
+                  question="영구 삭제할까요? 되돌릴 수 없습니다."
+                  disabled={!!busy}
+                  onConfirm={() =>
+                    run(doc.id, async () => {
+                      await api('wiki.purge', { ids: [doc.id] });
+                      return `‘${doc.title}’ 문서를 영구 삭제했습니다.`;
+                    })
+                  }
+                />
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
 // Select all shown documents, and act on the chosen ones: analyze them with the LLM, take back their analysis
 // or delete them.
 function BulkActions({
@@ -184,7 +304,7 @@ function BulkActions({
   onSelectAll: (on: boolean) => void;
   onClear: () => void;
 }) {
-  const { configured, openAdmin, notify, refresh, analysis } = useApp();
+  const { configured, openAdmin, notify, undoable, refresh, analysis } = useApp();
   const [busy, setBusy] = useState(false);
   const ids = chosen.map((doc) => doc.id);
   const running = !!analysis.job && activeJob(analysis.job.status);
@@ -265,13 +385,19 @@ function BulkActions({
           <Confirm
             label="삭제"
             icon={<Trash2 size={14} />}
-            question={`선택한 문서 ${chosen.length}개와 분석 결과를 삭제할까요?`}
+            question={`선택한 문서 ${chosen.length}개를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다.`}
             disabled={busy}
             onConfirm={() =>
               run(async () => {
-                const { deleted } = await api<{ deleted: number }>('wiki.delete_many', { ids });
+                const moved = await api<Deleted>('wiki.delete_many', { ids });
                 await refresh();
-                return `문서 ${deleted}개를 삭제했습니다.`;
+                undoable(`문서 ${moved.deleted}개를 휴지통으로 옮겼습니다.`, {
+                  label: '되돌리기',
+                  run: async () => {
+                    await api('wiki.restore', { ids: moved.ids });
+                    await refresh();
+                  },
+                });
               })
             }
           />

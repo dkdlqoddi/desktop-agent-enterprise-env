@@ -133,6 +133,7 @@ def test_folder_import_saves_each_picture_as_an_html_document_and_skips_others(i
     importer.start({"path": str(folder / "로고.png"), "mode": "file"})
     assert wait(importer)["skipped"] == 1
     service.wiki_delete({"id": ident})
+    service.wiki_purge({"ids": [ident]})
     with service.db.connect() as db:
         assert db.execute("SELECT count(*) FROM image_sources").fetchone()[0] == 1
 

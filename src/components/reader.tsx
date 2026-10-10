@@ -31,6 +31,7 @@ import {
   type SkipReason,
   type SourceStatus,
   type TextImport,
+  type Deleted,
   type WikiDocument,
   type WritebackJob,
 } from '@/lib/api';
@@ -98,6 +99,7 @@ function DocumentReader({
   const {
     configured,
     notify,
+    undoable,
     refresh,
     searchKeyword,
     askAbout,
@@ -288,13 +290,19 @@ function DocumentReader({
         <Confirm
           label="삭제"
           icon={<Trash2 size={14} />}
-          question="이 문서와 분석 결과를 삭제할까요?"
+          question="이 문서를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다."
           disabled={held}
           onConfirm={() =>
             act('delete', async () => {
-              await api('wiki.delete', { id: doc.id });
+              const { ids } = await api<Deleted>('wiki.delete', { id: doc.id });
               await refresh();
-              notify('문서를 삭제했습니다.');
+              undoable('문서를 휴지통으로 옮겼습니다.', {
+                label: '되돌리기',
+                run: async () => {
+                  await api('wiki.restore', { ids });
+                  await refresh();
+                },
+              });
               onClose();
             })
           }

@@ -340,12 +340,22 @@ class LLM:
             return self.public()
 
     def public(self):
+        """The settings as the screens and AI tools read them: without the API Key and the custom headers' values,
+        which may be secrets of their own (a gateway's token); each header says whether it has a value and whether that
+        value takes the key ({api_key})."""
         with self.lock:
             config, target = self.config, profile(self.config)
             return {**{k: v for k, v in config.items() if k not in SECRETS},
-                    "headers": [dict(header) for header in config["headers"]],
+                    "headers": [{"name": header["name"], "has_value": bool(header["value"]),
+                                 "uses_api_key": "{api_key}" in header["value"]} for header in config["headers"]],
                     "has_api_key": bool(config["api_key"]),
                     "configured": missing(config, target) is None, "active_model": target["model_name"]}
+
+    def secrets(self):
+        """The API Key and the custom headers with their values, for the main process alone, which keeps them
+        encrypted and hands them back at the next start (settings.load)."""
+        with self.lock:
+            return {"api_key": self.config["api_key"], "headers": [dict(header) for header in self.config["headers"]]}
 
     def complete(self, messages, *, temperature=None, timeout=None):
         """The LLM's answer, without a reasoning model's thinking (answer), so no caller stores or shows it. `timeout`

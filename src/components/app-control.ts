@@ -258,9 +258,14 @@ function pick<T extends Element>(
 }
 
 // The admin page and passwords decide what the API itself may do, and the import box and a document's update from its
-// file read this PC's files (marked data-requires-full); only the "full" access level reaches them.
+// file read this PC's files (marked data-requires-full); only the "full" access level reaches them. So does the
+// button that carries out a deletion or an emptying (data-destructive): the words of a document may ask for it.
 function guard(element: Element, target: Target) {
   if (target.allow_admin) return;
+  if (element.closest('[data-destructive]'))
+    throw new Error(
+      '삭제·비우기처럼 되돌리기 어려운 동작의 확인 버튼은 API 허용 범위가 ‘전체’일 때만 누를 수 있습니다. 문서는 call_api의 wiki.delete로 휴지통에 보낼 수 있습니다.',
+    );
   if (element.closest('.admin, [data-requires-full]') || secret(element))
     throw new Error(
       '관리 화면, 가져오기 상자, 파일의 원본에서 업데이트와 비밀번호 입력란은 API 허용 범위가 ‘전체’일 때만 다룰 수 있습니다. JIRA·Confluence 링크는 import_source로 가져올 수 있습니다.',

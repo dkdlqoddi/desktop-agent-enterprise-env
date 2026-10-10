@@ -3,7 +3,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { Diagnostics, MAX_BYTES, STDERR_BYTES, TAIL_BYTES } = require('../electron/diagnostics.cjs');
+const {
+  Diagnostics,
+  MAX_BYTES,
+  STDERR_BYTES,
+  TAIL_BYTES,
+  anonymize,
+  redact,
+} = require('../electron/diagnostics.cjs');
 
 async function logs(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-diagnostics-'));
@@ -60,6 +67,39 @@ test('a report holds the facts and the end of both logs, from whole lines', asyn
   assert.match(backend, /^줄 \d+ 가{10}\n/);
   assert.match(backend, /줄 1999 가{10}\n$/);
   assert.match(report, /=== app\.log \(마지막 부분\) ===\n1970-01-01T00:00:00.000Z 앱 기록\n/);
+});
+
+test('secrets quoted by what is logged are redacted, and the report leaves the user name out', async (t) => {
+  const { directory, diagnostics } = await logs(t);
+  await diagnostics.record(
+    'LLM 요청 실패: https://llm.example/v1?api_key=sk-abcdef123456 {"Authorization":"Bearer eyJhbGciOi.payload","token":"pa_1234567890abcdef","password":"p@ss word"}',
+  );
+  diagnostics.capture('agent.llm.UserError: x-api-key: secret-value-1\n');
+  await diagnostics.backendExited({ code: 1, signal: null });
+  const logged = await fs.readFile(path.join(directory, 'app.log'), 'utf8');
+  for (const secret of [
+    'sk-abcdef123456',
+    'eyJhbGciOi.payload',
+    'pa_1234567890abcdef',
+    'p@ss word',
+    'secret-value-1',
+  ])
+    assert.doesNotMatch(logged, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), secret);
+  assert.match(logged, /llm\.example\/v1\?api_key=\[REDACTED\]/);
+  await fs.writeFile(path.join(directory, 'backend.log'), 'older log: Bearer abcdef.ghijkl\n');
+  const report = await diagnostics.report([
+    '앱 0.1.0 · C:\\Users\\gildong\\AppData',
+    '/home/gildong/.config',
+  ]);
+  assert.doesNotMatch(report, /abcdef\.ghijkl|gildong/);
+  assert.match(report, /C:\\Users\\<user>\\AppData/);
+  assert.match(report, /\/home\/<user>\/\.config/);
+  // Ordinary words stay: only a value after the name of a secret goes.
+  assert.equal(
+    redact('the token count is 12; x-api-key: abc, next'),
+    'the token count is 12; x-api-key: [REDACTED], next',
+  );
+  assert.equal(anonymize('D:\\data\\wiki.db'), 'D:\\data\\wiki.db');
 });
 
 test('a log that cannot be written never stops the app', async (t) => {

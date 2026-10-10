@@ -9,6 +9,32 @@ const MAX_BYTES = 1_000_000;
 const STDERR_BYTES = 32_000;
 // How much of each log goes into the diagnostics the user copies.
 const TAIL_BYTES = 32_000;
+// Secrets as they could appear in what is logged (an error's message quoting a URL, a header or a JSON body): the
+// app's own API tokens (pa_…), OpenAI-style keys, bearer tokens and anything named as a password, key, token or
+// cookie. Written down as [REDACTED]; backend/agent/diagnostics.py does the same for the backend's log.
+const SECRETS = [
+  [/\bpa_[A-Za-z0-9_-]{6,}/g, 'pa_[REDACTED]'],
+  [/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[REDACTED]'],
+  [
+    /\b(password|passwd|pwd|api[_-]?key|x-api-key|authorization|token|secret|cookie)\b("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&}\]]+)/gi,
+    '$1$2[REDACTED]',
+  ],
+  [/\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}/gi, '$1 [REDACTED]'],
+];
+// The user's name in the paths of their profile folder, which the copied report leaves out.
+const USERS = [/([A-Za-z]:\\Users\\)[^\\\s"']+/g, /(\/home\/)[^/\s"']+/g, /(\/Users\/)[^/\s"']+/g];
+
+function redact(text) {
+  let out = String(text);
+  for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement);
+  return out;
+}
+
+function anonymize(text) {
+  let out = String(text);
+  for (const pattern of USERS) out = out.replace(pattern, '$1<user>');
+  return out;
+}
 
 class Diagnostics {
   constructor({ directory, now = () => new Date() }) {
@@ -18,9 +44,9 @@ class Diagnostics {
     this.stderr = '';
   }
 
-  // Appends one entry. A log that cannot be written never stops the app.
+  // Appends one entry, with the secrets it may quote redacted. A log that cannot be written never stops the app.
   record(text) {
-    const entry = `${this.now().toISOString()} ${String(text).trimEnd()}\n`;
+    const entry = `${this.now().toISOString()} ${redact(text).trimEnd()}\n`;
     this.queue = this.queue
       .then(async () => {
         await fs.mkdir(this.directory, { recursive: true });
@@ -67,11 +93,12 @@ class Diagnostics {
     }
   }
 
-  // The text the user copies to report a problem: the app and the PC, then the end of both logs.
+  // The text the user copies to report a problem: the app and the PC, then the end of both logs. Secrets are redacted
+  // once more (a log an earlier version wrote) and the user's name in paths left out: the report is meant to be sent.
   async report(facts) {
     await this.queue;
     const [own, backend] = await Promise.all([this.tail('app.log'), this.tail('backend.log')]);
-    return [
+    const text = [
       `Private Agent 진단 정보 · ${this.now().toISOString()}`,
       ...facts,
       `로그 폴더: ${this.directory}`,
@@ -83,7 +110,8 @@ class Diagnostics {
       backend.trim() || '(기록 없음)',
       '',
     ].join('\n');
+    return anonymize(redact(text));
   }
 }
 
-module.exports = { Diagnostics, MAX_BYTES, STDERR_BYTES, TAIL_BYTES };
+module.exports = { Diagnostics, MAX_BYTES, STDERR_BYTES, TAIL_BYTES, redact, anonymize };

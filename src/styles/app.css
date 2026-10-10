@@ -508,6 +508,14 @@ details.advanced[open] summary {
   background: none;
   color: #ffffffb3;
 }
+.toast .toast-action {
+  padding: 0 4px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
 /* Tags and status -------------------------------------------------------------------------- */
 .tags {
@@ -1477,6 +1485,32 @@ button.tag:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
+}
+/* The trash: each row restores or deletes for good instead of opening the document. */
+.document-list li.trash-row {
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.document-list li.trash-row > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.trash-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+.trash-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 10px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 .document-tools .document-filter {
   flex: 1 1 240px;

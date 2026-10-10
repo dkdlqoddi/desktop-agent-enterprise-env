@@ -81,6 +81,8 @@ type AppState = {
   bumpRuns: () => void;
   // notice: a caution the user should read, which stays until closed as an error does.
   notify: (message: string, error?: boolean, notice?: boolean) => void;
+  // A message with a way back, e.g. 되돌리기 after documents went to the trash.
+  undoable: (message: string, action: { label: string; run: () => Promise<void> | void }) => void;
   preferences: Preferences;
   savePreferences: (patch: Partial<Preferences>) => Promise<void>;
   search: SearchSession;
@@ -126,7 +128,7 @@ export default function App() {
   const [preferences, setPreferences] = useState<Preferences>({
     widgets: null,
     ai_answer: true,
-    web_assist: true,
+    web_assist: false,
   });
   const [version, setVersion] = useState(0);
   const [runsVersion, setRunsVersion] = useState(0);
@@ -151,17 +153,26 @@ export default function App() {
     [navigate],
   );
   // Errors and notices (cautions the user should read) stay until closed.
-  const [toast, setToast] = useState<{ message: string; error: boolean; notice?: boolean } | null>(
-    null,
-  );
+  const [toast, setToast] = useState<{
+    message: string;
+    error: boolean;
+    notice?: boolean;
+    action?: { label: string; run: () => Promise<void> | void };
+  } | null>(null);
   const omnibox = useRef<HTMLInputElement>(null);
   const notify = useCallback(
     (message: string, error = false, notice = false) => setToast({ message, error, notice }),
     [],
   );
+  const undoable = useCallback(
+    (message: string, action: { label: string; run: () => Promise<void> | void }) =>
+      setToast({ message, error: false, action }),
+    [],
+  );
   useEffect(() => {
     if (!toast || toast.error || toast.notice) return;
-    const timer = setTimeout(() => setToast(null), 6000);
+    // A message with a way back stays a little longer.
+    const timer = setTimeout(() => setToast(null), toast.action ? 10000 : 6000);
     return () => clearTimeout(timer);
   }, [toast]);
   // The backend answers requests side by side, so a reload's answer may come after a later one's: it is shown only
@@ -503,6 +514,7 @@ export default function App() {
       runsVersion,
       bumpRuns,
       notify,
+      undoable,
       preferences,
       savePreferences,
       search,
@@ -532,6 +544,7 @@ export default function App() {
       runsVersion,
       bumpRuns,
       notify,
+      undoable,
       preferences,
       savePreferences,
       search,
@@ -663,6 +676,7 @@ export default function App() {
           message={toast.message}
           error={toast.error}
           notice={toast.notice}
+          action={toast.action}
           onClose={() => setToast(null)}
         />
       )}
