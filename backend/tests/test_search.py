@@ -1,18 +1,24 @@
 import contextlib
 import json
 import sqlite3
+import threading
 import unicodedata
 from html import escape
 
 import pytest
 
-from agent import pageindex, search
+from agent import db as database_module
+from agent import pageindex, paging, search
 from agent.confluence import import_page
-from agent.db import Database
+from agent.db import FTS_DONE, Database, index_text
 from agent.html_document import page
 from agent.llm import UserError
 from agent.rtf_import import RtfImporter
 from agent.service import EXTRACT, Service
+
+# Tests of the trigram index itself need an SQLite with FTS5 and its trigram tokenizer (3.34+); everything else runs on
+# either, as search does.
+needs_fts = pytest.mark.skipif(not database_module.fts_supported(), reason="SQLite without the FTS5 trigram tokenizer")
 
 
 def paragraphs(count, word):
@@ -336,3 +342,328 @@ def test_many_matches_are_limited_and_shown_after_the_ai_picks(service):
     assert len(result["documents"]) == search.RESULT_LIMIT and result["total"] == search.RESULT_LIMIT + 5
     assert result["documents"][0]["title"] == agent["candidates"][2]["title"]
     assert sum(d["match"]["selected"] for d in result["documents"]) == 1
+
+
+# -- The trigram index ---------------------------------------------------------------------------------------------
+
+
+def index_matches(service):
+    """Whether the trigram index covers every row of the search text and holds exactly what it says (FTS5 checks its
+    entries against document_search, and fails on any it lacks or has too many of)."""
+    with service.db.connect() as db:
+        db.execute("INSERT INTO document_fts(document_fts, rank) VALUES('integrity-check', 1)")
+        return db.execute("SELECT value FROM metadata WHERE key='search_fts'").fetchone()[0] == str(FTS_DONE)
+
+
+def found(service, query, mode="auto"):
+    return [d["id"] for d in service.wiki_search({"query": query, "mode": mode})["documents"]]
+
+
+def long_markdown(tmp_path, name, word):
+    """A Markdown file too long for one document, which an import saves as three (parts.py), `word` in every part."""
+    path = tmp_path / f"{name}.md"
+    path.write_text("\n\n".join(f"## {word} 절 {i}\n\n" + "본문 " * 300 for i in range(190)), encoding="utf-8")
+    return path
+
+
+@needs_fts
+def test_the_trigram_index_follows_every_write_of_the_search_text(service, tmp_path):
+    assert service.db.fts and index_matches(service)
+    doc = save(service, "분기 계획서", "레디스 클러스터 도입 검토")
+    assert found(service, "클러스터") == [doc["id"]] and index_matches(service)
+    service.wiki_save({"id": doc["id"], "title": "연간 로드맵", "content": "레디스 클러스터 도입 검토"})
+    assert found(service, "로드맵") == [doc["id"]] and not found(service, "계획서") and index_matches(service)
+    service.wiki_save({"id": doc["id"], "title": "연간 로드맵", "content": "카프카 스트림 전환"})
+    assert not found(service, "클러스터") and found(service, "스트림") == [doc["id"]] and index_matches(service)
+    service.llm.extract = {"summary": "메시지 브로커 교체 요약", "keywords": ["kafka"], "relations": []}
+    service.wiki_analyze({"id": doc["id"]})
+    assert found(service, "브로커") == [doc["id"]] and index_matches(service)
+    service.wiki_clear_analysis({"ids": [doc["id"]]})
+    assert not found(service, "브로커") and index_matches(service)
+    # The parts of a long import, updated and cut down by an import of the same file again.
+    path = long_markdown(tmp_path, "설계서", "아키텍처")
+    first = service.markdown_import({"path": str(path)})["doc_ids"]
+    assert len(first) == 3 and set(found(service, "아키텍처")) == set(first) and index_matches(service)
+    path.write_text("## 요약본\n\n" + "짧아진 문서 " * 10, encoding="utf-8")
+    assert service.markdown_import({"path": str(path)})["doc_ids"] == first[:1]
+    assert not found(service, "아키텍처") and found(service, "요약본") == first[:1] and index_matches(service)
+    # The trash keeps the search text for a restore; emptying it takes the text out of the index with the document.
+    service.wiki_delete({"id": doc["id"]})
+    assert not found(service, "스트림") and index_matches(service)
+    service.wiki_restore({"ids": [doc["id"]]})
+    assert found(service, "스트림") == [doc["id"]]
+    service.wiki_delete({"id": doc["id"]})
+    service.wiki_purge({"ids": [doc["id"]]})
+    with service.db.connect() as db:
+        assert not db.execute("SELECT 1 FROM document_search WHERE doc_id=?", (doc["id"],)).fetchone()
+    assert index_matches(service)
+
+
+def test_a_title_or_summary_changed_without_the_search_text_is_searched_as_it_is_now(service, monkeypatch):
+    """Another program (or code that forgets index_text) changes a title and summary: the search text is marked out of
+    date, so search reads the document itself, and the next start makes it anew."""
+    doc = save(service, "주간보고서", "본문 내용")
+    for i in range(5):
+        save(service, f"기타 {i}", "다른 내용")
+    with contextlib.closing(sqlite3.connect(service.db.path)) as db, db:
+        db.execute("UPDATE documents SET title='월간회고록', summary='릴리스일정 정리' WHERE id=?", (doc["id"],))
+    for share in (0, 10 ** 9):  # The index's rows read one by one, and in one pass with the rest.
+        monkeypatch.setattr(search, "SCAN_SHARE", share)
+        assert found(service, "회고록") == found(service, "릴리스") == [doc["id"]] and not found(service, "보고서")
+    with service.db.connect() as db:
+        assert db.execute("SELECT revision FROM document_search WHERE doc_id=?", (doc["id"],)).fetchone()[0] == -1
+    Database(service.db.path)
+    with service.db.connect() as db:
+        assert tuple(db.execute("SELECT revision,title,summary FROM document_search WHERE doc_id=?",
+                                (doc["id"],)).fetchone()) == (1, "월간회고록", "릴리스일정 정리")
+    assert found(service, "회고록") == [doc["id"]] and (not service.db.fts or index_matches(service))
+
+
+SEARCHES = [("auto", "레디스 클러스터"), ("auto", "캐시를 도입한 문서"), ("word", "레디스 클러스터"), ("word", "캐시"),
+            ("auto", "abc"), ("auto", "r&d"), ("word", "api_spec_v2"), ("auto", "클러스터 운영"),
+            ("auto", '"캐시 무효화"'), ("keyword", "cache"), ("word", "캐 시"), ("auto", "지연 시간과"),
+            ("word", "레디스 메뉴")]
+
+
+def searched(service):
+    """Every search of SEARCHES as titles, scores and matched words, which do not depend on the documents' ids."""
+    titles = {doc["id"]: doc["title"] for doc in service.wiki_list({})}
+    return [[(titles[d["id"]], d["match"]["score"], d["match"]["matched"]) for d in service.wiki_search(
+        {"query": query, "mode": mode})["documents"]] for mode, query in SEARCHES]
+
+
+def fill(service):
+    """Documents the searches reach by every way: words of three or more characters and shorter ones, in titles,
+    summaries and bodies, keywords, Markdown escapes and full-width letters."""
+    for title, content in (("캐시 도입 회의", "레디스 클러스터로 캐시를 도입했습니다. R\\&D 검토"),
+                           ("ＡＢＣ 보고서", "Kafka 스트림 전환과 캐시 무효화 정책"),
+                           ("성능 점검", "레디스 지연 시간과 클러스터 장애 대응"),
+                           ("점심", "메뉴 추천"), ("릴리스 노트", "API\\_SPEC\\_v2 문서 정리 · 캐 시")):
+        save(service, title, content)
+    with service.db.connect() as db:
+        ident = db.execute("SELECT id FROM documents WHERE title='점심'").fetchone()[0]
+        db.execute("UPDATE documents SET summary='클러스터 운영 요약' WHERE id=?", (ident,))
+        db.execute("INSERT INTO keywords VALUES (?, 'cache')", (ident,))
+        index_text(db, [ident])
+
+
+def test_without_a_trigram_index_search_compares_the_search_text_and_finds_the_same(tmp_path, monkeypatch):
+    indexed = Service(Database(tmp_path / "indexed.db"), RoutingLLM())
+    monkeypatch.setattr(database_module, "fts_supported", lambda: False)
+    plain = Service(Database(tmp_path / "plain.db"), RoutingLLM())
+    assert not plain.db.fts
+    with plain.db.connect() as db:
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'document_fts%'").fetchone()
+    fill(indexed)
+    fill(plain)
+    # The index's rows read one by one, and read in one pass with the rest (Search.scanned), find the same.
+    monkeypatch.setattr(search, "SCAN_SHARE", 0)
+    expected = searched(indexed)
+    monkeypatch.setattr(search, "SCAN_SHARE", 10 ** 9)
+    assert searched(indexed) == expected
+    assert searched(plain) == expected and all(expected[:-1]) and not expected[-1]
+    # A start without FTS5 takes the triggers away, so writes go on, and leaves the index to be made anew.
+    reopened = Service(Database(tmp_path / "indexed.db"), RoutingLLM())
+    assert not reopened.db.fts and searched(reopened) == expected
+    added = save(reopened, "장애 회고", "클러스터 장애 원인 분석")["id"]
+    with reopened.db.connect() as db:
+        assert db.execute("SELECT value FROM metadata WHERE key='search_fts'").fetchone()[0] == "-1"
+    assert found(reopened, "장애 원인", "word") == [added]
+    monkeypatch.undo()
+    again = Service(Database(tmp_path / "indexed.db"), RoutingLLM())
+    assert again.db.fts == database_module.fts_supported() and found(again, "장애 원인", "word") == [added]
+    assert not again.db.fts or index_matches(again)
+
+
+@needs_fts
+def test_a_partly_filled_index_finds_every_document_and_is_filled_a_chunk_at_a_time(service):
+    ids = [save(service, f"문서 {i:02d}", f"공통어휘 {'희귀어휘' if i % 7 == 0 else '일반'} {i}")["id"] for i in range(30)]
+    with service.db.connect() as db:
+        # As a backfill that stopped leaves it: the index holds the rows up to a middle one and covers no more.
+        middle = db.execute("SELECT id FROM document_search ORDER BY id LIMIT 1 OFFSET 9").fetchone()[0]
+        db.execute("INSERT INTO document_fts(document_fts) VALUES('delete-all')")
+        db.execute("""INSERT INTO document_fts(rowid,title,summary,content)
+            SELECT id,title,summary,content FROM document_search WHERE id<=?""", (middle,))
+        db.execute("UPDATE metadata SET value=? WHERE key='search_fts'", (str(middle),))
+    assert set(found(service, "희귀어휘")) == {ids[i] for i in (0, 7, 14, 21, 28)}
+    # Writes on both sides of the mark: the triggers change the index only for the rows it covers.
+    service.wiki_save({"id": ids[3], "title": "문서 03", "content": "희귀어휘 새 내용"})
+    service.wiki_save({"id": ids[20], "title": "문서 20", "content": "희귀어휘 바뀐 내용"})
+    service.wiki_delete_many({"ids": [ids[0], ids[28]]})
+    service.wiki_purge({"all": True})
+    added = save(service, "새 문서", "희귀어휘 추가")["id"]
+    expected = {ids[3], ids[7], ids[14], ids[20], ids[21], added}
+    assert set(found(service, "희귀어휘")) == set(found(service, "희귀어휘", "word")) == expected
+    assert service.db._index(budget=0, chunk=5) is False
+    with service.db.connect() as db:
+        assert db.execute(f"SELECT {database_module.FTS_COVERED}").fetchone()[0] > middle
+    assert set(found(service, "희귀어휘")) == expected
+    assert service.db._index(chunk=5) is True and index_matches(service)
+    assert set(found(service, "희귀어휘")) == expected and found(service, "공통어휘", "word")
+
+
+@needs_fts
+def test_a_start_leaves_what_its_budget_does_not_reach_to_a_thread_of_its_own(tmp_path, monkeypatch):
+    path = tmp_path / "wiki.db"
+    service = Service(Database(path), RoutingLLM())
+    # 450 documents an earlier version saved, without their search text.
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        db.executemany("INSERT INTO documents(id,title,content,created_at,updated_at) VALUES (?,?,?,?,?)",
+                       [(f"d{i:03d}", f"문서 {i}", f"배경작업 {i}", "2026-01-01", "2026-01-01") for i in range(450)])
+    before = set(threading.enumerate())
+    monkeypatch.setattr(database_module, "INDEX_BUDGET", 0)
+    Database(path)
+    threads = [thread for thread in set(threading.enumerate()) - before if thread.name == "search-index"]
+    # The start made one chunk and answered; until the rest is made, searches read it from the documents.
+    assert len(threads) == 1 and service.wiki_search({"query": "배경작업", "mode": "word"})["total"] == 450
+    threads[0].join(60)
+    assert not threads[0].is_alive() and index_matches(service)
+    with service.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM document_search WHERE title IS NOT NULL").fetchone()[0] == 450
+    assert service.wiki_search({"query": "배경작업", "mode": "word"})["total"] == 450
+
+
+def test_the_search_text_of_an_earlier_version_is_made_anew(tmp_path):
+    path = tmp_path / "wiki.db"
+    service = Service(Database(path), RoutingLLM())
+    doc = save(service, "이전 버전", "옛날 형식의 검색 텍스트")
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        db.execute("DROP TABLE document_search")
+        db.execute("""CREATE TABLE document_search (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL, content TEXT NOT NULL)""")
+        db.execute("INSERT INTO document_search VALUES (?, 1, '옛날 형식의 검색 텍스트')", (doc["id"],))
+    reopened = Service(Database(path), RoutingLLM())
+    with reopened.db.connect() as db:
+        assert [r[1] for r in db.execute("PRAGMA table_info(document_search)")] == [
+            "id", "doc_id", "revision", "title", "summary", "length", "content"]
+        assert tuple(db.execute("SELECT title,summary,length FROM document_search").fetchone()) == ("이전 버전", "", 13)
+    assert found(reopened, "형식의 검색") == [doc["id"]] and (not reopened.db.fts or index_matches(reopened))
+
+
+def test_a_word_search_weighs_a_rare_word_above_a_common_one(service):
+    """Every document a word search ranks holds every word, so a word's IDF counts the documents that hold it at all
+    (the OR set): the document with more of the rarer word comes first, though the other is newer."""
+    rare = save(service, "기록 하나", "흔한단어 희귀단어 희귀단어 희귀단어")
+    common = save(service, "기록 둘", "흔한단어 흔한단어 흔한단어 희귀단어")
+    for i in range(6):
+        save(service, f"기타 {i}", "흔한단어 기타 내용")
+    assert found(service, "흔한단어 희귀단어", "word") == [rare["id"], common["id"]]
+
+
+# -- Pages and filters ---------------------------------------------------------------------------------------------
+
+
+def pages(call, params, size):
+    """Every page of a paged list, following next_cursor to the end."""
+    found, cursor = [], None
+    while True:
+        page = call({**params, "limit": size, **({"cursor": cursor} if cursor else {})})
+        found.append(page)
+        cursor = page["next_cursor"]
+        if cursor is None:
+            return found
+
+
+def test_the_document_list_comes_in_pages_and_by_filters(service, tmp_path):
+    docs = [save(service, f"문서 {i}", f"내용 {i}") for i in range(7)]
+    whole = service.wiki_list({})
+    ids = [d["id"] for d in whole]
+    assert ids == [d["id"] for d in reversed(docs)]
+    listed = pages(service.wiki_list, {}, 3)
+    assert [[d["id"] for d in page["documents"]] for page in listed] == [ids[:3], ids[3:6], ids[6:]]
+    assert [{k: v for k, v in d.items() if k != "parts"} for d in listed[0]["documents"]] == whole[:3]
+    assert all(d["parts"] == [] for page in listed for d in page["documents"])
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET status='indexing' WHERE id=?", (docs[0]["id"],))
+        db.execute("UPDATE documents SET status='error',error='실패' WHERE id=?", (docs[1]["id"],))
+        db.execute("UPDATE documents SET status='ready',index_mode='wiki' WHERE id=?", (docs[2]["id"],))
+    states = {state: {d["id"] for d in service.wiki_list({"analysis": state})} for state in paging.ANALYSIS}
+    assert states == {"running": {docs[0]["id"]}, "failed": {docs[1]["id"]}, "analyzed": {docs[2]["id"]},
+                      "not_analyzed": {d["id"] for d in docs[3:]}}
+    ranged = service.wiki_list({"updated_from": docs[2]["updated_at"], "updated_to": docs[5]["updated_at"], "limit": 9})
+    assert [d["id"] for d in ranged["documents"]] == [docs[4]["id"], docs[3]["id"], docs[2]["id"]]
+    assert ranged["next_cursor"] is None
+    # An import saved in parts is one entry of a page, its document updated last, with the import's documents.
+    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})["doc_ids"]
+    assert {d["id"] for d in service.wiki_list({"source": "markdown"})} == set(imported)
+    assert {d["id"] for d in service.wiki_list({"source": "manual"})} == {d["id"] for d in docs}
+    assert service.wiki_list({"source": "jira", "limit": 5}) == {"documents": [], "next_cursor": None}
+    entries = [d for page in pages(service.wiki_list, {}, 1) for d in page["documents"]]
+    assert len(entries) == 8 and len({d["id"] for d in entries}) == 8
+    entry = next(d for d in entries if d["id"] in imported)
+    assert [(p["id"], p["part"]) for p in entry["parts"]] == list(zip(imported, (1, 2, 3)))
+    assert entry["parts"][1]["title"] == "설계서 (2/3)"
+    service.wiki_save({"id": imported[1], "title": "설계서 (2/3)", "content": "아키텍처 둘째 부분을 고쳤습니다"})
+    first = service.wiki_list({"limit": 2})["documents"]
+    assert first[0]["id"] == imported[1] and first[1]["id"] not in imported
+    assert [p["id"] for p in first[0]["parts"]] == imported
+    # Filters choose among the import's documents; a part in the trash is not one of them.
+    unedited = service.wiki_list({"limit": 50, "updated_to": first[0]["updated_at"], "source": "markdown"})
+    assert len(unedited["documents"]) == 1 and unedited["documents"][0]["id"] != imported[1]
+    service.wiki_delete({"id": imported[1]})
+    entry = next(d for d in service.wiki_list({"limit": 50})["documents"] if d["id"] in imported)
+    assert [p["id"] for p in entry["parts"]] == [imported[0], imported[2]]
+    assert len(service.wiki_list({})) == 9  # Without limit: every document, as before.
+
+
+def test_a_page_request_is_checked(service):
+    save(service, "문서", "내용")
+    for limit in (0, 501, "5", True, 2.5):
+        with pytest.raises(UserError, match="1~500개"):
+            service.wiki_list({"limit": limit})
+    for cursor in ("잘못된", "e30", paging.encode("search", 1.0, "a", "b"), paging.encode("list", 1, "a"), 5):
+        with pytest.raises(UserError, match="cursor"):
+            service.wiki_list({"limit": 2, "cursor": cursor})
+    with pytest.raises(UserError, match="source"):
+        service.wiki_list({"source": "mail"})
+    with pytest.raises(UserError, match="analysis"):
+        service.wiki_list({"analysis": "done"})
+    with pytest.raises(UserError, match="updated_from"):
+        service.wiki_list({"updated_from": "2026-10-01"})
+    # A cursor alone asks for a page of the usual size.
+    assert service.wiki_list({"cursor": paging.encode("list", "9999", "z")})["next_cursor"] is None
+
+
+def test_search_results_come_in_pages_with_an_import_as_one_entry(service, tmp_path):
+    docs = [save(service, f"캐시 {i}", "캐시 " * (i + 1)) for i in range(5)]
+    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "캐시 설계", "캐시"))})["doc_ids"]
+    whole = service.wiki_search({"query": "캐시", "mode": "auto"})
+    assert whole["total"] == 8 and "next_cursor" not in whole
+    listed = pages(lambda p: service.wiki_search({**p, "query": "캐시", "mode": "auto"}), {}, 2)
+    assert [len(page["documents"]) for page in listed] == [2, 2, 2] and {page["total"] for page in listed} == {8}
+    entries = [d for page in listed for d in page["documents"]]
+    entry = next(d for d in entries if d["id"] in imported)
+    assert [p["id"] for p in entry["parts"]] == imported and entry["match"]["snippets"]
+    assert [d["id"] for d in entries] == [d["id"] for d in whole["documents"]
+                                          if d["id"] not in imported or d["id"] == entry["id"]]
+    assert all(d["parts"] == [] for d in entries if d is not entry)
+    # Filters keep what they name, with or without pages.
+    assert {d["id"] for d in service.wiki_search({"query": "캐시", "mode": "auto", "source": "markdown"})[
+        "documents"]} == set(imported)
+    manual = service.wiki_search({"query": "캐시", "mode": "word", "source": "manual", "limit": 9})
+    assert {d["id"] for d in manual["documents"]} == {d["id"] for d in docs} and manual["next_cursor"] is None
+    assert manual["total"] == 5
+    with pytest.raises(UserError, match="1~100개"):
+        service.wiki_search({"query": "캐시", "mode": "auto", "limit": 101})
+    with pytest.raises(UserError, match="AI 검색"):
+        service.wiki_search({"query": "캐시", "mode": "prompt", "limit": 5})
+    with pytest.raises(UserError, match="AI 검색"):
+        service.wiki_search({"query": "캐시", "mode": "prompt", "analysis": "analyzed"})
+    assert not service.llm.calls
+
+
+def test_conversations_come_in_pages(service):
+    with service.db.connect() as db:
+        db.executemany("INSERT INTO conversations VALUES (?,?,?,?)",
+                       [(f"c{i}", f"대화 {i}", f"2026-10-0{i}T00:00:00+00:00", f"2026-10-0{i}T00:00:00+00:00")
+                        for i in range(1, 6)])
+    conversations = service.assistant.conversations
+    assert [c["id"] for c in conversations({})] == ["c5", "c4", "c3", "c2", "c1"]
+    listed = pages(conversations, {}, 2)
+    assert [[c["id"] for c in page["conversations"]] for page in listed] == [["c5", "c4"], ["c3", "c2"], ["c1"]]
+    ranged = conversations({"updated_from": "2026-10-02T00:00:00+00:00", "updated_to": "2026-10-04T09:00:00+09:00"})
+    assert [c["id"] for c in ranged] == ["c3", "c2"]
+    with pytest.raises(UserError, match="1~200개"):
+        conversations({"limit": 201})
+    with pytest.raises(UserError, match="cursor"):
+        conversations({"cursor": paging.encode("list", "2026", "c1")})
