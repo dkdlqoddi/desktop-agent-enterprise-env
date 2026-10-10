@@ -433,6 +433,10 @@ const TOOLS = [
       updated_to: string('Only documents updated before this time (ISO 8601 with a time zone).'),
       limit: integer('Documents to return (1-200, default 30).', { minimum: 1, maximum: 200 }),
       cursor: string('The cursor of the previous answer, to continue after it.'),
+      offset: integer('Documents to skip (default 0, at most 10000). Prefer the cursor.', {
+        minimum: 0,
+        maximum: 10000,
+      }),
     },
     async (args, ctx) => {
       const page = await ctx.call('documents.query', { ...args, limit: args.limit ?? 30 });

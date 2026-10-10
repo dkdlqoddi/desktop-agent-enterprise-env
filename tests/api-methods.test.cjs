@@ -292,9 +292,41 @@ test('lists documents through the backend: its filters and pages, nothing filter
   await assert.rejects(query({ source: 'dropbox' }), /source/);
   await assert.rejects(query({ analysis: 'done' }), /analysis/);
   await assert.rejects(query({ query: 'x'.repeat(201) }), /검색어/);
-  // An offset would answer the first page again and again: the caller is told to use the cursor.
-  await assert.rejects(query({ offset: 50 }), /next_cursor를 cursor로/);
-  await assert.rejects(query({ offset: '50' }), /next_cursor를 cursor로/);
+});
+
+test('still skips an offset, as documents.query paged before cursors, by the backend pages before it', async () => {
+  // Six documents in pages of the size asked for, by cursors of their positions.
+  const all = Array.from({ length: 6 }, (_, i) => ({ ...DOCS[0], id: `n${i}` }));
+  const { methods, calls } = setup({
+    'wiki.list': (params) => {
+      const from = Number(params.cursor ?? 0);
+      const to = Math.min(all.length, from + params.limit);
+      return {
+        documents: all.slice(from, to),
+        next_cursor: to < all.length ? String(to) : null,
+        total: 6,
+      };
+    },
+  });
+  const query = methods['documents.query'];
+  const page = await query({ offset: 4, limit: 3, source: 'manual' });
+  assert.deepEqual(
+    [page.offset, page.total, page.next_cursor, page.documents.map((doc) => doc.id)],
+    [4, 6, null, ['n4', 'n5']],
+  );
+  assert.deepEqual(
+    calls.map((call) => call.params),
+    [
+      { limit: 4, source: 'manual' },
+      { limit: 3, source: 'manual', cursor: '4' },
+    ],
+  );
+  assert.deepEqual((await query({ offset: 9 })).documents, []);
+  assert.equal((await query({})).offset, 0);
+  assert.equal((await query({ cursor: '2' })).offset, undefined);
+  await assert.rejects(query({ offset: 2, cursor: '2' }), /함께 쓸 수 없습니다/);
+  await assert.rejects(query({ offset: 10_001 }), /offset/);
+  await assert.rejects(query({ offset: '50' }), /offset/);
 });
 
 test('leaves a document HTML page out unless asked', async () => {

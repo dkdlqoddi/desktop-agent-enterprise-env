@@ -124,17 +124,20 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 
 #### `documents.query`
 
-문서 목록: 검색어·출처·AI 분석 여부·키워드로 거르고 나누어 받기
+문서 목록: 글·키워드(한/영 별칭 포함)·출처·AI 분석 여부·수정 시각으로 거르고 limit·cursor로 나누어 받기 (total은 조건에 맞는 문서 수)
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `list_documents`, `query_api`
-- `GET /api/v1/documents` — 문서 목록 (거르기·나누어 받기)
-  - `query` (query, string) 제목·요약·본문 앞부분·키워드에 들어 있는 글
+- `GET /api/v1/documents` — 문서 목록: 최근에 고친 것부터, 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)
+  - `query` (query, string) 제목·요약·키워드(와 그 한/영 별칭)·출처(파일 경로·페이지 주소·티켓 키)에 들어 있는 글 (최대 200자)
+  - `keyword` (query, string) 추출 키워드나 그 별칭 (정확히 일치, 예: 데이터베이스 → database)
   - `source` (query, string) 출처 (manual = 직접 쓴 문서) [manual · rtf · office · image · text · markdown · confluence · jira]
   - `analysis` (query, string) AI 분석 여부 [analyzed · not_analyzed · failed · running]
-  - `keyword` (query, string) 추출 키워드 (정확히 일치)
-  - `limit` (query, integer) 최대 개수 1~500 [기본 50]
-  - `offset` (query, integer) 건너뛸 개수 [기본 0]
+  - `updated_from` (query, string) 이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601
+  - `updated_to` (query, string) 이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601
+  - `limit` (query, integer) 한 번에 받을 개수 1~500 [기본 50]
+  - `cursor` (query, string) 앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)
+  - `offset` (query, integer) 건너뛸 개수 (예전 방식, 최대 10,000). cursor를 쓰세요
 
 #### `documents.get`
 
@@ -148,7 +151,7 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 
 #### `wiki.list`
 
-전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로) source·analysis·updated_from·updated_to로 거르기
+전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로, total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `query_api`
@@ -330,11 +333,11 @@ expected_revision이 맞지 않아 저장이 거절된 수정 비교: 편집을 
 
 #### `wiki.graph`
 
-지식 관계도: 키워드·관계·문서
+지식 관계도: 키워드(한/영 별칭 aliases 포함)·관계·문서
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `knowledge_graph`, `query_api`
-- `GET /api/v1/graph` — 지식 관계도: 키워드(최대 1,000개)·관계·문서
+- `GET /api/v1/graph` — 지식 관계도: 키워드(최대 1,000개, 저마다 한/영 별칭 aliases)·관계·문서
 
 #### `analysis.start`
 
@@ -1491,11 +1494,12 @@ jira 가져오기 중지
 
 문서 검색 · 범위 `read` · slow · 메서드 `wiki.search`
 
-Search the user's private work wiki: documents imported from Confluence, JIRA, Office, RTF and text files, plus notes written in the app (mostly Korean). Returns ranked documents with id, source, summary, keywords and the passages that matched. Read one in full with get_document. mode: auto (default; local word search like the app's search box, fast; extracted keywords also match by their Korean/English aliases), word (every word must occur), keyword (comma-separated keywords the AI extracted, or their aliases: 데이터베이스 finds database), prompt (the LLM rewrites the question and picks documents and sections; slow).
+Search the user's private work wiki: documents imported from Confluence, JIRA, Office, RTF and text files, plus notes written in the app (mostly Korean). Returns ranked documents with id, source, summary, keywords, the passages that matched and the keywords matched by an alias. Read one in full with get_document. mode: auto (default; local word search like the app's search box, fast; extracted keywords also match by their Korean/English aliases), word (every word must occur), keyword (comma-separated keywords the AI extracted, or their aliases: 데이터베이스 finds database), prompt (the LLM rewrites the question and picks documents and sections; slow). Results other than prompt's come in pages: pass the cursor of the previous answer for the next.
 
 - `query` (string, 필수) Words or a question. "Quoted phrases" are matched as written.
 - `mode` (string) Search mode. [auto · word · keyword · prompt, 기본 "auto"]
 - `limit` (integer) Results to show (1-50, default 10).
+- `cursor` (string) The cursor of the previous answer of the same query and mode, for its next results (not for mode "prompt").
 - `wait_seconds` (integer) Seconds to wait for the result before returning a job_id for get_result (0-600, default 50). Keep it below your client's tool timeout.
 
 #### `get_document`
@@ -1513,22 +1517,25 @@ Read one wiki document: its Markdown text with source, keywords, AI summary and,
 
 문서 목록 · 범위 `read` · 메서드 `documents.query`
 
-List wiki documents, most recently updated first, optionally filtered by text in the title, summary or keywords, by source, by AI analysis state or by an extracted keyword. Use it to browse; use search_documents to find content.
+List wiki documents, most recently updated first, optionally filtered by text in the title, summary, keywords (or their Korean/English aliases) or where they came from (a file path, a page address, a ticket key), by source, by AI analysis state, by an extracted keyword or its alias, or by when they were updated. Use it to browse; use search_documents to find content. Long lists come in pages: pass the cursor of the previous answer with the same filters.
 
-- `query` (string) Text contained in the title, summary, beginning or keywords.
+- `query` (string) Text contained in the title, summary, keywords (or their aliases) or the source path or address.
 - `source` (string) Where documents came from (manual = written in the app). [manual · rtf · office · image · text · markdown · confluence · jira]
 - `analysis` (string) AI analysis state. [analyzed · not_analyzed · failed · running]
-- `keyword` (string) An extracted keyword (exact).
+- `keyword` (string) An extracted keyword or one of its aliases (exact).
+- `updated_from` (string) Only documents updated at or after this time (ISO 8601 with a time zone).
+- `updated_to` (string) Only documents updated before this time (ISO 8601 with a time zone).
 - `limit` (integer) Documents to return (1-200, default 30).
-- `offset` (integer) Documents to skip (default 0).
+- `cursor` (string) The cursor of the previous answer, to continue after it.
+- `offset` (integer) Documents to skip (default 0, at most 10000). Prefer the cursor.
 
 #### `knowledge_graph`
 
 지식 관계도 · 범위 `read` · 메서드 `wiki.graph`
 
-The knowledge graph the AI analysis built: keywords with how many documents mention them, and labeled relations between keywords. With keyword, shows that keyword's relations and documents.
+The knowledge graph the AI analysis built: keywords with how many documents mention them, and labeled relations between keywords. With keyword (or one of its Korean/English aliases), shows that keyword's aliases, relations and documents.
 
-- `keyword` (string) Focus on this keyword.
+- `keyword` (string) Focus on this keyword, or the keyword this alias names.
 - `limit` (integer) Keywords to show without a focus (1-300, default 40).
 
 #### `ask_wiki`

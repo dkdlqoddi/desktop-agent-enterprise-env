@@ -124,15 +124,14 @@ function allowFiles(access) {
   if (!allows(access, 'files')) throw forbidden(access, 'files');
 }
 
+// The most documents an offset may skip. An offset is how pages were asked for before cursors, kept so that what
+// was written against it still works; the backend's pages are read past it, which a cursor spares.
+const MAX_OFFSET = 10_000;
+
 // What an AI tool's document list asks the backend for: its own filters, the text and the keyword among them, and one
 // of its pages (wiki.list with limit and cursor), so that neither the whole Wiki nor a slice of it is filtered here.
 // The cursor is the backend's, passed on as it came.
 function documentQuery(params) {
-  // An offset was how pages were asked for before; ignoring one would answer the first page again and again.
-  if (params.offset !== undefined && params.offset !== null && Number(params.offset) !== 0)
-    throw new Error(
-      'offset 대신 앞 응답의 next_cursor를 cursor로 보내 주세요. 문서 목록은 cursor로 나누어 받습니다.',
-    );
   const query = {
     limit: integer(params.limit, 'limit', 50, 1, 500),
     source: choice(params.source, '출처(source)', SOURCE_KINDS, ''),
@@ -262,10 +261,26 @@ function createApiMethods({ handle, linkKind, extensions }) {
   return {
     'documents.query': async (params) => {
       const query = documentQuery(params);
-      const page = await handle('wiki.list', query);
+      const offset = integer(params.offset, 'offset', 0, 0, MAX_OFFSET);
+      if (offset && query.cursor)
+        throw new Error(
+          'offset과 cursor는 함께 쓸 수 없습니다. 앞 응답의 next_cursor만 보내 주세요.',
+        );
+      // Skipping `offset` entries: the pages before it, read by their cursors (only their count matters here).
+      let page = null;
+      for (let skipped = 0; skipped < offset;) {
+        page = await handle('wiki.list', { ...query, limit: Math.min(500, offset - skipped) });
+        skipped += page.documents.length;
+        if (!page.next_cursor) break;
+        query.cursor = page.next_cursor;
+      }
+      if (!page || page.next_cursor) page = await handle('wiki.list', query);
+      else page = { ...page, documents: [] };
       return {
         total: page.total,
         limit: query.limit,
+        // An answer to a request without a cursor says where it starts, as it did before cursors.
+        ...(params.cursor ? {} : { offset }),
         next_cursor: page.next_cursor,
         documents: page.documents.map((doc) => ({ ...doc, analysis: analysisState(doc) })),
       };

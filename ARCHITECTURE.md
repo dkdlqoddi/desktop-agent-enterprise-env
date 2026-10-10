@@ -39,7 +39,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 - 백엔드가 스스로 보내는 이벤트는 `id` 없는 줄 `{"event", "params"}`입니다. 메인 프로세스는 `BACKEND_EVENTS`에 있는 `assistant.delta`(LLM이 쓰는 답변의 조각)와 `assistant.done`(끝)만 창의 `assistant:delta` 채널로 넘기고, 나머지는 버립니다.
 - 메인 프로세스가 보내는 이벤트: `job:progress`(가져오기·AI 분석·자동 작업의 진행, `electron/job-progress.cjs`가 따라가며 번호를 붙임), `schedule:event`, `routine:event`, `import:notice`, `assistant:open`, `api:changed`, `control:command`(로컬 API의 화면 명령, 화면은 `control:result`로 답함)
-- 화면은 백엔드의 응답을 메서드와 매개변수별로 캐시합니다(`src/lib/query.ts`). 변경, 끝난 작업, 메인 프로세스의 알림이 태그(`documents`, `prompts`, `runs`, `routines`, `tasks`, `conversations`)를 무효로 하면 그 태그를 가진 응답만 다시 읽습니다.
+- 화면은 백엔드의 응답을 메서드와 매개변수별로 캐시합니다(`src/lib/query.ts`). 변경, 끝난 작업, 메인 프로세스의 알림이 태그(`documents`, `prompts`, `runs`, `routines`, `tasks`, `conversations`)를 무효로 하면 그 태그를 가진 응답만 다시 읽습니다. 보관함의 문서 목록은 같은 캐시의 나누어 받는 목록(`QueryCache.list`, `useDocumentPages`)으로 100개씩 불러오고, 무효가 되면 보이던 만큼을 첫 쪽부터 다시 읽으며, 보이는 줄만 그립니다(`src/components/windowing.ts`).
 
 ## 데이터 위치
 
@@ -134,7 +134,8 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `components/admin.tsx`, `admin/`                        | 관리 화면: LLM 연결, 사이트 계정, 템플릿, AI 도구 연동, API 매뉴얼                             |
 | `components/html-document.tsx`, `lib/html-document.ts`  | 가져온 HTML을 허용 목록으로 정제해 shadow DOM에 표시                                           |
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |
-| `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시, 선택자로 읽는 작은 상태 저장소                                    |
+| `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시와 나누어 받는 목록, 선택자로 읽는 작은 상태 저장소                 |
+| `components/windowing.ts`                               | 긴 목록에서 보이는 줄만 그리기(측정한 줄 높이)                                                 |
 
 ### scripts
 

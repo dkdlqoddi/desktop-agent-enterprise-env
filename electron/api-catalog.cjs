@@ -541,6 +541,10 @@ const GROUPS = [
           ...DOCUMENT_FILTERS,
           limit: integer('한 번에 받을 개수 1~500', { default: 50, minimum: 1, maximum: 500 }),
           cursor: string('앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)'),
+          offset: integer('건너뛸 개수 (예전 방식, 최대 10,000). cursor를 쓰세요', {
+            minimum: 0,
+            maximum: 10000,
+          }),
         },
       ),
       route('POST', '/documents', 'wiki.save', '새 Markdown 문서 저장', DOCUMENT_BODY),

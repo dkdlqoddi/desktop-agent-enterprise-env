@@ -184,9 +184,12 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
       1,
       ['API 메모 둘'],
     ]);
-    const offset = await ai.rest('GET', '/documents?offset=2');
-    expect(offset.status).toBe(400);
-    expect(offset.json.error.message).toContain('cursor');
+    // An offset, as pages were asked for before cursors, still works.
+    const skipped = (await ai.rest('GET', '/documents?offset=2&limit=5')).json.result;
+    expect([skipped.offset, skipped.documents.map((doc: Listed) => doc.title)]).toEqual([
+      2,
+      ['API로 만든 회의록'],
+    ]);
     const pages = data((await ai.tool('list_documents', { limit: 2 })).content[0].text!);
     expect(pages).toContain('API 메모 셋');
     expect(pages).not.toContain('API로 만든 회의록');

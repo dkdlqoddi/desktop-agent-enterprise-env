@@ -482,7 +482,7 @@
       "get": {
         "operationId": "get_documents",
         "tags": ["documents"],
-        "summary": "문서 목록 (거르기·나누어 받기)",
+        "summary": "문서 목록: 최근에 고친 것부터, 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)",
         "description": "메서드 documents.query · 범위 read",
         "x-scope": "read",
         "parameters": [
@@ -490,10 +490,20 @@
             "name": "query",
             "in": "query",
             "required": false,
-            "description": "제목·요약·본문 앞부분·키워드에 들어 있는 글",
+            "description": "제목·요약·키워드(와 그 한/영 별칭)·출처(파일 경로·페이지 주소·티켓 키)에 들어 있는 글 (최대 200자)",
             "schema": {
               "type": "string",
-              "description": "제목·요약·본문 앞부분·키워드에 들어 있는 글"
+              "description": "제목·요약·키워드(와 그 한/영 별칭)·출처(파일 경로·페이지 주소·티켓 키)에 들어 있는 글 (최대 200자)"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "description": "추출 키워드나 그 별칭 (정확히 일치, 예: 데이터베이스 → database)",
+            "schema": {
+              "type": "string",
+              "description": "추출 키워드나 그 별칭 (정확히 일치, 예: 데이터베이스 → database)"
             }
           },
           {
@@ -519,38 +529,58 @@
             }
           },
           {
-            "name": "keyword",
+            "name": "updated_from",
             "in": "query",
             "required": false,
-            "description": "추출 키워드 (정확히 일치)",
+            "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601",
             "schema": {
               "type": "string",
-              "description": "추출 키워드 (정확히 일치)"
+              "description": "이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601"
+            }
+          },
+          {
+            "name": "updated_to",
+            "in": "query",
+            "required": false,
+            "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601",
+            "schema": {
+              "type": "string",
+              "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601"
             }
           },
           {
             "name": "limit",
             "in": "query",
             "required": false,
-            "description": "최대 개수 1~500",
+            "description": "한 번에 받을 개수 1~500",
             "schema": {
               "type": "integer",
-              "description": "최대 개수 1~500",
+              "description": "한 번에 받을 개수 1~500",
               "default": 50,
               "minimum": 1,
               "maximum": 500
             }
           },
           {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)",
+            "schema": {
+              "type": "string",
+              "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)"
+            }
+          },
+          {
             "name": "offset",
             "in": "query",
             "required": false,
-            "description": "건너뛸 개수",
+            "description": "건너뛸 개수 (예전 방식, 최대 10,000). cursor를 쓰세요",
             "schema": {
               "type": "integer",
-              "description": "건너뛸 개수",
-              "default": 0,
-              "minimum": 0
+              "description": "건너뛸 개수 (예전 방식, 최대 10,000). cursor를 쓰세요",
+              "minimum": 0,
+              "maximum": 10000
             }
           }
         ],
@@ -1594,7 +1624,7 @@
       "get": {
         "operationId": "get_graph",
         "tags": ["documents"],
-        "summary": "지식 관계도: 키워드(최대 1,000개)·관계·문서",
+        "summary": "지식 관계도: 키워드(최대 1,000개, 저마다 한/영 별칭 aliases)·관계·문서",
         "description": "메서드 wiki.graph · 범위 read",
         "x-scope": "read",
         "parameters": [],
