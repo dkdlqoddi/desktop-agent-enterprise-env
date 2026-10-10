@@ -5,6 +5,7 @@
   "private": true,
   "description": "LLM과 함께하는 개인용 Prompt · LLM Wiki",
   "author": "Private Agent",
+  "license": "MIT",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -20,8 +21,8 @@
     "build:exe": "node scripts/build-exe.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write src electron scripts tests *.json *.ts README.md .github/workflows/*.yml",
-    "format:check": "prettier --check src electron scripts tests *.json *.ts README.md .github/workflows/*.yml",
+    "format": "prettier --write src electron scripts tests *.json *.ts *.md .github/workflows/*.yml",
+    "format:check": "prettier --check src electron scripts tests *.json *.ts *.md .github/workflows/*.yml",
     "test:python": "node scripts/test-python.mjs",
     "test:e2e": "playwright test",
     "test:main": "node --test tests/files.test.cjs tests/storage.test.cjs tests/backend-process.test.cjs tests/context-menu.test.cjs tests/relaunch.test.cjs tests/sites.test.cjs tests/links.test.cjs tests/reminders.test.cjs tests/schedules.test.cjs tests/routines.test.cjs tests/import-notices.test.cjs tests/api-server.test.cjs tests/mcp.test.cjs tests/mcp-stdio.test.cjs tests/api-settings.test.cjs tests/api-methods.test.cjs tests/app-control.test.cjs tests/diagnostics.test.cjs tests/package.test.cjs tests/restarts.test.cjs tests/captions.test.cjs tests/mp4.test.cjs tests/demo-plan.test.cjs tests/demo.test.cjs tests/graph-layout.test.cjs",
@@ -54,6 +55,7 @@
   "build": {
     "appId": "com.privateagent.desktop",
     "productName": "Private Agent",
+    "copyright": "Copyright © 2026 Jae-Yul Woo",
     "publish": null,
     "asar": true,
     "electronLanguages": [
@@ -68,6 +70,10 @@
       "out/**/*",
       "package.json",
       "!node_modules/**/*"
+    ],
+    "extraFiles": [
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
       {

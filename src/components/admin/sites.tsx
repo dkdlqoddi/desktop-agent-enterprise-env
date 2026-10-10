@@ -388,8 +388,8 @@ export default function SitesSection({ draft }: { draft?: { url: string; kind?: 
         <p className="banner warn" role="status">
           <CircleAlert size={15} />
           LLM 엔드포인트가 외부 서버({hostOf(settings.base_url)})입니다. 로그인·오류 화면의 글과 그
-          주소에 있는 내부 호스트 이름이 그 서버로 전송됩니다. 사내 LLM이 아니라면 이 옵션을 끄는
-          편이 안전합니다.
+          주소에 있는 내부 호스트 이름이 그 서버로 전송됩니다. 직접 운영하거나 신뢰하는 LLM 서버가
+          아니라면 이 옵션을 끄는 편이 안전합니다.
         </p>
       )}
       {state.error && (
