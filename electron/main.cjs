@@ -89,6 +89,8 @@ const ALLOWED = new Set([
   'wiki.list',
   'wiki.get',
   'wiki.save',
+  // Read only: an edit wiki.save refused, compared with the document as it is now.
+  'wiki.compare',
   'wiki.delete',
   'wiki.delete_many',
   'wiki.trash',

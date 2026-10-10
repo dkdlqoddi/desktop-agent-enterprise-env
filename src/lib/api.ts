@@ -294,6 +294,19 @@ export type Stats = { prompts: number; documents: number; keywords: number; rela
 export type Trash = { documents: WikiDocument[]; days: number };
 // What a deletion answers: the ids moved to the trash, for 되돌리기 (wiki.restore).
 export type Deleted = { deleted: number; ids: string[] };
+// Two texts compared line by line (backend/agent/changes.py diff): hunks of changed lines (+ added, - removed) among a
+// few unchanged ones, each starting at those line numbers of the two texts; `more` counts changed lines left out.
+export type DiffLine = { op: ' ' | '+' | '-'; text: string };
+export type DiffHunk = { old_start: number; new_start: number; lines: DiffLine[] };
+export type TextDiff = { added: number; removed: number; hunks: DiffHunk[]; more: number };
+// What an edit that wiki.save refused meets (wiki.compare): the document as it is now (without its HTML page), whether
+// it changed since the editor opened it, and the text the editor started from compared with the document's (theirs)
+// and the editor's (ours), and the document's with the editor's (overwrite: what saving over it would change).
+export type EditConflict = {
+  document: WikiDocument;
+  changed: boolean;
+  diffs: { theirs: TextDiff; ours: TextDiff; overwrite: TextDiff };
+};
 export type Graph = {
   nodes: { id: string; label: string; count: number; docs: string[] }[];
   edges: (Relation & { count: number; docs: string[] })[];

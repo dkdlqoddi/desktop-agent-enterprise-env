@@ -287,6 +287,25 @@ test('needs the full level to change the AI analysis of login pages, not the das
   }
 });
 
+test('lets the read level compare an edit a save refused, which changes nothing, but not save it', async () => {
+  settings.access = 'read';
+  const rpc = (method, params) =>
+    request({ path: '/api/v1/rpc', method: 'POST', body: { method, params } });
+  try {
+    const compared = await rpc('wiki.compare', {
+      id: 'd1',
+      base_revision: 1,
+      base: 'a',
+      content: 'b',
+    });
+    assert.equal(compared.status, 200);
+    assert.deepEqual(compared.json.result, { method: 'wiki.compare' });
+    assert.equal((await rpc('wiki.save', { id: 'd1', title: 't', content: 'b' })).status, 403);
+  } finally {
+    settings.access = 'write';
+  }
+});
+
 test('speaks MCP over Streamable HTTP', async () => {
   const mcp = (body, headers) => request({ path: '/mcp', method: 'POST', body, headers });
   const init = await mcp({

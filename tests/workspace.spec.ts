@@ -215,6 +215,49 @@ test('workspace: focused navigation, quick actions, document filtering and respo
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(page.locator('.glass-sculpture')).toHaveCSS('animation-name', 'none');
     await page.screenshot({ path: 'test-results/workspace-mobile.png', fullPage: true });
+
+    // The LLM settings warn of a plain http:// endpoint on another host, not of one on this PC, and take a header's
+    // value as a secret, as the API Key.
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await nav.getByRole('button', { name: '관리', exact: true }).click();
+    await page.getByRole('tab', { name: 'LLM 연결' }).click();
+    const endpoint = page.getByLabel(/API 엔드포인트/);
+    const plain = page.getByRole('status').filter({ hasText: 'http:// 주소는 암호화되지 않아' });
+    await endpoint.fill('http://llm.example.test/v1/chat/completions');
+    await expect(plain).toBeVisible();
+    await endpoint.fill('http://127.0.0.1:11434/v1/chat/completions');
+    await expect(plain).toHaveCount(0);
+    await page.getByLabel(/모델 이름/).fill('local-model');
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('헤더 1 이름').fill('X-Gateway-Token');
+    const value = page.getByLabel('헤더 1 값');
+    await value.fill('{api_key}');
+    await expect(value).toHaveAttribute('type', 'password');
+    await page.getByRole('button', { name: '헤더 1의 값 표시' }).click();
+    await expect(value).toHaveAttribute('type', 'text');
+    // An error stays until it is closed; a success beside it, not over it, closes by itself.
+    await page.getByRole('button', { name: '저장하고 사용' }).click();
+    const refused = page.locator('.toast.error');
+    await expect(refused).toContainText('API Key를 입력해 주세요');
+    await expect(refused).toHaveAttribute('role', 'alert');
+    await value.fill('gateway-token');
+    await page.getByRole('button', { name: '저장하고 사용' }).click();
+    const saved = page.locator('.toast').filter({ hasText: 'LLM 연결 설정을 저장했습니다.' });
+    await expect(saved).toHaveAttribute('aria-live', 'polite');
+    await expect(refused).toBeVisible();
+    const [error, success] = [(await refused.boundingBox())!, (await saved.boundingBox())!];
+    expect(error.y + error.height <= success.y || success.y + success.height <= error.y).toBe(true);
+    await page.screenshot({ path: 'test-results/workspace-toasts.png' });
+    await expect(saved).toHaveCount(0, { timeout: 10_000 });
+    await expect(refused).toBeVisible();
+    await refused.getByRole('button', { name: '알림 닫기' }).click();
+    await expect(refused).toHaveCount(0);
+    // The saved value never comes back to the screen: the field shows it is in use, and 다시 입력 starts a new one.
+    await expect(value).toHaveValue('');
+    await expect(value).toHaveAttribute('type', 'password');
+    await expect(page.locator('.llm-header .secret-input')).toContainText('등록됨');
+    await page.getByRole('button', { name: '헤더 1의 값 다시 입력' }).click();
+    await expect(value).toBeFocused();
     expect(errors).toEqual([]);
   } finally {
     await app?.close();

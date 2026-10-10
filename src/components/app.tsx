@@ -40,7 +40,7 @@ import { useImportJobs } from './import-jobs';
 import Reader, { type Focus, type ReaderTarget } from './reader';
 import SearchPanel, { Omnibox, useSearchSession, type SearchSession } from './search-panel';
 import StorageSetup from './storage-setup';
-import Toast from './toast';
+import Toasts, { useToasts } from './toast';
 import WorkspacePage, { WorkspaceSidebar, WORKSPACE_VIEWS, type WorkspaceView } from './workspace';
 import { AssistantData } from './widgets/assistant-data';
 
@@ -152,29 +152,20 @@ export default function App() {
     },
     [navigate],
   );
-  // Errors and notices (cautions the user should read) stay until closed.
-  const [toast, setToast] = useState<{
-    message: string;
-    error: boolean;
-    notice?: boolean;
-    action?: { label: string; run: () => Promise<void> | void };
-  } | null>(null);
+  // Errors and notices (cautions the user should read) stay until closed, successes close by themselves; a few show at
+  // once and the rest wait their turn (toast.tsx).
+  const toasts = useToasts();
+  const { push: pushToast } = toasts;
   const omnibox = useRef<HTMLInputElement>(null);
   const notify = useCallback(
-    (message: string, error = false, notice = false) => setToast({ message, error, notice }),
-    [],
+    (message: string, error = false, notice = false) => pushToast({ message, error, notice }),
+    [pushToast],
   );
   const undoable = useCallback(
     (message: string, action: { label: string; run: () => Promise<void> | void }) =>
-      setToast({ message, error: false, action }),
-    [],
+      pushToast({ message, error: false, action }),
+    [pushToast],
   );
-  useEffect(() => {
-    if (!toast || toast.error || toast.notice) return;
-    // A message with a way back stays a little longer.
-    const timer = setTimeout(() => setToast(null), toast.action ? 10000 : 6000);
-    return () => clearTimeout(timer);
-  }, [toast]);
   // The backend answers requests side by side, so a reload's answer may come after a later one's: it is shown only
   // when no later reload's answer is already on screen.
   const reloads = useRef({ asked: 0, shown: 0 });
@@ -340,9 +331,9 @@ export default function App() {
       // open in their own PowerPoint. The main process shows a system notification instead while the
       // window is unfocused.
       window.privateAgent?.onImportNotice?.((message) =>
-        setToast({ message, error: false, notice: true }),
+        pushToast({ message, error: false, notice: true }),
       ),
-    [],
+    [pushToast],
   );
   // An AI tool changed data through the local API: reload the lists, follow the jobs, and take the settings.
   const { watch: watchImports } = imports;
@@ -435,7 +426,7 @@ export default function App() {
         setReader(null);
         return { closed: true };
       case 'toast':
-        setToast({ message: text(params.message), error: params.error === true });
+        pushToast({ message: text(params.message), error: params.error === true });
         return { shown: true };
       case 'read_screen':
         return { view, reader: reader?.kind ?? null, ...readScreen() };
@@ -671,15 +662,7 @@ export default function App() {
       {reader && (
         <Reader key={JSON.stringify(reader)} target={reader} onClose={() => setReader(null)} />
       )}
-      {toast && (
-        <Toast
-          message={toast.message}
-          error={toast.error}
-          notice={toast.notice}
-          action={toast.action}
-          onClose={() => setToast(null)}
-        />
-      )}
+      <Toasts items={toasts.items} onClose={toasts.close} />
     </AppContext.Provider>
   );
 }

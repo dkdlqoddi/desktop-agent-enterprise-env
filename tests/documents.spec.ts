@@ -1,5 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -237,6 +237,171 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     release();
     await app?.close();
     await llm.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+// A 1×1 red PNG.
+const PICTURE =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+
+test('documents: an edit that meets a change made elsewhere is compared and saved as chosen; a downloaded page runs no script', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-conflict-'));
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    type Saved = { id: string; title: string; content: string; revision: number };
+    const plan = '# 배포 계획\n\n- 월요일 준비\n- 화요일 배포\n- 금요일 회고';
+    const { id } = await request<Saved>(page, 'wiki.save', { title: '배포 계획', content: plan });
+    // Another window or an AI tool saves the document while its editor is open here.
+    const elsewhere = async (content: string) => {
+      const { revision } = await request<Saved>(page, 'wiki.get', { id });
+      await request(page, 'wiki.save', {
+        id,
+        title: '배포 계획',
+        content,
+        expected_revision: revision,
+      });
+    };
+    await page.reload();
+    await openLibrary(page, '문서');
+    await widget(page, 'documents')
+      .locator('.document-row')
+      .filter({ hasText: '배포 계획' })
+      .click();
+    const panel = drawer(page);
+    const editor = panel.locator('textarea.document-editor');
+    const view = panel.locator('.document-content');
+    const lines = (kind: 'added' | 'removed') => panel.locator(`.change-lines li.${kind}`);
+    const toast = (text: string) => page.locator('.toast').filter({ hasText: text });
+
+    // The save is refused: the window compares what changed elsewhere, what the user changed and what saving over the
+    // document would do, and keeps the writing meanwhile.
+    await panel.getByRole('button', { name: '수정', exact: true }).click();
+    await editor.fill(`${plan}\n- 다음 주 점검`);
+    await elsewhere('# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고');
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await expect(panel.getByRole('heading', { name: '수정 충돌' })).toBeVisible();
+    await expect(
+      panel.getByRole('alert').filter({ hasText: '다른 곳에서 문서가 바뀌어' }),
+    ).toBeVisible();
+    await expect(lines('removed')).toHaveText([/화요일 배포/]);
+    await expect(lines('added')).toHaveText([/목요일 배포/]);
+    await panel.getByRole('radio', { name: '내가 바꾼 내용' }).click();
+    await expect(lines('removed')).toHaveCount(0);
+    await expect(lines('added')).toHaveText([/다음 주 점검/]);
+    await panel.getByRole('radio', { name: '내가 바꾼 내용' }).press('ArrowRight');
+    await expect(panel.getByRole('radio', { name: '덮어쓰면 바뀌는 내용' })).toBeChecked();
+    await expect(lines('removed')).toHaveText([/목요일 배포/]);
+    await expect(lines('added')).toHaveText([/화요일 배포/, /다음 주 점검/]);
+    await page.screenshot({ path: 'test-results/document-conflict.png' });
+    const ask = panel.getByRole('group', { name: /저장하지 않은 내용이 있습니다/ });
+    await page.keyboard.press('Escape');
+    await expect(ask).toBeVisible();
+    await ask.getByRole('button', { name: '계속 쓰기' }).click();
+
+    // 내 수정 유지하고 다시 열기: the writing goes on from the document as it is now, what changed there beside it.
+    await panel.getByRole('button', { name: '내 수정 유지하고 다시 열기' }).click();
+    await expect(panel.getByRole('heading', { name: '문서 수정' })).toBeVisible();
+    await expect(editor).toHaveValue(`${plan}\n- 다음 주 점검`);
+    await panel.getByText('다른 곳에서 바뀐 내용 보기').click();
+    await expect(lines('added')).toHaveText([/목요일 배포/]);
+    await editor.fill('# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고\n- 다음 주 점검');
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await expect(view).toContainText('목요일 배포');
+    await expect(view).toContainText('다음 주 점검');
+    await expect(toast('문서를 저장했습니다.')).toBeVisible();
+
+    // 새 문서로 저장: the writing becomes a document of its own, which the window links to.
+    await panel.getByRole('button', { name: '수정', exact: true }).click();
+    await editor.fill('# 배포 계획\n\n내가 쓴 메모');
+    await elsewhere('# 배포 계획\n\n다른 곳에서 쓴 메모');
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await panel.getByRole('button', { name: '새 문서로 저장' }).click();
+    await expect(view).toContainText('다른 곳에서 쓴 메모');
+    // The toast says so too; the link stays in the window.
+    const copied = panel.locator('.banner').filter({ hasText: '배포 계획 (충돌 사본)' });
+    await expect(copied).toHaveAttribute('role', 'status');
+    await expect(toast('배포 계획 (충돌 사본)')).toBeVisible();
+
+    // 현재 문서 덮어쓰기, asked first: the writing replaces what changed elsewhere.
+    await panel.getByRole('button', { name: '수정', exact: true }).click();
+    await editor.fill('# 배포 계획\n\n최종 메모');
+    await elsewhere('# 배포 계획\n\n또 다른 메모');
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await panel.getByRole('button', { name: '현재 문서 덮어쓰기' }).click();
+    await panel
+      .getByRole('group', { name: /다른 곳에서 바뀐 내용은 사라지고 내 수정으로 저장됩니다/ })
+      .getByRole('button', { name: '현재 문서 덮어쓰기' })
+      .click();
+    await expect(view).toContainText('최종 메모');
+    await expect(toast('현재 문서를 내 수정으로 덮어썼습니다.')).toBeVisible();
+    expect((await request<Saved>(page, 'wiki.get', { id })).content).toBe(
+      '# 배포 계획\n\n최종 메모',
+    );
+    await copied.getByRole('button', { name: '사본 열기' }).click();
+    await expect(panel.getByRole('heading', { name: '배포 계획 (충돌 사본)' })).toBeVisible();
+    await expect(view).toContainText('내가 쓴 메모');
+    await page.keyboard.press('Escape');
+    await expect(panel).toHaveCount(0);
+
+    // An imported page downloads with its own policy first: opened from the disk, no script of it runs, its embedded
+    // picture still shows.
+    const picture = path.join(directory, '조직도.png');
+    await writeFile(picture, Buffer.from(PICTURE, 'base64'));
+    await request(page, 'image.start', { path: picture, mode: 'file', recursive: false });
+    await expect
+      .poll(
+        async () => (await request<{ status: string } | null>(page, 'image.status', {}))?.status,
+      )
+      .toBe('completed');
+    await page.reload();
+    await openLibrary(page, '문서');
+    await widget(page, 'documents').locator('.document-row').filter({ hasText: '조직도' }).click();
+    await page.evaluate(() => {
+      const made = URL.createObjectURL.bind(URL);
+      const blobs: Blob[] = [];
+      Object.assign(window, { blobs });
+      URL.createObjectURL = (object: Blob | MediaSource) => {
+        if (object instanceof Blob) blobs.push(object);
+        return made(object);
+      };
+    });
+    await panel.getByRole('button', { name: '원문 HTML' }).click();
+    await expect(panel.getByLabel('HTML 원문')).toHaveValue(/^<!doctype html>/);
+    const downloaded = await page.evaluate(() =>
+      (window as unknown as { blobs: Blob[] }).blobs.at(-1)!.text(),
+    );
+    expect(downloaded).toMatch(
+      /^<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';[^"]*"><html/,
+    );
+    const file = path.join(directory, '조직도.html');
+    await writeFile(
+      file,
+      downloaded.replace('</body>', '<script>document.title = "실행됨"</script></body>'),
+    );
+    const opened = await app.evaluate(async ({ BrowserWindow }, local) => {
+      const window = new BrowserWindow({ show: false });
+      try {
+        await window.loadFile(local);
+        return {
+          title: window.webContents.getTitle(),
+          picture: await window.webContents.executeJavaScript(
+            'document.querySelector("img").naturalWidth',
+          ),
+        };
+      } finally {
+        window.destroy();
+      }
+    }, file);
+    expect(opened).toEqual({ title: '조직도', picture: 1 });
+    expect(errors).toEqual([]);
+  } finally {
+    await app?.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });

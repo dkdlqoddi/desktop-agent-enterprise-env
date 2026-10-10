@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { catchError, type ErrorInfo } from 'next/error';
 import {
   AlertCircle,
@@ -15,6 +15,7 @@ import {
   Network,
   Pencil,
   RefreshCw,
+  Save,
   Sparkles,
   Trash2,
   Upload,
@@ -25,11 +26,13 @@ import {
   date,
   dayTime,
   seconds,
+  type EditConflict,
   type ImportOutcome,
   type OutlineNode,
   type Run,
   type SkipReason,
   type SourceStatus,
+  type TextDiff,
   type TextImport,
   type Deleted,
   type WikiDocument,
@@ -45,6 +48,7 @@ import HtmlDocument from './html-document';
 import { activeJob, type ImportKind } from './import-jobs';
 import Markdown from './markdown';
 import Modal, { type ModalHandle } from './modal';
+import { rove } from './roving';
 
 // A document opened from search results shows where the search words and chosen sections are.
 export type Focus = { terms: string[]; sections: string[] };
@@ -52,6 +56,8 @@ export type ReaderTarget =
   | { kind: 'document'; id: string; focus?: Focus | null }
   | { kind: 'new'; title?: string; content?: string }
   | { kind: 'run'; id: string; terms?: string[] };
+// The document as the editor opened it.
+type Started = { revision: number; title: string; content: string };
 
 export default function Reader({ target, onClose }: { target: ReaderTarget; onClose: () => void }) {
   return (
@@ -109,16 +115,27 @@ function DocumentReader({
   } = useApp();
   const [doc, setDoc] = useState<WikiDocument | null>(null);
   const [focus, setFocus] = useState(target.kind === 'document' ? (target.focus ?? null) : null);
-  // source: the Markdown a Confluence or JIRA page became; html: the HTML page an imported file became.
-  const [mode, setMode] = useState<'view' | 'edit' | 'source' | 'html'>(
+  // source: the Markdown a Confluence or JIRA page became; html: the HTML page an imported file became; conflict: what
+  // a save refused because the document changed meanwhile elsewhere, compared, with the ways to save it.
+  const [mode, setMode] = useState<'view' | 'edit' | 'conflict' | 'source' | 'html'>(
     target.kind === 'new' ? 'edit' : 'view',
   );
   const [draft, setDraft] = useState({
     title: target.kind === 'new' ? (target.title ?? '') : '',
     content: target.kind === 'new' ? (target.content ?? '') : '',
   });
-  // The revision the editor opened: a save never overwrites text changed meanwhile elsewhere.
-  const opened = useRef<number | null>(null);
+  // The text and revision the editor opened: a save never overwrites text changed meanwhile elsewhere, and one refused
+  // for it compares this text with the editor's and the document's (wiki.compare), as no earlier text is stored.
+  const base = useRef<Started | null>(null);
+  // The comparison of a refused save, with the text the editor had started from then.
+  const [conflict, setConflict] = useState<{ compared: EditConflict; started: Started } | null>(
+    null,
+  );
+  // What changed elsewhere, beside the editor once the user goes back to writing from the document as it is now, to
+  // bring into their text by hand.
+  const [elsewhere, setElsewhere] = useState<TextDiff | null>(null);
+  // The document 새 문서로 저장 made of the editor's text, which this one then links to.
+  const [copy, setCopy] = useState<{ id: string; title: string } | null>(null);
   const [analyzeOnSave, setAnalyzeOnSave] = useState(false);
   const [source, setSource] = useState<{ markdown: string; filename: string } | null>(null);
   const [page, setPage] = useState<{ html: string; filename: string } | null>(null);
@@ -143,7 +160,7 @@ function DocumentReader({
   // The document read again (an analysis, an update or a write back ended) while the user writes would change the
   // text and revision under the editor: it waits until the writing ends, and the user hears of it.
   const editingNow = useRef(false);
-  editingNow.current = mode === 'edit';
+  editingNow.current = mode === 'edit' || mode === 'conflict';
   const behind = useRef(false);
   const show = (value: WikiDocument, what: string) => {
     if (!editingNow.current) return setDoc(value);
@@ -160,6 +177,8 @@ function DocumentReader({
   // Back from the editor without saving: a document read again meanwhile shows now.
   const leaveEditor = () => {
     setMode('view');
+    base.current = null;
+    setElsewhere(null);
     if (!behind.current || !doc) return;
     behind.current = false;
     void api<WikiDocument>('wiki.get', { id: doc.id }).then(setDoc, (e) => setError(e.message));
@@ -206,6 +225,99 @@ function DocumentReader({
         await refresh();
       }
     });
+  // The editor's text saved over revision `expected`: the one the editor opened, or the document's as the conflict view
+  // showed it (현재 문서 덮어쓰기). A save refused because the document changed meanwhile shows the conflict view.
+  async function save(expected?: number) {
+    const revision = expected ?? base.current?.revision ?? doc?.revision;
+    let saved: WikiDocument;
+    try {
+      saved = await api<WikiDocument>('wiki.save', {
+        ...draft,
+        id: doc?.id,
+        ...(doc ? { expected_revision: revision } : {}),
+      });
+    } catch (error) {
+      if (revision !== undefined && (await compare(revision))) return;
+      throw error;
+    }
+    behind.current = false;
+    base.current = null;
+    setConflict(null);
+    setElsewhere(null);
+    setDoc(saved);
+    setFocus(null);
+    setMode('view');
+    await refresh();
+    notify(
+      expected === undefined ? '문서를 저장했습니다.' : '현재 문서를 내 수정으로 덮어썼습니다.',
+    );
+    if (analyzeOnSave) await analyze(saved.id);
+  }
+  // Whether a save refused at revision `expected` met a change made elsewhere since, which the conflict view then
+  // shows; any other failure (a document deleted meanwhile, a backend that went away) is told as it was.
+  async function compare(expected: number) {
+    const started = base.current;
+    if (!doc || !started) return false;
+    let found: EditConflict;
+    try {
+      found = await api<EditConflict>('wiki.compare', {
+        id: doc.id,
+        base_revision: started.revision,
+        base: started.content,
+        content: draft.content,
+      });
+    } catch {
+      return false;
+    }
+    if (!found.changed || found.document.revision === expected) return false;
+    setConflict({ compared: found, started });
+    setMode('conflict');
+    return true;
+  }
+  // 새 문서로 저장: the editor's text as a document of its own, named after the one it was written for, which the
+  // window shows again as it is now, with a link to the copy.
+  const saveCopy = () =>
+    act('copy', async () => {
+      if (!doc || !conflict) return;
+      const suffix = ' (충돌 사본)';
+      // Within the 200 characters of a title, counted as the backend counts them.
+      const title = [...draft.title.trim()].slice(0, 200 - suffix.length).join('') + suffix;
+      const saved = await api<WikiDocument>('wiki.save', { title, content: draft.content });
+      const current = await api<WikiDocument>('wiki.get', { id: doc.id }).catch(
+        () => conflict.compared.document,
+      );
+      behind.current = false;
+      base.current = null;
+      setConflict(null);
+      setElsewhere(null);
+      setCopy({ id: saved.id, title: saved.title });
+      setDoc(current);
+      setFocus(null);
+      setMode('view');
+      await refresh();
+      notify(`쓰던 내용을 새 문서 ‘${saved.title}’(으)로 저장했습니다.`);
+    });
+  // 내 수정 유지하고 다시 열기: the editor goes on from the document as it is now, which the next save expects. What the
+  // user changed stays; what they left as it was (the title, say) takes the document's new text, so a save does not
+  // quietly take back the change made elsewhere.
+  function reopen() {
+    if (!conflict) return;
+    const { compared, started } = conflict;
+    const current = compared.document;
+    const text = current.content ?? '';
+    setDraft({
+      title: draft.title === started.title ? current.title : draft.title,
+      content: draft.content === started.content ? text : draft.content,
+    });
+    base.current = { revision: current.revision, title: current.title, content: text };
+    setElsewhere(compared.diffs.theirs.hunks.length ? compared.diffs.theirs : null);
+    // The comparison carries the document without its page: the window reads it whole once the editing ends.
+    behind.current = true;
+    setDoc(current);
+    setConflict(null);
+    setMode('edit');
+    notify('지금 문서를 기준으로 다시 열었습니다. 쓰던 내용은 그대로 두었습니다.');
+  }
   // Headings of the rendered document for its PageIndex table of contents.
   function showSection(node: OutlineNode) {
     const headings = findAll(contentRef.current, 'h1, h2, h3, h4, h5, h6');
@@ -217,8 +329,16 @@ function DocumentReader({
         : headings.find((element) => text(element) === node.title);
     heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
-  const editing = mode === 'edit';
-  const title = editing ? (doc ? '문서 수정' : '새 문서') : (doc?.title ?? '문서');
+  // Writing: in the editor, or choosing how to save what a refused save held (the conflict view).
+  const editing = mode === 'edit' || mode === 'conflict';
+  const title =
+    mode === 'conflict'
+      ? '수정 충돌'
+      : editing
+        ? doc
+          ? '문서 수정'
+          : '새 문서'
+        : (doc?.title ?? '문서');
   const subtitle = doc && !editing ? `마지막 수정 ${date(doc.updated_at)}` : undefined;
   // What closing the panel would throw away: a change to the opened document, or a new one with any text.
   const unsaved =
@@ -238,8 +358,10 @@ function DocumentReader({
           disabled={held}
           title={waitNote}
           onClick={() => {
-            setDraft({ title: doc.title, content: doc.content || '' });
-            opened.current = doc.revision;
+            const text = doc.content || '';
+            setDraft({ title: doc.title, content: text });
+            base.current = { revision: doc.revision, title: doc.title, content: text };
+            setElsewhere(null);
             setAnalyzeOnSave(false);
             setMode('edit');
           }}
@@ -324,28 +446,34 @@ function DocumentReader({
           {error}
         </p>
       )}
-      {editing ? (
+      {copy && mode === 'view' && (
+        <p className="banner drawer-error" role="status">
+          <Copy size={15} />
+          <span>쓰던 내용은 새 문서 ‘{copy.title}’에 저장했습니다.</span>
+          <button type="button" className="text-button" onClick={() => openDocument(copy.id)}>
+            사본 열기
+          </button>
+        </p>
+      )}
+      {mode === 'conflict' && conflict ? (
+        <ConflictView
+          conflict={conflict.compared}
+          startedTitle={conflict.started.title}
+          busy={!!busy}
+          unsaved={unsaved}
+          onOverwrite={() => act('save', () => save(conflict.compared.document.revision))}
+          onCopy={() => void saveCopy()}
+          onReopen={reopen}
+        />
+      ) : editing ? (
         <form
           className="drawer-body document-form"
           // Unsaved writing, also after a save that failed: closing the window keeps it (app-control.ts changedForm).
           data-dirty={unsaved ? 'true' : undefined}
           onSubmit={(event) => {
             event.preventDefault();
-            void act('save', async () => {
-              // The revision this editor opened: text changed meanwhile elsewhere is not overwritten.
-              const saved = await api<WikiDocument>('wiki.save', {
-                ...draft,
-                id: doc?.id,
-                ...(doc ? { expected_revision: opened.current ?? doc.revision } : {}),
-              });
-              behind.current = false;
-              setDoc(saved);
-              setFocus(null);
-              setMode('view');
-              await refresh();
-              notify('문서를 저장했습니다.');
-              if (analyzeOnSave) await analyze(saved.id);
-            });
+            // The revision this editor opened: text changed meanwhile elsewhere is not overwritten.
+            void act('save', () => save());
           }}
         >
           <label>
@@ -359,6 +487,14 @@ function DocumentReader({
               placeholder="문서 제목"
             />
           </label>
+          {elsewhere && (
+            <details className="change-lines">
+              <summary>
+                다른 곳에서 바뀐 내용 보기 · +{elsewhere.added} −{elsewhere.removed}
+              </summary>
+              <DiffLines diff={elsewhere} from="편집 전" to="지금 문서" />
+            </details>
+          )}
           <label>
             내용
             <textarea
@@ -566,6 +702,151 @@ function DocumentReader({
         </div>
       )}
     </Modal>
+  );
+}
+
+// The comparisons of a refused save, from wiki.compare: the text the editor started from against the document's and
+// the editor's, and the document's against the editor's.
+type Side = keyof EditConflict['diffs'];
+const SIDES: { id: Side; label: string; note: string; from: string; to: string }[] = [
+  {
+    id: 'theirs',
+    label: '다른 곳에서 바뀐 내용',
+    note: '편집을 시작한 뒤 다른 창·AI 도구·가져오기에서 바뀐 줄입니다.',
+    from: '편집 전',
+    to: '지금 문서',
+  },
+  {
+    id: 'ours',
+    label: '내가 바꾼 내용',
+    note: '편집을 시작한 뒤 내가 바꾼 줄입니다.',
+    from: '편집 전',
+    to: '내 수정',
+  },
+  {
+    id: 'overwrite',
+    label: '덮어쓰면 바뀌는 내용',
+    note: '지금 문서를 덮어쓰면 − 줄이 사라지고 + 줄이 들어갑니다.',
+    from: '지금 문서',
+    to: '내 수정',
+  },
+];
+
+// A save refused because the document changed elsewhere while it was edited: what changed on each side, and the ways
+// to go on. The writing stays unsaved meanwhile (data-dirty), so neither closing the window nor an AI tool throws it
+// away (app-control.ts editingDocument, changedForm).
+function ConflictView({
+  conflict,
+  startedTitle,
+  busy,
+  unsaved,
+  onOverwrite,
+  onCopy,
+  onReopen,
+}: {
+  conflict: EditConflict;
+  startedTitle: string;
+  busy: boolean;
+  unsaved: boolean;
+  onOverwrite: () => Promise<void>;
+  onCopy: () => void;
+  onReopen: () => void;
+}) {
+  const [side, setSide] = useState<Side>('theirs');
+  const chosen = SIDES.find((item) => item.id === side)!;
+  const diff = conflict.diffs[side];
+  const current = conflict.document;
+  return (
+    <div className="drawer-body document-form" data-dirty={unsaved ? 'true' : undefined}>
+      <p className="banner warn" role="alert">
+        <AlertCircle size={15} />
+        <span>
+          편집하는 동안 다른 곳에서 문서가 바뀌어(마지막 수정 {date(current.updated_at)}) 저장하지
+          않았습니다. 바뀐 내용을 비교하고 저장할 방법을 골라 주세요. 쓰던 내용은 그대로 있습니다.
+        </span>
+      </p>
+      {current.title !== startedTitle && (
+        <p className="drawer-note">
+          제목도 ‘{startedTitle}’에서 ‘{current.title}’(으)로 바뀌었습니다.
+        </p>
+      )}
+      {/* As wide as its choices, which wrap on a narrow window. */}
+      <div
+        className="segmented"
+        role="radiogroup"
+        aria-label="비교할 내용"
+        style={{ alignSelf: 'flex-start', flexWrap: 'wrap' }}
+      >
+        {SIDES.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="radio"
+            aria-checked={side === item.id}
+            tabIndex={side === item.id ? 0 : -1}
+            onKeyDown={rove}
+            className={side === item.id ? 'active' : ''}
+            onClick={() => setSide(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <p className="drawer-note">
+        +{diff.added} −{diff.removed} · {chosen.note}
+      </p>
+      <div className="change-lines">
+        <DiffLines diff={diff} from={chosen.from} to={chosen.to} />
+      </div>
+      <div className="form-actions">
+        <Confirm
+          label="현재 문서 덮어쓰기"
+          icon={<Save size={14} />}
+          question="다른 곳에서 바뀐 내용은 사라지고 내 수정으로 저장됩니다. 덮어쓸까요?"
+          disabled={busy}
+          onConfirm={onOverwrite}
+        />
+        <button type="button" className="button secondary small" disabled={busy} onClick={onCopy}>
+          <Copy size={14} />새 문서로 저장
+        </button>
+        <button type="button" className="button primary small" disabled={busy} onClick={onReopen}>
+          <Pencil size={14} />내 수정 유지하고 다시 열기
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// One comparison of two texts (wiki.compare): changed lines among a few unchanged ones, each run headed by where it
+// starts in the two texts. − lines are only in the first text, + lines only in the second.
+function DiffLines({ diff, from, to }: { diff: TextDiff; from: string; to: string }) {
+  if (!diff.hunks.length) return <p className="muted">바뀐 줄이 없습니다.</p>;
+  return (
+    <ul aria-label={`${from} → ${to}`} style={{ maxHeight: 'min(52vh, 560px)' }}>
+      {diff.hunks.map((hunk, index) => (
+        <Fragment key={index}>
+          <li className="more">
+            {from} {hunk.old_start}행 · {to} {hunk.new_start}행
+          </li>
+          {hunk.lines.map((line, number) => (
+            <li
+              key={number}
+              className={line.op === '+' ? 'added' : line.op === '-' ? 'removed' : undefined}
+            >
+              {line.op === ' ' ? (
+                <span aria-hidden="true"> </span>
+              ) : (
+                <span aria-label={line.op === '+' ? '추가' : '삭제'}>
+                  {line.op === '+' ? '+' : '−'}
+                </span>
+              )}
+              {line.text}
+            </li>
+          ))}
+        </Fragment>
+      ))}
+      {diff.more > 0 && <li className="more">바뀐 줄 {diff.more}개 더 있음</li>}
+    </ul>
   );
 }
 
@@ -918,6 +1199,19 @@ function PartLinks({ doc }: { doc: WikiDocument }) {
   );
 }
 
+// What a downloaded page carries first. Opened from the disk in a browser, it is outside the app's sanitizer and CSP
+// (src/lib/html-document.ts, electron/main.cjs): its own policy keeps any script of the imported file from running and
+// anything from loading from elsewhere, while its embedded pictures and its own styles still show. The charset comes
+// first as well, as the file is written in UTF-8 whatever the page says.
+const DOWNLOAD_POLICY =
+  "<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">";
+// The page with the policy before everything it holds but its doctype, which stays first so the page keeps the
+// rendering mode it was made for.
+function downloadPage(html: string) {
+  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(html)?.[0].length ?? 0;
+  return html.slice(0, doctype) + DOWNLOAD_POLICY + html.slice(doctype);
+}
+
 // The HTML page an imported file became, as text, with its download.
 function HtmlSource({
   page,
@@ -929,7 +1223,9 @@ function HtmlSource({
   const text = useMemo(() => readableSource(page.html), [page.html]);
   const [link, setLink] = useState('');
   useEffect(() => {
-    const url = URL.createObjectURL(new Blob([page.html], { type: 'text/html;charset=utf-8' }));
+    const url = URL.createObjectURL(
+      new Blob([downloadPage(page.html)], { type: 'text/html;charset=utf-8' }),
+    );
     setLink(url);
     return () => URL.revokeObjectURL(url);
   }, [page.html]);
@@ -938,7 +1234,8 @@ function HtmlSource({
       <p className="drawer-note">
         파일을 가져올 때(원본에서 업데이트했다면 그때) 만든 HTML 원문입니다. 읽기 쉽게 요소마다 줄을
         나누고, 문서 안에 base64로 들어 있는 그림 데이터는 앞부분만 보여 줍니다. .html 다운로드에는
-        원문이 그대로 들어 있고, 본문을 수정해도 원문은 남습니다.
+        원문이 그대로 들어 있고, 브라우저로 열어도 스크립트가 실행되거나 외부 자료를 불러오지 않도록
+        맨 앞에 보안 정책을 붙입니다. 본문을 수정해도 원문은 남습니다.
       </p>
       <textarea
         aria-label="HTML 원문"

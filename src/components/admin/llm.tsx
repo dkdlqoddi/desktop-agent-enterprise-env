@@ -1,18 +1,9 @@
 import { useRef, useState } from 'react';
-import {
-  Check,
-  CircleAlert,
-  Eye,
-  EyeOff,
-  KeyRound,
-  LoaderCircle,
-  Plus,
-  Trash2,
-  Unplug,
-} from 'lucide-react';
+import { Check, CircleAlert, LoaderCircle, Plus, Trash2, Unplug } from 'lucide-react';
 import { api, type LlmFormat, type LlmHeader, type Settings } from '@/lib/api';
 import { useApp } from '../app';
 import { rove } from '../roving';
+import SecretInput from '../secret-input';
 
 // The request formats: where each starts, an example model, and the header its API Key goes in.
 const FORMATS: Record<LlmFormat, { label: string; endpoint: string; model: string; auth: string }> =
@@ -33,9 +24,14 @@ const FORMATS: Record<LlmFormat, { label: string; endpoint: string; model: strin
 const ENDPOINTS = Object.values(FORMATS).map((format) => format.endpoint);
 type Secret = 'api_key';
 
-// An empty endpoint starts at its format's own.
-const withEndpoint = (settings: Settings) =>
-  settings.base_url ? settings : { ...settings, base_url: FORMATS[settings.api_format].endpoint };
+// The form as the settings start it: an empty endpoint starts at its format's own, and each custom header's value
+// empty, as the screens get only whether one is saved (has_value), never the value itself. Fields the settings gain
+// later go along as they are.
+const formOf = (settings: Settings): Settings => ({
+  ...settings,
+  base_url: settings.base_url || FORMATS[settings.api_format].endpoint,
+  headers: settings.headers.map((header) => ({ ...header, value: header.value ?? '' })),
+});
 // The server an endpoint is on (scheme, host and port), which the saved API Key is kept for.
 function serverOf(value: string) {
   try {
@@ -45,46 +41,29 @@ function serverOf(value: string) {
     return '';
   }
 }
-
-function SecretInput({
-  label,
-  value,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder: string;
-  onChange: (value: string) => void;
-}) {
-  const [shown, setShown] = useState(false);
-  return (
-    <span className="secret-input">
-      <KeyRound size={15} />
-      <input
-        type={shown ? 'text' : 'password'}
-        autoComplete="new-password"
-        spellCheck={false}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-      <button
-        type="button"
-        className="icon-button"
-        aria-label={shown ? `${label} 숨기기` : `${label} 표시`}
-        onClick={() => setShown(!shown)}
-      >
-        {shown ? <EyeOff size={15} /> : <Eye size={15} />}
-      </button>
-    </span>
-  );
+// An endpoint reached over plain http on another host than this PC: the API Key, the headers and whatever the AI
+// features send (documents, questions) cross the network unencrypted. A local LLM (localhost, 127.0.0.0/8, ::1) is
+// reached without leaving the PC.
+function plainHttp(value: string) {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    return (
+      url.protocol === 'http:' &&
+      host !== 'localhost' &&
+      !host.endsWith('.localhost') &&
+      host !== '[::1]' &&
+      !/^127(?:\.\d{1,3}){3}$/.test(host)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export default function LlmSettings() {
   const { settings, setSettings, notify } = useApp();
   const formRef = useRef<HTMLFormElement>(null);
-  const [form, setForm] = useState(() => withEndpoint(settings));
+  const [form, setForm] = useState(() => formOf(settings));
   const [keys, setKeys] = useState<Record<Secret, string>>({ api_key: '' });
   const [busy, setBusy] = useState('');
   const [testResult, setTestResult] = useState('');
@@ -147,7 +126,7 @@ export default function LlmSettings() {
         ca_bundle: form.ca_bundle,
       });
       setSettings(result);
-      setForm(withEndpoint(result));
+      setForm(formOf(result));
       setKeys({ api_key: '' });
       if (test) setTestResult((await api<{ message: string }>('settings.test')).message);
       else notify('LLM 연결 설정을 저장했습니다.');
@@ -260,11 +239,21 @@ export default function LlmSettings() {
             요청을 보낼 전체 URL입니다. 게이트웨이나 프록시 서버를 거친다면 그 주소를 넣습니다.
           </small>
         </label>
+        {plainHttp(form.base_url) && (
+          <p className="banner warn" role="status">
+            <CircleAlert size={15} />
+            http:// 주소는 암호화되지 않아 API Key와 헤더, AI 기능이 보내는 문서·질문이 네트워크에
+            그대로 드러날 수 있습니다. 이 PC의 로컬 LLM(localhost·127.0.0.1)이 아니라면 https://
+            주소를 쓰세요.
+          </p>
+        )}
         <label>
           API Key
           <SecretInput
             label="API Key"
             value={keys.api_key}
+            saved={form.has_api_key}
+            stale={moved}
             onChange={(value) => setKey('api_key', value)}
             placeholder={
               moved
@@ -307,12 +296,15 @@ export default function LlmSettings() {
                 onChange={(e) => setHeader(index, { name: e.target.value })}
                 placeholder="헤더 이름"
               />
-              <input
-                aria-label={`헤더 ${index + 1} 값`}
+              {/* The field keeps its name "헤더 1 값"; its buttons say "헤더 1의 값 …", so looking the field up by its
+                  name (a person's screen reader, an AI tool's fill) finds the field alone. */}
+              <SecretInput
+                label={`헤더 ${index + 1}의 값`}
+                name={`헤더 ${index + 1} 값`}
                 value={header.value}
-                spellCheck={false}
-                data-secret
-                onChange={(e) => setHeader(index, { value: e.target.value })}
+                saved={!!header.has_value}
+                stale={!!header.has_value && movedServer}
+                onChange={(value) => setHeader(index, { value })}
                 placeholder={header.has_value ? '등록된 값 사용 중 · 바꾸려면 새 값 입력' : '값'}
               />
               <button
@@ -336,7 +328,7 @@ export default function LlmSettings() {
           <small>
             값의 {'{api_key}'}는 위 API Key로, {'{uuid}'}는 요청마다 새 ID로 바뀝니다. 기본 헤더와
             이름이 같으면 이 값을 보냅니다. 값은 API Key처럼 암호화해 저장하고 화면에 다시 보이지
-            않습니다.
+            않으며, 바꿀 때는 ‘다시 입력’으로 새 값을 넣습니다.
           </small>
         </fieldset>
         <details className="advanced">

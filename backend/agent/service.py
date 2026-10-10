@@ -173,6 +173,7 @@ class Service:
             "runs.list": self.runs_list, "runs.get": self.runs_get, "runs.delete": self.runs_delete,
             "runs.stats": self.runs_stats, "runs.active": self.runs_active,
             "wiki.list": self.wiki_list, "wiki.get": self.wiki_get, "wiki.save": self.wiki_save,
+            "wiki.compare": self.wiki_compare,
             "wiki.delete": self.wiki_delete, "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
             "wiki.delete_many": self.wiki_delete_many, "wiki.clear_analysis": self.wiki_clear_analysis,
             "wiki.trash": self.wiki_trash, "wiki.restore": self.wiki_restore, "wiki.purge": self.wiki_purge,
@@ -565,6 +566,26 @@ class Service:
             if row is None or row["content"].strip() != content:
                 index_text(db, [ident])
         return self.wiki_get({"id": ident})
+
+    def wiki_compare(self, p):
+        """What an edit that wiki.save refused meets, for the document window's conflict view; it changes nothing. The
+        document as it is now (without its HTML page), whether it changed since the editor opened it (its revision is
+        no longer `base_revision`; without one, whether its text differs from `base`), and three comparisons
+        (changes.diff) of the text the editor started from (`base`, which the window kept, as no earlier text is
+        stored), the editor's text (`content`) and the document's: what changed elsewhere (theirs), what the user
+        changed (ours), and what saving the editor's text over the document would change in it (overwrite)."""
+        from .changes import diff
+        base = text(p.get("base", ""), "편집을 시작한 문서", 80000, required=False)
+        content = text(p.get("content", ""), "문서", 80000, required=False)
+        revision = p.get("base_revision")
+        if revision is not None and (isinstance(revision, bool) or not isinstance(revision, int)):
+            raise UserError("문서 버전(base_revision)을 확인해 주세요.")
+        doc = self.document(p.get("id"))
+        current = doc["content"]
+        return {"document": doc,
+                "changed": doc["revision"] != revision if revision is not None else current != base,
+                "diffs": {"theirs": diff(base, current), "ours": diff(base, content),
+                          "overwrite": diff(current, content)}}
 
     def wiki_delete(self, p):
         """Move a document to the trash, where it waits TRASH_DAYS for the user to restore it (wiki.restore)."""

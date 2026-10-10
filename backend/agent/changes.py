@@ -1,6 +1,7 @@
 """What changed in a page or ticket between two imports of it: the lines the newer text added and removed, for the
 automatic routines that watch Confluence pages and JIRA tickets (routines.py). Only an excerpt of the changed lines is
-kept, so a job's results stay small however long the documents are."""
+kept, so a job's results stay small however long the documents are. The document window's edit conflict compares
+whole texts with the same line matching (diff)."""
 import bisect
 import difflib
 from collections import Counter
@@ -10,6 +11,8 @@ MAX_LINE = 400  # each cut to this many characters.
 # A stretch of lines with no line that occurs once on each side is compared with difflib, which takes time growing with
 # the square of its size: a longer one in blocks of about this many lines each side, where they are as far in.
 BLOCK = 400
+CONTEXT = 3  # Unchanged lines shown around each change of a document comparison (diff),
+MAX_DIFF_LINES = 3000  # and the most lines one comparison carries to the screen.
 
 
 def increasing(pairs):
@@ -102,3 +105,50 @@ def excerpt(change, limit=6000):
     if change["more"]:
         text += f"\n(바뀐 줄 {change['more']}개 더 있음)"
     return text[:limit]
+
+
+def lines_of(text):
+    """A text's lines as an editor numbers them, whatever its line breaks; a final line break starts no line of its
+    own."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def diff(before, after, context=CONTEXT, limit=MAX_DIFF_LINES):
+    """Two texts compared line by line as a unified diff, for the document window's edit conflict: {"added",
+    "removed", "hunks": [{"old_start", "new_start", "lines": [{"op": " ", "+" or "-", "text"}]}], "more"}. A hunk holds
+    changes with up to `context` unchanged lines around them and starts at those line numbers of each text (from 1);
+    `more` counts the changed lines left out past `limit` lines. Unlike compare(), blank lines count and every line keeps
+    its whole text, as the user chooses between the texts by them; lines that differ only in trailing spaces are the
+    same line."""
+    old, new = lines_of(before), lines_of(after)
+    # Each line once, in the order a reader goes through both texts: (op, text, line of the old text, line of the new
+    # one). A line one text lacks carries the number of that text's next line, where a hunk starting with it starts.
+    rows, i, j = [], 0, 0
+    kept = matches([line.rstrip() for line in old], [line.rstrip() for line in new])
+    for kept_i, kept_j in [*kept, (len(old), len(new))]:
+        rows += [("-", old[n], n + 1, j + 1) for n in range(i, kept_i)]
+        rows += [("+", new[n], kept_i + 1, n + 1) for n in range(j, kept_j)]
+        if kept_i < len(old):
+            rows.append((" ", new[kept_j], kept_i + 1, kept_j + 1))
+        i, j = kept_i + 1, kept_j + 1
+    changed = [index for index, row in enumerate(rows) if row[0] != " "]
+    hunks, shown, told = [], 0, 0
+    start = 0
+    while start < len(changed) and shown < limit:
+        # Changes no more than twice the context apart share one hunk, so no unchanged line shows twice.
+        end = start
+        while end + 1 < len(changed) and changed[end + 1] - changed[end] <= 2 * context + 1:
+            end += 1
+        part = rows[max(0, changed[start] - context):changed[end] + context + 1][:limit - shown]
+        if all(op == " " for op, _, _, _ in part):
+            break  # Cut short before its first change: the changes go to `more`.
+        hunks.append({"old_start": part[0][2], "new_start": part[0][3],
+                      "lines": [{"op": op, "text": text} for op, text, _, _ in part]})
+        shown += len(part)
+        told += sum(op != " " for op, _, _, _ in part)
+        start = end + 1
+    return {"added": sum(row[0] == "+" for row in rows), "removed": sum(row[0] == "-" for row in rows),
+            "hunks": hunks, "more": len(changed) - told}

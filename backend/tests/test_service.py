@@ -261,6 +261,86 @@ def test_an_edit_never_overwrites_text_that_changed_while_it_was_open(service):
     assert service.wiki_save({"id": doc["id"], "title": "새 문서", "content": "다시"})["content"] == "다시"
 
 
+def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(service):
+    """The document window keeps the text its editor opened (no earlier text is stored): wiki.compare sets it beside the
+    editor's text and the document's, so the user sees what changed elsewhere, what they changed and what saving over
+    the document would do, and nothing changes until they choose."""
+    base = "# 배포 계획\n\n- 월요일 준비\n- 화요일 배포\n- 금요일 회고"
+    doc = document(service, "배포 계획", base)
+    service.wiki_analyze({"id": doc["id"]})
+    theirs = service.wiki_save({"id": doc["id"], "title": "배포 계획",
+                                "content": "# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고"})
+    mine = base + "\n- 다음 주 점검"
+    with pytest.raises(UserError, match="다른 곳에서 문서가 바뀌었습니다"):
+        service.wiki_save({"id": doc["id"], "title": "배포 계획", "content": mine, "expected_revision": doc["revision"]})
+    stored = service.wiki_get({"id": doc["id"]})
+    conflict = service.dispatch("wiki.compare", {"id": doc["id"], "base_revision": doc["revision"], "base": base,
+                                                 "content": mine})
+    assert conflict["changed"] is True
+    assert {key: conflict["document"][key] for key in ("id", "title", "content", "revision")} == \
+        {key: theirs[key] for key in ("id", "title", "content", "revision")}
+    assert "html" not in conflict["document"]
+
+    def lines(change):
+        return [(line["op"], line["text"]) for hunk in change["hunks"] for line in hunk["lines"]]
+
+    elsewhere = conflict["diffs"]["theirs"]
+    assert (elsewhere["added"], elsewhere["removed"], elsewhere["more"]) == (1, 1, 0)
+    assert [(hunk["old_start"], hunk["new_start"]) for hunk in elsewhere["hunks"]] == [(1, 1)]
+    assert lines(elsewhere) == [(" ", "# 배포 계획"), (" ", ""), (" ", "- 월요일 준비"), ("-", "- 화요일 배포"),
+                                ("+", "- 목요일 배포"), (" ", "- 금요일 회고")]
+    assert [line for line in lines(conflict["diffs"]["ours"]) if line[0] != " "] == [("+", "- 다음 주 점검")]
+    # Saving over the document would take back what changed elsewhere and add what the user wrote.
+    assert [line for line in lines(conflict["diffs"]["overwrite"]) if line[0] != " "] == [
+        ("-", "- 목요일 배포"), ("+", "- 화요일 배포"), ("+", "- 다음 주 점검")]
+    # Only read: the document, its analysis state and its revision are as they were.
+    assert service.wiki_get({"id": doc["id"]}) == stored
+    # Saved over the revision the comparison showed, the user's text wins; compared again, nothing changed since.
+    saved = service.wiki_save({"id": doc["id"], "title": "배포 계획", "content": mine,
+                               "expected_revision": conflict["document"]["revision"]})
+    assert saved["content"] == mine and saved["revision"] == theirs["revision"] + 1
+    again = service.dispatch("wiki.compare", {"id": doc["id"], "base_revision": saved["revision"], "base": mine,
+                                              "content": mine})
+    assert again["changed"] is False
+    assert all(change == {"added": 0, "removed": 0, "hunks": [], "more": 0} for change in again["diffs"].values())
+    # Without a revision, a text that differs from the one the editor started from is a change.
+    assert service.dispatch("wiki.compare", {"id": doc["id"], "base": base, "content": mine})["changed"] is True
+    for bad in ({"base_revision": "1"}, {"base_revision": True}, {"base_revision": 1.5}):
+        with pytest.raises(UserError, match="base_revision"):
+            service.dispatch("wiki.compare", {"id": doc["id"], "base": base, "content": mine, **bad})
+    with pytest.raises(UserError, match="편집을 시작한 문서"):
+        service.dispatch("wiki.compare", {"id": doc["id"], "base": ["not text"], "content": mine})
+    with pytest.raises(UserError, match="문서"):
+        service.dispatch("wiki.compare", {"id": doc["id"], "base": base, "content": "x" * 80001})
+    # A document moved to the trash meanwhile is no conflict to compare: the window tells wiki.save's refusal.
+    service.wiki_delete({"id": doc["id"]})
+    with pytest.raises(UserError, match="찾을 수 없습니다"):
+        service.dispatch("wiki.compare", {"id": doc["id"], "base_revision": doc["revision"], "base": base,
+                                          "content": mine})
+
+
+def test_a_comparison_shows_changes_among_a_few_unchanged_lines_and_stays_bounded():
+    from agent.changes import diff
+    old = "\n".join(f"줄 {n}" for n in range(1, 31))
+    new = old.replace("줄 5", "다섯째 줄").replace("줄 9", "아홉째 줄").replace("줄 25", "스물다섯째 줄")
+    change = diff(old, new)
+    # Changes close together share a hunk; each hunk starts three unchanged lines before its first change.
+    assert [(hunk["old_start"], hunk["new_start"], len(hunk["lines"])) for hunk in change["hunks"]] == \
+        [(2, 2, 13), (22, 22, 8)]
+    assert (change["added"], change["removed"], change["more"]) == (3, 3, 0)
+    # Lines past the limit are counted, not sent; a hunk cut before its first change is left out whole.
+    cut = diff(old, new, limit=9)
+    assert [line["op"] for line in cut["hunks"][0]["lines"]] == [" ", " ", " ", "-", "+", " ", " ", " ", "-"]
+    assert len(cut["hunks"]) == 1 and cut["more"] == 3
+    assert diff(old, new, limit=2) == {"added": 3, "removed": 3, "hunks": [], "more": 6}
+    # Blank lines count, line breaks of any kind and trailing spaces do not.
+    assert diff("가\r\n\r\n나\r\n", "가\n\n나") == {"added": 0, "removed": 0, "hunks": [], "more": 0}
+    assert diff("가  \n나", "가\n나")["hunks"] == []
+    assert diff("가\n나", "가\n\n나")["hunks"][0]["lines"] == [
+        {"op": " ", "text": "가"}, {"op": "+", "text": ""}, {"op": " ", "text": "나"}]
+    assert diff("", "새 글")["hunks"] == [{"old_start": 1, "new_start": 1, "lines": [{"op": "+", "text": "새 글"}]}]
+
+
 def test_concurrent_edit_cannot_receive_old_analysis(service):
     doc = document(service)
     started, release = threading.Event(), threading.Event()
