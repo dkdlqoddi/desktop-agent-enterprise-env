@@ -13,7 +13,7 @@ from agent.db import FTS_DONE, Database, index_text
 from agent.html_document import page
 from agent.llm import UserError
 from agent.rtf_import import RtfImporter
-from agent.service import EXTRACT, Service
+from agent.service import EXTRACT, GRAPH_ALIASES, Service
 
 # Tests of the trigram index itself need an SQLite with FTS5 and its trigram tokenizer (3.34+); everything else runs on
 # either, as search does.
@@ -703,7 +703,7 @@ def test_the_document_list_comes_in_pages_and_by_filters(service, tmp_path):
     imported = service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})["doc_ids"]
     assert {d["id"] for d in service.wiki_list({"source": "markdown"})} == set(imported)
     assert {d["id"] for d in service.wiki_list({"source": "manual"})} == {d["id"] for d in docs}
-    assert service.wiki_list({"source": "jira", "limit": 5}) == {"documents": [], "next_cursor": None}
+    assert service.wiki_list({"source": "jira", "limit": 5}) == {"documents": [], "next_cursor": None, "total": 0}
     entries = [d for page in pages(service.wiki_list, {}, 1) for d in page["documents"]]
     assert len(entries) == 8 and len({d["id"] for d in entries}) == 8
     entry = next(d for d in entries if d["id"] in imported)
@@ -720,6 +720,70 @@ def test_the_document_list_comes_in_pages_and_by_filters(service, tmp_path):
     entry = next(d for d in service.wiki_list({"limit": 50})["documents"] if d["id"] in imported)
     assert [p["id"] for p in entry["parts"]] == [imported[0], imported[2]]
     assert len(service.wiki_list({})) == 9  # Without limit: every document, as before.
+
+
+def test_every_page_of_the_document_list_counts_the_documents_its_filters_keep(service, tmp_path):
+    """`total` is what a screen shows as the list's count while it holds a page or two: the documents the filters keep,
+    each part of an import counted as stats counts it, on every page and whatever the cursor."""
+    docs = [save(service, f"문서 {i}", f"내용 {i}") for i in range(5)]
+    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})["doc_ids"]
+    listed = pages(service.wiki_list, {}, 2)
+    assert [len(page["documents"]) for page in listed] == [2, 2, 2]
+    assert {page["total"] for page in listed} == {len(docs) + len(imported)} == {service.stats({})["documents"]}
+    assert service.wiki_list({"source": "markdown", "limit": 9})["total"] == len(imported)
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET status='ready',index_mode='wiki' WHERE id=?", (docs[0]["id"],))
+    assert {page["total"] for page in pages(service.wiki_list, {"analysis": "not_analyzed"}, 2)} == {7}
+    service.wiki_delete({"id": docs[1]["id"]})
+    assert service.wiki_list({"limit": 1})["total"] == 7
+
+
+def test_the_document_list_finds_a_text_where_the_screen_shows_it_and_a_keyword_by_its_aliases(service, tmp_path):
+    """`query` keeps the documents holding the text in their title, summary, keywords and the keywords' aliases, or in
+    where they came from; case, full-width letters and decomposed Hangul do not count. `keyword` keeps the documents
+    with the keyword or with the keyword an alias names. Searches leave both alone: their query is what they search."""
+    service.llm.extract = {
+        "summary": "인덱스 튜닝 요약",
+        "keywords": ["database", "index"],
+        "aliases": {"database": ["데이터베이스", "DB"]},
+        "relations": [],
+    }
+    tuning = service.wiki_analyze({"id": save(service, "Tuning Notes", "본문")["id"]})
+    plan = save(service, "주간 회의록", "Redis 클러스터 도입")
+    note = save(service, "메모", "다른 내용")
+    folder = tmp_path / "Projects 2026"
+    folder.mkdir()
+    (folder / "회의록.md").write_text("# 분기 계획\n\n내용", encoding="utf-8")
+    markdown = service.markdown_import({"path": str(folder / "회의록.md")})["doc_ids"][0]
+
+    def ids(**params):
+        whole = {d["id"] for d in service.wiki_list(params)}
+        page = service.wiki_list({**params, "limit": 50})
+        assert {d["id"] for d in page["documents"]} == whole and page["total"] == len(whole)
+        return whole
+
+    assert ids(query="회의록") == {plan["id"], markdown}  # A title, and the name of the file it came from.
+    assert ids(query="tuning notes") == ids(query="ＴＵＮＩＮＧ") == {tuning["id"]}
+    assert ids(query="인덱스 튜닝") == {tuning["id"]}  # The summary.
+    assert ids(query="datab") == ids(query="데이터베") == {tuning["id"]}  # A keyword, an alias.
+    assert ids(query="projects 2026") == ids(query=str(folder)) == {markdown}  # The folder, as typed or in any case.
+    assert ids(query="redis") == set()  # The text of the document is what a search finds.
+    assert ids(query="  ") == ids() == {tuning["id"], plan["id"], note["id"], markdown}
+    assert ids(query="%") == ids(query="회_록") == set()  # LIKE's wildcards are characters of their own.
+    assert ids(keyword="Database") == ids(keyword="데이터베이스") == ids(keyword="db") == {tuning["id"]}
+    assert ids(keyword="데이터") == set()  # A keyword matches whole.
+    assert ids(query="회의록", source="manual") == {plan["id"]}
+    service.wiki_delete({"id": tuning["id"]})
+    assert ids(keyword="database") == set()
+    # A search's query is the words it looks for; the list's filters are not among its own.
+    assert {d["id"] for d in service.wiki_search({"query": "회의록", "mode": "auto", "keyword": "x"})["documents"]}
+    with pytest.raises(UserError, match="200자"):
+        service.wiki_list({"query": "가" * 201})
+    for bad in (5, ["회의록"]):
+        with pytest.raises(UserError, match="query"):
+            service.wiki_list({"query": bad})
+    with pytest.raises(UserError, match="키워드"):
+        service.wiki_list({"keyword": "가" * 81})
 
 
 def test_a_page_request_is_checked(service):
@@ -885,6 +949,39 @@ def test_the_keyword_and_prompt_searches_match_aliases_and_the_word_search_does_
     assert analysis["wiki_keywords"] == ["index", "database", "결제"]
     assert [d["id"] for d in result["documents"]] == [english["id"]]
     assert result["documents"][0]["match"]["aliases"] == [{"keyword": "index", "alias": "색인"}]
+
+
+def test_the_graph_names_each_keyword_with_the_aliases_its_live_documents_gave(service):
+    """The knowledge graph's keyword filter finds a keyword by its other names, so each node carries them: names that
+    search compares the same are one, written as most documents wrote it, those given by more documents first; a
+    document in the trash gives none."""
+    analyzed(
+        service, "하나", "본문 하나", ["database", "index"], {"database": ["DB", "데이터베이스"], "index": ["색인"]}
+    )
+    analyzed(service, "둘", "본문 둘", ["database"], {"database": ["데이터베이스", "db", "디비"]})
+    third = analyzed(service, "셋", "본문 셋", ["database"], {"database": ["DB", "데이타베이스"]})
+    analyzed(service, "넷", "본문 넷", ["cache"], {})
+
+    def aliases():
+        return {node["id"]: node["aliases"] for node in service.wiki_graph({})["nodes"]}
+
+    assert aliases() == {
+        "database": ["DB", "데이터베이스", "데이타베이스", "디비"],
+        "index": ["색인"],
+        "cache": [],
+    }
+    service.wiki_delete({"id": third["id"]})
+    # DB and 데이터베이스 now have two documents each: the names come in the order search compares them.
+    assert aliases()["database"] == ["DB", "데이터베이스", "디비"]
+    with service.db.connect() as db:
+        db.executemany(
+            "INSERT INTO keyword_aliases VALUES (?, 'index', ?, ?)",
+            [
+                (next(d["id"] for d in service.wiki_list({}) if d["title"] == "하나"), f"색인{i}", f"색인{i}")
+                for i in range(12)
+            ],
+        )
+    assert len(aliases()["index"]) == GRAPH_ALIASES
 
 
 def test_aliases_go_with_their_keywords(service):

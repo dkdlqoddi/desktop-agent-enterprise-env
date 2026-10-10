@@ -1100,6 +1100,11 @@ input[type='checkbox'] {
 .document-filter small {
   white-space: nowrap;
 }
+.document-select select,
+.document-range input {
+  border-radius: 10px;
+  background: var(--inset);
+}
 .widget-edit {
   border-radius: 19px 19px 0 0;
   background: var(--accent-soft);
@@ -1180,6 +1185,10 @@ input[type='checkbox'] {
 }
 .workspace-page .document-row {
   padding: 16px 0;
+}
+/* The library's list in pages fills the window's height, the dashboard's few rows keep their box. */
+.workspace-page .document-list.paged {
+  max-height: max(360px, calc(100vh - 360px));
 }
 .workspace-page .document-title strong,
 .workspace-page .task-open strong {

@@ -157,6 +157,14 @@ const clip = (value, limit) => {
   return text.length > limit ? text.slice(0, limit - 1) + '…' : text;
 };
 const day = (value) => (value ? String(value).slice(0, 16).replace('T', ' ') : '—');
+// A keyword or alias as the app compares them: compatibility forms as their plain letters, case and runs of white
+// space left out.
+const fold = (value) =>
+  String(value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
 
 // Text from documents, web pages, the screen or the LLM, between markers with an ID made for this answer: the
 // text cannot know the ID, so it cannot end itself early and pose as this server or the user (see INSTRUCTIONS). Data
@@ -196,6 +204,7 @@ function documentLine(doc, index) {
   return lines;
 }
 
+// A search's answer. A page of a search other than prompt carries next_cursor, which the next request sends back.
 function searchText(result, query, mode, limit) {
   const docs = result.documents.slice(0, limit);
   const lines = [];
@@ -206,6 +215,11 @@ function searchText(result, query, mode, limit) {
     if (lines.length) lines.push('');
     lines.push(...documentLine(doc, index));
     const match = doc.match ?? {};
+    // The keywords the document matched by another name the AI analysis gave them (데이터베이스 for database).
+    if (match.aliases?.length)
+      lines.push(
+        `   matched by alias: ${match.aliases.map((item) => `${item.alias} → ${item.keyword}`).join(', ')}`,
+      );
     if (match.selected || match.reason) lines.push(`   AI pick: ${match.reason || 'selected'}`);
     if (match.sections?.length)
       lines.push(`   sections: ${match.sections.map((section) => section.title).join(' / ')}`);
@@ -215,8 +229,12 @@ function searchText(result, query, mode, limit) {
       );
   });
   const head = `${result.total} document(s) match "${query}" (mode ${mode}). Showing ${docs.length}.`;
+  // The cursor is the backend's own (letters, digits, - and _), never text of a document.
+  const more = result.next_cursor
+    ? ` More: search_documents with the same query and mode, cursor="${result.next_cursor}".`
+    : '';
   const next = docs.length
-    ? 'Read a document with get_document(id).'
+    ? `Read a document with get_document(id).${more}`
     : 'Try other words, mode "prompt", or list_documents.';
   return lines.length ? withData(head, lines.join('\n'), next) : `${head}\n${next}`;
 }
@@ -334,7 +352,7 @@ const TOOLS = [
     'search_documents',
     '문서 검색',
     'read',
-    "Search the user's private work wiki: documents imported from Confluence, JIRA, Office, RTF and text files, plus notes written in the app (mostly Korean). Returns ranked documents with id, source, summary, keywords and the passages that matched. Read one in full with get_document. mode: auto (default; local word search like the app's search box, fast; extracted keywords also match by their Korean/English aliases), word (every word must occur), keyword (comma-separated keywords the AI extracted, or their aliases: 데이터베이스 finds database), prompt (the LLM rewrites the question and picks documents and sections; slow).",
+    "Search the user's private work wiki: documents imported from Confluence, JIRA, Office, RTF and text files, plus notes written in the app (mostly Korean). Returns ranked documents with id, source, summary, keywords, the passages that matched and the keywords matched by an alias. Read one in full with get_document. mode: auto (default; local word search like the app's search box, fast; extracted keywords also match by their Korean/English aliases), word (every word must occur), keyword (comma-separated keywords the AI extracted, or their aliases: 데이터베이스 finds database), prompt (the LLM rewrites the question and picks documents and sections; slow). Results other than prompt's come in pages: pass the cursor of the previous answer for the next.",
     {
       query: string('Words or a question. "Quoted phrases" are matched as written.', {
         required: true,
@@ -344,12 +362,30 @@ const TOOLS = [
         default: 'auto',
       }),
       limit: integer('Results to show (1-50, default 10).', { minimum: 1, maximum: 50 }),
+      cursor: string(
+        'The cursor of the previous answer of the same query and mode, for its next results (not for mode "prompt").',
+      ),
       wait_seconds: WAIT,
     },
     async (args, ctx) => {
       const mode = args.mode ?? 'auto';
-      const result = await ctx.call('wiki.search', { query: args.query, mode });
-      return searchText(result, args.query, mode, args.limit ?? 10);
+      const limit = args.limit ?? 10;
+      // The AI search picks its few documents at once; the others come a page at a time.
+      if (mode === 'prompt') {
+        if (args.cursor)
+          throw new ToolError(
+            'mode "prompt" answers at once and has no cursor: search again instead.',
+          );
+        const result = await ctx.call('wiki.search', { query: args.query, mode });
+        return searchText(result, args.query, mode, limit);
+      }
+      const result = await ctx.call('wiki.search', {
+        query: args.query,
+        mode,
+        limit,
+        ...(args.cursor ? { cursor: args.cursor } : {}),
+      });
+      return searchText(result, args.query, mode, limit);
     },
     { slow: (args) => args.mode === 'prompt', annotations: llm(readOnly) },
   ),
@@ -379,28 +415,35 @@ const TOOLS = [
     'list_documents',
     '문서 목록',
     'read',
-    'List wiki documents, most recently updated first, optionally filtered by text in the title, summary or keywords, by source, by AI analysis state or by an extracted keyword. Use it to browse; use search_documents to find content.',
+    'List wiki documents, most recently updated first, optionally filtered by text in the title, summary, keywords (or their Korean/English aliases) or where they came from (a file path, a page address, a ticket key), by source, by AI analysis state, by an extracted keyword or its alias, or by when they were updated. Use it to browse; use search_documents to find content. Long lists come in pages: pass the cursor of the previous answer with the same filters.',
     {
-      query: string('Text contained in the title, summary, beginning or keywords.'),
+      query: string(
+        'Text contained in the title, summary, keywords (or their aliases) or the source path or address.',
+      ),
       source: string('Where documents came from (manual = written in the app).', {
         enum: SOURCE_KINDS,
       }),
       analysis: string('AI analysis state.', {
         enum: ['analyzed', 'not_analyzed', 'failed', 'running'],
       }),
-      keyword: string('An extracted keyword (exact).'),
+      keyword: string('An extracted keyword or one of its aliases (exact).'),
+      updated_from: string(
+        'Only documents updated at or after this time (ISO 8601 with a time zone).',
+      ),
+      updated_to: string('Only documents updated before this time (ISO 8601 with a time zone).'),
       limit: integer('Documents to return (1-200, default 30).', { minimum: 1, maximum: 200 }),
-      offset: integer('Documents to skip (default 0).', { minimum: 0 }),
+      cursor: string('The cursor of the previous answer, to continue after it.'),
     },
     async (args, ctx) => {
       const page = await ctx.call('documents.query', { ...args, limit: args.limit ?? 30 });
-      const head = `${page.total} document(s). Showing ${page.documents.length ? `${page.offset + 1}–${page.offset + page.documents.length}` : 'none'}.`;
+      const head = `${page.total} document(s)${args.cursor ? ', continued' : ''}. Showing ${page.documents.length}.`;
       if (!page.documents.length) return head;
-      const next = page.offset + page.documents.length;
       return withData(
         head,
         page.documents.flatMap((doc) => documentLine(doc)).join('\n'),
-        next < page.total ? `More: list_documents(offset=${next}).` : '',
+        page.next_cursor
+          ? `More: list_documents with the same filters and cursor="${page.next_cursor}".`
+          : '',
       );
     },
   ),
@@ -408,9 +451,9 @@ const TOOLS = [
     'knowledge_graph',
     '지식 관계도',
     'read',
-    "The knowledge graph the AI analysis built: keywords with how many documents mention them, and labeled relations between keywords. With keyword, shows that keyword's relations and documents.",
+    "The knowledge graph the AI analysis built: keywords with how many documents mention them, and labeled relations between keywords. With keyword (or one of its Korean/English aliases), shows that keyword's aliases, relations and documents.",
     {
-      keyword: string('Focus on this keyword.'),
+      keyword: string('Focus on this keyword, or the keyword this alias names.'),
       limit: integer('Keywords to show without a focus (1-300, default 40).', {
         minimum: 1,
         maximum: 300,
@@ -423,21 +466,34 @@ const TOOLS = [
       const head = `${graph.total_keywords} keywords, ${graph.total_relations} relations in the wiki.`;
       const lines = [];
       if (args.keyword) {
-        const key = args.keyword.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-        const node = graph.nodes.find((item) => item.id === key);
+        const key = fold(args.keyword);
+        const aliases = (item) => (item.aliases ?? []).map(fold);
+        // A keyword, or the keyword one of its aliases names: 데이터베이스 finds database.
+        const node =
+          graph.nodes.find((item) => item.id === key) ??
+          graph.nodes.find((item) => aliases(item).includes(key));
         if (!node) {
           const similar = graph.nodes
-            .filter((item) => item.id.includes(key) || key.includes(item.id))
+            .filter(
+              (item) =>
+                item.id.includes(key) ||
+                key.includes(item.id) ||
+                aliases(item).some((alias) => alias.includes(key)),
+            )
             .slice(0, 10)
             .map((item) => item.id);
           return similar.length
             ? withData(`${head}\nNo keyword "${key}". Similar keywords:`, similar.join(', '))
             : `${head}\nNo keyword "${key}", nor a similar one.`;
         }
+        if (node.id !== key) lines.push(`"${key}" is an alias of the keyword "${node.id}".`);
         lines.push(`"${node.id}" appears in ${node.count} document(s):`);
+        if (node.aliases?.length) lines.push(`aliases: ${node.aliases.join(', ')}`);
         for (const id of node.docs.slice(0, 30))
           lines.push(`- ${clip(titles.get(id) ?? id, 300)} — id: ${id}`);
-        const related = graph.edges.filter((edge) => edge.source === key || edge.target === key);
+        const related = graph.edges.filter(
+          (edge) => edge.source === node.id || edge.target === node.id,
+        );
         if (related.length) lines.push('relations:');
         for (const edge of related.slice(0, 50))
           lines.push(`- ${edge.source} —[${edge.label}]→ ${edge.target} (${edge.count} doc(s))`);
@@ -1499,12 +1555,14 @@ class McpServer {
       description: 'Every method, REST route, MCP tool and access level of the local API.',
       mimeType: 'text/markdown',
     };
-    const offset = Number.parseInt(params.cursor ?? '0', 10) || 0;
+    // The pages of the document list, by its own cursor: the first holds the manual too.
+    const cursor = typeof params.cursor === 'string' && params.cursor ? params.cursor : undefined;
     let page;
     try {
-      page = await this.call('documents.query', { limit: 100, offset }, access);
-    } catch {
-      return { resources: offset ? [] : [manual] };
+      page = await this.call('documents.query', { limit: 100, ...(cursor && { cursor }) }, access);
+    } catch (error) {
+      if (cursor) throw new RpcError(-32602, `Invalid params: ${messageOf(error)}`);
+      return { resources: [manual] };
     }
     const resources = page.documents.map((doc) => ({
       uri: DOCUMENT_URI + encodeURIComponent(doc.id),
@@ -1513,10 +1571,9 @@ class McpServer {
       description: clip(doc.summary || doc.excerpt || '', 200),
       mimeType: 'text/markdown',
     }));
-    const next = offset + page.documents.length;
     return {
-      resources: offset ? resources : [manual, ...resources],
-      ...(next < page.total ? { nextCursor: String(next) } : {}),
+      resources: cursor ? resources : [manual, ...resources],
+      ...(page.next_cursor ? { nextCursor: page.next_cursor } : {}),
     };
   }
 

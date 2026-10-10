@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   api,
+  type DocumentQuery,
   type JobsSnapshot,
   type Method,
   type Preferences,
@@ -18,7 +19,7 @@ import {
   type Stats,
   type WikiDocument,
 } from '@/lib/api';
-import { QueryCache, type QueryState, type Tag } from '@/lib/query';
+import { QueryCache, type PagedState, type QueryState, type Tag } from '@/lib/query';
 import { createStore, useStore, type Store } from '@/lib/store';
 import type { AdminSection, SiteDraft } from './admin';
 import { JobsFeed, NO_JOBS, type ImportJobs, type JobsState } from './import-jobs';
@@ -90,7 +91,8 @@ export type AppStores = {
   // The search session and the toast queue belong to components of their own (app.tsx); the actions reach them here.
   search: { current: SearchSession | null };
   attachToasts: (push: (toast: ToastMessage) => void) => () => void;
-  // Loads the document and template lists and the counts, and keeps them loaded: every screen may show them.
+  // Loads the templates and the counts, and keeps them loaded: every screen may show them. The documents load a page
+  // at a time where a list shows them (useDocumentPages), the whole list only where a form offers every document.
   loadLibrary: () => Promise<void>;
 };
 
@@ -112,7 +114,7 @@ export const INITIAL_SETTINGS: Settings = {
   load_error: '',
 };
 const INITIAL_PREFERENCES: Preferences = { widgets: null, ai_answer: true, web_assist: false };
-const LIBRARY: Method[] = ['prompts.list', 'wiki.list', 'stats'];
+const LIBRARY: Method[] = ['prompts.list', 'stats'];
 
 export function createAppStores(): AppStores {
   const session = createStore<Session>({
@@ -368,9 +370,56 @@ const NO_STATS: Stats = { prompts: 0, documents: 0, keywords: 0, relations: 0 };
 // The lists every screen may show, which the app loads as it starts and keeps loaded (AppStores.loadLibrary): a
 // component that shows them asks for nothing, also not before the Wiki is known.
 const LOADED = { load: false };
-export const useDocuments = () => useQuery<WikiDocument[]>('wiki.list', {}, LOADED).data ?? NONE;
+// Every document at once, for a form that offers them all (a task's source document): loaded while one is shown and
+// again when the documents change. Lists of documents load in pages instead (useDocumentPages).
+export const useDocuments = () => useQuery<WikiDocument[]>('wiki.list').data ?? NONE;
 export const usePrompts = () => useQuery<Prompt[]>('prompts.list', {}, LOADED).data ?? NONE;
 export const useStats = () => useQuery<Stats>('stats', {}, LOADED).data ?? NO_STATS;
+
+// A page of the document list holds this many documents, as many again coming as the list is scrolled.
+export const DOCUMENT_PAGE = 100;
+const NO_PAGES: PagedState<WikiDocument> = {
+  items: [],
+  total: null,
+  next: null,
+  loading: false,
+  error: null,
+  loaded: false,
+};
+
+// The document list in pages for `filters` (wiki.list with limit and cursor, see QueryCache.list): the documents loaded
+// so far, how many the filters keep in all (total, the backend's count, never the loaded pages'), the next page as the
+// list is scrolled (more) and all of them (loadAll). It loads when a component first shows it and again from its first
+// page when the documents change, showing what it had meanwhile; a list of other filters that has not come yet shows the
+// last one's documents until it has, so changing a filter neither empties the list nor makes it jump. null filters
+// load nothing.
+export function useDocumentPages(filters: DocumentQuery | null) {
+  const { queries } = useStores();
+  const key = filters && QueryCache.key('wiki.list', filters);
+  // The list follows the filters' content (key), not the object they come in.
+  const list = useMemo(
+    () => (filters ? queries.list<WikiDocument>('wiki.list', filters, DOCUMENT_PAGE) : null),
+    [queries, key],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => (list ? list.subscribe(listener) : () => {}),
+    [list],
+  );
+  const read = () => list?.state ?? NO_PAGES;
+  const state = useSyncExternalStore(subscribe, read, read);
+  // The last list that had come, kept from drawing to drawing as React has it (a state set while drawing).
+  const [shown, setShown] = useState(state);
+  if (shown !== state && (state.loaded || !shown.loaded)) setShown(state);
+  const more = useCallback(() => list?.more() ?? Promise.resolve(), [list]);
+  const reload = useCallback(() => list?.reload() ?? Promise.resolve(), [list]);
+  const loadAll = useCallback(
+    (max: number) => list?.loadAll(max) ?? Promise.resolve(NO_PAGES.items),
+    [list],
+  );
+  const view = state.loaded ? state : { ...shown, loading: true, error: state.error };
+  // current: whether what is shown is the list of these filters, not the last one's while it comes.
+  return { ...view, current: state.loaded, more, reload, loadAll };
+}
 
 // Everything at once, as the screens read it before the state was split: a component that uses it draws again with
 // any change of any slice. Kept for code written against it; the screens use the hooks above.

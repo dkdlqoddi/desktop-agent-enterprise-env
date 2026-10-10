@@ -57,6 +57,8 @@ def like(value):
 # The other names the analysis keeps of each keyword, at most this many (EXTRACT asks for as many): its Korean or
 # English form, an abbreviation or another spelling, by which a search finds the keyword's documents (keyword_aliases).
 MAX_ALIASES = 5
+# The other names of a keyword the knowledge graph carries, of those its documents gave (wiki.graph).
+GRAPH_ALIASES = 8
 
 
 def found_aliases(value, keys):
@@ -701,9 +703,10 @@ class Service:
         return docs
 
     def wiki_list(self, p):
-        """The live documents, the last updated first; `source`, `analysis` and `updated_from`/`updated_to` keep those
-        they name (paging.Filters). With `limit` or `cursor` one page of them (paging): {documents, next_cursor}."""
-        filters = paging.Filters.of(p)
+        """The live documents, the last updated first; `source`, `analysis`, `updated_from`/`updated_to`, `query` and
+        `keyword` keep those they name (paging.Filters). With `limit` or `cursor` one page of them (paging):
+        {documents, next_cursor, total}."""
+        filters = paging.Filters.of(p, listing=True)
         test, args = filters.sql("d") if filters else ("1", [])
         if paging.wanted(p):
             return self.wiki_page(p, filters, test, args)
@@ -724,11 +727,13 @@ class Service:
     def wiki_page(self, p, filters, test, args):
         """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. An import
         saved in parts is one entry, its document updated last of those the filters keep, with the import's
-        documents in `parts` ([] for a document not saved in parts)."""
+        documents in `parts` ([] for a document not saved in parts). `total` counts the documents the filters keep, as
+        stats counts them (each part of an import is one), so a screen shows how many there are while it has a page."""
         limit = paging.size(p, "문서 목록은", 500)
         after = paging.decode(p, "list", (str, str))
         entries = []
         with self.db.connect() as db:
+            total = db.execute(f"SELECT count(*) FROM documents d WHERE d.{LIVE} AND {test}", args).fetchone()[0]
             while len(entries) <= limit:
                 # Before the cursor's entry: written so the index is searched from it rather than read from the top.
                 keyset, keys = (
@@ -759,9 +764,10 @@ class Service:
                     if len(entries) > limit:
                         break
         if len(entries) <= limit:
-            return {"documents": entries, "next_cursor": None}
+            return {"documents": entries, "next_cursor": None, "total": total}
         last = entries[limit - 1]
-        return {"documents": entries[:limit], "next_cursor": paging.encode("list", last["updated_at"], last["id"])}
+        cursor = paging.encode("list", last["updated_at"], last["id"])
+        return {"documents": entries[:limit], "next_cursor": cursor, "total": total}
 
     def wiki_get(self, p):
         return self.document(p.get("id"), html=True)
@@ -1266,18 +1272,54 @@ class Service:
     def wiki_search(self, p):
         return self.search.run(p)
 
+    @staticmethod
+    def graph_aliases(db):
+        """The other names of each keyword of the live documents (keyword_aliases), by which the graph's keyword filter
+        finds it, a Korean name finding the English keyword: {keyword: [alias]}. Names that search compares the same
+        (DB, db) are one, written as most documents wrote it; those most documents gave come first, at most
+        GRAPH_ALIASES of a keyword."""
+        from .search import ALIASES
+
+        found = {}
+        for r in db.execute(
+            f"""SELECT a.keyword, a.normalized, a.alias, count(*) AS count FROM {ALIASES}
+            GROUP BY a.keyword, a.normalized, a.alias"""
+        ):
+            # {normalized: [documents, {written form: documents}]}
+            name = found.setdefault(r["keyword"], {}).setdefault(r["normalized"], [0, {}])
+            name[0] += r["count"]
+            name[1][r["alias"]] = r["count"]
+        return {
+            key: [
+                min(forms.items(), key=lambda form: (-form[1], form[0]))[0]
+                for _, (_, forms) in sorted(names.items(), key=lambda item: (-item[1][0], item[0]))[:GRAPH_ALIASES]
+            ]
+            for key, names in found.items()
+        }
+
     def wiki_graph(self, _):
+        """The knowledge graph: the most frequent keywords of the live documents with the documents of each and the
+        other names the analysis gave it (`aliases`, see graph_aliases), and the relations between those keywords."""
         with self.db.connect() as db:
             # Lists show up to 1,000 keywords; the graph views draw the most frequent of them.
             live = f"JOIN documents d ON d.id=k.doc_id AND d.{LIVE}"
             nodes = {
-                r["keyword"]: {"id": r["keyword"], "label": r["keyword"], "count": r["count"], "docs": []}
+                r["keyword"]: {
+                    "id": r["keyword"],
+                    "label": r["keyword"],
+                    "count": r["count"],
+                    "docs": [],
+                    "aliases": [],
+                }
                 for r in db.execute(f"""SELECT k.keyword,count(*) AS count FROM keywords k {live}
                          GROUP BY k.keyword ORDER BY count DESC,k.keyword LIMIT 1000""")
             }
             for r in db.execute(f"SELECT k.doc_id,k.keyword FROM keywords k {live}"):
                 if r["keyword"] in nodes:
                     nodes[r["keyword"]]["docs"].append(r["doc_id"])
+            for key, aliases in self.graph_aliases(db).items():
+                if key in nodes:
+                    nodes[key]["aliases"] = aliases
             edges = {}
             for r in db.execute(f"SELECT k.doc_id,k.source,k.target,k.label FROM relations k {live}"):
                 if r["source"] in nodes and r["target"] in nodes:

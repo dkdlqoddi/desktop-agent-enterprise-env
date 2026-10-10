@@ -375,6 +375,15 @@
 .panel-list > button > span {
   overflow-wrap: anywhere;
 }
+/* The other name of a keyword that the filter found it by: 데이터베이스 for database. */
+.keyword-alias {
+  font-style: normal;
+  color: var(--muted);
+}
+.explorer-detail > p.keyword-aliases {
+  margin-top: -6px;
+  overflow-wrap: anywhere;
+}
 .panel-list > button small {
   flex-shrink: 0;
   font-size: 0.6875rem;

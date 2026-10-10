@@ -100,12 +100,12 @@ const METHODS = {
   ),
   'documents.query': method(
     'read',
-    '문서 목록: 검색어·출처·AI 분석 여부·키워드로 거르고 나누어 받기',
+    '문서 목록: 글·키워드(한/영 별칭 포함)·출처·AI 분석 여부·수정 시각으로 거르고 limit·cursor로 나누어 받기 (total은 조건에 맞는 문서 수)',
   ),
   'documents.get': method('read', '문서 하나: 본문(Markdown)·출처·키워드·관계·목차'),
   'wiki.list': method(
     'read',
-    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로) source·analysis·updated_from·updated_to로 거르기',
+    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로, total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기',
   ),
   'wiki.get': method('read', '문서 하나 (HTML 문서는 HTML 페이지 포함)'),
   'wiki.source_markdown': method('read', '가져온 문서의 Markdown 원문'),
@@ -157,7 +157,7 @@ const METHODS = {
     slow: true,
   }),
   'wiki.clear_analysis': method('write', '여러 문서의 AI 분석 결과 지우기'),
-  'wiki.graph': method('read', '지식 관계도: 키워드·관계·문서'),
+  'wiki.graph': method('read', '지식 관계도: 키워드(한/영 별칭 aliases 포함)·관계·문서'),
   'analysis.start': method('write', '여러 문서 AI 분석 시작 (백그라운드)'),
   'analysis.status': method('read', '여러 문서 AI 분석 진행 상황'),
   'analysis.cancel': method('write', '여러 문서 AI 분석 중지'),
@@ -528,16 +528,21 @@ const GROUPS = [
     description:
       'Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML 페이지도 함께 가집니다. 검색과 LLM은 본문을 읽습니다.',
     routes: [
-      route('GET', '/documents', 'documents.query', '문서 목록 (거르기·나누어 받기)', {
-        query: string('제목·요약·본문 앞부분·키워드에 들어 있는 글'),
-        source: string('출처 (manual = 직접 쓴 문서)', { enum: SOURCE_KINDS }),
-        analysis: string('AI 분석 여부', {
-          enum: ['analyzed', 'not_analyzed', 'failed', 'running'],
-        }),
-        keyword: string('추출 키워드 (정확히 일치)'),
-        limit: integer('최대 개수 1~500', { default: 50, minimum: 1, maximum: 500 }),
-        offset: integer('건너뛸 개수', { default: 0, minimum: 0 }),
-      }),
+      route(
+        'GET',
+        '/documents',
+        'documents.query',
+        '문서 목록: 최근에 고친 것부터, 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)',
+        {
+          query: string(
+            '제목·요약·키워드(와 그 한/영 별칭)·출처(파일 경로·페이지 주소·티켓 키)에 들어 있는 글 (최대 200자)',
+          ),
+          keyword: string('추출 키워드나 그 별칭 (정확히 일치, 예: 데이터베이스 → database)'),
+          ...DOCUMENT_FILTERS,
+          limit: integer('한 번에 받을 개수 1~500', { default: 50, minimum: 1, maximum: 500 }),
+          cursor: string('앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)'),
+        },
+      ),
       route('POST', '/documents', 'wiki.save', '새 Markdown 문서 저장', DOCUMENT_BODY),
       route('GET', '/documents/{id}', 'documents.get', '문서 하나', {
         id: ID,
@@ -661,7 +666,12 @@ const GROUPS = [
       route('POST', '/analysis/dismiss', 'analysis.dismiss', '끝난 AI 분석 작업 지우기', {
         id: string('작업 ID', { required: true }),
       }),
-      route('GET', '/graph', 'wiki.graph', '지식 관계도: 키워드(최대 1,000개)·관계·문서'),
+      route(
+        'GET',
+        '/graph',
+        'wiki.graph',
+        '지식 관계도: 키워드(최대 1,000개, 저마다 한/영 별칭 aliases)·관계·문서',
+      ),
     ],
   },
   {

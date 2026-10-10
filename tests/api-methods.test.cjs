@@ -236,46 +236,65 @@ test("reaches other computers' shared folders from AI tools only where the user 
   assert.equal(lists.length, looked);
 });
 
-test('lists documents filtered and paged, with their analysis state', async () => {
-  const { methods } = setup();
+test('lists documents through the backend: its filters and pages, nothing filtered here', async () => {
+  // The backend's pages of the list: the first, and the one its cursor continues with.
+  const pages = {
+    first: { documents: DOCS.slice(0, 2), next_cursor: 'c2', total: 4 },
+    c2: { documents: DOCS.slice(2), next_cursor: null, total: 4 },
+  };
+  const { methods, calls } = setup({
+    'wiki.list': (params) => structuredClone(pages[params.cursor ?? 'first']),
+  });
   const query = methods['documents.query'];
-  const all = await query({});
-  assert.equal(all.total, 4);
+  const first = await query({});
+  assert.deepEqual(calls.at(-1), { method: 'wiki.list', params: { limit: 50 } });
+  assert.deepEqual([first.total, first.limit, first.next_cursor], [4, 50, 'c2']);
   assert.deepEqual(
-    all.documents.map((doc) => doc.analysis),
-    ['analyzed', 'failed', 'running', 'not_analyzed'],
+    first.documents.map((doc) => [doc.id, doc.analysis]),
+    [
+      ['a', 'analyzed'],
+      ['b', 'failed'],
+    ],
   );
+  const second = await query({ limit: 2, cursor: first.next_cursor });
+  assert.deepEqual(calls.at(-1).params, { limit: 2, cursor: 'c2' });
   assert.deepEqual(
-    (await query({ query: '캐시' })).documents.map((doc) => doc.id),
-    ['a'],
+    second.documents.map((doc) => doc.analysis),
+    ['running', 'not_analyzed'],
   );
-  assert.deepEqual(
-    (await query({ query: '로그인' })).documents.map((doc) => doc.id),
-    ['b'],
-  );
-  assert.deepEqual(
-    (await query({ source: 'manual' })).documents.map((doc) => doc.id),
-    ['a'],
-  );
-  assert.deepEqual(
-    (await query({ source: 'office' })).documents.map((doc) => doc.id),
-    ['c', 'd'],
-  );
-  assert.deepEqual(
-    (await query({ analysis: 'not_analyzed' })).documents.map((doc) => doc.id),
-    ['d'],
-  );
-  assert.deepEqual(
-    (await query({ keyword: '캐시' })).documents.map((doc) => doc.id),
-    ['a'],
-  );
-  const page = await query({ limit: 2, offset: 1 });
-  assert.deepEqual(
-    [page.total, page.offset, page.limit, page.documents.map((doc) => doc.id)],
-    [4, 1, 2, ['b', 'c']],
-  );
+  assert.equal(second.next_cursor, null);
+  // Every filter goes to the backend, which answers the page: the text and keyword trimmed, the empty ones left out.
+  await query({
+    query: ' 캐시 ',
+    keyword: '데이터베이스',
+    source: 'office',
+    analysis: 'not_analyzed',
+    updated_from: '2026-10-01T00:00:00+09:00',
+    updated_to: '2026-10-08T00:00:00+09:00',
+    limit: 5,
+    cursor: 'c2',
+  });
+  assert.deepEqual(calls.at(-1).params, {
+    limit: 5,
+    query: '캐시',
+    keyword: '데이터베이스',
+    source: 'office',
+    analysis: 'not_analyzed',
+    updated_from: '2026-10-01T00:00:00+09:00',
+    updated_to: '2026-10-08T00:00:00+09:00',
+    cursor: 'c2',
+  });
+  await query({ query: '  ', keyword: '', source: '', analysis: null, offset: 0 });
+  assert.deepEqual(calls.at(-1).params, { limit: 50 });
+  assert.equal(calls.filter((call) => call.method === 'wiki.list' && !call.params.limit).length, 0);
   await assert.rejects(query({ limit: 0 }), /limit/);
+  await assert.rejects(query({ limit: 501 }), /limit/);
   await assert.rejects(query({ source: 'dropbox' }), /source/);
+  await assert.rejects(query({ analysis: 'done' }), /analysis/);
+  await assert.rejects(query({ query: 'x'.repeat(201) }), /검색어/);
+  // An offset would answer the first page again and again: the caller is told to use the cursor.
+  await assert.rejects(query({ offset: 50 }), /next_cursor를 cursor로/);
+  await assert.rejects(query({ offset: '50' }), /next_cursor를 cursor로/);
 });
 
 test('leaves a document HTML page out unless asked', async () => {

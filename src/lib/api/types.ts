@@ -348,7 +348,9 @@ export type RestoreScheduled = {
   cancelled?: boolean;
 };
 export type Graph = {
-  nodes: { id: string; label: string; count: number; docs: string[] }[];
+  // `aliases`: the other names the AI analysis gave the keyword (its Korean or English form, an abbreviation), by which
+  // the keyword filter finds it; absent from a backend older than them.
+  nodes: { id: string; label: string; count: number; docs: string[]; aliases?: string[] }[];
   edges: (Relation & { count: number; docs: string[] })[];
   documents: { id: string; title: string }[];
   total_keywords: number;
@@ -390,17 +392,26 @@ export type SearchResult = {
 // What a document list (wiki.list) or a search other than prompt (wiki.search) is asked for besides its query: with
 // limit or cursor one page of it, whose next_cursor the next request sends back as cursor; and only the documents of
 // one source (manual: written here), one state of AI analysis, or updated from updated_from up to updated_to (ISO 8601
-// with a time zone; the end left out). Without limit and cursor the whole list comes as before.
+// with a time zone; the end left out). Without limit and cursor the whole list comes as before. The document list also
+// keeps only the documents holding `query` in their title, summary, keywords (or the keywords' aliases) or where they
+// came from, and those with the keyword `keyword` or the keyword it is an alias of; a search's query is its own.
 export type DocumentQuery = {
   limit?: number;
   cursor?: string;
-  source?: 'manual' | NonNullable<WikiDocument['source']>['kind'];
-  analysis?: 'analyzed' | 'not_analyzed' | 'failed' | 'running';
+  source?: DocumentSource;
+  analysis?: DocumentAnalysis;
   updated_from?: string;
   updated_to?: string;
+  query?: string;
+  keyword?: string;
 };
-// A page of the document list (wiki.list with limit or cursor): null next_cursor after the last page.
-export type DocumentPage = { documents: WikiDocument[]; next_cursor: string | null };
+// Where a document came from, as a list filters by it (manual: written in the app).
+export type DocumentSource = 'manual' | NonNullable<WikiDocument['source']>['kind'];
+// A document's AI analysis, as a list filters by it (electron/api-catalog.cjs analysisState).
+export type DocumentAnalysis = 'analyzed' | 'not_analyzed' | 'failed' | 'running';
+// A page of the document list (wiki.list with limit or cursor): null next_cursor after the last page. `total` counts
+// the documents the filters keep in all, each part of an import as one, as stats counts them.
+export type DocumentPage = { documents: WikiDocument[]; next_cursor: string | null; total: number };
 
 export type StorageInfo = {
   initialized: boolean;

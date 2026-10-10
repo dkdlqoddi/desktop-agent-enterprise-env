@@ -118,23 +118,44 @@ test('searches and reads documents as text the model can follow up on', async ()
             sections: [],
             reason: '',
             selected: false,
+            aliases: [{ keyword: 'cache', alias: '캐시' }],
           },
         },
       ],
-      plan: { terms: ['캐시'], keywords: [], explanation: '', intent: '' },
+      plan: { terms: ['캐시'], keywords: ['캐시'], explanation: '', intent: '' },
+      next_cursor: 'eyJzZWFyY2gi',
     },
     'documents.get': doc,
   });
   const found = await tool('search_documents', { query: '캐시', limit: '5' });
   assert.equal(found.isError, false);
+  // A search other than prompt comes a page at a time, the next one by the cursor of the answer.
   assert.deepEqual(calls.at(-1), {
     method: 'wiki.search',
-    params: { query: '캐시', mode: 'auto' },
+    params: { query: '캐시', mode: 'auto', limit: 5 },
   });
-  assert.match(found.content[0].text, /1 document\(s\) match "캐시"/);
-  assert.match(found.content[0].text, /id: d1/);
-  assert.match(found.content[0].text, /JIRA A-1/);
-  assert.match(found.content[0].text, /> 캐시를 도입합니다/);
+  const text = found.content[0].text;
+  assert.match(text, /1 document\(s\) match "캐시"/);
+  assert.match(text, /id: d1/);
+  assert.match(text, /JIRA A-1/);
+  assert.match(text, /> 캐시를 도입합니다/);
+  // The keyword the document matched by its alias is the app's data, inside the block; the cursor is the server's own.
+  assert.match(text, /matched by alias: 캐시 → cache\n/);
+  assert.doesNotMatch(outside(text), /matched by alias/);
+  assert.match(outside(text), /cursor="eyJzZWFyY2gi"/);
+  await tool('search_documents', { query: '캐시', mode: 'keyword', cursor: 'eyJzZWFyY2gi' });
+  assert.deepEqual(calls.at(-1).params, {
+    query: '캐시',
+    mode: 'keyword',
+    limit: 10,
+    cursor: 'eyJzZWFyY2gi',
+  });
+  // The AI search picks its documents at once, without pages.
+  await tool('search_documents', { query: '캐시', mode: 'prompt' });
+  assert.deepEqual(calls.at(-1).params, { query: '캐시', mode: 'prompt' });
+  const paged = await tool('search_documents', { query: '캐시', mode: 'prompt', cursor: 'x' });
+  assert.equal(paged.isError, true);
+  assert.match(paged.content[0].text, /no cursor/);
   const read = await tool('get_document', { id: 'd1' });
   assert.match(read.content[0].text, /^<<<untrusted [0-9a-f]{12}>>>\n# 캐시 도입 회의록/);
   assert.match(read.content[0].text, /Python API에 캐시를 도입합니다/);
@@ -278,13 +299,18 @@ test('offers the manual and every document as resources, page by page', async ()
     id: `d${i}`,
     title: `문서 ${i}`,
   }));
-  const { send } = setup({
-    'documents.query': (params) => ({
-      total: 150,
-      offset: params.offset,
-      limit: 100,
-      documents: params.offset ? documents.slice(0, 50) : documents,
-    }),
+  const { send, calls } = setup({
+    // The document list's pages, by its own cursor.
+    'documents.query': (params) => {
+      if (params.cursor && params.cursor !== 'next')
+        throw new Error('목록을 이어 받을 위치(cursor)가 올바르지 않습니다.');
+      return {
+        total: 150,
+        limit: 100,
+        next_cursor: params.cursor ? null : 'next',
+        documents: params.cursor ? documents.slice(0, 50) : documents,
+      };
+    },
     'documents.get': (params) => {
       if (params.id !== 'd 1') throw new Error('문서를 찾을 수 없습니다.');
       return { ...doc, id: 'd 1' };
@@ -293,10 +319,14 @@ test('offers the manual and every document as resources, page by page', async ()
   const first = (await send('resources/list', {}, 'read')).result;
   assert.equal(first.resources[0].uri, 'private-agent://manual');
   assert.equal(first.resources.length, 101);
-  assert.equal(first.nextCursor, '100');
-  const second = (await send('resources/list', { cursor: '100' }, 'read')).result;
+  assert.equal(first.nextCursor, 'next');
+  const second = (await send('resources/list', { cursor: 'next' }, 'read')).result;
+  assert.deepEqual(calls.at(-1).params, { limit: 100, cursor: 'next' });
   assert.equal(second.resources.length, 50);
   assert.equal(second.nextCursor, undefined);
+  // A cursor the list does not know is an error of the request, not an empty page.
+  const wrong = await send('resources/list', { cursor: '100' }, 'read');
+  assert.equal(wrong.error.code, -32602);
   const manual = (await send('resources/read', { uri: 'private-agent://manual' }, 'read')).result;
   assert.equal(manual.contents[0].text, '# manual all');
   const read = (await send('resources/read', { uri: 'private-agent://documents/d%201' }, 'read'))
@@ -306,6 +336,67 @@ test('offers the manual and every document as resources, page by page', async ()
   assert.equal(gone.error.code, -32002);
   const templates = (await send('resources/templates/list', {}, 'read')).result;
   assert.equal(templates.resourceTemplates[0].uriTemplate, 'private-agent://documents/{id}');
+});
+
+test('lists documents a page at a time with the backend filters, by the cursor of each answer', async () => {
+  const { tool, calls } = setup({
+    'documents.query': (params) => ({
+      total: 3,
+      limit: params.limit,
+      next_cursor: params.cursor ? null : 'eyJsaXN0Ig',
+      documents: params.cursor ? [{ ...doc, id: 'd3' }] : [doc, { ...doc, id: 'd2' }],
+    }),
+  });
+  const first = (
+    await tool('list_documents', { keyword: '데이터베이스', updated_from: '2026-10-01T00:00:00Z' })
+  ).content[0].text;
+  assert.deepEqual(calls.at(-1).params, {
+    keyword: '데이터베이스',
+    updated_from: '2026-10-01T00:00:00Z',
+    limit: 30,
+  });
+  assert.match(first, /^3 document\(s\)\. Showing 2\./);
+  assert.match(outside(first), /cursor="eyJsaXN0Ig"/);
+  const second = (
+    await tool('list_documents', { keyword: '데이터베이스', cursor: 'eyJsaXN0Ig', limit: 2 })
+  ).content[0].text;
+  assert.deepEqual(calls.at(-1).params, {
+    keyword: '데이터베이스',
+    cursor: 'eyJsaXN0Ig',
+    limit: 2,
+  });
+  assert.match(second, /^3 document\(s\), continued\. Showing 1\./);
+  assert.match(second, /id: d3/);
+  assert.doesNotMatch(second, /More:/);
+});
+
+test('finds a keyword of the knowledge graph by its alias, and names its aliases', async () => {
+  const { tool } = setup({
+    'wiki.graph': {
+      nodes: [
+        {
+          id: 'database',
+          label: 'database',
+          count: 2,
+          docs: ['d1'],
+          aliases: ['데이터베이스', 'DB'],
+        },
+        { id: 'index', label: 'index', count: 1, docs: ['d1'], aliases: ['색인'] },
+      ],
+      edges: [{ source: 'index', target: 'database', label: '구성', count: 1, docs: ['d1'] }],
+      documents: [{ id: 'd1', title: '튜닝 기록' }],
+      total_keywords: 2,
+      total_relations: 1,
+    },
+  });
+  const named = (await tool('knowledge_graph', { keyword: 'ＤＢ' })).content[0].text;
+  assert.match(named, /"db" is an alias of the keyword "database"/);
+  assert.match(named, /aliases: 데이터베이스, DB/);
+  assert.match(named, /index —\[구성\]→ database/);
+  assert.match(named, /튜닝 기록 — id: d1/);
+  const near = (await tool('knowledge_graph', { keyword: '데이터' })).content[0].text;
+  assert.match(near, /No keyword "데이터"\. Similar keywords:/);
+  assert.match(near, /database/);
 });
 
 test('offers prompts that steer the model to the tools', async () => {

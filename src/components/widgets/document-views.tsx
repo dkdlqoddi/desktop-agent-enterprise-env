@@ -1,10 +1,9 @@
 import { ArrowRight, FileText, Plus } from 'lucide-react';
-import { date, plain, type WikiDocument } from '@/lib/api';
-import { analyzed } from '../analysis';
-import { useActions, useDocuments, useStats } from '../state';
+import { date, plain, type DocumentPage, type DocumentQuery, type WikiDocument } from '@/lib/api';
+import { useActions, useQuery, useStats } from '../state';
 import { useWidgetFrame, WidgetHead } from '../dashboard';
 import EmptyState from '../empty-state';
-import { ICONS } from './documents';
+import { ICONS, LATEST } from './documents';
 import { Bars, Metrics } from './parts';
 
 type Kind = keyof typeof ICONS | 'written';
@@ -19,6 +18,13 @@ const SOURCES: Record<Kind, string> = {
   image: '이미지',
 };
 const kindOf = (doc: WikiDocument): Kind => doc.source?.kind ?? 'written';
+const NONE: never[] = [];
+
+// How many documents the filters keep, as the backend counts them: the total of a page of one document, so no widget
+// loads the whole list to count it.
+function useCount(filters: DocumentQuery) {
+  return useQuery<DocumentPage>('wiki.list', { ...filters, limit: 1 }).data?.total ?? 0;
+}
 
 function NoDocuments() {
   const { navigate } = useActions();
@@ -37,20 +43,23 @@ function NoDocuments() {
   );
 }
 
-// The latest documents as cards: where each came from, its summary and keywords.
+// The latest documents as cards: where each came from, its summary and keywords. They are the first page of the
+// document list, which says how many there are in all.
 export function DocumentCards() {
-  const documents = useDocuments();
+  const { data } = useQuery<DocumentPage>('wiki.list', LATEST);
+  const documents = data?.documents ?? NONE;
+  const count = data?.total;
   const { openDocument, newDocument, navigate } = useActions();
   const { size } = useWidgetFrame('documents');
   const shown = documents.slice(0, { s: 3, m: 4, l: 6, xl: 8 }[size]);
   return (
     <>
-      <WidgetHead count={documents.length}>
+      <WidgetHead count={count}>
         <button className="button secondary small" onClick={() => newDocument()}>
           <Plus size={14} />새 문서
         </button>
       </WidgetHead>
-      {!documents.length && <NoDocuments />}
+      {count === 0 && <NoDocuments />}
       <ul className="doc-cards">
         {shown.map((doc) => {
           const Icon = doc.source ? ICONS[doc.source.kind] : FileText;
@@ -80,28 +89,28 @@ export function DocumentCards() {
           );
         })}
       </ul>
-      {documents.length > shown.length && (
+      {!!count && count > shown.length && (
         <button className="text-button" onClick={() => navigate('library')}>
-          문서 {documents.length}개 모두 보기 <ArrowRight size={13} />
+          문서 {count.toLocaleString()}개 모두 보기 <ArrowRight size={13} />
         </button>
       )}
     </>
   );
 }
 
-// How much the Wiki holds and how much of it the LLM has analyzed.
+// How much the Wiki holds and how much of it the LLM has analyzed, as the backend counts them.
 export function DocumentStats() {
-  const documents = useDocuments();
   const stats = useStats();
-  const done = documents.filter(analyzed).length;
-  const share = documents.length ? Math.round((done / documents.length) * 100) : 0;
+  const done = useCount({ analysis: 'analyzed' });
+  const total = stats.documents;
+  const share = total ? Math.round((done / total) * 100) : 0;
   return (
     <>
       <WidgetHead />
       <Metrics
         items={[
-          { label: '문서', value: documents.length },
-          { label: 'AI 분석', value: done, note: `분석 전 ${documents.length - done}개` },
+          { label: '문서', value: total },
+          { label: 'AI 분석', value: done, note: `분석 전 ${Math.max(0, total - done)}개` },
           { label: '키워드', value: stats.keywords },
           { label: '관계', value: stats.relations },
         ]}
@@ -118,18 +127,30 @@ export function DocumentStats() {
   );
 }
 
-// How many documents each kind of source brought, the largest first.
+// How many documents each kind of source brought, the largest first: one count of the backend a kind.
+function useSourceCounts(): [Kind, number][] {
+  return [
+    ['written', useCount({ source: 'manual' })],
+    ['office', useCount({ source: 'office' })],
+    ['rtf', useCount({ source: 'rtf' })],
+    ['confluence', useCount({ source: 'confluence' })],
+    ['jira', useCount({ source: 'jira' })],
+    ['text', useCount({ source: 'text' })],
+    ['markdown', useCount({ source: 'markdown' })],
+    ['image', useCount({ source: 'image' })],
+  ];
+}
+
 export function DocumentSources() {
-  const documents = useDocuments();
-  const counts = new Map<Kind, number>();
-  for (const doc of documents) counts.set(kindOf(doc), (counts.get(kindOf(doc)) ?? 0) + 1);
+  const stats = useStats();
+  const counts = useSourceCounts().filter(([, value]) => value > 0);
   return (
     <>
-      <WidgetHead count={documents.length} />
-      {documents.length ? (
+      <WidgetHead count={stats.documents} />
+      {stats.documents ? (
         <Bars
           label="출처별 문서 수"
-          items={[...counts]
+          items={counts
             .sort((a, b) => b[1] - a[1])
             .map(([kind, value]) => ({ key: kind, label: SOURCES[kind], value }))}
         />

@@ -1,5 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -63,21 +63,25 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     await expect(row('설계 검토').locator('.status-label')).toHaveText('분석 전');
     await expect(documents.getByRole('checkbox')).toHaveCount(0);
 
-    // The library filters by it and counts each group.
+    // The library filters by it on the backend, which counts what each choice keeps.
     await openLibrary(page, '문서');
-    const filters = documents.getByRole('radiogroup', { name: 'AI 분석 여부' });
-    await expect(filters.getByRole('radio')).toHaveText(['전체5', 'AI 분석 완료1', '분석 전4']);
-    await filters.getByRole('radio', { name: /AI 분석 완료/ }).click();
+    const analysis = documents.getByRole('combobox', { name: 'AI 분석' });
+    const count = documents.locator('.document-filter small');
+    await expect(count).toHaveText('5개');
+    await analysis.selectOption({ label: 'AI 분석 완료' });
     await expect(documents.locator('.document-row')).toHaveCount(1);
-    await filters.getByRole('radio', { name: /분석 전/ }).click();
+    await expect(count).toHaveText('1개');
+    await analysis.selectOption({ label: '분석 전' });
     await expect(documents.locator('.document-row strong')).toHaveText([
       '회고 메모',
       '배포 체크리스트',
       '실패할 메모',
       '설계 검토',
     ]);
+    await expect(count).toHaveText('4개');
 
-    // Shift-click chooses the documents between two rows; the chosen ones are analyzed one by one.
+    // Shift-click chooses the documents between two rows; the chosen ones stay chosen in another filter that shows
+    // them, and are analyzed one by one.
     await documents.getByRole('checkbox', { name: '회고 메모 선택' }).check();
     await documents
       .getByRole('checkbox', { name: '실패할 메모 선택' })
@@ -90,6 +94,9 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     );
     await expect(toolbar.getByRole('button', { name: '분석 결과 지우기' })).toHaveCount(0);
     await page.screenshot({ path: 'test-results/documents-selected.png', fullPage: true });
+    await analysis.selectOption({ label: '전체' });
+    await expect(documents.locator('.document-row')).toHaveCount(5);
+    await expect(toolbar).toContainText('3개 선택');
     await toolbar.getByRole('button', { name: 'AI 분석', exact: true }).click();
     const job = documents.locator('.analysis-job');
     await expect(job.getByRole('status')).toContainText('선택한 문서를 차례로 분석하는 중');
@@ -127,17 +134,17 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     await job.getByText('분석하지 못한 문서 1건').click();
     await expect(job.locator('.job-results li')).toContainText('실패할 메모');
     await expect(job.locator('.job-results li')).toContainText('HTTP 503');
-    // Still in the 분석 전 filter: the failed document stays, the analyzed ones left it.
-    await expect(documents.locator('.document-row strong')).toHaveText([
-      '실패할 메모',
-      '설계 검토',
-    ]);
+    // Before the analysis is the document it did not reach; the failed one waits apart, to be tried again.
+    await analysis.selectOption({ label: '분석 전' });
+    await expect(documents.locator('.document-row strong')).toHaveText(['설계 검토']);
+    await analysis.selectOption({ label: '분석 실패' });
+    await expect(documents.locator('.document-row strong')).toHaveText(['실패할 메모']);
     await expect(row('실패할 메모').locator('.status-label')).toHaveText('분석 실패');
     await job.getByRole('button', { name: 'AI 분석 진행 상황 닫기' }).click();
     await expect(job).toHaveCount(0);
 
     // Taking back the analysis of two documents returns them to 분석 전.
-    await filters.getByRole('radio', { name: /AI 분석 완료/ }).click();
+    await analysis.selectOption({ label: 'AI 분석 완료' });
     await expect(documents.locator('.document-row strong')).toHaveText([
       '회고 메모',
       '배포 체크리스트',
@@ -153,10 +160,12 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
       .click();
     await expect(page.getByText('문서 2개의 AI 분석 결과를 지웠습니다.')).toBeVisible();
     await expect(documents.locator('.document-row strong')).toHaveText(['주간 회의록']);
-    await expect(filters.getByRole('radio')).toHaveText(['전체5', 'AI 분석 완료1', '분석 전4']);
+    await expect(count).toHaveText('1개');
+    await analysis.selectOption({ label: '분석 전' });
+    await expect(count).toHaveText('3개');
 
     // Deleting several documents asks once, in place, and moves them to the trash, from where they come back.
-    await filters.getByRole('radio', { name: /전체/ }).click();
+    await analysis.selectOption({ label: '전체' });
     await documents.getByRole('checkbox', { name: '실패할 메모 선택' }).check();
     await documents.getByRole('checkbox', { name: '설계 검토 선택' }).check();
     await toolbar.getByRole('button', { name: '삭제', exact: true }).click();
@@ -236,6 +245,167 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
     expect(errors).toEqual([]);
   } finally {
     release();
+    await app?.close();
+    await llm.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+test('documents: the library comes in pages filtered by the backend, drawn a window at a time, and acts on a choice across pages', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-pages-'));
+  const llm = await llmServer(({ system }) =>
+    system.includes('extract metadata')
+      ? {
+          summary: '데이터 저장소를 정리한 메모입니다.',
+          keywords: ['database', 'storage'],
+          aliases: { database: ['데이터베이스', 'DB'] },
+          relations: [{ source: 'database', target: 'storage', label: '저장' }],
+        }
+      : '연결 성공',
+  );
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    await connectLlm(page, llm.endpoint);
+    // A Markdown file imported first, then 120 notes: 메모 001 … 메모 120, the newest last; 메모 120 is analyzed.
+    const folder = path.join(directory, '회의 자료');
+    await mkdir(folder);
+    await writeFile(
+      path.join(folder, '분기 회의록.md'),
+      '# 분기 회의록\n\n분기 목표를 정했습니다.',
+    );
+    await request(page, 'files.import_text', {
+      path: path.join(folder, '분기 회의록.md'),
+      analyze: false,
+    });
+    const ids = await page.evaluate(async () => {
+      const made: string[] = [];
+      for (let i = 1; i <= 120; i++) {
+        const name = `메모 ${String(i).padStart(3, '0')}`;
+        const response = await window.privateAgent!.request('wiki.save', {
+          title: name,
+          content: `${name}의 본문입니다.`,
+        });
+        if (!response.ok) throw new Error(response.error);
+        made.push((response.result as { id: string }).id);
+      }
+      return made;
+    });
+    await request(page, 'wiki.analyze', { id: ids[119] });
+    await page.reload();
+
+    await openLibrary(page, '문서');
+    const documents = widget(page, 'documents');
+    const list = documents.getByRole('list', { name: '문서 목록' });
+    const rows = list.locator('li[data-index]');
+    const count = documents.locator('.document-filter small');
+    const toEnd = () => list.evaluate((box) => box.scrollTo(0, box.scrollHeight));
+    // The counts are the backend's: every document, though the list holds the first page of 100.
+    await expect(documents.locator('.widget-head .count')).toHaveText('121');
+    await expect(count).toHaveText('121개');
+    await expect(rows.first()).toContainText('메모 120');
+    await expect(list.locator('.list-more')).toContainText('100 / 121');
+    // Only the rows near what the list shows are drawn.
+    expect(await rows.count()).toBeLessThan(40);
+    // Scrolled to its end, the list brings the next page: the oldest document is the last.
+    await toEnd();
+    await expect(list.locator('.list-more')).toHaveCount(0);
+    await toEnd();
+    await expect(rows.last()).toContainText('분기 회의록');
+    await expect(rows.last()).toHaveAttribute('aria-setsize', '121');
+    expect(await rows.count()).toBeLessThan(40);
+    await page.screenshot({ path: 'test-results/documents-pages.png', fullPage: true });
+
+    // The keyboard: one row in the Tab order, the arrows, Home and End move across the pages loaded.
+    await list.evaluate((box) => box.scrollTo(0, 0));
+    await expect(rows.first()).toContainText('메모 120');
+    await rows.first().locator('.document-row').focus();
+    await expect(list.locator('[tabindex="0"]')).toHaveCount(2);
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator(':focus')).toContainText('메모 119');
+    await page.keyboard.press('End');
+    await expect(page.locator(':focus')).toContainText('분기 회의록');
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator(':focus')).toHaveAttribute('aria-label', '분기 회의록 선택');
+    await page.keyboard.press('Home');
+    await expect(page.locator(':focus')).toHaveAttribute('aria-label', '메모 120 선택');
+
+    // A choice spans the pages: one on the first, one on the second, deleted at once and brought back.
+    await documents.getByRole('checkbox', { name: '메모 120 선택' }).check();
+    await toEnd();
+    await documents.getByRole('checkbox', { name: '메모 001 선택' }).check();
+    const toolbar = documents.getByRole('group', { name: '선택한 문서 작업' });
+    await expect(toolbar).toContainText('2개 선택');
+    await toolbar.getByRole('button', { name: '삭제', exact: true }).click();
+    await toolbar
+      .getByRole('group', {
+        name: '선택한 문서 2개를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다.',
+      })
+      .getByRole('button', { name: '삭제', exact: true })
+      .click();
+    const toast = page.locator('.toast').filter({ hasText: '문서 2개를 휴지통으로 옮겼습니다.' });
+    await expect(toast).toBeVisible();
+    await expect(count).toHaveText('119개');
+    await expect(documents.getByRole('checkbox', { name: '메모 001 선택' })).toHaveCount(0);
+    await toast.getByRole('button', { name: '되돌리기' }).click();
+    await expect(count).toHaveText('121개');
+    await list.evaluate((box) => box.scrollTo(0, 0));
+    await expect(rows.first()).toContainText('메모 120');
+
+    // 모두 선택 takes the documents loaded, then every one the filters keep.
+    await page.reload();
+    await openLibrary(page, '문서');
+    await expect(count).toHaveText('121개');
+    await toolbar.getByRole('checkbox', { name: '모두 선택' }).check();
+    await expect(toolbar).toContainText('100개 선택');
+    await toolbar.getByRole('button', { name: '조건에 맞는 문서 121개 모두 선택' }).click();
+    await expect(toolbar).toContainText('121개 선택');
+    await toolbar.getByRole('button', { name: '선택 해제' }).click();
+
+    // The filters are the backend's: where documents came from, their analysis, when they changed and a text.
+    await documents.getByRole('combobox', { name: '출처' }).selectOption({ label: 'Markdown' });
+    await expect(count).toHaveText('1개');
+    await expect(rows).toHaveText([/분기 회의록/]);
+    await documents.getByRole('button', { name: '조건 지우기' }).click();
+    await documents
+      .getByRole('combobox', { name: 'AI 분석' })
+      .selectOption({ label: 'AI 분석 완료' });
+    await expect(rows).toHaveText([/메모 120/]);
+    await documents.getByRole('combobox', { name: 'AI 분석' }).selectOption({ label: '전체' });
+    const period = documents.getByRole('combobox', { name: '수정일' });
+    await period.selectOption({ label: '직접 지정' });
+    await documents.getByLabel('수정일 시작').fill('2099-01-01');
+    await expect(count).toHaveText('0개');
+    await expect(documents).toContainText('조건에 맞는 문서가 없습니다.');
+    await period.selectOption({ label: '오늘' });
+    await expect(count).toHaveText('121개');
+    const filter = page.getByLabel('보관함 문서 필터');
+    await filter.fill('메모 05');
+    await expect(count).toHaveText('10개');
+    await expect(rows).toHaveCount(10);
+    await filter.fill('회의 자료');
+    await expect(rows).toHaveText([/분기 회의록/]);
+    await filter.fill('데이터베이스');
+    await expect(rows).toHaveText([/메모 120/]);
+    await documents.getByRole('button', { name: '조건 지우기' }).click();
+    await expect(count).toHaveText('121개');
+
+    // The knowledge graph finds a keyword by the other name the analysis gave it, and shows the keyword.
+    await page.getByRole('tab', { name: '지식 관계도' }).click();
+    const panel = page.getByRole('complementary', { name: '지식 목록' });
+    await panel.getByLabel('키워드 찾기').fill('데이터베이스');
+    await expect(panel.locator('.panel-list > button')).toHaveText([/# database · 데이터베이스/]);
+    await panel.locator('.panel-list > button').click();
+    await expect(panel.locator('.keyword-aliases')).toHaveText('다른 이름: DB, 데이터베이스');
+    await panel.getByRole('tab', { name: /발견한 관계/ }).click();
+    await panel.getByLabel('관계 찾기').fill('db');
+    await expect(panel.locator('.panel-list > button')).toHaveText([/database → 저장 → storage/]);
+    expect(errors).toEqual([]);
+  } finally {
     await app?.close();
     await llm.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

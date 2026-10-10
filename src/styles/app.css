@@ -1449,6 +1449,49 @@ button.tag:hover {
 .document-tools .document-filter {
   flex: 1 1 240px;
 }
+/* The library's filters beside the text one: where documents came from, their AI analysis and when they changed. */
+.document-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.document-select select,
+.document-range input {
+  width: auto;
+  padding: 5px 8px;
+  font-size: 0.8125rem;
+}
+.document-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+/* The library's list draws only the rows near what it shows; the spacers take the room of the others. The browser
+   must not keep a row in place by scrolling as rows come and go (scroll anchoring): the list places them itself, and
+   the browser's correction would scroll it away from where the user scrolled. */
+.document-list.paged {
+  overflow-anchor: none;
+}
+.document-list .window-spacer {
+  padding: 0;
+  border: 0;
+}
+/* The end of the loaded pages: the next comes as it nears, or with 더 보기. */
+.document-list li.list-more {
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.document-list li.list-more small {
+  font-variant-numeric: tabular-nums;
+}
 .document-tools .segmented .count {
   margin-left: 0;
 }
@@ -1535,6 +1578,11 @@ button.tag:hover {
 .index-badge {
   background: var(--accent-soft);
   color: var(--accent);
+}
+/* An entry of the list that stands for an import saved in parts. */
+.parts-badge {
+  background: var(--inset-2);
+  color: var(--ink-2);
 }
 .ai-badge {
   background: var(--mark);

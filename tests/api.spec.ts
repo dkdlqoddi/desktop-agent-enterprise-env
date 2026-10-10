@@ -73,20 +73,27 @@ async function copied(app: ElectronApplication, page: Page, button: string) {
 test('AI tools: local API and MCP server with the admin page, manual, data, app control and access levels', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-api-'));
   const llm = await llmServer(({ system }) =>
-    system.includes('analyze a user')
+    system.includes('extract metadata')
       ? {
-          intent: '캐시 도입 결정 찾기',
-          terms: ['캐시'],
-          keywords: [],
-          explanation: '캐시를 찾습니다.',
+          summary: '캐시 서버 도입 결정',
+          keywords: ['cache server'],
+          aliases: { 'cache server': ['캐시 서버'] },
+          relations: [],
         }
-      : system.includes('search agent')
+      : system.includes('analyze a user')
         ? {
-            thinking: '회의록이 맞습니다.',
-            results: [{ ref: 'D1', reason: '캐시 결정', sections: [] }],
-            next: null,
+            intent: '캐시 도입 결정 찾기',
+            terms: ['캐시'],
+            keywords: [],
+            explanation: '캐시를 찾습니다.',
           }
-        : { answer: '캐시 서버를 도입하기로 했습니다. [1]', citations: [1] },
+        : system.includes('search agent')
+          ? {
+              thinking: '회의록이 맞습니다.',
+              results: [{ ref: 'D1', reason: '캐시 결정', sections: [] }],
+              next: null,
+            }
+          : { answer: '캐시 서버를 도입하기로 했습니다. [1]', citations: [1] },
   );
   let app: ElectronApplication | undefined;
   try {
@@ -155,6 +162,35 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     );
     const listed = await ai.rest('GET', '/documents?analysis=not_analyzed&limit=5');
     expect(listed.json.result.documents.map((doc: { id: string }) => doc.id)).toEqual([id]);
+    // The list comes a page at a time by the backend's cursor, filtered by the backend, with the count of all it keeps.
+    const more: string[] = [];
+    for (const title of ['API 메모 둘', 'API 메모 셋'])
+      more.push(
+        (await ai.rest('POST', '/documents', { title, content: `# ${title}\n\n점검 메모` })).json
+          .result.id,
+      );
+    type Listed = { title: string };
+    const first = (await ai.rest('GET', '/documents?limit=2')).json.result;
+    expect(first.total).toBe(3);
+    expect(first.documents.map((doc: Listed) => doc.title)).toEqual(['API 메모 셋', 'API 메모 둘']);
+    const second = (
+      await ai.rest('GET', `/documents?limit=2&cursor=${encodeURIComponent(first.next_cursor)}`)
+    ).json.result;
+    expect(second.documents.map((doc: Listed) => doc.title)).toEqual(['API로 만든 회의록']);
+    expect(second.next_cursor).toBe(null);
+    const matched = (await ai.rest('GET', `/documents?query=${encodeURIComponent('메모 둘')}`)).json
+      .result;
+    expect([matched.total, matched.documents.map((doc: Listed) => doc.title)]).toEqual([
+      1,
+      ['API 메모 둘'],
+    ]);
+    const offset = await ai.rest('GET', '/documents?offset=2');
+    expect(offset.status).toBe(400);
+    expect(offset.json.error.message).toContain('cursor');
+    const pages = data((await ai.tool('list_documents', { limit: 2 })).content[0].text!);
+    expect(pages).toContain('API 메모 셋');
+    expect(pages).not.toContain('API로 만든 회의록');
+    for (const extra of more) await ai.rest('DELETE', `/documents/${extra}`);
     const searched = await ai.rest('GET', `/search?query=${encodeURIComponent('캐시')}`);
     expect(searched.json.result.documents[0].id).toBe(id);
     const rpc = await ai.rest('POST', '/rpc', { method: 'stats' });
@@ -292,6 +328,19 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     const answer = await ai.tool('ask_wiki', { question: '캐시는 어떻게 하기로 했나요?' });
     expect(answer.content[0].text).toContain('캐시 서버를 도입하기로 했습니다. [1]');
     expect(answer.content[0].text).toContain(`[1] API로 만든 회의록 — id: ${id}`);
+    // Analyzed, the document has a keyword with a Korean alias: a search by it says so, a page at a time, and the
+    // knowledge graph and the list find the keyword by it.
+    expect((await ai.rest('POST', `/documents/${id}/analyze`)).status).toBe(200);
+    const byAlias = (await ai.tool('search_documents', { query: '캐시 서버', mode: 'keyword' }))
+      .content[0].text!;
+    expect(data(byAlias)).toContain('matched by alias: 캐시 서버 → cache server');
+    const graph = data(
+      (await ai.tool('knowledge_graph', { keyword: '캐시 서버' })).content[0].text!,
+    );
+    expect(graph).toContain('"캐시 서버" is an alias of the keyword "cache server"');
+    const keyed = (await ai.rest('GET', `/documents?keyword=${encodeURIComponent('캐시 서버')}`))
+      .json.result;
+    expect(keyed.documents.map((doc: { id: string }) => doc.id)).toEqual([id]);
 
     // Read-only access: changes are refused and the change tools disappear.
     await openAdmin(page, 'AI 도구 연동');

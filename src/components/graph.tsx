@@ -40,6 +40,13 @@ const LIMITS = [30, 60, 120, 300];
 const PAGE = 100;
 const clip = (value: string, size: number) =>
   value.length > size ? `${value.slice(0, size - 1)}…` : value;
+// A keyword, one of its aliases or what the filter is given, as the backend compares keywords: compatibility forms as
+// their plain letters (full width, decomposed Hangul), case and runs of white space left out.
+const fold = (value: string) => value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+// Each keyword's folded name and aliases (ExplorerPanel), and the alias of keyword `id` that holds `needle`, if any.
+type Names = Map<string, { label: string; aliases: { alias: string; folded: string }[] }>;
+const aliasIn = (names: Names, id: string, needle: string) =>
+  names.get(id)?.aliases.find(({ folded }) => folded.includes(needle))?.alias;
 export const keywordRadius = (count: number) => 9 + Math.sqrt(count) * 4;
 
 // Graph nodes are prefixed by kind; a keyword and a document can never collide.
@@ -621,17 +628,39 @@ const ExplorerPanel = memo(function ExplorerPanel({
   const [filter, setFilter] = useState('');
   const titles = useMemo(() => new Map(graph.documents.map((d) => [d.id, d.title])), [graph]);
   const rank = useMemo(() => new Map(graph.nodes.map((n, i) => [n.id, i])), [graph]);
-  const needle = filter.trim().toLowerCase();
+  const needle = fold(filter);
+  // Each keyword with its aliases (the other names the AI analysis gave it), folded once per graph: the filter finds a
+  // keyword by any of them, so a Korean name finds the English keyword, which the list shows with the name it matched.
+  const names: Names = useMemo(
+    () =>
+      new Map(
+        graph.nodes.map((n) => [
+          n.id,
+          {
+            label: fold(n.label),
+            aliases: (n.aliases ?? []).map((alias) => ({ alias, folded: fold(alias) })),
+          },
+        ]),
+      ),
+    [graph],
+  );
   const keywords = useMemo(
-    () => graph.nodes.filter((n) => n.label.toLowerCase().includes(needle)),
-    [graph, needle],
+    () =>
+      graph.nodes.flatMap((n): { node: Graph['nodes'][number]; alias?: string }[] => {
+        if (names.get(n.id)!.label.includes(needle)) return [{ node: n }];
+        const alias = needle ? aliasIn(names, n.id, needle) : undefined;
+        return alias ? [{ node: n, alias }] : [];
+      }),
+    [graph, names, needle],
   );
   const relations = useMemo(
     () =>
-      graph.edges.filter((r) =>
-        `${r.source} ${r.label} ${r.target}`.toLowerCase().includes(needle),
+      graph.edges.filter(
+        (r) =>
+          fold(`${r.source} ${r.label} ${r.target}`).includes(needle) ||
+          (!!needle && (!!aliasIn(names, r.source, needle) || !!aliasIn(names, r.target, needle))),
       ),
-    [graph, needle],
+    [graph, names, needle],
   );
   const items = panel === 'keywords' ? keywords : relations;
   // Up to a thousand keywords and every relation: the list grows by ‘더 보기’, and starts over with another tab or search.
@@ -668,6 +697,9 @@ const ExplorerPanel = memo(function ExplorerPanel({
             문서 {keyword.count}개 · 관계 {linked.length}개
             {(rank.get(keyword.id) ?? 0) >= shown && ' · 그래프에 표시되지 않은 키워드'}
           </p>
+          {!!keyword.aliases?.length && (
+            <p className="keyword-aliases">다른 이름: {keyword.aliases.join(', ')}</p>
+          )}
           <button className="button secondary small" onClick={() => onKeyword(keyword.id)}>
             <Search size={14} />
             관련 문서 검색
@@ -791,14 +823,16 @@ const ExplorerPanel = memo(function ExplorerPanel({
         <Search size={14} />
         <input
           aria-label={panel === 'keywords' ? '키워드 찾기' : '관계 찾기'}
-          placeholder={panel === 'keywords' ? '키워드 찾기' : '키워드나 관계 이름으로 찾기'}
+          placeholder={
+            panel === 'keywords' ? '키워드나 다른 이름으로 찾기' : '키워드나 관계 이름으로 찾기'
+          }
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
       </label>
       <div className="panel-list" role="tabpanel">
         {panel === 'keywords'
-          ? keywords.slice(0, size).map((k) => (
+          ? keywords.slice(0, size).map(({ node: k, alias }) => (
               <button
                 key={k.id}
                 className={
@@ -806,7 +840,10 @@ const ExplorerPanel = memo(function ExplorerPanel({
                 }
                 onClick={() => onSelect({ type: 'keyword', id: k.id })}
               >
-                <span># {k.label}</span>
+                <span>
+                  # {k.label}
+                  {alias && <em className="keyword-alias"> · {alias}</em>}
+                </span>
                 <small>문서 {k.count}</small>
               </button>
             ))

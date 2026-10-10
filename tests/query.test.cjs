@@ -178,3 +178,137 @@ test('data that came another way is shown as the latest answer', async () => {
   await flush();
   assert.deepEqual(entry.state.data, [{ id: 'r', running: true }]);
 });
+
+// --- Lists in pages -----------------------------------------------------------------------------------------------
+
+// Documents d0, d1, … as a page of the document list answers them.
+const docs = (from, count) =>
+  Array.from({ length: count }, (_, i) => ({ id: `d${from + i}`, title: `문서 ${from + i}` }));
+const page = (from, count, next, total = 250) => ({
+  documents: docs(from, count),
+  next_cursor: next,
+  total,
+});
+
+test('a list in pages loads its first page when shown, the next as asked, and counts by the backend', async () => {
+  const { cache, pending } = backend();
+  const list = cache.list('wiki.list', { analysis: 'analyzed' }, 100);
+  assert.equal(cache.list('wiki.list', { analysis: 'analyzed' }, 100), list);
+  assert.deepEqual(list.tags, TAGS['wiki.list']);
+  let told = 0;
+  list.subscribe(() => told++);
+  assert.deepEqual(pending[0].params, { analysis: 'analyzed', limit: 100 });
+  // Nothing more is asked before the first page came.
+  void list.more();
+  assert.equal(pending.length, 1);
+  pending[0].resolve(page(0, 100, 'c100'));
+  await flush();
+  assert.equal(list.state.items.length, 100);
+  assert.deepEqual([list.state.total, list.state.next, list.state.loaded], [250, 'c100', true]);
+  assert.ok(told > 0);
+  // One page at a time: asking again while one is on its way asks for nothing more.
+  const more = list.more();
+  void list.more();
+  assert.equal(pending.length, 2);
+  assert.deepEqual(pending[1].params, { analysis: 'analyzed', limit: 100, cursor: 'c100' });
+  assert.equal(list.state.loading, true);
+  // A document saved meanwhile is not shown twice.
+  pending[1].resolve({ ...page(99, 100, 'c199'), total: 251 });
+  await more;
+  assert.equal(list.state.items.length, 199);
+  assert.equal(new Set(list.state.items.map((doc) => doc.id)).size, 199);
+  assert.deepEqual([list.state.total, list.state.next, list.state.loading], [251, 'c199', false]);
+});
+
+test('invalidating the documents loads a shown list again from its first page, as much as it shows, without emptying it', async () => {
+  const { cache, pending } = backend();
+  const list = cache.list('wiki.list', {}, 100);
+  list.subscribe(() => {});
+  pending[0].resolve(page(0, 100, 'c100'));
+  await flush();
+  void list.more();
+  pending[1].resolve(page(100, 100, 'c200'));
+  await flush();
+  const shown = list.state.items;
+  const done = cache.invalidate(['documents']);
+  // 200 shown: one request of 200 from the first page; what is shown stays meanwhile.
+  assert.deepEqual(pending[2].params, { limit: 200 });
+  assert.equal(list.state.items, shown);
+  assert.equal(list.state.loading, true);
+  const again = page(0, 200, 'c200');
+  again.documents[5] = { id: 'd5', title: '문서 5 고침' };
+  pending[2].resolve(again);
+  await done;
+  // The rows that did not change are the very objects shown before.
+  assert.equal(list.state.items[0], shown[0]);
+  assert.notEqual(list.state.items[5], shown[5]);
+  assert.equal(list.state.items[5].title, '문서 5 고침');
+  assert.equal(list.state.next, 'c200');
+  // A page asked for before a reload is dropped when it comes after it.
+  const late = list.more();
+  void list.reload();
+  pending[3].resolve(page(200, 50, null));
+  await late;
+  assert.equal(list.state.items.length, 200);
+  pending[4].resolve(page(0, 200, 'c200'));
+  await flush();
+  assert.equal(list.state.next, 'c200');
+  // Lists no component shows are not loaded again: they load when shown.
+  const other = cache.list('wiki.list', { source: 'jira' }, 100);
+  void cache.invalidate(['documents']);
+  assert.equal(pending.filter((request) => request.params.source === 'jira').length, 0);
+  assert.equal(other.state.loaded, false);
+});
+
+test('a list reloads what it shows 500 at most a request, and loads every page to act on all of it', async () => {
+  const { cache, pending } = backend();
+  const list = cache.list('wiki.list', { source: 'jira' }, 100);
+  list.subscribe(() => {});
+  pending[0].resolve(page(0, 100, 'c100', 1200));
+  await flush();
+  const all = list.loadAll(1000);
+  for (let n = 1; n < 10; n++) {
+    await flush();
+    const request = pending[n];
+    if (!request) break;
+    const from = list.state.items.length;
+    request.resolve(page(from, request.params.limit, `c${from + request.params.limit}`, 1200));
+  }
+  const items = await all;
+  // 100 shown, then 500 and 400 more: the 1,000 asked for.
+  assert.deepEqual(
+    pending.slice(1).map((request) => request.params.limit),
+    [500, 400],
+  );
+  assert.equal(items.length, 1000);
+  // Loaded again from the first page: 500 a request until the 1,000 shown came.
+  const reloaded = list.reload();
+  assert.deepEqual(pending[3].params, { source: 'jira', limit: 500 });
+  pending[3].resolve(page(0, 500, 'c500', 1200));
+  await flush();
+  assert.deepEqual(pending[4].params, { source: 'jira', limit: 500, cursor: 'c500' });
+  pending[4].resolve(page(500, 500, 'c1000', 1200));
+  await reloaded;
+  assert.equal(list.state.items.length, 1000);
+  assert.equal(list.state.next, 'c1000');
+});
+
+test('a failed page keeps what the list shows and says why; lists no component shows are dropped in time', async () => {
+  const { cache, pending } = backend();
+  const list = cache.list('wiki.list', {}, 100);
+  list.subscribe(() => {});
+  pending[0].resolve(page(0, 100, 'c100'));
+  await flush();
+  const failed = list.more();
+  pending[1].reject(new Error('백엔드가 바쁩니다.'));
+  await assert.rejects(failed, /바쁩니다/);
+  assert.equal(list.state.items.length, 100);
+  assert.equal(list.state.error.message, '백엔드가 바쁩니다.');
+  assert.equal(list.state.loading, false);
+  // The lists of other filters that no component shows are kept for going back to them, the latest few; a shown one
+  // always stays.
+  const others = Array.from({ length: 12 }, (_, i) => cache.list('wiki.list', { query: `q${i}` }));
+  assert.equal(cache.list('wiki.list', {}, 100), list);
+  assert.equal(cache.list('wiki.list', { query: 'q11' }), others[11]);
+  assert.notEqual(cache.list('wiki.list', { query: 'q0' }), others[0]);
+});

@@ -36,7 +36,6 @@ function optionalText(value, name, limit) {
   return value.trim();
 }
 
-const fold = (value) => value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 const LINK = /^[a-z][a-z0-9+.-]*:\/\//i;
 const unquote = (value) => value.replace(/^"(.*)"$/, '$1');
 
@@ -123,6 +122,32 @@ function createPathCheck({ handle, wikiDirectory }) {
 // learns nothing about the PC's files.
 function allowFiles(access) {
   if (!allows(access, 'files')) throw forbidden(access, 'files');
+}
+
+// What an AI tool's document list asks the backend for: its own filters, the text and the keyword among them, and one
+// of its pages (wiki.list with limit and cursor), so that neither the whole Wiki nor a slice of it is filtered here.
+// The cursor is the backend's, passed on as it came.
+function documentQuery(params) {
+  // An offset was how pages were asked for before; ignoring one would answer the first page again and again.
+  if (params.offset !== undefined && params.offset !== null && Number(params.offset) !== 0)
+    throw new Error(
+      'offset 대신 앞 응답의 next_cursor를 cursor로 보내 주세요. 문서 목록은 cursor로 나누어 받습니다.',
+    );
+  const query = {
+    limit: integer(params.limit, 'limit', 50, 1, 500),
+    source: choice(params.source, '출처(source)', SOURCE_KINDS, ''),
+    analysis: choice(params.analysis, 'AI 분석 여부(analysis)', ANALYSIS, ''),
+    query: optionalText(params.query, '검색어', 200),
+    keyword: optionalText(params.keyword, '키워드', 80),
+    updated_from: params.updated_from,
+    updated_to: params.updated_to,
+    cursor: params.cursor,
+  };
+  return Object.fromEntries(
+    Object.entries(query).filter(
+      ([, value]) => value !== undefined && value !== null && value !== '',
+    ),
+  );
 }
 
 // Methods only the local API offers, made of the screens' own requests (`handle`): one entry point for every kind of
@@ -236,29 +261,13 @@ function createApiMethods({ handle, linkKind, extensions }) {
 
   return {
     'documents.query': async (params) => {
-      const limit = integer(params.limit, 'limit', 50, 1, 500);
-      const offset = integer(params.offset, 'offset', 0, 0, 1_000_000);
-      const query = fold(optionalText(params.query, '검색어', 200));
-      const keyword = fold(optionalText(params.keyword, '키워드', 80));
-      const source = choice(params.source, '출처(source)', SOURCE_KINDS, '');
-      const analysis = choice(params.analysis, 'AI 분석 여부(analysis)', ANALYSIS, '');
-      const found = (await handle('wiki.list', {})).filter(
-        (doc) =>
-          (!query ||
-            fold(
-              [doc.title, doc.summary, doc.excerpt, (doc.keywords || []).join(' ')].join(' '),
-            ).includes(query)) &&
-          (!keyword || (doc.keywords || []).includes(keyword)) &&
-          (!source || (source === 'manual' ? !doc.source : doc.source?.kind === source)) &&
-          (!analysis || analysisState(doc) === analysis),
-      );
+      const query = documentQuery(params);
+      const page = await handle('wiki.list', query);
       return {
-        total: found.length,
-        offset,
-        limit,
-        documents: found
-          .slice(offset, offset + limit)
-          .map((doc) => ({ ...doc, analysis: analysisState(doc) })),
+        total: page.total,
+        limit: query.limit,
+        next_cursor: page.next_cursor,
+        documents: page.documents.map((doc) => ({ ...doc, analysis: analysisState(doc) })),
       };
     },
     'documents.get': async (params) => {

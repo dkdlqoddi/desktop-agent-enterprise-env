@@ -19,7 +19,8 @@ async function call(method, params, access) {
   if (method === 'app.screenshot')
     return { mime: 'image/png', width: 4, height: 1, data: PNG.toString('base64') };
   if (method === 'wiki.delete') throw new Error('문서를 찾을 수 없습니다.');
-  if (method === 'documents.query') return { total: 0, offset: 0, limit: 50, documents: [] };
+  if (method === 'documents.query')
+    return { total: 0, limit: 50, next_cursor: null, documents: [] };
   return { method };
 }
 
@@ -136,7 +137,7 @@ test('routes REST calls by the catalog: query types, path values, defaults and l
   assert.equal(listed.status, 200);
   assert.deepEqual(calls.at(-1), {
     method: 'documents.query',
-    params: { limit: 5, analysis: 'analyzed', offset: 0 },
+    params: { limit: 5, analysis: 'analyzed' },
   });
   await request({ path: '/api/v1/documents/a%20b%2Fc' });
   assert.deepEqual(calls.at(-1), {

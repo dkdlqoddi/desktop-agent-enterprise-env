@@ -61,9 +61,14 @@ export function QuickAdd({
   );
 }
 
+// The fields of the task being edited, with every document its source field offers: the documents load while a task
+// is edited, not with the list of tasks.
+function EditedTaskFields(props: { task: Task; onChange: (task: Task) => void }) {
+  return <TaskFields {...props} documents={useDocuments()} />;
+}
+
 export default function TasksWidget() {
   const configured = useConfigured();
-  const documents = useDocuments();
   const { openAdmin, notify } = useActions();
   const { tasks, refresh } = useAssistantData();
   const [filter, setFilter] = useState<keyof typeof FILTERS>('open');
@@ -213,7 +218,7 @@ export default function TasksWidget() {
                       }}
                     >
                       <fieldset disabled={busy}>
-                        <TaskFields task={editing} onChange={setEditing} documents={documents} />
+                        <EditedTaskFields task={editing} onChange={setEditing} />
                         <div className="form-actions">
                           <Confirm
                             label="삭제"
