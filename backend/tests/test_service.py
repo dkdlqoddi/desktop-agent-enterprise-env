@@ -220,6 +220,46 @@ def test_what_the_llm_got_wrong_is_left_out_and_the_rest_of_the_analysis_kept(se
         service.wiki_analyze({"id": document(service, "다른 문서")["id"]})
 
 
+def aliases(service):
+    with service.db.connect() as db:
+        return [tuple(row) for row in db.execute(
+            "SELECT keyword,alias,normalized FROM keyword_aliases ORDER BY keyword,normalized")]
+
+
+def test_the_analysis_keeps_up_to_five_aliases_of_each_keyword(service):
+    """The analysis asks for other names of each keyword (Korean and English forms, abbreviations) and keeps them as
+    written and as search compares words. Names of keywords the answer does not have, a keyword's own name, repeats in
+    another form, names too long and those beyond five a keyword are left out."""
+    doc = document(service)
+    service.llm.result["aliases"] = {
+        "Python": ["파이썬", "PY", "py", "Ｐｙｔｈｏｎ", "  파이썬  ", "python3"],
+        "API": ["에이피아이", "Application  Programming Interface", "a", "b", "c", "d"],
+        "캐시": ["cache", "x" * 81, ""], "없는키워드": ["무시"]}
+    analyzed = service.wiki_analyze({"id": doc["id"]})
+    system = service.llm.calls[-1][0]
+    assert '"aliases"' in system and "at most 5" in system and "Use lowercase English keywords" in system
+    assert analyzed["keywords"] == ["api", "python", "캐시"]
+    assert aliases(service) == [
+        ("api", "a", "a"), ("api", "Application Programming Interface", "application programming interface"),
+        ("api", "b", "b"), ("api", "c", "c"), ("api", "에이피아이", "에이피아이"),
+        ("python", "PY", "py"), ("python", "python3", "python3"), ("python", "파이썬", "파이썬"), ("캐시", "cache", "cache")]
+    assert [d["id"] for d in service.wiki_search({"query": "파이썬", "mode": "keyword"})["documents"]] == [doc["id"]]
+    # Analyzed again, the document keeps only the new answer's aliases.
+    service.llm.result["aliases"] = {"python": ["파이선"]}
+    service.wiki_analyze({"id": doc["id"]})
+    assert aliases(service) == [("python", "파이선", "파이선")]
+
+
+@pytest.mark.parametrize("bad", [None, "파이썬", ["파이썬"], {"python": "파이썬"}, {"": ["x"], "python": None},
+                                 {"python": [1, None, {"x": 1}, ["파이썬"], " ", "x" * 81]}])
+def test_aliases_in_another_form_are_left_out_and_the_analysis_kept(service, bad):
+    doc = document(service)
+    service.llm.result["aliases"] = bad
+    analyzed = service.wiki_analyze({"id": doc["id"]})
+    assert (analyzed["status"], analyzed["keywords"], len(analyzed["relations"])) == ("ready", ["api", "python", "캐시"], 2)
+    assert aliases(service) == []
+
+
 def test_saving_the_same_text_keeps_the_ai_analysis(service):
     doc = document(service)
     analyzed = service.wiki_analyze({"id": doc["id"]})

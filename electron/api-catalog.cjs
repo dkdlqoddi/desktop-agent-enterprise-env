@@ -504,7 +504,7 @@ const GROUPS = [
             required: true,
           }),
           mode: string(
-            'auto: 검색창과 같은 단어 검색 · word: 모든 단어 포함 · keyword: 추출 키워드(쉼표로 구분) · prompt: AI 검색(느림)',
+            'auto: 검색창과 같은 단어 검색(추출 키워드와 그 한/영 별칭도 일치) · word: 모든 단어 포함 · keyword: 추출 키워드나 그 별칭(쉼표로 구분, 예: 데이터베이스 → database) · prompt: AI 검색(느림)',
             { enum: ['auto', 'word', 'keyword', 'prompt'], default: 'auto' },
           ),
           ...PAGE(100),

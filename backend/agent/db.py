@@ -173,6 +173,18 @@ class Database:
                     keyword TEXT NOT NULL, PRIMARY KEY(doc_id, keyword)
                 );
                 CREATE INDEX IF NOT EXISTS idx_keyword ON keywords(keyword);
+                -- Other names of an extracted keyword that the AI analysis gives with it (its Korean or English form,
+                -- an abbreviation, another spelling), by which a search finds the keyword's documents (search.py):
+                -- alias as the LLM wrote it, normalized as search compares words (search_text, white space as one
+                -- space). An alias goes with its keyword, so whatever clears or replaces a document's keywords, or
+                -- purges the document, takes its aliases too (the cascade) without knowing of them. A document
+                -- analyzed before aliases has none until it is analyzed again.
+                CREATE TABLE IF NOT EXISTS keyword_aliases (
+                    doc_id TEXT NOT NULL, keyword TEXT NOT NULL, alias TEXT NOT NULL, normalized TEXT NOT NULL,
+                    PRIMARY KEY(doc_id, keyword, normalized),
+                    FOREIGN KEY(doc_id, keyword) REFERENCES keywords(doc_id, keyword) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_keyword_aliases ON keyword_aliases(normalized);
                 CREATE TABLE IF NOT EXISTS relations (
                     doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL,

@@ -18,6 +18,11 @@ title, summary and content are kept so in document_search, with a trigram index 
 which may hold a word of three or more characters; shorter words are compared with LIKE over the kept text, as every
 word is where SQLite has no trigram index. The words are counted in what is found, so the index only decides which
 documents are read, never how they rank.
+
+Extracted keywords are canonical lowercase English, and the analysis keeps other names of each beside it
+(keyword_aliases): its Korean form, abbreviations, other spellings. A search word or keyword that is an alias, or lies
+within one, matches as the keyword itself would, so a Korean query finds a document whose keyword is English and the
+other way round. The literal word search (strict) leaves keywords and their aliases out, as it does all AI metadata.
 """
 import itertools
 import json
@@ -306,6 +311,10 @@ LIVE = "d.deleted_at IS NULL"
 # selective way in, though nearly every document is live, and would read them all to find a few (the + keeps it out).
 LIVE_ROW = "+d.deleted_at IS NULL"
 KEYWORDS = f"keywords k JOIN documents d ON d.id=k.doc_id AND {LIVE}"
+# The aliases of the live documents' keywords, found by their index on `normalized`. An alias whose keyword a program
+# not keeping the foreign keys took away matches nothing.
+ALIASES = f"""keyword_aliases a JOIN keywords k ON k.doc_id=a.doc_id AND k.keyword=a.keyword
+    JOIN documents d ON d.id=a.doc_id AND {LIVE_ROW}"""
 # A document's search text is fresh when it was made for the document's revision by this version, which keeps the title
 # (an earlier one kept the content alone) and marks it stale when the title or summary changes (documents_search_stale).
 FRESH = "(s.revision IS d.revision AND s.title IS NOT NULL)"
@@ -401,13 +410,36 @@ class Search:
                 found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
         return found
 
+    @staticmethod
+    def aliases(db, terms=(), names=()):
+        """The aliases of the live documents' keywords that are one of `names` or hold one of `terms`, as rows (doc_id,
+        keyword, alias, normalized). The terms are looked for in the distinct aliases, which their index gives in one
+        pass, rather than with LIKE over every row: a Wiki keeps several aliases a keyword, and one pattern over the
+        names costs a fraction of LIKE over all of them. The rows of the names found are then read by the index."""
+        wanted = set(names)
+        terms = [t for t in terms if t]
+        if terms:
+            pattern = re.compile("|".join(map(re.escape, terms)))
+            wanted.update(name for name, in tuples(db, "SELECT DISTINCT normalized FROM keyword_aliases")
+                          if pattern.search(name))
+        found = []
+        for chunk in chunks(sorted(wanted)):
+            found += tuples(db, f"SELECT a.doc_id,a.keyword,a.alias,a.normalized FROM {ALIASES} "
+                                f"WHERE a.normalized IN ({','.join('?' * len(chunk))})", chunk)
+        return found
+
     def lexical(self, terms=(), keywords=(), *, strict=False, phrase=""):
         """Rank the documents matching any term or exact keyword by BM25 over title, summary, PageIndex
-        section summaries and body, plus keyword matches. A strict (word) search needs every term in the
-        title or body and ignores AI metadata; a term's IDF counts the documents holding it in either, the
-        OR set, since every ranked document holds every term. Returns [{id, score, matched, updated_at}]."""
+        section summaries and body, plus keyword matches, an alias of a keyword matching as the keyword. A strict
+        (word) search needs every term in the title or body and ignores AI metadata; a term's IDF counts the documents
+        holding it in either, the OR set, since every ranked document holds every term. Returns [{id, score, matched,
+        updated_at}], with `aliases` [{keyword, alias}] for a document whose keywords a term or keyword named by an
+        alias: those keywords are among its `matched` too."""
         terms, keywords = list(dict.fromkeys(terms)), list(dict.fromkeys(keywords))
         hits = defaultdict(set)
+        # The keywords of a document that a search word or keyword named by their alias: {id: {keyword: (place, alias)}},
+        # the place of that word in the search, so the first of several is shown.
+        by_alias = defaultdict(dict)
         nodes = {}
         stats = {}
         held = [0] * len(terms)  # Strict: documents holding each term in the title or body.
@@ -421,6 +453,21 @@ class Search:
                     hits[row["doc_id"]].update(("keyword", k) for k in keywords if k == row["keyword"])
                     hits[row["doc_id"]].update(("exact" if t == row["keyword"] else "partial", t)
                                                for t in terms if t in row["keyword"])
+                # An alias matches as its keyword would: equal to a term or keyword of the search, or holding a term, it
+                # marks the document as the keyword does, under the search's own word, so the document ranks as it
+                # would had the keyword itself been typed. Its documents join the ranking below (`rest`) whatever the
+                # trigram index found, as keyword matches do: an alias is AI metadata like its keyword, looked up in
+                # its own table, rather than words put into the search text, where it would count as words of the
+                # body (and in the word search, which leaves AI metadata out) and every analysis would write the text
+                # and its index again.
+                names = terms + keywords
+                for ident, key, alias, name in self.aliases(db, terms, names):
+                    hits[ident].update(("keyword", k) for k in keywords if k == name)
+                    hits[ident].update(("exact" if t == name else "partial", t) for t in terms if t in name)
+                    # A term within an alias is a partial match, which marks no keyword, as within a keyword.
+                    place = names.index(name) if name in names else None
+                    if place is not None and place < by_alias[ident].get(key, (len(names),))[0]:
+                        by_alias[ident][key] = (place, alias)
             if not strict and terms:
                 where = " OR ".join("n.summary LIKE ? ESCAPE '\\'" for _ in terms)
                 for row in db.execute(f"""SELECT n.doc_id, group_concat(n.summary, ' ') AS text FROM doc_nodes n
@@ -511,8 +558,14 @@ class Search:
                     matched.append(key)
             # Documents matching more of the search words rank higher, whole phrases higher still.
             score *= (0.5 + len(set(matched)) / len(terms + keywords)) * (1.5 if s["phrase"] else 1)
-            ranked.append({"id": ident, "score": score, "matched": list(dict.fromkeys(matched)),
-                           "updated_at": s["updated_at"]})
+            entry = {"id": ident, "score": score, "matched": list(dict.fromkeys(matched)), "updated_at": s["updated_at"]}
+            if by_alias.get(ident):
+                # A keyword named by its alias is one the document matched, which the screen marks among its keywords.
+                # It joins `matched` after the score, which counts the search's own words.
+                found = sorted(by_alias[ident].items())
+                entry["matched"] = list(dict.fromkeys(entry["matched"] + [key for key, _ in found]))
+                entry["aliases"] = [{"keyword": key, "alias": alias} for key, (_, alias) in found]
+            ranked.append(entry)
         return sorted(ranked, key=lambda r: (r["score"], r["updated_at"]), reverse=True)
 
     def hydrate(self, ranked, pattern):
@@ -535,6 +588,8 @@ class Search:
                 doc["match"] = {"score": round(ranked[doc["id"]]["score"], 3), "matched": ranked[doc["id"]]["matched"],
                                 "snippets": snippets(content, pattern, doc["_tree"]), "sections": [],
                                 "reason": "", "selected": False}
+                if ranked[doc["id"]].get("aliases"):
+                    doc["match"]["aliases"] = ranked[doc["id"]]["aliases"]
         return docs
 
     # -- Word and keyword search ---------------------------------------------------------------------
@@ -638,8 +693,8 @@ class Search:
     def auto(self, query, page=None, filters=None):
         """The search box without the LLM: documents with any of the query's words, those with more of them
         and with the whole phrase first. Question words and Korean particles are dropped (캐시를 → 캐시),
-        verb forms also search their stem (도입한 → 도입), and words that are extracted keywords also
-        match as keywords. `page` and `filters` are those of results()."""
+        verb forms also search their stem (도입한 → 도입), and words that are extracted keywords, or the
+        alias of one, also match as keywords. `page` and `filters` are those of results()."""
         phrases, rest = self.phrases(query)
         found = [form for word in words(rest) for form in (word, stem(word)) if form]
         terms = list(dict.fromkeys(phrases + found))[:16] or list(dict.fromkeys(fold(rest).split()))[:16]
@@ -647,9 +702,15 @@ class Search:
             raise UserError("검색어를 입력해 주세요.")
         proposed = [k for k in dict.fromkeys(map(canonical, terms + [query.replace('"', " ")])) if k]
         with self.db.connect() as db:
+            marks = ",".join("?" * len(proposed))
             keys = [row[0] for row in db.execute(
-                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({','.join('?' * len(proposed))})", proposed)
-            ] if proposed else []
+                f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword IN ({marks})", proposed)] if proposed else []
+            # A word that is the alias of a keyword is a keyword of the search as well, which matches the documents of
+            # every keyword it names (lexical): 데이터베이스 is to them what database is.
+            if proposed:
+                named = {row[0] for row in db.execute(
+                    f"SELECT DISTINCT a.normalized FROM {ALIASES} WHERE a.normalized IN ({marks})", proposed)}
+                keys += [k for k in proposed if k in named and k not in keys]
         ranked = self.lexical(terms, keys, phrase=fold(query.replace('"', "")) if len(terms) > 1 else "")
         return self.results(ranked, list(dict.fromkeys(terms + keys)),
                             {"terms": terms, "keywords": keys, "explanation": "", "intent": ""}, page, filters)
@@ -657,11 +718,15 @@ class Search:
     # -- Prompt search -------------------------------------------------------------------------------
 
     def vocabulary(self, sentence, limit=120):
-        """Existing Wiki keywords for the analysis: those sharing a word with the question, then the most
-        frequent ones."""
+        """Existing Wiki keywords for the analysis: those sharing a word with the question, then those whose
+        alias shares one (a Korean question meets the English keyword), then the most frequent ones."""
+        question = words(sentence)[:8]
         with self.db.connect() as db:
-            near = [row[0] for word in words(sentence)[:8] for row in db.execute(
+            near = [row[0] for word in question for row in db.execute(
                 f"SELECT DISTINCT k.keyword FROM {KEYWORDS} WHERE k.keyword LIKE ? ESCAPE '\\' LIMIT 20", (like(word),))]
+            rows = self.aliases(db, question)
+            near += [key for word in question
+                     for key in list(dict.fromkeys(key for _, key, _, name in rows if word in name))[:20]]
             common = [row[0] for row in db.execute(f"""SELECT k.keyword FROM {KEYWORDS} GROUP BY k.keyword
                 ORDER BY count(*) DESC, k.keyword LIMIT ?""", (limit,))]
         return list(dict.fromkeys(near + common))[:limit]
