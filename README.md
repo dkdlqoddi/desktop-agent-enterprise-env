@@ -28,6 +28,7 @@
 | [docs/api.md](docs/api.md), [OpenAPI](docs/openapi.json) | 로컬 REST API와 MCP의 메서드, 허용 범위, 매개변수                           |
 | [CHANGELOG.md](CHANGELOG.md)                             | 변경 기록과 버전 정책                                                       |
 | [AGENTS.md](AGENTS.md)                                   | AI 코딩 에이전트를 위한 규약                                                |
+| [TODO.md](TODO.md)                                       | 남은 일, 결정이 필요한 것, 로드맵 밖 기능 제안                              |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)         | 함께 배포하는 오픈소스 구성 요소의 라이선스 고지                            |
 | [LICENSE](LICENSE)                                       | MIT 라이선스                                                                |
 
