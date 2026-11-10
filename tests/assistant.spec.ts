@@ -9,6 +9,7 @@ import {
   drawer,
   launch,
   llmServer,
+  openDashboard,
   results,
   searchBox,
   streamed,
@@ -148,6 +149,7 @@ test('personal assistant widgets: offline tasks, reviewed extraction, document q
     await app!.close();
     page = await start();
     page.on('pageerror', (error) => errors.push(error.message));
+    await openDashboard(page, 30_000);
     // A saved conversation opens again from the recent conversations widget.
     const conversations = widget(page, 'conversations');
     await conversations

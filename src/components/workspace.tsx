@@ -6,8 +6,10 @@ import {
   ChevronRight,
   CircleHelp,
   Clock3,
+  Globe2,
   House,
   Layers3,
+  MessageSquare,
   Plus,
   Settings2,
   ShieldCheck,
@@ -19,9 +21,15 @@ import ErrorBoundary from './error-boundary';
 import { defaultView, WIDGETS } from './widgets';
 import { useAssistantData } from './widgets/assistant-data';
 
-export type WorkspaceView = 'home' | 'tasks' | 'library' | 'automation' | 'activity' | 'admin';
+export type WorkspaceView =
+  'chat' | 'home' | 'tasks' | 'library' | 'automation' | 'records' | 'activity' | 'admin';
 
 export const WORKSPACE_VIEWS = {
+  chat: {
+    title: '채팅',
+    description: '말로 맡기면 계획을 보여 드리고, 확인한 작업만 실행합니다.',
+    icon: MessageSquare,
+  },
   home: { title: '홈', description: '나의 하루를 한눈에', icon: House },
   tasks: { title: '할 일', description: '지금 중요한 일에 집중하세요.', icon: CheckCheck },
   library: {
@@ -33,6 +41,11 @@ export const WORKSPACE_VIEWS = {
     title: 'AI 작업',
     description: '반복되는 업무는 맡기고, 중요한 일에 시간을 쓰세요.',
     icon: Sparkles,
+  },
+  records: {
+    title: '웹 기록',
+    description: '사이트에서 본 광고와 상품을 내 PC에 남깁니다.',
+    icon: Globe2,
   },
   activity: {
     title: '활동 기록',
@@ -73,24 +86,26 @@ export function WorkspaceSidebar() {
       </button>
       <nav className="workspace-nav" aria-label="화면">
         <p className="nav-caption">워크스페이스</p>
-        {(['home', 'tasks', 'library', 'automation', 'activity'] as const).map((id) => {
-          const { title, icon: Icon } = WORKSPACE_VIEWS[id];
-          const count = id === 'tasks' ? open : id === 'library' ? stats.documents : 0;
-          return (
-            <button
-              key={id}
-              aria-label={title}
-              title={title}
-              aria-current={view === id ? 'page' : undefined}
-              onClick={() => navigate(id)}
-            >
-              <Icon size={19} strokeWidth={1.7} />
-              <span>{title}</span>
-              {count > 0 && <span className="nav-count">{count}</span>}
-              {view === id && !count && <span className="nav-active-dot" />}
-            </button>
-          );
-        })}
+        {(['chat', 'home', 'tasks', 'library', 'automation', 'records', 'activity'] as const).map(
+          (id) => {
+            const { title, icon: Icon } = WORKSPACE_VIEWS[id];
+            const count = id === 'tasks' ? open : id === 'library' ? stats.documents : 0;
+            return (
+              <button
+                key={id}
+                aria-label={title}
+                title={title}
+                aria-current={view === id ? 'page' : undefined}
+                onClick={() => navigate(id)}
+              >
+                <Icon size={19} strokeWidth={1.7} />
+                <span>{title}</span>
+                {count > 0 && <span className="nav-count">{count}</span>}
+                {view === id && !count && <span className="nav-active-dot" />}
+              </button>
+            );
+          },
+        )}
         <div className="nav-bottom">
           <p className="nav-caption">환경 설정</p>
           <button
@@ -175,7 +190,7 @@ const TABS = {
 export default function WorkspacePage({
   view,
 }: {
-  view: Exclude<WorkspaceView, 'home' | 'admin'>;
+  view: Exclude<WorkspaceView, 'home' | 'admin' | 'chat' | 'records'>;
 }) {
   const workspaceTab = useWorkspaceTab();
   const { navigate, newDocument } = useActions();

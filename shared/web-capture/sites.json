@@ -1,0 +1,26 @@
+{
+  "coupang": {
+    "name": "쿠팡",
+    "home": "https://www.coupang.com/",
+    "search": "https://www.coupang.com/np/search?q={query}",
+    "hosts": ["coupang.com"]
+  },
+  "amazon": {
+    "name": "아마존",
+    "home": "https://www.amazon.com/",
+    "search": "https://www.amazon.com/s?k={query}",
+    "hosts": ["amazon.com", "amazon.co.jp", "amazon.co.uk", "amazon.de"]
+  },
+  "naver": {
+    "name": "네이버",
+    "home": "https://www.naver.com/",
+    "search": "https://search.naver.com/search.naver?query={query}",
+    "hosts": ["naver.com"]
+  },
+  "google": {
+    "name": "구글",
+    "home": "https://www.google.com/",
+    "search": "https://www.google.com/search?q={query}",
+    "hosts": ["google.com", "google.co.kr"]
+  }
+}

@@ -163,6 +163,9 @@ async function harness(
               { role: 'button', name: '이 위치에 저장하고 시작' },
             ],
           };
+        // The app opens on the chat once the Wiki is ready.
+        if (screen.view === 'chat')
+          return { controls: [{ role: 'input', name: '메시지', value: '' }] };
         const controls = [
           { role: 'button', name: '위젯 편집' },
           { role: 'input', name: '가져올 링크 또는 경로', value: screen.input },
@@ -204,7 +207,7 @@ async function harness(
       if (type !== 'click') return {};
       if (params.name === '이 위치에 저장하고 시작') {
         storage.initialized = true;
-        screen.view = 'home';
+        screen.view = 'chat';
         answer('storage.initialize', { initialized: true });
       } else if (params.role === 'checkbox') {
         const name = params.name.startsWith(ANALYZE) ? ANALYZE : params.name;
@@ -437,10 +440,11 @@ test('a demo initializes its Wiki, imports each item through the import box and 
   const done = actions.map(([type, name, value]) =>
     [type, name, value].filter((part) => part !== '').join(' '),
   );
-  assert.deepEqual(done.slice(0, 4), [
+  assert.deepEqual(done.slice(0, 5), [
     'fullscreen true',
     `fill Wiki 저장 폴더 ${demo.plan.wiki}`,
     'click 이 위치에 저장하고 시작',
+    'navigate home',
     'navigate library import',
   ]);
   const importBox = done.filter((line) =>

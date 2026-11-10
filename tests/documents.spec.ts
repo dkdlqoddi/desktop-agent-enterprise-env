@@ -9,6 +9,7 @@ import {
   goHome,
   launch,
   llmServer,
+  openDashboard,
   openLibrary,
   widget,
 } from './helpers';
@@ -53,6 +54,7 @@ test('documents: AI-analyzed documents stand apart; several are analyzed, cleare
       ).id;
     await request(page, 'wiki.analyze', { id: ids['주간 회의록'] });
     await page.reload();
+    await openDashboard(page);
 
     // On the dashboard the analyzed document is labelled apart from the ones left as imported.
     const documents = widget(page, 'documents');

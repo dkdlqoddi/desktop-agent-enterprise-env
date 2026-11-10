@@ -15,12 +15,14 @@ npm ci
 npm run setup:python    # backend/.venv를 만들고 백엔드와 개발 도구(pytest, ruff, PyInstaller, coverage, debugpy)를 설치
 npm run setup:browser   # 백엔드의 Playwright가 쓰는 Chromium 설치
 npm run setup:electron  # Electron 실행 파일 내려받기
+npm run build:hermes    # 채팅의 내장 Hermes를 dist/hermes에(선택. 없으면 채팅은 LLM의 JSON 답으로 계획)
 npm run dev
 ```
 
 - `setup:python`은 `PYTHON` 환경변수의 Python을 먼저 쓰고, 없으면 `python3`·`python`(Windows는 `python`·`py -3`)에서 3.10 이상을 찾습니다. 예: `PYTHON=python3.13 npm run setup:python`
 - `npm run dev:ready`(Windows는 `run-dev.cmd`)는 `npm ci`(바뀐 것이 없으면 건너뜀)와 세 가지 준비 스크립트를 실행한 뒤 `npm run dev`를 시작합니다.
 - 개발용 LLM 초기값은 `.env.example`을 `.env`로 복사해 넣습니다. 소스로 실행한 백엔드만 `.env`를 읽습니다.
+- `build:hermes`는 Hermes 소스를 `build/hermes-source`에 받고(git), CPython 3.14.0과 의존성 wheel을 내려받아 해시를 확인합니다. 인터넷 없이 빌드하려면 같은 커밋의 소스를 `build/hermes-source`에, 내려받은 압축 파일을 `build/`에 두거나, Linux에서는 독립 실행형 CPython 3.14.0을 `--python`(또는 `PRIVATE_AGENT_HERMES_BUILD_PYTHON`)으로 줍니다.
 
 ## 실행
 
@@ -82,6 +84,9 @@ npm run test:e2e -- tests/search.spec.ts --grep "long documents"
 | `PRIVATE_AGENT_WORD_TEST`            | `1`이면 Windows에서 Word로 RTF를 읽는 테스트를 실행합니다                                                          |
 | `PRIVATE_AGENT_NOTEPAD_TEST`         | `1`이면 Windows에서 메모장을 쓰는 테스트를 실행합니다                                                              |
 | `PRIVATE_AGENT_SCHEDULE_INTERVAL_MS` | 예약·자동 작업 확인 간격(1,000~60,000ms, 기본 30,000). 테스트가 줄여 씁니다                                        |
+| `PRIVATE_AGENT_WEB_HEADLESS`         | `1`이면 웹 기록의 브라우저를 창 없이 실행합니다. 테스트만 씁니다                                                   |
+| `PRIVATE_AGENT_HERMES_DIR`           | 내장 Hermes 폴더. 앱이 정하며(개발 중 `dist/hermes`, 배포 앱 `resources/hermes`), 백엔드 테스트가 바꿔 씁니다      |
+| `PRIVATE_AGENT_HERMES_BUILD_PYTHON`  | Linux `build:hermes`가 내려받는 대신 복사할 독립 실행형 CPython 3.14.0                                             |
 
 LLM 연결의 초기값은 `.env.example`의 이름(`BASE_URL`, `API_KEY`, `MODEL_NAME` 등)으로 줍니다. 패키징한 앱은 `PRIVATE_AGENT_` 접두사가 붙은 이름(`PRIVATE_AGENT_BASE_URL` 등)만 읽습니다. 앱에서 저장한 설정이 이 초기값보다 우선합니다.
 

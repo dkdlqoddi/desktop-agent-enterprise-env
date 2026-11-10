@@ -1710,6 +1710,42 @@ class WorkReport(Recipe):
         )
 
 
+class WebCaptureRun(Recipe):
+    kind = "web_capture"
+    title = "사이트 광고·상품 기록"
+    summary = "쇼핑·검색 사이트에서 정한 검색어의 결과 페이지를 열어 보이는 광고와 상품을 기록합니다."
+    description = (
+        "정한 시각에 브라우저 창을 열고 검색 결과의 광고·상품·검색 결과를 웹 기록에 남깁니다. "
+        "광고를 누르지 않으며, 로봇 확인이 나오면 기록하지 않고 알려 줍니다."
+    )
+    group = "웹 기록"
+    fields = (
+        field(
+            "site",
+            "사이트",
+            "select",
+            required=True,
+            default="coupang",
+            options=[("coupang", "쿠팡"), ("amazon", "아마존"), ("naver", "네이버"), ("google", "구글")],
+        ),
+        field("query", "검색어", "text", required=True, limit=100, placeholder="예) 노트북"),
+    )
+    schedule = {**Recipe.schedule, "frequency": "daily", "run_time": "09:00"}
+    timeout = 10 * 60  # One search page opened, scrolled and read; a browser start included.
+
+    def run(self, run):
+        run.check()
+        run.step("브라우저에서 검색 결과를 읽는 중")
+        kept = run.service.web.capture(run.config["site"], run.config["query"], source="schedule")
+        counts = kept["counts"]
+        summary = f"광고 {counts['ad']} · 상품 {counts['product']} · 검색 결과 {counts['result']}"
+        items = [
+            {"title": title, "status": "new", "doc_id": None, "url": kept["url"], "message": "광고"}
+            for title in kept["ads"]
+        ]
+        return outcome(summary, bool(counts["ad"]), items, capture_id=kept["capture_id"])
+
+
 RECIPES = {
     recipe.kind: recipe
     for recipe in (
@@ -1720,6 +1756,7 @@ RECIPES = {
         SourceRefresh(),
         AnalyzeNew(),
         WorkReport(),
+        WebCaptureRun(),
     )
 }
 

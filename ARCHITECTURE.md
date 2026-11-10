@@ -12,13 +12,16 @@ Electron 메인 프로세스(electron/main.cjs) ◀── AI 도구: 127.0.0.1 R
    │  stdin/stdout JSON 줄(electron/backend-process.cjs)
    ▼
 Python 백엔드(backend/main.py → agent/service.py) ──▶ wiki.db, LLM 서버, Chromium(Playwright), Office(COM)
+   │  stdin/stdout JSON 줄(agent/hermes.py)
+   ▼
+Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 작업 계획만 세우고, 모델 호출은 백엔드에 맡김
 ```
 
 | 프로세스      | 맡는 일                                                                                                                                                               | 경계                                                                                                                                                                         |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 렌더러        | 화면. Next.js 16(React 19)의 정적 내보내기(`output: 'export'`)를 메인 프로세스가 `agent://bundle/` 프로토콜로 제공합니다                                              | `sandbox`·`contextIsolation`, Node.js 없음, 스크립트 해시 기반 CSP. 외부 이동·새 창·webview·권한 요청을 막습니다. 요청 통로는 preload가 연 하나뿐입니다                      |
 | Electron 메인 | 창, IPC 허용 목록, 설정 파일과 비밀 값(운영체제 보안 저장소), 사이트 계정과 로그인 계획, 로컬 API·MCP 서버, 알림·자동 작업의 시각 확인, 로그·진단, 백엔드 시작·재시작 | 렌더러의 요청은 보낸 프레임과 `ALLOWED`로, AI 도구의 요청은 토큰과 허용 범위로 거릅니다                                                                                      |
-| Python 백엔드 | `wiki.db`, 검색, LLM 호출, 가져오기(Office COM 워커, Playwright Chromium), 원본 반영, 자동 작업 실행, 백업                                                            | 포트를 열지 않고 메인 프로세스와 표준 입출력으로만 통신합니다. LLM 설정(API Key 포함)은 시작할 때 받아 메모리에만 두고, 사이트 비밀번호는 로그인이 필요한 요청에 담겨 옵니다 |
+| Python 백엔드 | `wiki.db`, 검색, LLM 호출, 가져오기(Office COM 워커, Playwright Chromium), 원본 반영, 자동 작업 실행, 백업, 채팅 작업 실행과 웹 기록(보이는 Chromium 창)              | 포트를 열지 않고 메인 프로세스와 표준 입출력으로만 통신합니다. LLM 설정(API Key 포함)은 시작할 때 받아 메모리에만 두고, 사이트 비밀번호는 로그인이 필요한 요청에 담겨 옵니다 |
 
 메인 프로세스는 앱이 시작할 때 저장된 Wiki 폴더로 백엔드를 띄우고(`electron/storage.cjs`), 처음 실행이면 화면이 폴더를 고르게 합니다. 백엔드가 예기치 않게 끝나면 1초, 5초, 15초 뒤에 다시 시작합니다. 2분 안에 세 번 다시 시작하고도 또 끝나면 더 시작하지 않고 사용자에게 알립니다(`electron/restarts.cjs`).
 
@@ -48,12 +51,15 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 사용자가 처음 실행할 때 고른 폴더입니다(기본 제안은 문서 폴더의 `Private Agent`).
 
-| 경로                   | 내용                                                                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wiki.db`              | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 1입니다(`backend/agent/migrations.py`)                                                         |
-| `backups/`             | `wiki-YYYYMMDD-HHMMSS.db`(하루 한 번 자동, 최근 7개), `wiki-manual-….db`(직접 백업, 최근 7개), `wiki-before-restore-….db`(복원으로 바뀐 Wiki, 지우지 않음) |
-| `backups/restore.json` | 예약된 복원. 함께 있는 `restore-<id>.db`를 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                       |
-| `원본 백업/`           | 원본 반영 전에 복사한 Office 파일(파일마다 최근 5개)과 저장 단계를 적는 `.writing` 파일                                                                    |
+| 경로                    | 내용                                                                                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wiki.db`               | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 1입니다(`backend/agent/migrations.py`)                                                         |
+| `backups/`              | `wiki-YYYYMMDD-HHMMSS.db`(하루 한 번 자동, 최근 7개), `wiki-manual-….db`(직접 백업, 최근 7개), `wiki-before-restore-….db`(복원으로 바뀐 Wiki, 지우지 않음) |
+| `backups/restore.json`  | 예약된 복원. 함께 있는 `restore-<id>.db`를 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                       |
+| `원본 백업/`            | 원본 반영 전에 복사한 Office 파일(파일마다 최근 5개)과 저장 단계를 적는 `.writing` 파일                                                                    |
+| `web-captures/YYYY-MM/` | 웹 기록 때 찍은 페이지 스크린샷(`<기록 id>.jpg`)                                                                                                           |
+| `exports/`              | 웹 기록의 CSV 내보내기(`web-records-YYYYMMDD-HHMMSS.csv`, UTF-8 BOM)                                                                                       |
+| `hermes/`               | 내장 Hermes의 홈(`HERMES_HOME`): 세션 기록(`state.db`)과 임시·캐시 폴더. API Key와 헤더 값은 들어가지 않습니다                                             |
 
 `wiki.db`의 테이블은 다음과 같이 묶입니다(`backend/agent/db.py`).
 
@@ -62,6 +68,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 - 출처: `office_sources`, `rtf_sources`, `image_sources`, `text_sources`, `markdown_sources`, `confluence_sources`, `jira_sources`, `ignored_sources`(영구 삭제한 출처), `writeback_backups`(원본 백업 기록)
 - 프롬프트와 자동화: `prompts`, `runs`, `schedules`, `routines`, `routine_runs`
 - 비서: `tasks`, `conversations`, `messages`
+- 채팅과 웹 기록: `agent_messages`(채팅 대화와 작업 카드, 최근 1,000개), `web_captures`(기록한 페이지), `web_items`(광고·상품·검색 결과, 직접 누른 광고의 도착 페이지)
 - `metadata`: 검색·대시보드 설정(`preferences`)과 색인 상태
 
 가져온 이미지는 별도 파일 없이 HTML 안의 `data:` URI로 저장합니다. Office 그림을 내보낼 때 쓰는 임시 폴더(`private-agent-office-…`, `private-agent-pictures-…`)는 시스템 임시 폴더에 생기고, 백엔드가 시작할 때 10분 넘은 것을 지웁니다.
@@ -79,6 +86,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `window.json`                            | 화면 배율                                                                                                                                                                                                        |
 | `logs/app.log`, `logs/backend.log`       | 메인 프로세스와 백엔드의 로그. 각각 1MB를 넘으면 `.1`로 하나 남깁니다                                                                                                                                            |
 | `confluence-profiles/`, `jira-profiles/` | 사이트 주소(origin)마다 하나인 Chromium 프로필. 그 사이트의 마지막 계정을 지우면 함께 지웁니다                                                                                                                   |
+| `web-profiles/default/`                  | 웹 기록용 보이는 브라우저의 Chromium 프로필(쿠키와 로그인 상태). 사용자가 그 창에서 로그인한 사이트의 세션이 남습니다                                                                                            |
 | `mcp/private-agent-mcp.cjs`              | stdio로만 연결하는 AI 도구가 실행하는 MCP 연결 프로그램. 로컬 API를 켤 때 씁니다                                                                                                                                 |
 
 화면 테마는 창의 localStorage(`private-agent:theme`)에 있습니다. 배포용 exe는 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀어 실행합니다.
@@ -106,6 +114,9 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/browser_import.py`, `confluence_import.py`, `jira_import.py`                                                    | 사이트별 Chromium 프로필, 요청 속도 제한, Confluence 페이지와 JIRA 티켓 수집             |
 | `agent/web_login.py`, `agent/web_assist.py`                                                                            | 로그인 방식에 따른 자동 로그인, 로그인·접속 실패 시 LLM 도움(기본 꺼짐)                  |
 | `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                             |
+| `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 계획을 작업 카드로 검사, 승인한 작업만 실행(`agent.*`)                  |
+| `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지, 워커의 모델 호출을 앱의 LLM 연결로 보내기                    |
+| `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)     |
 
 ### electron
 
@@ -139,6 +150,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |
 | `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시와 나누어 받는 목록, 선택자로 읽는 작은 상태 저장소                 |
 | `components/windowing.ts`                               | 긴 목록에서 보이는 줄만 그리기(측정한 줄 높이)                                                 |
+| `components/agent-chat.tsx`, `web-records.tsx`          | 첫 화면인 채팅(작업 카드와 승인), 웹 기록 표와 CSV 내보내기                                    |
 
 ### scripts
 
@@ -148,6 +160,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `setup-python.mjs`, `setup-browser.mjs`, `setup-electron.mjs`                           | 가상 환경, Chromium, Electron 준비                                                |
 | `test-python.mjs`, `test-e2e.mjs`, `lint-python.mjs`                                    | pytest, Playwright(Linux에서는 xvfb-run), ruff 실행                               |
 | `package.mjs`, `build-python.mjs`, `build-browser.mjs`, `build-exe.mjs`, `launcher.nsi` | 패키징(아래 참고)                                                                 |
+| `build-hermes.mjs`, `build-hermes.py`                                                   | 내장 Hermes 준비: 고정한 소스·CPython·해시 고정 wheel을 `dist/hermes`에           |
 | `generate-methods.mjs`, `export-api-docs.mjs`, `third-party-notices.mjs`                | 생성 파일: 화면의 `Method` 타입, `docs/api.md`·`docs/openapi.json`, 서드파티 고지 |
 
 ## 기능과 RPC 메서드 추가
@@ -165,6 +178,17 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 9. 백엔드 테스트(`backend/tests/`)와 메인 프로세스 테스트를 추가합니다. `tests/methods.test.cjs`는 화면이 부르는 모든 메서드가 `ALLOWED`에 있고 메인 프로세스나 백엔드가 처리하는지 확인합니다. 화면을 바꿨다면 E2E(`tests/*.spec.ts`)도 봅니다.
 10. 사용자에게 보이는 변경은 README와 [CHANGELOG.md](CHANGELOG.md)에 적습니다.
 
+## 채팅과 웹 기록
+
+채팅은 첫 화면입니다. 메시지를 보내면(`agent.send`) 백엔드가 최근 대화와 함께 내장 Hermes에 계획을 묻습니다.
+
+1. `agent/hermes.py`가 `resources/hermes`(개발 중에는 `dist/hermes`)의 CPython으로 `worker.py`를 띄웁니다. 실행 전에 `manifest.json`의 `worker_sha256`을 확인하고, 환경 변수는 사용자의 Hermes·프록시·Python 설정을 버린 최소한만 넘깁니다(`child_environment`).
+2. 워커는 Hermes에 `prepare_actions` 도구 하나만 줍니다. 이 도구는 작업을 실행하지 않고 목록으로만 남깁니다. Hermes가 모델을 부를 때마다 워커가 백엔드에 요청을 넘기고, `agent/hermes_llm.py`가 앱의 LLM 연결(키, 헤더, CA)로 보냅니다. 키는 워커에 들어가지 않으며, 계획 하나에 모델 호출은 4번, 시간은 120초까지입니다.
+3. `agent/agent_chat.py`가 제안된 작업을 `TOOLS` 목록과 인수별로 검사해 카드로 만듭니다. 앱의 기록만 읽는 작업(문서 찾기, 웹 기록 요약)은 바로 실행하고, 사이트 열기·페이지 기록·할 일 추가·예약은 사용자가 **확인 후 실행**(`agent.approve`)을 누를 때만 실행합니다.
+4. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있습니다.
+
+`npm run build:hermes`를 하지 않은 소스 실행에서는 연결한 LLM이 JSON으로 계획하고(`engine: direct`), 화면의 배지가 이를 알립니다. 배포 앱은 항상 내장 Hermes를 씁니다.
+
 ## 보안 경계
 
 자세한 위협 모델은 [SECURITY.md](SECURITY.md)에 있습니다. 구조와 관련된 규칙만 요약합니다.
@@ -175,6 +199,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 - 사이트 주소는 HTTPS가 기본이며 HTTP로 내려가지 않습니다. 브라우저 자동화는 Chromium 샌드박스를 켠 채 실행합니다.
 - 문서 삭제는 휴지통으로 가고, 영구 삭제·백업 복원·파일 가져오기·설정 변경은 허용 범위 ‘전체’에서만 AI 도구가 할 수 있습니다.
 - 로그와 진단 복사본은 키·토큰·비밀번호를 가립니다.
+- 채팅의 계획기(Hermes)는 작업을 제안만 합니다. 사이트를 열거나 기록하는 작업은 사용자가 승인한 카드만 실행하고, 앱은 페이지의 광고나 링크를 누르지 않습니다.
 
 ## 빌드와 패키징
 
@@ -184,7 +209,8 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 2. `next build`: 화면을 `out/`으로 정적 내보내기합니다(`NEXT_TELEMETRY_DISABLED=1`).
 3. `scripts/build-python.mjs`: PyInstaller `--onedir`로 백엔드를 `dist/backend/private-agent-backend/`에 만듭니다. UTF-8 모드로 실행되게 하고, setuptools와 debugpy는 넣지 않습니다. Windows에서는 만든 백엔드가 모든 표준 확장 모듈을 불러오는지 확인합니다(`--check-build`).
 4. `scripts/build-browser.mjs`: 백엔드의 Playwright가 쓰는 Chromium을 `dist/browsers`에 설치합니다. 패키징한 앱은 `PLAYWRIGHT_BROWSERS_PATH`를 이 폴더로 정합니다.
-5. electron-builder(`package.json`의 `build`): `electron/`, `out/`, `package.json`을 `app.asar`에 넣고, `dist/browsers`와 `dist/backend`를 `resources/`에, `LICENSE`와 `THIRD_PARTY_NOTICES.md`를 앱 폴더에 넣으며 Electron fuses를 적용합니다. nsis 대상과 `scripts/launcher.nsi`로 `release/Private-Agent-<버전>-x64.exe` 하나를 만듭니다. 백신 검사 때문에 `EPERM`·`EBUSY`로 멈추면 세 번까지 다시 시도합니다.
+5. `scripts/build-hermes.mjs`: `runtime/hermes/manifest.json`에 고정한 Hermes 소스(태그와 커밋 확인), CPython 3.14.0(Windows는 python.org embeddable package, Linux는 python-build-standalone, 둘 다 SHA-256 확인), `runtime/hermes/requirements.txt`의 해시 고정 wheel을 `dist/hermes`에 모읍니다.
+6. electron-builder(`package.json`의 `build`): `electron/`, `out/`, `package.json`을 `app.asar`에 넣고, `dist/browsers`, `dist/backend`, `dist/hermes`를 `resources/`에, `LICENSE`와 `THIRD_PARTY_NOTICES.md`를 앱 폴더에 넣으며 Electron fuses를 적용합니다. nsis 대상과 `scripts/launcher.nsi`로 `release/Private-Agent-<버전>-x64.exe` 하나를 만듭니다. 백신 검사 때문에 `EPERM`·`EBUSY`로 멈추면 세 번까지 다시 시도합니다.
 
 이 exe는 설치 프로그램이 아니라 실행기입니다. 빌드마다 처음 실행할 때 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀고, 그 뒤에는 바로 실행합니다. 레지스트리, 바로 가기, 제거 프로그램을 만들지 않으며, 실행 중인 앱이 없을 때 더 오래된 빌드의 폴더를 지웁니다.
 

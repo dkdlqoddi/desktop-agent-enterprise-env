@@ -10,6 +10,7 @@ import {
   goHome,
   launch,
   openAdmin,
+  openDashboard,
   openLibrary,
   results,
   searchBox,
@@ -130,6 +131,7 @@ test('JIRA: per-site account, ticket link check, scopes, Python Playwright impor
 
     app = await launch(directory);
     page = await app.firstWindow();
+    await openDashboard(page, 30_000);
     await expect(widget(page, 'documents').locator('.document-row')).toHaveCount(3);
     await searchBox(page).fill('마지막 댓글 검색어');
     await searchBox(page).press('Enter');

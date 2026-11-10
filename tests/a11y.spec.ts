@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  chatBox,
   chooseStorage,
   connectLlm,
   drawer,
@@ -11,6 +12,7 @@ import {
   launch,
   llmServer,
   openAdmin,
+  openDashboard,
   openLibrary,
   results,
   searchBox,
@@ -56,10 +58,17 @@ async function request<T>(page: Page, method: string, params: Record<string, unk
 const nav = (page: Page, name: string) =>
   page.getByRole('navigation', { name: '화면' }).getByRole('button', { name, exact: true });
 
-// Every main screen once, each measured by axe: the dashboard and its editor, tasks, the library with a document open,
-// the AI and activity pages, each admin section and a search with its answer.
+// Every main screen once, each measured by axe: the chat and the web records (empty), the dashboard and its editor,
+// tasks, the library with a document open, the AI and activity pages, each admin section and a search with its answer.
 async function visit(page: Page, theme: string, found: Finding[]) {
   const screen = (name: string) => `${theme} · ${name}`;
+  await nav(page, '채팅').click();
+  await expect(chatBox(page)).toBeVisible();
+  await expect(page.getByRole('group', { name: '예시' })).toBeVisible();
+  await audit(page, screen('채팅'), found);
+  await nav(page, '웹 기록').click();
+  await expect(page.getByText('기록이 없습니다', { exact: true })).toBeVisible();
+  await audit(page, screen('웹 기록'), found);
   await goHome(page);
   await expect(widget(page, 'documents').locator('.document-row')).toHaveCount(4);
   await audit(page, screen('홈'), found);
@@ -222,7 +231,7 @@ test('accessibility: the main screens have no critical or serious axe findings, 
       variables: { '전달할 내용': '주간 진행 상황' },
     });
     await page.reload();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
 
     await visit(page, '밝게', found);
 
@@ -268,7 +277,7 @@ test('accessibility: the main screens have no critical or serious axe findings, 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     await visit(page, '어둡게', found);
 
     // The zoom keys and Ctrl+wheel reach the main process, which zooms the window and keeps the factor for the next

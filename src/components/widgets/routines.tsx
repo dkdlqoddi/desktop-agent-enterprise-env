@@ -18,6 +18,7 @@ import {
   Play,
   Plus,
   Radar,
+  ScanSearch,
   Square,
   Trash2,
   Workflow,
@@ -57,6 +58,7 @@ export const ROUTINE_ICONS: Record<string, LucideIcon> = {
   source_refresh: FolderSync,
   analyze_new: BrainCircuit,
   work_report: NotebookPen,
+  web_capture: ScanSearch,
 };
 const STATUS: Record<NonNullable<Routine['last_status']>, string> = {
   queued: '대기 중',

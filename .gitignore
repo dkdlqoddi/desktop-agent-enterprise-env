@@ -36,6 +36,8 @@ electron/build-info.json
 storage-state*.json
 settings.json
 sites.json
+# The web records' site list (search addresses, no accounts), shared with the Android app.
+!shared/web-capture/sites.json
 api.json
 *.spec
 !tests/*.spec.*

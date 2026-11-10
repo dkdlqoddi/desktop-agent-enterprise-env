@@ -6,6 +6,8 @@
 
 ## 주요 기능
 
+- 첫 화면의 채팅: 말로 맡기면 내장 Hermes Agent가 작업을 계획하고, 사이트 열기·페이지 기록·할 일 추가·예약은 사용자가 확인한 카드만 실행
+- 웹 기록: 쿠팡·아마존·네이버·구글 검색 결과를 눈앞의 브라우저 창에서 읽어 광고·상품·검색 결과와 스크린샷을 이 PC에 기록하고 CSV로 내보내기. 앱은 광고를 누르지 않고, 사용자가 직접 누른 광고만 도착 페이지까지 기록
 - Wiki 문서 작성, Markdown·이미지 가져오기, 문서 검색과 지식 관계도
 - Windows Office 문서(Word·Excel·PowerPoint·Visio), RTF, 텍스트 파일·폴더 가져오기
 - JIRA 티켓·프로젝트 및 Confluence 페이지 가져오기
@@ -101,6 +103,19 @@ API Key, 사용자 지정 헤더 값과 사이트 비밀번호는 운영체제 �
 
 같은 경로나 링크를 다시 가져오면 원본의 변경 사항을 기존 문서에 반영합니다. Wiki에서 직접 고친 내용은 명시적으로 덮어쓰기를 선택하기 전까지 보존합니다. 폴더는 5,000개씩 나누어 처리하며, 진행 중 취소할 수 있습니다. Office 문서는 해당 앱이 실제로 열 수 있어야 합니다.
 
+## 채팅과 웹 기록
+
+앱을 열면 **채팅**이 먼저 보입니다. "쿠팡에서 노트북 광고 기록해 줘", "매일 9시에 네이버 캠핑의자 광고 기록해 줘"처럼 적으면 내장 [Hermes Agent](https://github.com/NousResearch/hermes-agent)가 연결한 LLM으로 작업을 계획하고, 화면에 작업 카드로 보여 줍니다.
+
+- 문서 찾기와 웹 기록 요약처럼 앱의 기록만 읽는 작업은 바로 실행합니다.
+- 사이트 열기, 페이지 기록, 할 일 추가, 예약은 카드의 **확인 후 실행**을 눌러야 실행합니다. **취소**한 작업은 실행하지 않습니다.
+- 사이트 작업은 별도 Chromium 창에서 사용자에게 보이게 진행합니다. 앱은 페이지의 광고나 링크를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 알려 줍니다. 그 창에서 사용자가 직접 누른 광고는 도착 페이지(60초 안)까지 함께 기록합니다.
+- 계획 중에는 **중지**로 멈출 수 있습니다. Hermes는 작업을 제안만 하고, API Key와 헤더 값은 Hermes에 넘기지 않습니다.
+
+**웹 기록** 화면에서 사이트·종류(광고, 상품, 검색 결과, 누른 광고)·검색어·날짜로 기록을 거르고, **CSV 내보내기**로 Wiki 폴더의 `exports`에 저장합니다(Excel에서 바로 열리는 UTF-8 BOM). 브라우저 창에 직접 연 페이지는 **열린 페이지 기록**으로 남깁니다. 채팅으로 만든 예약은 **AI 작업 → 자동 작업**의 ‘웹 기록’ 작업으로 보이고 거기서 바꾸거나 끌 수 있습니다.
+
+사이트의 이용약관과 접근 정책을 지키는 범위에서 쓰세요. 기록은 이 PC의 Wiki 폴더에만 남고, 채팅 내용과 앱이 읽은 기록 요약은 계획을 위해 설정한 LLM 서버로 전송됩니다.
+
 ## API와 MCP
 
 **관리 → AI 도구 연동**에서 서버를 활성화하고 연결 정보를 복사합니다. 기능별 매개변수와 접근 권한은 **API 매뉴얼**이나 [docs/api.md](docs/api.md)에서 확인합니다.
@@ -122,8 +137,11 @@ npm run format:python:check
 npm run check
 npm run build:web
 npm run build:python
+npm run build:hermes
 npm run test:e2e
 ```
+
+`build:hermes`는 채팅이 쓰는 Hermes Agent를 `runtime/hermes/manifest.json`에 고정한 소스·CPython 3.14.0·해시 고정 wheel로 `dist/hermes`에 준비합니다(Windows는 python.org embeddable package, Linux는 python-build-standalone을 받아 SHA-256을 확인합니다). 이것 없이 소스로 실행하면 채팅은 연결한 LLM의 JSON 답으로 계획하고 화면에 ‘기본 계획기’로 표시합니다.
 
 `check`는 ESLint 검사(`npm run lint`), 화면과 Electron 메인 프로세스의 TypeScript 검사(`npm run typecheck`, `npm run typecheck:electron`), Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. `test:e2e`는 Linux에서 xvfb가 설치되어 있으면 가상 디스플레이에서 창을 띄우지 않고 실행되며(`PRIVATE_AGENT_E2E_SHOW=1`이면 실제 화면에 띄웁니다), 같은 E2E가 GitHub Actions의 `e2e-linux.yml`로 매일 밤과 수동 실행 때 돌아갑니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
 
@@ -140,10 +158,12 @@ GitHub Actions의 `check.yml`은 푸시와 PR마다 Node.js 22·24에서 형식�
 ## 저장소 구조
 
 ```text
-backend/agent/       Wiki, 검색, LLM, 가져오기와 자동화
+backend/agent/       Wiki, 검색, LLM, 가져오기와 자동화, 채팅과 웹 기록
 backend/tests/       Python 단위·브라우저 테스트
 src/                Next.js 기반 화면과 공유 타입
 electron/           데스크톱 실행, 계정 저장, 로컬 API와 MCP
+shared/web-capture/ 웹 기록의 페이지 읽기·클릭 확인 스크립트와 사이트 목록
+runtime/hermes/     내장 Hermes의 고정 버전, 해시 고정 의존성, 워커
 scripts/            개발 환경과 패키징 도구
 tests/              Electron 단위 테스트와 Playwright E2E
 assets/             앱 아이콘
@@ -153,10 +173,10 @@ assets/             앱 아이콘
 
 Wiki 데이터는 선택한 폴더의 `wiki.db`에 저장됩니다. 삭제한 문서는 휴지통에 30일 보관되며 **지식 보관함 → 문서 → 휴지통**에서 복원하거나 영구 삭제할 수 있습니다. 연결 설정과 브라우저 로그인 세션은 운영체제의 앱 설정 폴더에 저장되며, 개발 환경의 기본 설정 폴더는 `.local-data/dev-user-data`입니다.
 
-앱이 켜져 있으면 하루에 한 번 같은 폴더의 `backups`에 `wiki-YYYYMMDD-HHMMSS.db`로 백업하고 최근 7개를 남깁니다. **관리 → 저장 위치·정보 → 지금 백업**이나 API(`wiki.backup`)로 만든 백업(`wiki-manual-…`)은 따로 최근 7개를 남깁니다. 백업으로 되돌리기는 같은 화면의 **백업과 복원** 목록이나 API(`wiki.restore_backup`)로 예약하고 앱을 다시 실행할 때 이루어지며(목록의 **지금 다시 시작**으로 바로 다시 실행하고, 그 전에는 **복원 취소**로 거둘 수 있습니다), 그때까지의 Wiki는 `backups`에 `wiki-before-restore-….db`로 남습니다. 원본에 반영한 Office 문서는 문서 창의 **원본 백업**에서 반영 전 파일로 되돌릴 수 있습니다. 앱은 시작할 때마다 데이터베이스를 검사(`PRAGMA quick_check`)하고 스키마 버전(`PRAGMA user_version`)을 확인해, 손상되었거나 더 새로운 버전의 앱이 바꾼 파일은 열지 않고 그대로 둔 채 할 일을 알려 줍니다. 실행 기록은 최근 90일 안의 최근 2,000개를, 대화는 최근 1,000개와 대화마다 최근 메시지 200개를 보관합니다.
+앱이 켜져 있으면 하루에 한 번 같은 폴더의 `backups`에 `wiki-YYYYMMDD-HHMMSS.db`로 백업하고 최근 7개를 남깁니다. **관리 → 저장 위치·정보 → 지금 백업**이나 API(`wiki.backup`)로 만든 백업(`wiki-manual-…`)은 따로 최근 7개를 남깁니다. 백업으로 되돌리기는 같은 화면의 **백업과 복원** 목록이나 API(`wiki.restore_backup`)로 예약하고 앱을 다시 실행할 때 이루어지며(목록의 **지금 다시 시작**으로 바로 다시 실행하고, 그 전에는 **복원 취소**로 거둘 수 있습니다), 그때까지의 Wiki는 `backups`에 `wiki-before-restore-….db`로 남습니다. 원본에 반영한 Office 문서는 문서 창의 **원본 백업**에서 반영 전 파일로 되돌릴 수 있습니다. 앱은 시작할 때마다 데이터베이스를 검사(`PRAGMA quick_check`)하고 스키마 버전(`PRAGMA user_version`)을 확인해, 손상되었거나 더 새로운 버전의 앱이 바꾼 파일은 열지 않고 그대로 둔 채 할 일을 알려 줍니다. 실행 기록은 최근 90일 안의 최근 2,000개를, 대화는 최근 1,000개와 대화마다 최근 메시지 200개를, 채팅은 최근 메시지 1,000개를 보관합니다. 웹 기록의 스크린샷은 Wiki 폴더의 `web-captures`, CSV는 `exports`, 내장 Hermes의 세션 기록은 `hermes`에 있습니다. 웹 기록용 브라우저의 프로필(그 창에서 로그인한 사이트의 세션)은 앱 설정 폴더의 `web-profiles`에 남습니다.
 
 `.env`, 인증서·키, 데이터베이스, 브라우저 프로필, 로그와 빌드 결과를 저장소에 추가하지 마세요.
 
 ## 라이선스
 
-이 프로젝트는 [MIT 라이선스](LICENSE)로 배포합니다. 함께 배포하는 Electron·Chromium·Python과 각 라이브러리는 저마다의 라이선스를 따르며, 목록과 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다.
+이 프로젝트는 [MIT 라이선스](LICENSE)로 배포합니다. 함께 배포하는 Electron·Chromium·Python·Hermes Agent와 각 라이브러리는 저마다의 라이선스를 따르며, 목록과 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다.

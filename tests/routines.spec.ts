@@ -62,8 +62,9 @@ test('routines: pick a ready-made job, let it run by itself and now, see what ch
     await page.getByRole('tab', { name: '자동 작업' }).click();
     const box = widget(page, 'routines');
     const catalog = box.getByRole('region', { name: '자동 작업 종류' });
-    await expect(catalog.locator('.recipe-card')).toHaveCount(7);
+    await expect(catalog.locator('.recipe-card')).toHaveCount(8);
     await expect(catalog.getByRole('button', { name: /업무 보고 초안/ })).toContainText('LLM 필요');
+    await expect(catalog.getByRole('button', { name: /사이트 광고·상품 기록/ })).toBeVisible();
     await page.screenshot({ path: 'test-results/routines-catalog.png', fullPage: true });
     await catalog.getByRole('button', { name: /JIRA 티켓 변경 확인/ }).click();
     const form = box.getByRole('form', { name: '새 자동 작업 · JIRA 티켓 변경 확인' });

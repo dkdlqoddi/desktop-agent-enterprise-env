@@ -23,6 +23,7 @@ import {
   launch,
   llmServer,
   openAdmin,
+  openDashboard,
   results,
   searchBox,
   widget,
@@ -287,6 +288,7 @@ test('desktop: admin settings, prompt widget, one search box with answers, drawe
 
     app = await launch(directory);
     page = await app.firstWindow();
+    await openDashboard(page, 30_000);
     await expect(widget(page, 'documents').locator('.document-row')).toHaveCount(1);
     await expect(widget(page, 'documents').locator('.document-row')).toContainText('AI 분석 완료');
     expect(await order()).toEqual(arranged);
@@ -420,7 +422,7 @@ test('a damaged storage.json offers its Wiki again; fields edit by mouse; a cras
     ).toBeVisible();
     await expect(page.getByLabel('Wiki 저장 폴더', { exact: true })).toHaveValue(wikiDirectory);
     await page.getByRole('button', { name: '이 위치에 저장하고 시작' }).click();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible({ timeout: 30_000 });
+    await openDashboard(page, 30_000);
     expect(JSON.parse(await readFile(file, 'utf8')).directory).toBe(wikiDirectory);
     const aside = (await readdir(directory)).filter((name) =>
       name.startsWith('storage.json.corrupt-'),
@@ -486,7 +488,7 @@ test('a damaged storage.json offers its Wiki again; fields edit by mouse; a cras
       .poll(() =>
         app!.evaluate(({ BrowserWindow }) =>
           BrowserWindow.getAllWindows()[0].webContents.executeJavaScript(
-            'document.querySelectorAll("section[data-widget]").length',
+            'document.querySelectorAll(\'nav[aria-label="화면"] button\').length',
           ),
         ),
       )
@@ -740,7 +742,7 @@ test('LLM limits saved and read back; Wiki backups restored after a restart, a r
     app = await launch(directory);
     page = await app.firstWindow();
     page.on('pageerror', (error) => errors.push(error.message));
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible({ timeout: 30_000 });
+    await openDashboard(page, 30_000);
     const titles = (await request<{ title: string }[]>('wiki.list')).map((doc) => doc.title);
     expect(titles).toContain('백업 전 문서');
     expect(titles).not.toContain('백업 뒤 문서');
@@ -765,6 +767,7 @@ test('LLM limits saved and read back; Wiki backups restored after a restart, a r
     );
     expect(seeded.stderr).toBe('');
     await page.reload();
+    await openDashboard(page);
     await widget(page, 'documents').locator('.document-row').filter({ hasText: '보고서' }).click();
     const source = drawer(page).locator('.document-source');
     await source.locator('.writeback-backups summary').click();

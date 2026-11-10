@@ -199,6 +199,12 @@ class Service:
         from .routines import Routines
 
         self.routines = Routines(self)
+        from .web_capture import WebCapture
+
+        self.web = WebCapture(self)
+        from .agent_chat import AgentChat
+
+        self.agent = AgentChat(self)
         self.active, self.active_lock = {}, threading.Lock()
         # One backup, or copy of a backup to restore, at a time: the daily one and those asked for.
         self.backup_lock = threading.Lock()
@@ -217,14 +223,17 @@ class Service:
 
     def shutdown(self, _=None):
         """The app is closing: stop the automatic routines, the imports, a write to an original file before it saves,
-        the browsers of Confluence and JIRA and the AI analysis, and give them up to 15 seconds.
+        the browsers of Confluence, JIRA and the web records and the AI analysis, and give them up to 15 seconds.
         A stopped Office import closes its file and quits the Office app it started, which Windows leaves running when
         Electron ends the process tree."""
         self.routines.shutdown()
+        self.agent.shutdown()
         importers = (self.rtf, self.office, self.images, self.texts, self.analysis, self.writeback)
         for importer in importers:
             importer.cancel()
-        browsers = [threading.Thread(target=site.shutdown, daemon=True) for site in (self.confluence, self.jira)]
+        browsers = [
+            threading.Thread(target=site.shutdown, daemon=True) for site in (self.confluence, self.jira, self.web)
+        ]
         for thread in browsers:
             thread.start()
         deadline = time.monotonic() + 15
@@ -339,6 +348,8 @@ class Service:
             **self.assistant.methods,
             **self.schedules.methods,
             **self.routines.methods,
+            **self.web.methods,
+            **self.agent.methods,
         }
         if method not in methods or not isinstance(params, dict):
             raise UserError("지원하지 않는 요청입니다.")

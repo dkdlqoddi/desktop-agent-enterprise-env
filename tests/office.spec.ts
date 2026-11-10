@@ -3,7 +3,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { addWidget, chooseStorage, drawer, launch, results, searchBox, widget } from './helpers';
+import {
+  addWidget,
+  chooseStorage,
+  drawer,
+  launch,
+  openDashboard,
+  results,
+  searchBox,
+  widget,
+} from './helpers';
 
 test('Office and RTF: one import box for files and folders, capabilities and IPC validation', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'office-desktop-'));
@@ -213,6 +222,7 @@ test('Imported files are HTML pages: shown as pages, cleaned, searchable, with t
     });
     expect(seeded.stderr).toBe('');
     await page.reload();
+    await openDashboard(page);
     await widget(page, 'documents').locator('.document-row').filter({ hasText: '보고서' }).click();
     await expect(view.locator('h1')).toHaveText('개요');
     expect(await view.locator('h1').evaluate((h1) => getComputedStyle(h1).color)).toBe(
@@ -397,6 +407,7 @@ test('A file too long for one document opens as parts that lead to each other', 
     expect(seeded.stderr).toBe('');
     expect(seeded.stdout.trim()).toBe('3');
     await page.reload();
+    await openDashboard(page);
     // The document list shows the import as one entry that counts its parts; its window leads from part to part.
     const entry = widget(page, 'documents')
       .locator('.document-row')

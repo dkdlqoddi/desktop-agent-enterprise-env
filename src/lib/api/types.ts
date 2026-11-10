@@ -948,3 +948,102 @@ export type Briefing = {
   reminders: Task[];
   recent_documents: Pick<WikiDocument, 'id' | 'title' | 'summary' | 'updated_at'>[];
 };
+
+// The agent chat (agent.*): one conversation whose answers carry the actions the agent proposed, as cards.
+export type AgentTool =
+  | 'search_documents'
+  | 'list_records'
+  | 'web_capture'
+  | 'open_site'
+  | 'capture_page'
+  | 'add_task'
+  | 'schedule_capture';
+export type AgentCardStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+export type AgentCard = {
+  tool: AgentTool;
+  args: Record<string, string>;
+  title: string;
+  // Whether it waits for 확인 후 실행: what opens a site, records a page, adds a task or schedules a routine.
+  approval: boolean;
+  status: AgentCardStatus;
+  result: {
+    text: string;
+    capture_id?: string;
+    ads?: string[];
+    products?: string[];
+    documents?: { id: string; title: string }[];
+    records?: Pick<WebRecord, 'kind' | 'title' | 'price' | 'site' | 'captured_at' | 'link_url'>[];
+    url?: string;
+    task_id?: string;
+    routine_id?: string;
+  } | null;
+};
+export type AgentMessage = {
+  seq: number;
+  role: 'user' | 'assistant';
+  content: string;
+  actions: AgentCard[];
+  // The planner of an answer: the bundled Hermes, the LLM's JSON in a source run without it, or '' for the user's.
+  engine: 'hermes' | 'direct' | 'error' | '';
+  created_at: string;
+  updated_at: string;
+};
+export type AgentSend = { user: AgentMessage; reply: AgentMessage };
+export type AgentEngine = { engine: 'hermes' | 'direct'; ready: boolean };
+export type AgentStatus = {
+  phase: 'idle' | 'starting' | 'thinking' | 'stopping' | 'finishing' | 'cancelled';
+  text: string;
+  draft: string;
+  can_stop: boolean;
+};
+
+// The web records (web.*): what a site's page showed at one time (a capture) and its items.
+export type WebSite = { key: string; name: string; home: string };
+export type WebItemKind = 'ad' | 'product' | 'result';
+export type WebRecord = {
+  id: number;
+  capture_id: string;
+  site: string;
+  query: string;
+  captured_at: string;
+  kind: WebItemKind;
+  position: number;
+  title: string;
+  price: string;
+  display_url: string;
+  link_url: string;
+  image_url: string;
+  snippet: string;
+  clicked_at: string | null;
+  landing_url: string;
+  landing_title: string;
+};
+export type WebRecords = { total: number; items: WebRecord[] };
+export type WebCaptureSummary = {
+  id: string;
+  site: string;
+  query: string;
+  url: string;
+  title: string;
+  source: 'chat' | 'schedule' | 'manual';
+  ad_count: number;
+  product_count: number;
+  result_count: number;
+  screenshot: string;
+  captured_at: string;
+};
+export type WebCaptures = { total: number; captures: WebCaptureSummary[] };
+export type WebKept = {
+  capture_id: string;
+  site: string;
+  name: string;
+  query: string;
+  url: string;
+  counts: Record<WebItemKind, number>;
+  ads: string[];
+  products: string[];
+  screenshot: boolean;
+};
+export type WebExport = { path: string; rows: number };
+export type WebDeleted = { deleted: string };
+export type WebStatus = { open: boolean; busy: boolean; headless: boolean };

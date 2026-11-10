@@ -11,6 +11,7 @@ import {
   drawer,
   launch,
   llmServer,
+  openDashboard,
   openLibrary,
   widget,
 } from './helpers';
@@ -168,6 +169,7 @@ test('An update from a page keeps the document window from editing until it ends
       ).result.job?.status;
     await expect.poll(status, { timeout: 90_000 }).toBe('completed');
     await page.reload();
+    await openDashboard(page);
     await widget(page, 'documents')
       .locator('.document-row')
       .filter({ hasText: '페이지 1' })
@@ -200,6 +202,7 @@ test('An update from a page keeps the document window from editing until it ends
     );
     expect(imported.ok).toBe(true);
     await page.reload();
+    await openDashboard(page);
     await widget(page, 'documents').locator('.document-row').filter({ hasText: '회의록' }).click();
     await expect(drawer(page).getByRole('complementary', { name: 'AI 분석' })).toContainText(
       '회의록 요약입니다.',
@@ -272,6 +275,7 @@ test('Text changed in an imported Office document can be written back into its o
     });
     expect(seeded.stderr).toBe('');
     await page.reload();
+    await openDashboard(page);
     const rows = widget(page, 'documents').locator('.document-row');
     const source = drawer(page).locator('.document-source');
     const write = source.getByRole('button', { name: '원본에 반영' });
