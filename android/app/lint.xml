@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- The adaptive launcher icons stay in mipmap-anydpi-v26: moved to mipmap-anydpi as this check suggests, the
+         Android Gradle Plugin 8.13 resource merger files them under anydpi-v4 and they are not linked. -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+</lint>

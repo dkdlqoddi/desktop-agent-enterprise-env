@@ -94,6 +94,10 @@ LLM 연결 화면은 엔드포인트가 비어 있으면 고른 API 형식의 �
 - 두 로그와 진단 복사본은 `sk-…`·`pa_…` 형식의 키와 토큰, `password`·`api_key`·`authorization`·`token`·`secret`·`cookie` 같은 이름 뒤의 값, `Bearer` 토큰을 `[REDACTED]`로 바꿉니다. 이 형식에 맞지 않는 값(예: 이름이 다른 사용자 지정 헤더)은 가려지지 않을 수 있습니다.
 - 진단 복사본은 클립보드에만 복사하며, 사용자 폴더 이름을 `<user>`로 바꿉니다. 보내기 전에 내용을 확인하세요. 자세한 내용은 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#로그와-진단-정보)에 있습니다.
 
+## Android 앱
+
+Android 앱(`android/`)은 채팅, 기록, 설정을 휴대폰의 앱 저장소에만 두고, 설정한 LLM 서버(https만)와 사용자가 승인하거나 직접 연 사이트에만 연결합니다. API Key는 Android Keystore로 암호화하고, 앱 데이터는 백업과 기기 간 이전에서 뺍니다. 무엇을 어디에 두고 LLM에 무엇을 보내는지는 [android/README.md](android/README.md#휴대폰에-남는-것과-llm으로-가는-것)에 있습니다.
+
 ## 원격 측정
 
 - 앱에는 원격 측정, 사용 통계, 오류 보고(crash reporter), 자동 업데이트가 없습니다. 새 버전은 사용자가 직접 받아 실행합니다.

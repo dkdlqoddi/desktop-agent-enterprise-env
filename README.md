@@ -8,6 +8,7 @@
 
 - 첫 화면의 채팅: 말로 맡기면 내장 Hermes Agent가 작업을 계획하고, 사이트 열기·페이지 기록·할 일 추가·예약은 사용자가 확인한 카드만 실행
 - 웹 기록: 쿠팡·아마존·네이버·구글 검색 결과를 눈앞의 브라우저 창에서 읽어 광고·상품·검색 결과와 스크린샷을 이 PC에 기록하고 CSV로 내보내기. 앱은 광고를 누르지 않고, 사용자가 직접 누른 광고만 도착 페이지까지 기록
+- Android 앱(`android/`): 채팅, 앱 안의 보이는 브라우저, 광고·상품 기록과 CSV 공유를 휴대폰 안에서 처리. 데스크톱과 같은 페이지 읽기 스크립트를 씁니다
 - Wiki 문서 작성, Markdown·이미지 가져오기, 문서 검색과 지식 관계도
 - Windows Office 문서(Word·Excel·PowerPoint·Visio), RTF, 텍스트 파일·폴더 가져오기
 - JIRA 티켓·프로젝트 및 Confluence 페이지 가져오기
@@ -31,6 +32,7 @@
 | [CHANGELOG.md](CHANGELOG.md)                             | 변경 기록과 버전 정책                                                       |
 | [AGENTS.md](AGENTS.md)                                   | AI 코딩 에이전트를 위한 규약                                                |
 | [TODO.md](TODO.md)                                       | 남은 일, 결정이 필요한 것, 로드맵 밖 기능 제안                              |
+| [android/README.md](android/README.md)                   | Android 앱의 화면, 휴대폰에 남는 것, 빌드와 테스트                          |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)         | 함께 배포하는 오픈소스 구성 요소의 라이선스 고지                            |
 | [LICENSE](LICENSE)                                       | MIT 라이선스                                                                |
 
@@ -162,8 +164,9 @@ backend/agent/       Wiki, 검색, LLM, 가져오기와 자동화, 채팅과 웹
 backend/tests/       Python 단위·브라우저 테스트
 src/                Next.js 기반 화면과 공유 타입
 electron/           데스크톱 실행, 계정 저장, 로컬 API와 MCP
-shared/web-capture/ 웹 기록의 페이지 읽기·클릭 확인 스크립트와 사이트 목록
+shared/web-capture/ 웹 기록의 페이지 읽기·클릭 확인 스크립트와 사이트 목록(데스크톱·Android 공용)
 runtime/hermes/     내장 Hermes의 고정 버전, 해시 고정 의존성, 워커
+android/            Android 앱(Kotlin, Jetpack Compose)
 scripts/            개발 환경과 패키징 도구
 tests/              Electron 단위 테스트와 Playwright E2E
 assets/             앱 아이콘

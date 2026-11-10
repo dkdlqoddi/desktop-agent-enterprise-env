@@ -185,7 +185,9 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 1. `agent/hermes.py`가 `resources/hermes`(개발 중에는 `dist/hermes`)의 CPython으로 `worker.py`를 띄웁니다. 실행 전에 `manifest.json`의 `worker_sha256`을 확인하고, 환경 변수는 사용자의 Hermes·프록시·Python 설정을 버린 최소한만 넘깁니다(`child_environment`).
 2. 워커는 Hermes에 `prepare_actions` 도구 하나만 줍니다. 이 도구는 작업을 실행하지 않고 목록으로만 남깁니다. Hermes가 모델을 부를 때마다 워커가 백엔드에 요청을 넘기고, `agent/hermes_llm.py`가 앱의 LLM 연결(키, 헤더, CA)로 보냅니다. 키는 워커에 들어가지 않으며, 계획 하나에 모델 호출은 4번, 시간은 120초까지입니다.
 3. `agent/agent_chat.py`가 제안된 작업을 `TOOLS` 목록과 인수별로 검사해 카드로 만듭니다. 앱의 기록만 읽는 작업(문서 찾기, 웹 기록 요약)은 바로 실행하고, 사이트 열기·페이지 기록·할 일 추가·예약은 사용자가 **확인 후 실행**(`agent.approve`)을 누를 때만 실행합니다.
-4. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있습니다.
+4. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있어 Android 앱도 같은 스크립트를 씁니다.
+
+Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다(Hermes 없이 설정한 LLM의 도구 호출로 계획). 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
 
 `npm run build:hermes`를 하지 않은 소스 실행에서는 연결한 LLM이 JSON으로 계획하고(`engine: direct`), 화면의 배지가 이를 알립니다. 배포 앱은 항상 내장 Hermes를 씁니다.
 

@@ -1,0 +1,4 @@
+# The wrapper scripts keep the line breaks their shells need on every checkout.
+gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary

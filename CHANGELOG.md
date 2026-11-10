@@ -33,6 +33,7 @@
 
 - 채팅(첫 화면): 말로 맡기면 내장 Hermes Agent 0.23.0이 연결한 LLM으로 작업을 계획하고 작업 카드로 보여 줍니다. 문서 찾기와 웹 기록 요약은 바로 실행하고, 사이트 열기·페이지 기록·할 일 추가·예약은 **확인 후 실행**을 누른 카드만 실행합니다. 계획 중에는 **중지**로 멈추고, **대화 비우기**는 확인을 거쳐 채팅만 지웁니다(`agent.*`). Hermes는 키 없이 작업을 제안만 하고, 모델 호출은 백엔드가 앱의 LLM 연결로 보냅니다.
 - 웹 기록: 쿠팡·아마존·네이버·구글 검색 결과를 사용자가 보는 Chromium 창에서 읽어 광고·상품·검색 결과와 스크린샷을 Wiki 폴더에 기록합니다. 앱은 광고를 누르지 않고 로봇 확인이 나오면 멈추며, 사용자가 직접 누른 광고만 도착 페이지까지 기록합니다. **웹 기록** 화면에서 사이트·종류·검색어·날짜로 거르고 CSV(UTF-8 BOM)로 내보내며, 기록 하나를 스크린샷과 함께 지웁니다(`web.*`). 채팅으로 만든 예약은 자동 작업의 ‘웹 기록’ 작업으로 돕니다.
+- Android 앱(`android/`, Kotlin·Jetpack Compose, Android 8.0 이상): 채팅(OpenAI 호환·Anthropic 도구 호출, JSON 답 대체), 앱 안의 보이는 브라우저와 **이 페이지 기록**, 기록 목록·거르기·CSV 공유, Keystore로 암호화한 API Key, 알림으로 시작하는 예약 기록. 데스크톱과 같은 `shared/web-capture` 스크립트를 빌드 때 복사해 씁니다.
 - 로컬 API의 `app.navigate`가 채팅(`chat`)과 웹 기록(`records`) 화면으로도 이동합니다.
 - 빌드: `npm run build:hermes`가 고정한 Hermes 소스와 CPython 3.14.0(Windows embeddable package, Linux python-build-standalone, SHA-256 확인), 해시 고정 의존성을 `dist/hermes`에 준비하고, 배포 앱의 `resources/hermes`에 넣습니다. 서드파티 고지에 Hermes와 그 의존성을 적습니다.
 - 휴지통: 삭제한 문서를 30일 보관하고 휴지통 화면에서 복원하거나 영구 삭제합니다(`wiki.trash`, `wiki.restore`, `wiki.purge`). 삭제 직후 알림에서 되돌릴 수 있습니다.

@@ -32,6 +32,8 @@ export default defineConfig(
     '.claude/',
     '.local-data/',
     'backend/',
+    // The Android app (Kotlin, built by Gradle): its build copies shared/web-capture, which is linted where it is.
+    'android/',
     'next-env.d.ts',
   ]),
   js.configs.recommended,

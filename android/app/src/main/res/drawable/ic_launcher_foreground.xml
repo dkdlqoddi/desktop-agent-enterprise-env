@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher icon's foreground: a speech bubble holding a list, inside the adaptive icon's safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,32H74A6,6 0 0 1 80,38V64A6,6 0 0 1 74,70H46L34,80V38A6,6 0 0 1 40,32Z" />
+    <path
+        android:fillColor="#FF2F5DA8"
+        android:pathData="M42,42H46V46H42ZM50,42H70V46H50ZM42,50H46V54H42ZM50,50H70V54H50ZM42,58H46V62H42ZM50,58H64V62H50Z" />
+</vector>
