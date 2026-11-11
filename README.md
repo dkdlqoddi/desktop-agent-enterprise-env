@@ -145,7 +145,7 @@ npm run test:e2e
 
 `build:hermes`는 채팅이 쓰는 Hermes Agent를 `runtime/hermes/manifest.json`에 고정한 소스·CPython 3.14.0·해시 고정 wheel로 `dist/hermes`에 준비합니다(Windows는 python.org embeddable package, Linux는 python-build-standalone을 받아 SHA-256을 확인합니다). 이것 없이 소스로 실행하면 채팅은 연결한 LLM의 JSON 답으로 계획하고 화면에 ‘기본 계획기’로 표시합니다.
 
-`check`는 ESLint 검사(`npm run lint`), 화면과 Electron 메인 프로세스의 TypeScript 검사(`npm run typecheck`, `npm run typecheck:electron`), Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. `test:e2e`는 Linux에서 xvfb가 설치되어 있으면 가상 디스플레이에서 창을 띄우지 않고 실행되며(`PRIVATE_AGENT_E2E_SHOW=1`이면 실제 화면에 띄웁니다), 같은 E2E가 GitHub Actions의 `e2e-linux.yml`로 매일 밤과 수동 실행 때 돌아갑니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
+`check`는 ESLint 검사(`npm run lint`), 화면과 Electron 메인 프로세스의 TypeScript 검사(`npm run typecheck`, `npm run typecheck:electron`), Python 테스트와 Electron 메인 프로세스 테스트를 실행합니다. `test:e2e`는 Linux에서 xvfb가 설치되어 있으면 가상 디스플레이에서 창을 띄우지 않고 실행되며(`PRIVATE_AGENT_E2E_SHOW=1`이면 실제 화면에 띄웁니다), 같은 E2E를 `npm run ci`가 핵심 검사와 함께 로컬에서 돌립니다. 메인 프로세스 테스트에는 두 테마의 글자색 대비(WCAG AA) 측정이 포함되고, E2E의 `tests/a11y.spec.ts`는 주요 화면을 두 테마에서 axe로 검사해 critical·serious 위반이 있으면 실패합니다. 브라우저 테스트에는 `setup:browser`가 필요하며, Chromium이 없으면 건너뜁니다. E2E 테스트는 빌드된 웹 화면과 Python 백엔드를 실행하며, Linux에서는 가상 디스플레이 등 Electron 실행 환경도 필요합니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 빌드한 백엔드 대신 `backend/.venv`의 Python으로 `backend/main.py`를 실행하므로 `build:python` 없이 E2E를 돌릴 수 있습니다. Office 통합 테스트는 해당 앱이 설치된 Windows에서만 실행됩니다.
 
 `lint`는 ESLint로 화면(TypeScript, React 훅, 접근성, Next.js 규칙), Electron 메인 프로세스와 preload, 스크립트, 테스트를 검사하고 경고 하나도 실패로 봅니다(`npm run lint:fix`는 고칠 수 있는 것을 고칩니다). `typecheck:electron`은 JavaScript로 쓴 `electron/*.cjs`와 `scripts/*.mjs`를 TypeScript(checkJs)로 검사합니다. 설정은 `eslint.config.mjs`와 `tsconfig.electron.json`에 있고, 형식은 Prettier만 맞춥니다. 메인 프로세스 테스트에는 `agent://` 프로토콜의 경로·CSP 검사(`tests/protocol.test.cjs`), IPC를 보낸 곳과 `ALLOWED` 검사(`tests/trusted-sender.test.cjs`), 가져온 HTML 정제기의 XSS 사례 95가지(`tests/sanitize.test.cjs`)가 들어 있습니다.
 
@@ -155,7 +155,7 @@ npm run test:e2e
 
 Windows 배포 파일은 `build-exe.cmd` 또는 `npm run build:exe`로 만듭니다. 빌드 결과는 `dist/`, `out/`, `release/`에 생성되며 Git에서 제외됩니다.
 
-GitHub Actions의 `check.yml`은 푸시와 PR마다 Node.js 22·24에서 형식·ESLint·타입 검사(화면과 Electron), Electron 테스트와 웹 빌드를, Ubuntu(Python 3.10·3.13)와 Windows(Python 3.13)에서 Python 테스트를 실행하며, 백엔드의 코드와 형식을 ruff로 검사하고 서드파티 고지가 최신인지 확인합니다. `build.yml`은 `v*` 태그(`package.json`의 버전과 같아야 합니다)나 수동 실행으로 Windows exe를 만들어 `SHA256SUMS`와 함께 아티팩트로 올립니다. 저장소에 `WIN_CSC_LINK`·`WIN_CSC_KEY_PASSWORD` 시크릿이 있으면 exe에 코드 서명합니다. 의존성 업데이트는 `renovate.json`에 따라 매달 PR로 올라오며, 이를 위해 저장소 소유자가 Renovate GitHub 앱을 설치해야 합니다.
+검사는 GitHub Actions 대신 로컬에서 돌립니다. `npm run ci`는 형식·ESLint·타입 검사(화면과 Electron), 메인 프로세스 테스트, 웹 빌드, Python 테스트와 ruff 검사, 서드파티 고지 확인에 더해 E2E까지 설치된 Node.js·Python 하나로 한 번에 실행하고(`npm run ci:core`는 E2E를 뺀 핵심 검사만), 끝에 통과·실패를 정리합니다(`scripts/ci-local.mjs`). Windows 배포 파일은 Windows에서 `npm run build:exe`로 만들며, 환경 변수 `WIN_CSC_LINK`·`WIN_CSC_KEY_PASSWORD`가 있으면 exe에 코드 서명합니다. 의존성 업데이트는 `renovate.json`에 따라 매달 PR로 올라오며, 이를 위해 저장소 소유자가 Renovate GitHub 앱을 설치해야 합니다.
 
 ## 저장소 구조
 

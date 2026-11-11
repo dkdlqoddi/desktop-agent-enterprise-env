@@ -216,4 +216,4 @@ Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 asset
 
 이 exe는 설치 프로그램이 아니라 실행기입니다. 빌드마다 처음 실행할 때 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀고, 그 뒤에는 바로 실행합니다. 레지스트리, 바로 가기, 제거 프로그램을 만들지 않으며, 실행 중인 앱이 없을 때 더 오래된 빌드의 폴더를 지웁니다.
 
-`npm run build:exe`(`build-exe.cmd`)는 `npm ci`, 세 가지 준비 스크립트, `npm run check`, `npm run package:win`을 실행한 뒤 패키징한 앱(`release/win-unpacked`)으로 E2E를 돌립니다. GitHub Actions의 `build.yml`이 `v*` 태그나 수동 실행에서 이를 실행하고, 서명 시크릿이 있으면 코드 서명하며, `SHA256SUMS`와 함께 아티팩트로 올립니다. 버전과 태그의 관계는 [CHANGELOG.md](CHANGELOG.md#버전-정책)를 보세요.
+`npm run build:exe`(`build-exe.cmd`)는 `npm ci`, 세 가지 준비 스크립트, `npm run check`, `npm run package:win`을 실행한 뒤 패키징한 앱(`release/win-unpacked`)으로 E2E를 돌립니다. Windows에서 직접 실행하며, 서명 인증서(환경 변수 `WIN_CSC_LINK`·`WIN_CSC_KEY_PASSWORD`)가 있으면 코드 서명합니다. 버전과 태그의 관계는 [CHANGELOG.md](CHANGELOG.md#버전-정책)를 보세요.

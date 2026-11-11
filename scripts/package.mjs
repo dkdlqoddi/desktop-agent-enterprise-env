@@ -16,7 +16,7 @@ if (!Object.hasOwn(targets, target)) {
 }
 if (process.platform !== 'win32') {
   console.error(
-    '이 앱은 Windows 전용입니다. 내장 Python 런타임을 포함한 패키지는 Windows에서 빌드하세요. .github/workflows/build.yml의 Windows 빌드도 사용할 수 있습니다.',
+    '이 앱은 Windows 전용입니다. 내장 Python 런타임을 포함한 패키지는 Windows에서 `npm run build:exe`로 빌드하세요.',
   );
   process.exit(1);
 }

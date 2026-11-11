@@ -5,11 +5,11 @@
 ## 버전 정책
 
 - 버전은 `MAJOR.MINOR.PATCH`이고, 기준은 `package.json`의 `version`입니다. 이 값이 exe 파일 이름(`Private-Agent-<버전>-x64.exe`), 앱이 보고하는 버전, 실행 파일이 앱을 푸는 폴더 이름(`%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`)에 들어갑니다.
-- 릴리스는 `v<버전>` 태그로 만듭니다. `.github/workflows/build.yml`은 태그가 `package.json`의 버전과 다르면 빌드를 멈춥니다. 예를 들어 `v0.2.0` 태그에는 `"version": "0.2.0"`이 필요합니다.
+- 릴리스는 `v<버전>` 태그로 만들고, 태그는 `package.json`의 버전과 같아야 합니다. 예를 들어 `v0.2.0` 태그에는 `"version": "0.2.0"`이 필요합니다.
 - 1.0.0 전에는 MINOR가 기능 추가와 호환되지 않는 변경을, PATCH가 호환되는 수정을 뜻합니다. 1.0.0부터는 호환되지 않는 변경이 MAJOR를 올립니다.
 - 호환성을 지키는 대상은 로컬 API와 MCP(메서드 이름, 매개변수, 허용 범위)와 Wiki 데이터베이스(`wiki.db`)입니다. 메서드나 매개변수를 없애거나 이름을 바꾸는 것, 메서드에 더 높은 허용 범위를 요구하는 것은 호환되지 않는 변경입니다.
 - Wiki의 스키마 버전(`PRAGMA user_version`, `backend/agent/migrations.py`의 `SCHEMA_VERSION`)을 올리는 변경은 이 기록에 따로 적습니다. 새 버전이 올린 Wiki는 이전 버전의 앱이 열지 않으므로, 이전 버전으로 돌아가려면 업데이트 전에 만든 백업을 복원해야 합니다. 현재 스키마 버전은 1입니다.
-- 릴리스 순서: 이 파일의 `Unreleased`를 새 버전 제목으로 옮기고, `package.json`의 버전을 올린 뒤 `npm run docs:api`로 `docs/api.md`·`docs/openapi.json`의 버전을 맞춰 함께 커밋하고, `v<버전>` 태그를 푸시합니다. `build.yml`이 exe와 `SHA256SUMS`를 아티팩트로 만듭니다.
+- 릴리스 순서: 이 파일의 `Unreleased`를 새 버전 제목으로 옮기고, `package.json`의 버전을 올린 뒤 `npm run docs:api`로 `docs/api.md`·`docs/openapi.json`의 버전을 맞춰 함께 커밋하고, `v<버전>` 태그를 붙입니다. Windows에서 `npm run build:exe`로 exe를 만듭니다.
 
 ## [Unreleased]
 
@@ -27,7 +27,7 @@
 - LLM 클라이언트가 쿠키를 보관하거나 보내지 않습니다.
 - 내려받는 원본 HTML 파일에 CSP를 넣어, 디스크에서 열어도 스크립트를 실행하거나 외부 자원을 불러오지 않습니다.
 - Electron fuses로 `ELECTRON_RUN_AS_NODE`와 `NODE_OPTIONS`를 끄고, 무결성을 검사한 `app.asar`에서만 앱 코드를 불러오며, `file://` 페이지에 추가 권한을 주지 않습니다.
-- CI의 액션을 릴리스 커밋으로 고정하고 작업 공간에 git 자격 증명을 남기지 않습니다. 코드 서명은 저장소에 서명 시크릿이 있을 때만 합니다.
+- 코드 서명은 서명 인증서(환경 변수)가 있을 때만 합니다.
 
 ### 추가
 
@@ -51,7 +51,7 @@
 - 진단 복사본에 빌드한 커밋을 적습니다.
 - 개발 도구: 터미널 로그(`PRIVATE_AGENT_LOG_CONSOLE`), 로그 수준(`PRIVATE_AGENT_LOG_LEVEL`), 파일 변경 시 자동 재시작, debugpy 연결(`PRIVATE_AGENT_DEBUGPY`), 소스 백엔드로 E2E 실행, ruff 검사·형식(`npm run lint:python`, `npm run format:python`), ESLint 검사(`npm run lint`: 화면의 TypeScript·React 훅·접근성·Next.js 규칙, Electron 메인 프로세스의 처리되지 않은 Promise), Electron 메인 프로세스와 스크립트의 타입 검사(`npm run typecheck:electron`), 서드파티 고지 생성(`npm run notices`), 화면 메서드 타입 생성(`npm run generate:methods`), 커버리지 보고서
 - 테스트: `agent://` 프로토콜(경로 이탈, CSP 해시)과 IPC를 보낸 곳·`ALLOWED` 검사의 단위 테스트, 가져온 HTML 정제기의 XSS 사례 95가지(jsdom)
-- CI: PR마다 Node.js 22·24와 Python 3.10·3.13(Ubuntu)·3.13(Windows) 검사, 매일 밤 Linux 가상 디스플레이 E2E(`e2e-linux.yml`), 접근성 검사(`tests/a11y.spec.ts`)
+- 로컬 CI 러너(`npm run ci`): 형식·ESLint·타입(화면·Electron)·메인 프로세스 테스트·웹 빌드·Python 테스트·ruff 검사·서드파티 고지 검사와 E2E(가상 디스플레이, 접근성 `tests/a11y.spec.ts` 포함)를 설치된 Node.js·Python 하나로 한 번에 돌립니다. `npm run ci:core`는 E2E를 빼고 핵심 검사만 실행합니다(`scripts/ci-local.mjs`).
 - 문서: [LICENSE](LICENSE)(MIT), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [SECURITY.md](SECURITY.md), [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [PRIVACY.md](PRIVACY.md), 카탈로그에서 만드는 [API 문서](docs/api.md)와 [OpenAPI](docs/openapi.json)(`npm run docs:api`)
 
 ### 변경

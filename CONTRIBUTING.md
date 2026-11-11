@@ -136,27 +136,26 @@ GitHub의 blame 화면은 이 파일을 알아서 읽습니다. 리베이스나 
 
 `git log`처럼 Conventional Commits의 접두사를 쓰고, 제목은 영어로 무엇이 바뀌었는지 적습니다. 범위는 괄호에 넣을 수 있습니다.
 
-| 접두사  | 쓰는 곳               | 예                                                                  |
-| ------- | --------------------- | ------------------------------------------------------------------- |
-| `feat`  | 기능 추가             | `feat(search): Korean/English keyword aliases from the AI analysis` |
-| `fix`   | 버그 수정             | `fix(llm): a cancelled stream stops at once on Windows too`         |
-| `docs`  | 문서                  | `docs: note npm run generate:methods beside the notices step`       |
-| `test`  | 테스트만              | `test: pass the Python suite on Windows runners`                    |
-| `ci`    | GitHub Actions        | `ci: run the E2E suite on a virtual display, nightly on Linux`      |
-| `chore` | 도구·설정             | `chore: ruff configuration, lint fixes and CI step`                 |
-| `style` | 동작이 같은 형식 변경 | `style: format the Python backend with ruff`                        |
+| 접두사  | 쓰는 곳               | 예                                                                     |
+| ------- | --------------------- | ---------------------------------------------------------------------- |
+| `feat`  | 기능 추가             | `feat(search): Korean/English keyword aliases from the AI analysis`    |
+| `fix`   | 버그 수정             | `fix(llm): a cancelled stream stops at once on Windows too`            |
+| `docs`  | 문서                  | `docs: note npm run generate:methods beside the notices step`          |
+| `test`  | 테스트만              | `test: pass the Python suite on Windows runners`                       |
+| `ci`    | 로컬 CI 러너          | `ci: a local runner for the checks that used to run on GitHub Actions` |
+| `chore` | 도구·설정             | `chore: ruff configuration, lint fixes and CI step`                    |
+| `style` | 동작이 같은 형식 변경 | `style: format the Python backend with ruff`                           |
 
 본문에는 왜 바꾸었는지와 무엇이 달라지는지 적습니다. 사용자에게 보이는 변경은 [CHANGELOG.md](CHANGELOG.md)의 `Unreleased`에도 적습니다.
 
-## PR에서 CI가 확인하는 것
+## 커밋 전 로컬 검사
 
-`.github/workflows/check.yml`이 `main`으로의 푸시와 모든 PR에서 실행됩니다.
+GitHub Actions는 쓰지 않습니다. 대신 `npm run ci`가 설치된 Node.js·Python 하나로 아래를 한 번에 실행합니다(`scripts/ci-local.mjs`). 핵심 검사만 빠르게 돌리려면 `npm run ci:core`로 E2E를 건너뜁니다.
 
-- Node.js 22·24: `npm ci`, `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run typecheck:electron`, `npm run test:main`(생성 파일이 최신인지 포함), `npm run build:web`
-- Python 3.10·3.13(Ubuntu)과 3.13(Windows): `npm run setup:python`, `npm run setup:browser`, `npm run test:python`(`PRIVATE_AGENT_REQUIRE_BROWSER=1`이라 브라우저 테스트도 실행)
-- Python 3.13(Ubuntu)에서 한 번: `npm run lint:python`, `npm run format:python:check`, `npm run notices:check`
+- 핵심 검사: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run typecheck:electron`, `npm run test:main`(생성 파일이 최신인지 포함), `npm run build:web`, `npm run test:python`, `npm run lint:python`, `npm run format:python:check`, `npm run notices:check`
+- E2E: `npm run setup:electron`, `npm run build:python`(또는 `npm run ci -- --source-backend`로 건너뛰고 `backend/.venv`로 실행), `npm run build:hermes`, `npm run test:e2e`(Linux는 xvfb 가상 디스플레이)
 
-`build.yml`(Windows exe 빌드와 패키징한 앱의 E2E)은 `v*` 태그나 수동 실행에서, `e2e-linux.yml`(Linux E2E)은 매일 밤과 수동 실행에서 돌아갑니다. PR 전에 위 명령을 직접 실행해 보고, 화면이나 메인 프로세스를 바꿨다면 관련 E2E 스펙도 실행합니다.
+핵심 검사가 하나라도 실패하면 E2E는 건너뛰고, 끝에 통과·실패를 정리해 보여 줍니다. 처음에는 `npm ci`와 `npm run setup:python`으로 의존성을 준비하세요. 화면이나 메인 프로세스를 바꿨다면 관련 E2E 스펙(`npm run test:e2e -- tests/<이름>.spec.ts`)도 실행합니다. Windows exe는 Windows에서 `npm run build:exe`로 따로 빌드합니다.
 
 ## 공개 앱 규약
 

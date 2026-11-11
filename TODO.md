@@ -5,16 +5,16 @@
 ## 결정이 필요한 것
 
 - [ ] 라이선스 확정. 지금은 MIT로 가정했습니다. 바꾸려면 `LICENSE`, `package.json`의 `license`, `backend/pyproject.toml`의 `license`, README의 라이선스 절, `THIRD_PARTY_NOTICES.md` 첫 줄을 함께 고칩니다.
-- [ ] 코드 서명 인증서. 저장소 시크릿 `WIN_CSC_LINK`(base64로 적은 .pfx)와 `WIN_CSC_KEY_PASSWORD`를 넣으면 `build.yml`이 exe에 서명합니다. 없으면 SmartScreen 경고가 뜹니다.
+- [ ] 코드 서명 인증서. 환경 변수 `WIN_CSC_LINK`(base64로 적은 .pfx)와 `WIN_CSC_KEY_PASSWORD`를 넣고 `npm run build:exe`를 실행하면 exe에 서명합니다. 없으면 SmartScreen 경고가 뜹니다.
 - [ ] Renovate GitHub 앱 설치. `renovate.json`은 준비되어 있고, 설치하면 매달 의존성 PR이 올라옵니다(Playwright 3중 핀은 한 PR로).
 
 ## Windows에서 확인할 것
 
-- [ ] `npm run build:exe`로 만든 설치본에서 fuses(asar 무결성 검증, `onlyLoadAppFromAsar`)가 켜진 exe가 시작되는지, 런처의 첫 실행 압축 해제와 그 뒤 E2E(`build.yml`이 자동 실행)가 통과하는지.
+- [ ] `npm run build:exe`로 만든 설치본에서 fuses(asar 무결성 검증, `onlyLoadAppFromAsar`)가 켜진 exe가 시작되는지, 런처의 첫 실행 압축 해제와 그 뒤 E2E(`npm run build:exe`가 함께 실행)가 통과하는지.
 - [ ] `npm run test:main`의 glob이 cmd.exe에서 확장되는지, `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`에서 백엔드 프로세스를 찾는지.
 - [ ] 원본 반영의 저장 저널(`office_write.edit`)이 실제 Office에서 동작하는지. 지금은 가짜 워커로만 테스트했습니다.
 - [ ] HTTPS LLM 엔드포인트에서 답변 중지가 즉시 끝나는지. Windows CI는 평문 HTTP로만 확인했습니다.
-- [ ] 패키징한 exe에서 내장 Hermes(embeddable CPython)가 시작하고 계획하는지. Linux에서만 실행해 봤습니다(`tests/agent.spec.ts`는 `build.yml`의 E2E에도 들어갑니다).
+- [ ] 패키징한 exe에서 내장 Hermes(embeddable CPython)가 시작하고 계획하는지. Linux에서만 실행해 봤습니다(`tests/agent.spec.ts`는 `npm run ci`의 E2E에도 들어갑니다).
 - [ ] 웹 기록 창이 Windows 바탕 화면에 보이게 뜨고, 실제 사이트에서 사용자가 누른 광고의 도착 페이지가 기록되는지.
 
 ## 알려진 미완과 개선
@@ -63,8 +63,7 @@
 
 ### 품질과 운영
 
-- [ ] 야간 Linux E2E(`e2e-linux.yml`)의 결과를 지켜봅니다. 첫 실행은 성공했습니다.
-- [ ] main 브랜치 보호 규칙(필수 CI 검사, 강제 푸시 금지)을 검토합니다.
+- [ ] main 브랜치 보호 규칙(강제 푸시 금지 등)을 검토합니다. 자동 CI 상태 검사가 없으므로, 커밋 전에 `npm run ci`(핵심 검사 + E2E)로 직접 확인합니다.
 - [ ] Electron, Chromium, Python의 월간 갱신 절차를 정합니다. Renovate 설치 뒤 PR을 어떻게 검증해 합칠지가 핵심입니다.
 
 ## 로드맵 밖의 기능 제안
