@@ -144,6 +144,14 @@ export type CatalogMethod =
 
 // The methods only the screens call: those the main process allows them beyond the catalog.
 export type ScreenMethod =
+  | 'agent.approve'
+  | 'agent.clear'
+  | 'agent.engine'
+  | 'agent.messages'
+  | 'agent.reject'
+  | 'agent.send'
+  | 'agent.status'
+  | 'agent.stop'
   | 'api.copy'
   | 'api.get'
   | 'api.manual'
@@ -156,6 +164,18 @@ export type ScreenMethod =
   | 'import.choose'
   | 'jobs.status'
   | 'storage.choose'
-  | 'storage.initialize';
+  | 'storage.initialize'
+  | 'web.capture'
+  | 'web.capture_get'
+  | 'web.capture_page'
+  | 'web.captures'
+  | 'web.close'
+  | 'web.delete_capture'
+  | 'web.export'
+  | 'web.open'
+  | 'web.open_exports'
+  | 'web.records'
+  | 'web.sites'
+  | 'web.status';
 
 export type Method = CatalogMethod | ScreenMethod;

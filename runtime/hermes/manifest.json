@@ -1,0 +1,10 @@
+{
+  "version": "0.23.0",
+  "repository": "https://github.com/NousResearch/hermes-agent.git",
+  "commit": "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
+  "python": "3.14.0",
+  "windows_url": "https://www.python.org/ftp/python/3.14.0/python-3.14.0-embed-amd64.zip",
+  "windows_sha256": "8d4d3590c10449d78aa4375f534e6d5f3027d67fdc362dd1a882279db6f90fdf",
+  "linux_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20251120/cpython-3.14.0%2B20251120-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+  "linux_sha256": "66f385305ae0eefd6b65e2cf942bc91d943a61e26fb7581e029f760a2b04f393"
+}

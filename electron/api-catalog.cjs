@@ -64,7 +64,7 @@ function analysisState(doc) {
 }
 
 // Screens, tabs and admin sections the app can be sent to, as in src/components/workspace.tsx and admin.tsx.
-const VIEWS = ['home', 'tasks', 'library', 'automation', 'activity', 'admin'];
+const VIEWS = ['chat', 'home', 'tasks', 'library', 'automation', 'records', 'activity', 'admin'];
 const TABS = {
   tasks: ['reminders'],
   library: ['documents', 'import', 'knowledge'],

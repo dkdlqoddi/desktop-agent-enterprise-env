@@ -76,7 +76,16 @@ export async function chooseStorage(page: Page, directory: string) {
   await page.getByRole('button', { name: '이 위치에 저장하고 시작' }).click();
   // This starts the built-in backend, which Electron gives 20 seconds; a cold start under
   // antivirus scanning takes longer than the 5 seconds an assertion waits by default.
-  await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible({ timeout: 30_000 });
+  await openDashboard(page, 30_000);
+}
+
+// The app opens on the agent chat, after a start or a reload; the dashboard is one click away.
+export const chatBox = (page: Page) => page.getByRole('textbox', { name: '메시지', exact: true });
+
+export async function openDashboard(page: Page, timeout?: number) {
+  await expect(chatBox(page)).toBeVisible({ timeout });
+  await goHome(page);
+  await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
 }
 
 // The app's Python backend: the child of the Electron main process that runs the built-in backend, or Python with
@@ -119,7 +128,10 @@ export async function openAdmin(page: Page, tab: string) {
 }
 
 export async function goHome(page: Page) {
-  await page.getByRole('navigation', { name: '화면' }).getByRole('button', { name: '홈' }).click();
+  await page
+    .getByRole('navigation', { name: '화면' })
+    .getByRole('button', { name: '홈', exact: true })
+    .click();
 }
 
 export async function openLibrary(page: Page, tab: string) {
@@ -159,7 +171,9 @@ export async function connectLlm(page: Page, endpoint: string) {
     endpoint,
   );
   expect(saved.ok).toBe(true);
+  // The reload opens the chat; the tests go on from the dashboard, where they were.
   await page.reload();
+  await openDashboard(page);
   await expect(page.getByRole('button', { name: 'e2e-model' })).toBeVisible();
 }
 
@@ -172,6 +186,7 @@ export type LlmRequest = {
     stream: boolean;
     model: string;
     max_tokens?: number;
+    tools?: { type: string; function: { name: string } }[];
   };
 };
 
@@ -187,6 +202,12 @@ export class StreamedReply {
 }
 export const streamed = (parts: (string | Promise<string>)[], finish?: 'stop' | 'length') =>
   new StreamedReply(parts, finish);
+
+// An answer that calls tools, as an OpenAI-compatible server returns one: each call is a tool's name and arguments.
+export class ToolCalls {
+  constructor(readonly calls: [string, object][]) {}
+}
+export const toolCalls = (...calls: [string, object][]) => new ToolCalls(calls);
 
 // A local stand-in for the LLM: `reply` answers each request by its system prompt, at once or
 // when its promise settles; a StreamedReply streams to a request asked with stream.
@@ -211,6 +232,27 @@ export async function llmServer(
     if (content instanceof Error) {
       // The backend sends a request refused with 503 again, up to 4 times in all: Retry-After 0 spares the waits.
       response.writeHead(503, { 'Retry-After': '0' }).end();
+      return;
+    }
+    if (content instanceof ToolCalls) {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: content.calls.map(([name, args], index) => ({
+                  id: `call_${index + 1}`,
+                  type: 'function',
+                  function: { name, arguments: JSON.stringify(args) },
+                })),
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        }),
+      );
       return;
     }
     if (content instanceof StreamedReply) {

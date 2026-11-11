@@ -10,6 +10,7 @@ import {
   goHome,
   launch,
   openAdmin,
+  openDashboard,
   openLibrary,
   results,
   searchBox,
@@ -155,6 +156,7 @@ test('Confluence: site account with detected login method, import box, subpages,
 
     app = await launch(directory);
     page = await app.firstWindow();
+    await openDashboard(page, 30_000);
     await expect(widget(page, 'documents').locator('.document-row')).toHaveCount(4);
     await searchBox(page).fill('접힌 세부 내용');
     await searchBox(page).press('Enter');

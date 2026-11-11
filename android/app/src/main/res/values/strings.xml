@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Private Agent</string>
+
+    <!-- Tabs -->
+    <string name="tab_chat">채팅</string>
+    <string name="tab_browser">브라우저</string>
+    <string name="tab_records">기록</string>
+    <string name="tab_settings">설정</string>
+
+    <!-- Chat -->
+    <string name="chat_title">채팅</string>
+    <string name="chat_input_hint">명령을 입력하세요</string>
+    <string name="chat_send">보내기</string>
+    <string name="chat_stop">요청 중지</string>
+    <string name="chat_waiting">답을 기다리는 중…</string>
+    <string name="chat_empty_title">무엇을 기록할까요?</string>
+    <string name="chat_empty_body">사이트를 열거나 예약을 만들기 전에는 카드로 먼저 확인을 받습니다. 예시를 누르면 입력창에 채워집니다.</string>
+    <string-array name="chat_examples">
+        <item>쿠팡에서 노트북 광고 기록해 줘</item>
+        <item>아마존에서 headphones 광고 보여줘</item>
+        <item>네이버에서 캠핑의자 검색해서 기록</item>
+        <item>오늘 기록한 광고 요약해 줘</item>
+        <item>매일 9시에 쿠팡 노트북 광고 기록해 줘</item>
+    </string-array>
+    <string name="chat_setup_title">LLM 연결이 필요합니다</string>
+    <string name="chat_setup_body">설정에서 API 형식, 전체 API 엔드포인트, 모델 이름을 입력해 주세요.</string>
+    <string name="chat_open_settings">설정 열기</string>
+    <string name="chat_empty_reply">LLM이 빈 답을 보냈습니다. 다시 시도해 주세요.</string>
+    <string name="chat_truncated">답이 길어 중간에 끊겼습니다.</string>
+    <string name="chat_stopped">요청을 중지했습니다.</string>
+    <string name="chat_too_many_actions">LLM이 한 번에 너무 많은 작업을 제안해 처음 %1$d개만 보여 드립니다.</string>
+
+    <!-- Action cards -->
+    <string name="action_web_capture">웹 기록</string>
+    <string name="action_open_site">사이트 열기</string>
+    <string name="action_schedule">예약 만들기</string>
+    <string name="action_list_records">기록 조회</string>
+    <string name="action_state_pending">승인 대기</string>
+    <string name="action_state_running">실행 중</string>
+    <string name="action_state_done">완료</string>
+    <string name="action_state_failed">실패</string>
+    <string name="action_state_cancelled">취소</string>
+    <string name="action_approve">확인 후 실행</string>
+    <string name="action_cancel">취소</string>
+    <string name="action_view_records">기록 보기</string>
+    <string name="action_view_browser">브라우저 보기</string>
+    <string name="describe_web_capture">%1$s에서 \'%2$s\' 검색 결과를 열고, 보이는 광고와 상품을 기록합니다.</string>
+    <string name="describe_scheduled_run">예약한 기록: %1$s</string>
+    <string name="describe_open_site">%1$s 홈페이지를 브라우저에서 엽니다. 직접 누른 광고는 도착 페이지와 함께 기록됩니다.</string>
+    <string name="describe_open_url">브라우저에서 이 주소를 엽니다: %1$s</string>
+    <string name="describe_schedule">%1$s %2$s에 %3$s \'%4$s\' 광고 기록을 알림으로 알려 드립니다. 알림을 누르면 브라우저에서 기록합니다.</string>
+    <string name="describe_list_records">기기에 저장된 기록을 찾습니다: %1$s</string>
+    <string name="describe_unknown">알 수 없는 작업</string>
+    <string name="filter_everything">전체</string>
+    <string name="days_daily">매일</string>
+    <string name="days_weekdays">평일(월~금)</string>
+
+    <!-- Results -->
+    <string name="count_ad">광고 %1$d건</string>
+    <string name="count_product">상품 %1$d건</string>
+    <string name="count_result">검색 결과 %1$d건</string>
+    <string name="result_recorded">%1$s을 기록했습니다.</string>
+    <string name="result_nothing">표시된 광고와 상품을 찾지 못했습니다. 사이트 화면 구조가 바뀌었을 수 있습니다.</string>
+    <string name="result_blocked">사이트가 로봇 확인(CAPTCHA)을 요청해 기록을 멈췄습니다. 브라우저 탭에서 직접 확인을 마친 뒤 다시 요청해 주세요.</string>
+    <string name="result_load_failed">페이지를 열지 못했습니다. 네트워크 연결을 확인해 주세요.</string>
+    <string name="result_timeout">페이지가 30초 안에 열리지 않았습니다. 잠시 후 다시 시도해 주세요.</string>
+    <string name="result_moved">기록하는 동안 다른 사이트로 이동해 기록하지 않았습니다.</string>
+    <string name="result_script">페이지 내용을 읽지 못했습니다. 페이지가 다 열린 뒤 다시 시도해 주세요.</string>
+    <string name="result_no_browser">브라우저를 준비하지 못했습니다. 앱을 다시 열어 주세요.</string>
+    <string name="result_interrupted">앱이 다시 시작되어 실행이 중단되었습니다.</string>
+    <string name="result_opened">%1$s 페이지를 열었습니다. 직접 누른 광고는 도착 페이지와 함께 기록됩니다.</string>
+    <string name="result_schedule_created">예약을 만들었습니다. 다음 알림: %1$s</string>
+    <string name="result_schedule_no_notifications">알림 권한이 없어 알림이 오지 않습니다. 설정 탭에서 알림을 허용해 주세요.</string>
+    <string name="result_list">기록 %1$d건을 찾았습니다.</string>
+    <string name="result_list_none">조건에 맞는 기록이 없습니다.</string>
+    <string name="result_cancelled">실행하지 않았습니다.</string>
+    <string name="schedule_run_missing">예약을 찾을 수 없습니다. 삭제되었을 수 있습니다.</string>
+
+    <!-- Problems with what the LLM asked for -->
+    <string name="problem_unknown_tool">LLM이 알 수 없는 작업(%1$s)을 요청해 실행하지 않았습니다.</string>
+    <string name="problem_unknown_site">지원하지 않는 사이트입니다(%1$s). %2$s 중에서 골라 다시 말씀해 주세요.</string>
+    <string name="problem_missing_site">어느 사이트에서 할지 알려 주세요. %1$s 중에서 고를 수 있습니다.</string>
+    <string name="problem_missing_query">검색어를 알려 주세요.</string>
+    <string name="problem_query_too_long">검색어가 너무 깁니다. %1$d자 이내로 알려 주세요.</string>
+    <string name="problem_bad_url">열 수 없는 주소입니다(%1$s).</string>
+    <string name="problem_insecure_url">HTTPS가 아닌 주소(%1$s)는 열지 않습니다. https:// 주소를 알려 주세요.</string>
+    <string name="problem_missing_target">열 사이트나 주소를 알려 주세요.</string>
+    <string name="problem_bad_time">예약 시각(%1$s)을 이해하지 못했습니다. 09:00처럼 24시간 형식으로 알려 주세요.</string>
+    <string name="problem_bad_days">반복 주기(%1$s)를 이해하지 못했습니다. 매일 또는 평일 중에서 골라 주세요.</string>
+    <string name="problem_bad_kind">기록 종류(%1$s)를 이해하지 못했습니다. 광고, 상품, 검색 결과, 누른 광고 중에서 골라 주세요.</string>
+    <string name="problem_bad_arguments">LLM이 보낸 작업 내용을 읽지 못해 실행하지 않았습니다. 다시 요청해 주세요.</string>
+
+    <!-- LLM errors -->
+    <string name="llm_error_auth">LLM API가 인증을 거부했습니다(HTTP %1$d). 설정에서 API Key를 확인해 주세요.</string>
+    <string name="llm_error_request">LLM API가 요청을 받지 않았습니다(HTTP %1$d). 전체 엔드포인트 주소와 모델 이름, 이 모델이 도구 호출을 지원하는지 확인해 주세요.</string>
+    <string name="llm_error_rate">LLM API가 요청이 너무 많다고 응답했습니다(HTTP 429). 잠시 후 다시 시도해 주세요.</string>
+    <string name="llm_error_server">LLM 서버에 일시적인 오류가 있습니다(HTTP %1$d). 잠시 후 다시 시도해 주세요.</string>
+    <string name="llm_error_status">LLM API가 HTTP %1$d를 반환했습니다. 주소와 설정을 확인해 주세요.</string>
+    <string name="llm_error_redirect">LLM 서버가 다른 주소로 이동하라고 응답했습니다(HTTP %1$d). API Key가 다른 곳으로 가지 않도록 따라가지 않았습니다. 전체 엔드포인트 주소를 정확히 입력해 주세요.</string>
+    <string name="llm_error_timeout">LLM 응답이 60초 안에 오지 않았습니다. 잠시 후 다시 시도해 주세요.</string>
+    <string name="llm_error_network">LLM 서버에 연결할 수 없습니다. 네트워크와 엔드포인트 주소를 확인해 주세요.</string>
+    <string name="llm_error_tls">LLM 서버의 인증서를 확인할 수 없습니다. 주소가 맞는지 확인해 주세요. 이 앱은 인증서 검사를 끄지 않습니다.</string>
+    <string name="llm_error_insecure">이 앱은 HTTPS 주소로만 LLM에 연결합니다.</string>
+    <string name="llm_error_format">LLM 응답 형식이 올바르지 않습니다. 설정의 API 형식(OpenAI 호환 또는 Anthropic)을 확인해 주세요.</string>
+    <string name="llm_error_refused">LLM이 이 요청에 답하지 않았습니다. 요청을 바꿔 다시 시도해 주세요.</string>
+    <string name="llm_error_unexpected">예기치 않은 오류로 요청을 마치지 못했습니다. 다시 시도해 주세요.</string>
+
+    <!-- Browser -->
+    <string name="browser_address_hint">주소 또는 검색어</string>
+    <string name="browser_back">뒤로</string>
+    <string name="browser_forward">앞으로</string>
+    <string name="browser_reload">새로고침</string>
+    <string name="browser_stop">불러오기 중지</string>
+    <string name="browser_capture_page">이 페이지 기록</string>
+    <string name="browser_empty_title">사이트를 열어 보세요</string>
+    <string name="browser_empty_body">채팅에서 요청하거나 아래 사이트를 누르면 이 화면에서 열립니다. 앱은 페이지를 읽기만 하고 광고나 링크를 대신 누르지 않습니다.</string>
+    <string name="browser_capturing">%1$s \'%2$s\' 기록하는 중… 끝날 때까지 화면을 누르지 말아 주세요.</string>
+    <string name="browser_capturing_page">이 페이지를 기록하는 중…</string>
+    <string name="browser_marked">이 페이지의 광고 %1$d건을 표시해 두었습니다. 직접 누르면 기록됩니다.</string>
+    <string name="browser_blocked_external">앱 밖으로 나가는 링크(%1$s:)는 열지 않았습니다.</string>
+    <string name="browser_blocked_insecure">HTTPS가 아닌 페이지는 앱 안에서 열지 않습니다.</string>
+    <string name="browser_bad_address">열 수 없는 주소입니다.</string>
+    <string name="browser_open_external">다른 브라우저로 열기</string>
+    <string name="browser_dismiss">알림 닫기</string>
+    <string name="browser_ssl_error">이 사이트의 인증서를 확인할 수 없어 열지 않았습니다.</string>
+    <string name="browser_renderer_gone">브라우저가 멈춰 다시 시작했습니다.</string>
+    <string name="browser_click_recorded">누른 광고를 기록했습니다.</string>
+    <string name="browser_click_recorded_item">누른 항목을 기록했습니다.</string>
+
+    <!-- Records -->
+    <string name="records_title">기록</string>
+    <string name="records_items">항목</string>
+    <string name="records_captures">기록한 페이지</string>
+    <string name="records_export">CSV 내보내기</string>
+    <string name="records_export_empty">내보낼 항목이 없습니다.</string>
+    <string name="records_export_failed">CSV 파일을 만들지 못했습니다.</string>
+    <string name="records_export_chooser">CSV 공유</string>
+    <string name="filter_all_sites">모든 사이트</string>
+    <string name="site_generic">기타</string>
+    <string name="kind_all">전체</string>
+    <string name="kind_ad">광고</string>
+    <string name="kind_product">상품</string>
+    <string name="kind_result">검색 결과</string>
+    <string name="kind_clicked">누른 광고</string>
+    <string name="records_search_hint">제목, 링크, 검색어로 찾기</string>
+    <string name="records_clear_search">검색어 지우기</string>
+    <string name="records_only_capture">이 기록만 보는 중</string>
+    <string name="records_show_all">모두 보기</string>
+    <string name="records_empty">아직 기록이 없습니다. 채팅에서 \"쿠팡에서 노트북 광고 기록해 줘\"처럼 요청해 보세요.</string>
+    <string name="records_no_match">조건에 맞는 항목이 없습니다.</string>
+    <string name="records_counts">광고 %1$d · 상품 %2$d · 검색 결과 %3$d</string>
+    <string name="records_clicked_badge">누름</string>
+    <string name="source_chat">채팅</string>
+    <string name="source_schedule">예약</string>
+    <string name="source_manual">직접 기록</string>
+    <string name="source_click">광고 누름</string>
+    <string name="time_today">오늘 %1$s</string>
+    <string name="detail_kind">종류</string>
+    <string name="detail_position_value">%1$d번째</string>
+    <string name="detail_site">사이트</string>
+    <string name="detail_query">검색어</string>
+    <string name="detail_price">가격</string>
+    <string name="detail_display_url">표시 URL</string>
+    <string name="detail_link">링크</string>
+    <string name="detail_captured_at">기록 시각</string>
+    <string name="detail_clicked_at">누른 시각</string>
+    <string name="detail_clicked_url">누른 링크</string>
+    <string name="detail_landing_url">도착 페이지</string>
+    <string name="detail_landing_title">도착 페이지 제목</string>
+    <string name="detail_page">기록한 페이지</string>
+    <string name="detail_text">카드 내용</string>
+    <string name="detail_copy">링크 복사</string>
+    <string name="detail_copied">링크를 복사했습니다.</string>
+    <string name="detail_close">닫기</string>
+    <string-array name="csv_header">
+        <item>기록 시각</item>
+        <item>사이트</item>
+        <item>검색어</item>
+        <item>종류</item>
+        <item>순서</item>
+        <item>제목</item>
+        <item>가격</item>
+        <item>표시 URL</item>
+        <item>링크</item>
+        <item>이미지</item>
+        <item>누른 시각</item>
+        <item>누른 링크</item>
+        <item>도착 URL</item>
+        <item>도착 페이지 제목</item>
+        <item>페이지 URL</item>
+        <item>카드 내용</item>
+    </string-array>
+
+    <!-- Settings -->
+    <string name="settings_title">설정</string>
+    <string name="settings_llm">LLM 연결</string>
+    <string name="settings_format">API 형식</string>
+    <string name="format_openai">OpenAI 호환</string>
+    <string name="format_anthropic">Anthropic</string>
+    <string name="settings_endpoint">전체 API 엔드포인트</string>
+    <string name="settings_endpoint_hint_openai">https://api.example.com/v1/chat/completions</string>
+    <string name="settings_endpoint_hint_anthropic">https://api.example.com/v1/messages</string>
+    <string name="settings_endpoint_help">요청을 보낼 전체 주소입니다. https://를 빼고 입력하면 https://로 저장합니다. http:// 주소는 쓸 수 없습니다.</string>
+    <string name="settings_model">모델 이름</string>
+    <string name="settings_key">API Key</string>
+    <string name="settings_key_saved">저장됨 · 새 키를 입력하고 저장하면 바뀝니다</string>
+    <string name="settings_key_none">저장된 키 없음</string>
+    <string name="settings_key_clear">키 지우기</string>
+    <string name="settings_key_removed">저장된 API Key를 지웠습니다.</string>
+    <string name="settings_key_failed">API Key를 암호화해 저장하지 못했습니다. 다시 시도해 주세요.</string>
+    <string name="settings_save">저장</string>
+    <string name="settings_saved">저장했습니다.</string>
+    <string name="settings_key_cleared_host">서버 주소가 바뀌어 저장된 API Key를 지웠습니다. 새 서버의 키를 입력해 주세요.</string>
+    <string name="settings_test">연결 확인</string>
+    <string name="settings_testing">확인하는 중…</string>
+    <string name="settings_test_ok">연결되었습니다. LLM이 응답했습니다.</string>
+    <string name="endpoint_error_empty">엔드포인트를 입력해 주세요.</string>
+    <string name="endpoint_error_http">이 앱은 HTTPS 주소만 씁니다. http:// 주소로는 API Key와 대화가 암호화되지 않은 채 전송되므로 막아 두었습니다. https:// 주소를 입력해 주세요.</string>
+    <string name="endpoint_error_scheme">https:// 주소를 입력해 주세요.</string>
+    <string name="endpoint_error_invalid">주소 형식이 올바르지 않습니다.</string>
+    <string name="endpoint_error_credentials">주소에 사용자 이름이나 비밀번호를 넣지 말고, 키는 API Key 칸에 입력해 주세요.</string>
+    <string name="endpoint_error_fragment">주소에서 # 뒤 부분을 지워 주세요.</string>
+    <string name="model_error_empty">모델 이름을 입력해 주세요.</string>
+    <string name="settings_privacy">API Key는 이 기기의 Android Keystore 키로 암호화해 저장하며 화면에 다시 보여 주지 않습니다. 키는 입력할 때의 서버로만 보냅니다.</string>
+    <string name="settings_schedules">예약한 기록</string>
+    <string name="settings_schedules_empty">예약이 없습니다. 채팅에서 \"매일 9시에 쿠팡 노트북 광고 기록해 줘\"처럼 요청하면 만들어집니다. 예약한 시각에는 알림이 오고, 알림을 누르면 브라우저에서 기록합니다.</string>
+    <string name="schedule_row">%1$s %2$s · %3$s \'%4$s\'</string>
+    <string name="schedule_next">다음 알림: %1$s</string>
+    <string name="schedule_off">꺼짐</string>
+    <string name="schedule_toggle">예약 켜기</string>
+    <string name="schedule_delete">예약 삭제</string>
+    <string name="schedule_delete_title">예약을 삭제할까요?</string>
+    <string name="schedule_delete_confirm">삭제</string>
+    <string name="notifications_off">알림이 꺼져 있어 예약한 시각에 알림이 오지 않습니다.</string>
+    <string name="notifications_allow">알림 허용</string>
+    <string name="settings_browser">브라우저</string>
+    <string name="settings_record_clicks">직접 누른 광고 기록</string>
+    <string name="settings_record_clicks_help">열어 본 페이지의 광고를 표시해 두고, 직접 누른 광고와 그 도착 페이지를 기록합니다.</string>
+    <string name="settings_clear_browser">브라우저 데이터 지우기</string>
+    <string name="settings_clear_browser_title">브라우저 데이터를 지울까요?</string>
+    <string name="settings_clear_browser_body">쿠키, 저장된 사이트 데이터, 캐시, 방문 기록을 지웁니다. 사이트에 다시 로그인해야 합니다.</string>
+    <string name="settings_data">데이터</string>
+    <string name="settings_clear_chat">대화 지우기</string>
+    <string name="settings_clear_chat_title">대화를 모두 지울까요?</string>
+    <string name="settings_clear_chat_body">채팅 메시지를 모두 지웁니다. 기록과 예약은 남습니다.</string>
+    <string name="settings_clear_records">기록 모두 지우기</string>
+    <string name="settings_clear_records_title">기록을 모두 지울까요?</string>
+    <string name="settings_clear_records_body">기록한 페이지와 항목을 모두 지웁니다. 되돌릴 수 없습니다.</string>
+    <string name="settings_cleared">지웠습니다.</string>
+    <string name="confirm_clear">지우기</string>
+    <string name="confirm_cancel">취소</string>
+    <string name="settings_about">정보</string>
+    <string name="settings_about_body">대화와 기록은 이 기기에만 저장됩니다. 설정한 LLM에는 채팅 내용과 짧은 기록 요약(개수와 상위 항목 제목)만 보냅니다. 앱은 광고를 대신 누르지 않고, 로봇 확인을 우회하지 않습니다.</string>
+    <string name="settings_version">버전 %1$s</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_name">예약한 기록</string>
+    <string name="notif_channel_desc">예약한 시각에 광고 기록을 알려 드립니다.</string>
+    <string name="notif_title">예약한 광고 기록: %1$s \'%2$s\'</string>
+    <string name="notif_body">눌러서 브라우저에서 기록을 시작합니다.</string>
+</resources>

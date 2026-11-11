@@ -1121,7 +1121,7 @@ LLM 연결 설정 바꾸기
 - 범위 `control`(앱 제어) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `app_navigate`, `call_api`
 - `POST /api/v1/app/navigate` — 화면 이동
-  - `view` (body, string, 필수) 화면 [home · tasks · library · automation · activity · admin]
+  - `view` (body, string, 필수) 화면 [chat · home · tasks · library · automation · records · activity · admin]
   - `tab` (body, string) 탭 — library: documents·import·knowledge · automation: prompt·schedules·routines · activity: history·conversations · tasks: reminders
   - `section` (body, string) view=admin의 관리 항목 [llm · sites · templates · preferences · api · manual · about]
 
@@ -1767,9 +1767,9 @@ Control the app window: show (bring to front), minimize, maximize, restore, full
 
 화면 이동 · 범위 `control` · 메서드 `app.navigate`
 
-Show a screen of the app: home, tasks (tabs reminders), library (tabs documents, import, knowledge), automation (tabs prompt, schedules, routines), activity (tabs history, conversations), admin (sections llm, sites, templates, preferences, api, manual, about). Refused while the user writes a document in the panel or has changed a form on the screen without saving it.
+Show a screen of the app: chat, home, tasks (tabs reminders), library (tabs documents, import, knowledge), automation (tabs prompt, schedules, routines), records, activity (tabs history, conversations), admin (sections llm, sites, templates, preferences, api, manual, about). Refused while the user writes a document in the panel or has changed a form on the screen without saving it.
 
-- `view` (string, 필수) Screen. [home · tasks · library · automation · activity · admin]
+- `view` (string, 필수) Screen. [chat · home · tasks · library · automation · records · activity · admin]
 - `tab` (string) Tab of the screen.
 - `section` (string) Admin section, with view admin. [llm · sites · templates · preferences · api · manual · about]
 

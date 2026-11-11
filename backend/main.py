@@ -36,6 +36,14 @@ SLOW = frozenset(
         # A backup and the copy of one to restore read and write the whole Wiki.
         "wiki.backup",
         "wiki.restore_backup",
+        # The agent chat's planner (Hermes or the LLM) and its actions, which drive the web records' browser.
+        "agent.send",
+        "agent.approve",
+        "web.capture",
+        "web.capture_page",
+        "web.open",
+        "web.close",
+        "web.export",
     }
 )
 # Requests a user waits for on the screen (or an AI tool for its answer): their LLM requests go before those of batch
@@ -52,6 +60,8 @@ INTERACTIVE_METHODS = frozenset(
         "schedules.run",
         "confluence.check",
         "jira.check",
+        "agent.send",
+        "agent.approve",
     }
 )
 SLOW_SLOTS = 4

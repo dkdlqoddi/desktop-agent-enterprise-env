@@ -461,9 +461,15 @@ class DemoRun {
       () => this.click('이 위치에 저장하고 시작', 'button'),
       150_000,
     );
+    // The app opens on the chat; the demo works the dashboard.
+    await this.waitFor(async () => !!(await this.findControl((item) => item.name === '메시지')), {
+      timeout: 90_000,
+      message: 'Wiki를 연 뒤 첫 화면이 열리지 않았습니다.',
+    });
+    await this.command('navigate', { view: 'home' });
     await this.waitFor(
       async () => !!(await this.findControl((item) => item.name === '위젯 편집')),
-      { timeout: 90_000, message: 'Wiki를 연 뒤 홈 화면이 열리지 않았습니다.' },
+      { timeout: 30_000, message: 'Wiki를 연 뒤 홈 화면이 열리지 않았습니다.' },
     );
     this.caption('빈 Wiki가 준비되었습니다 · 문서 0개', { label });
     await this.hold(2600);

@@ -10,6 +10,7 @@ import {
   launch,
   llmServer,
   openAdmin,
+  openDashboard,
   results,
 } from './helpers';
 
@@ -410,7 +411,7 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     await app.close();
     app = await launch(directory);
     page = await app.firstWindow();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     await expect.poll(async () => (await fetch(`${base}/api/v1/health`)).status).toBe(200);
     await openAdmin(page, 'AI 도구 연동');
     await expect(page.getByLabel('허용 범위')).toHaveValue('read');

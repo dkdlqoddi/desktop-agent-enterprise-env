@@ -47,6 +47,10 @@ const pyinstaller = [
   // points to (_internal/pillow-*.dist-info/licenses/LICENSE).
   '--copy-metadata',
   'pillow',
+  // The web records' page scripts and site list, which the Android app shares (shared/web-capture): the backend reads
+  // them from its bundle (web_capture.py assets()).
+  '--add-data',
+  `${path.join(projectRoot, 'shared', 'web-capture')}${path.delimiter}web_capture`,
   ...(process.platform === 'win32'
     ? [
         '--hidden-import',

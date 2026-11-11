@@ -6,7 +6,7 @@ import { projectRoot, venvPython } from './python.mjs';
 
 // THIRD_PARTY_NOTICES.md, written from what the app ships: the npm packages the static export can bundle
 // (package-lock.json, with the license files in node_modules), the Python distributions the PyInstaller backend bundles
-// (backend/.venv, through importlib.metadata), and fixed entries for what neither lock file lists (Electron, Chromium,
+// (backend/.venv, through importlib.metadata), the bundled Hermes agent and its pinned wheels (runtime/hermes), and fixed entries for what neither lock file lists (Electron, Chromium,
 // Python, the PyInstaller bootloader) or what only Windows installs (pywin32). `--check` writes nothing and fails when
 // the committed file differs from what it would write.
 //
@@ -395,7 +395,7 @@ function runtimes(installed, pins) {
       version: installed.chromium,
       license: 'BSD-3-Clause 및 포함 구성 요소별 라이선스',
       homepage: 'https://www.chromium.org/',
-      note: 'JIRA·Confluence 가져오기와 사이트 로그인에 쓰는 브라우저(앱의 `resources/browsers`). 브라우저의 `chrome://credits` 페이지에 전체 고지가 있습니다',
+      note: 'JIRA·Confluence 가져오기, 사이트 로그인과 웹 기록에 쓰는 브라우저(앱의 `resources/browsers`). 브라우저의 `chrome://credits` 페이지에 전체 고지가 있습니다',
       texts: [],
     },
     {
@@ -423,6 +423,139 @@ function runtimes(installed, pins) {
       texts: pyinstaller.texts.map(cleanText).filter(Boolean),
     },
   ];
+}
+
+// --- Hermes ---------------------------------------------------------------------------------------------------------
+
+// The bundled Hermes agent (runtime/hermes, staged by scripts/build-hermes.py into the app's resources/hermes): its own
+// license, the CPython it runs on, and the hashed wheels of runtime/hermes/requirements.txt. The wheels' license files
+// ship with them (resources/hermes/dependencies/*.dist-info), and their wheels differ by platform, so the table names
+// each license from this list instead of reading a build. The list is checked against the requirements: a pin added,
+// removed or renamed stops the script until the list follows it.
+const HERMES_LICENSES = {
+  'annotated-types': 'MIT',
+  anyio: 'MIT',
+  certifi: 'MPL-2.0',
+  cffi: 'MIT-0',
+  'charset-normalizer': 'MIT',
+  colorama: 'BSD-3-Clause',
+  'concurrent-log-handler': 'Apache-2.0',
+  croniter: 'MIT',
+  cryptography: 'Apache-2.0 OR BSD-3-Clause',
+  distro: 'Apache-2.0',
+  fire: 'Apache-2.0',
+  h11: 'MIT',
+  httpcore: 'BSD-3-Clause',
+  httpx: 'BSD-3-Clause',
+  idna: 'BSD-3-Clause',
+  jinja2: 'BSD-3-Clause',
+  jiter: 'MIT',
+  markdown: 'BSD-3-Clause',
+  'markdown-it-py': 'MIT',
+  markupsafe: 'BSD-3-Clause',
+  mdurl: 'MIT',
+  openai: 'Apache-2.0',
+  packaging: 'Apache-2.0 OR BSD-2-Clause',
+  pathspec: 'MPL-2.0',
+  pillow: 'MIT-CMU',
+  portalocker: 'BSD-3-Clause',
+  'prompt-toolkit': 'BSD-3-Clause',
+  psutil: 'BSD-3-Clause',
+  pycparser: 'BSD-3-Clause',
+  pydantic: 'MIT',
+  'pydantic-core': 'MIT',
+  pygments: 'BSD-2-Clause',
+  pyjwt: 'MIT',
+  'python-dateutil': 'BSD-3-Clause',
+  'python-dotenv': 'BSD-3-Clause',
+  requests: 'Apache-2.0',
+  rich: 'MIT',
+  'ruamel-yaml': 'MIT',
+  'ruamel-yaml-clib': 'MIT',
+  sniffio: 'MIT OR Apache-2.0',
+  snowballstemmer: 'BSD-3-Clause',
+  socksio: 'MIT',
+  tenacity: 'Apache-2.0',
+  termcolor: 'MIT',
+  'tomli-w': 'MIT',
+  tqdm: 'MPL-2.0 AND MIT',
+  truststore: 'MIT',
+  'typing-extensions': 'PSF-2.0',
+  'typing-inspection': 'MIT',
+  tzdata: 'Apache-2.0',
+  urllib3: 'MIT',
+  wcwidth: 'MIT',
+  websockets: 'BSD-3-Clause',
+};
+// build/hermes-source/LICENSE at the commit runtime/hermes/manifest.json pins. Check it when the pin changes.
+const HERMES_LICENSE = `MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`;
+
+function hermes() {
+  const pin = JSON.parse(
+    readFileSync(path.join(projectRoot, 'runtime', 'hermes', 'manifest.json'), 'utf8'),
+  );
+  const pins = {};
+  for (const line of readFileSync(
+    path.join(projectRoot, 'runtime', 'hermes', 'requirements.txt'),
+    'utf8',
+  ).split(/\r?\n/)) {
+    const match = /^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)/.exec(line);
+    if (match) pins[canonical(match[1])] = match[2];
+  }
+  for (const name of Object.keys(pins))
+    if (!Object.hasOwn(HERMES_LICENSES, name))
+      fail(
+        `runtime/hermes/requirements.txt의 ${name}이(가) scripts/third-party-notices.mjs의 HERMES_LICENSES에 없습니다. 라이선스를 확인해 넣으세요.`,
+      );
+  for (const name of Object.keys(HERMES_LICENSES))
+    if (!Object.hasOwn(pins, name))
+      fail(
+        `scripts/third-party-notices.mjs의 HERMES_LICENSES에 있는 ${name}이(가) runtime/hermes/requirements.txt에 없습니다. 목록에서 빼세요.`,
+      );
+  const standalone = /\/download\/(\d+)\//.exec(pin.linux_url)?.[1] ?? '';
+  return {
+    runtime: [
+      {
+        name: 'Hermes Agent',
+        version: pin.version,
+        license: 'MIT',
+        homepage: pin.repository.replace(/\.git$/, ''),
+        note: `채팅의 작업 계획을 세우는 에이전트(Nous Research). 원본 커밋 ${pin.commit.slice(0, 12)}에서 테스트·웹 화면·플러그인 등을 뺀 Python 코드`,
+        texts: [HERMES_LICENSE],
+      },
+      {
+        name: 'CPython',
+        version: pin.python,
+        license: 'PSF-2.0 및 포함 구성 요소별 라이선스',
+        homepage: 'https://www.python.org/',
+        note: `Hermes 실행 환경. Windows는 python.org의 embeddable package, Linux 빌드는 python-build-standalone ${standalone}입니다. 라이선스 전문은 \`resources/hermes/python\` 안의 LICENSE.txt와 https://docs.python.org/3/license.html 에 있습니다`,
+        texts: [],
+      },
+    ],
+    packages: Object.entries(pins)
+      .map(([name, version]) => ({ name, version, license: HERMES_LICENSES[name] }))
+      .sort(byName),
+  };
 }
 
 // --- Markdown -------------------------------------------------------------------------------------------------------
@@ -474,6 +607,7 @@ function render() {
   const runtime = runtimes(installed, pins);
   const python = pythonPackages(installed, pins);
   const npm = npmPackages();
+  const agent = hermes();
   // The development dependencies and what only the build runs, each package once (@types/react is both).
   const npmTools = [...npmDevTools(), ...npm.buildOnly]
     .filter((item, index, all) => all.findIndex((other) => byName(other, item) === 0) === index)
@@ -487,7 +621,7 @@ function render() {
 
 Private Agent는 [MIT 라이선스](LICENSE)로 배포하며, 아래 오픈소스 구성 요소를 함께 배포하거나 빌드에 사용합니다. 각 구성 요소는 자신의 라이선스를 따릅니다. 고정된 버전은 \`package.json\`·\`package-lock.json\`과 \`backend/pyproject.toml\`·\`backend/constraints.txt\`에 있습니다.
 
-<!-- 이 파일은 scripts/third-party-notices.mjs가 package-lock.json·node_modules와 backend/.venv에서 만듭니다. 직접 고치지 말고, 의존성을 바꾼 뒤 npm run notices를 실행하세요. CI는 npm run notices:check로 최신인지 확인합니다. -->
+<!-- 이 파일은 scripts/third-party-notices.mjs가 package-lock.json·node_modules, backend/.venv와 runtime/hermes에서 만듭니다. 직접 고치지 말고, 의존성을 바꾼 뒤 npm run notices를 실행하세요. CI는 npm run notices:check로 최신인지 확인합니다. -->
 
 ## 앱에 포함되는 구성 요소
 
@@ -514,6 +648,27 @@ ${table(
 ${table(
   ['패키지', '버전', '라이선스', '홈페이지', '비고'],
   python.map((item) => [item.name, item.version, item.license, item.homepage, item.note ?? '']),
+)}
+
+### 내장 Hermes 에이전트
+
+채팅의 작업 계획에 쓰는 Hermes Agent와 그 실행 환경입니다(앱의 \`resources/hermes\`). 아래 패키지의 라이선스 파일은 \`resources/hermes/dependencies\`의 각 \`*.dist-info\` 폴더에 함께 들어 있습니다.
+
+<!-- 생성됨: runtime/hermes/manifest.json과 runtime/hermes/requirements.txt(라이선스는 scripts/third-party-notices.mjs의 HERMES_LICENSES) -->
+
+${table(
+  ['구성 요소', '버전', '라이선스', '설명'],
+  agent.runtime.map((item) => [
+    `[${item.name}](${item.homepage})`,
+    item.version,
+    item.license,
+    item.note,
+  ]),
+)}
+
+${table(
+  ['패키지', '버전', '라이선스'],
+  agent.packages.map((item) => [item.name, item.version, item.license]),
 )}
 
 ### npm 패키지
@@ -544,7 +699,7 @@ ${table(
 
 <!-- 생성됨: node_modules의 LICENSE·NOTICE 파일과 backend/.venv 배포 패키지의 License-File -->
 
-${licenseTexts([runtime, python, npm.shipped])}
+${licenseTexts([runtime, python, agent.runtime, npm.shipped])}
 `;
 }
 

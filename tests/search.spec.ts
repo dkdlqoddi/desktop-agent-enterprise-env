@@ -8,6 +8,7 @@ import {
   drawer,
   launch,
   llmServer,
+  openDashboard,
   results,
   searchBox,
   widget,
@@ -165,6 +166,7 @@ test('keywords search every document, whatever the next question is about, once 
       }
     });
     await page.reload();
+    await openDashboard(page);
     const rows = widget(page, 'documents').locator('.document-row');
 
     // A question about one document, its answer still being written.

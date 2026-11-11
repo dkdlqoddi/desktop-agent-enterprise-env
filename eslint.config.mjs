@@ -32,6 +32,8 @@ export default defineConfig(
     '.claude/',
     '.local-data/',
     'backend/',
+    // The Android app (Kotlin, built by Gradle): its build copies shared/web-capture, which is linted where it is.
+    'android/',
     'next-env.d.ts',
   ]),
   js.configs.recommended,
@@ -169,6 +171,13 @@ export default defineConfig(
     // CommonJS for this parser too: a file's top level is its module's scope, not the global one.
     files: ['electron/**/*.cjs'],
     languageOptions: { parserOptions: { ecmaFeatures: { globalReturn: true } } },
+  },
+  // The web records' page scripts (shared/web-capture): one function expression or statement each, which the desktop
+  // backend evaluates with Playwright and the Android app with its WebView, in the visited page.
+  {
+    files: ['shared/web-capture/*.js'],
+    languageOptions: { sourceType: 'script', globals: globals.browser },
+    rules: { 'no-unused-expressions': 'off' },
   },
   // The recorder's page: a classic script in a sandboxed page, with the bridge recorder-preload.cjs exposes.
   {

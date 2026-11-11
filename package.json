@@ -20,13 +20,14 @@
     "build:browser": "node scripts/build-browser.mjs",
     "build:web": "next build",
     "build:python": "node scripts/build-python.mjs",
-    "build": "npm run build:web && npm run build:python",
+    "build:hermes": "node scripts/build-hermes.mjs",
+    "build": "npm run build:web && npm run build:python && npm run build:hermes",
     "build:exe": "node scripts/build-exe.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "typecheck:electron": "tsc -p tsconfig.electron.json",
-    "format": "prettier --write src electron scripts tests *.json *.ts *.mjs *.md docs/*.md .github/workflows/*.yml",
-    "format:check": "prettier --check src electron scripts tests *.json *.ts *.mjs *.md docs/*.md .github/workflows/*.yml",
+    "format": "prettier --write src electron scripts shared tests *.json *.ts *.mjs *.md docs/*.md .github/workflows/*.yml",
+    "format:check": "prettier --check src electron scripts shared tests *.json *.ts *.mjs *.md docs/*.md .github/workflows/*.yml",
     "lint": "eslint --max-warnings 0 .",
     "lint:fix": "eslint --fix .",
     "lint:python": "node scripts/lint-python.mjs check backend",
@@ -100,6 +101,10 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
+      {
+        "from": "dist/hermes",
+        "to": "hermes"
+      },
       {
         "from": "dist/browsers",
         "to": "browsers"

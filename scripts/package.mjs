@@ -32,6 +32,8 @@ console.log(
 for (const args of [
   [require.resolve('next/dist/bin/next'), 'build'],
   ['scripts/build-python.mjs'],
+  // The agent chat's planner: the pinned Hermes source, its CPython and hashed wheels (dist/hermes).
+  ['scripts/build-hermes.mjs'],
   ['scripts/build-browser.mjs'],
 ]) {
   const result = spawnSync(process.execPath, args, { stdio: 'inherit', env });

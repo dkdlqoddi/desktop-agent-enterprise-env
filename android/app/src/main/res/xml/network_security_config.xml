@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HTTPS only, for the LLM requests and the in-app browser alike, with the system's certificate authorities. Android
+     cannot allow cleartext for just the one host a user types at run time, so http:// stays off everywhere; the
+     settings refuse an http:// LLM endpoint and the browser offers to open an http:// page in another browser. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

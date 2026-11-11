@@ -295,6 +295,35 @@ class Database:
                     written TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_writeback_backups_path ON writeback_backups(source_path,created_at);
+                -- The agent chat (agent_chat.py): one conversation, the user's messages and the agent's answers with
+                -- the actions it proposed (actions: JSON cards, each awaiting approval, running or done).
+                CREATE TABLE IF NOT EXISTS agent_messages (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+                    content TEXT NOT NULL DEFAULT '', actions TEXT NOT NULL DEFAULT '[]',
+                    engine TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                -- Web records (web_capture.py): what a site's page showed at one time (a capture) and the ads,
+                -- products and results on it (items), with the landing page of an item the user clicked.
+                CREATE TABLE IF NOT EXISTS web_captures (
+                    id TEXT PRIMARY KEY, site TEXT NOT NULL, query TEXT NOT NULL DEFAULT '', url TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat',
+                    ad_count INTEGER NOT NULL DEFAULT 0, product_count INTEGER NOT NULL DEFAULT 0,
+                    result_count INTEGER NOT NULL DEFAULT 0, screenshot TEXT NOT NULL DEFAULT '',
+                    captured_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_web_captures_time ON web_captures(captured_at);
+                CREATE TABLE IF NOT EXISTS web_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    capture_id TEXT NOT NULL REFERENCES web_captures(id) ON DELETE CASCADE,
+                    ref INTEGER NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('ad','product','result')),
+                    position INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', price TEXT NOT NULL DEFAULT '',
+                    display_url TEXT NOT NULL DEFAULT '', link_url TEXT NOT NULL DEFAULT '',
+                    image_url TEXT NOT NULL DEFAULT '', snippet TEXT NOT NULL DEFAULT '', clicked_at TEXT,
+                    landing_url TEXT NOT NULL DEFAULT '', landing_title TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_web_items_capture ON web_items(capture_id,position);
+                CREATE INDEX IF NOT EXISTS idx_web_items_clicked ON web_items(clicked_at);
             """)  # noqa: E501
             for name, (columns, key) in SOURCE_TABLES.items():
                 db.execute(source_table(name, columns, key))

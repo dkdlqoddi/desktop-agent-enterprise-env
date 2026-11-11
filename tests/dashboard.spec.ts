@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { addWidget, chooseStorage, goHome, launch, widget } from './helpers';
+import { addWidget, chooseStorage, goHome, launch, openDashboard, widget } from './helpers';
 
 // The widgets as placed: id, format, width and height.
 const placed = (page: Page) =>
@@ -66,7 +66,7 @@ test('dashboard: templates, one content in many formats, widths, heights, undo a
       await request('wiki.save', { title: '분기 계획', content: '분기 목표와 일정 초안' });
     });
     await page.reload();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     const caption = page.locator('.dashboard-caption');
     await expect(caption).toContainText('기본 템플릿 · 위젯 6개');
     expect(await placed(page)).toEqual([
@@ -192,7 +192,7 @@ test('dashboard: templates, one content in many formats, widths, heights, undo a
     // The layout is kept with the Wiki.
     app = await launch(directory);
     page = await app.firstWindow();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible({ timeout: 30_000 });
+    await openDashboard(page, 30_000);
     expect(await placed(page)).toEqual(arranged);
     await expect(page.locator('.dashboard-caption')).toContainText('직접 구성');
 
@@ -206,7 +206,7 @@ test('dashboard: templates, one content in many formats, widths, heights, undo a
       }),
     );
     await page.reload();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     expect(await placed(page)).toEqual([
       'welcome:banner:xl',
       'shortcuts:tiles:xl',
@@ -304,7 +304,7 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
       ],
     });
     await page.reload();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     expect(await placed(page)).toEqual(['shortcuts:tiles:xl', 'welcome:banner:xl', 'tasks:list:m']);
     await page.getByRole('button', { name: '위젯 편집' }).click();
     await page.getByLabel('할 일 크기').selectOption('l');
@@ -339,7 +339,7 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
     );
     expect(stored.stderr).toBe('');
     await page.reload();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     expect(await placed(page)).toEqual(['documents:list:m']);
 
     // Widgets and formats of a newer version stay saved through an edit, where they were; ↓ keeps the keyboard on the
@@ -353,7 +353,7 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
       ],
     });
     await page.reload();
-    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await openDashboard(page);
     expect(await placed(page)).toEqual(['tasks:list:m', 'tasks-2:gantt:s', 'documents:list:m']);
     await page.getByRole('button', { name: '위젯 편집' }).click();
     const down = widget(page, 'tasks').locator('button[data-move="down"]');
@@ -393,6 +393,7 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
       ],
     });
     await page.reload();
+    await openDashboard(page);
     await page.getByRole('button', { name: '위젯 편집' }).click();
     const tray = page.getByRole('region', { name: '추가할 수 있는 위젯' });
     await expect(tray).toContainText('위젯은 40개까지 놓을 수 있습니다');

@@ -143,6 +143,10 @@ const RPC_TIMEOUTS = {
   // A backup, and the copy of one to restore, read and write the whole Wiki: minutes for a large one on a slow drive.
   'wiki.backup': 900_000,
   'wiki.restore_backup': 900_000,
+  // The agent chat: Hermes' plan (up to two minutes and a worker start), and an action it proposed, which may open a
+  // site, scroll and read it (web_capture.py TASK_SECONDS) or wait for a run the user's import holds up.
+  'agent.send': 420_000,
+  'agent.approve': 420_000,
 };
 
 const RESTARTING = 'Python 백엔드를 다시 시작하고 있습니다. 잠시 후 다시 시도해 주세요.';
@@ -294,6 +298,13 @@ async function launchBackend(dataDirectory) {
           'confluence-profiles',
         ),
         PRIVATE_AGENT_JIRA_PROFILES: path.join(app.getPath('userData'), 'jira-profiles'),
+        // The visible browser of the agent chat's web tasks and web records: one profile.
+        PRIVATE_AGENT_WEB_PROFILES: path.join(app.getPath('userData'), 'web-profiles'),
+        // The bundled Hermes agent (npm run build:hermes): its CPython, pinned source and worker.
+        PRIVATE_AGENT_HERMES_DIR: path.join(
+          app.isPackaged ? process.resourcesPath : path.join(ROOT, 'dist'),
+          'hermes',
+        ),
         // The backend's log of unexpected failures, beside the app's own.
         PRIVATE_AGENT_LOG_DIR: diagnostics.directory,
         PYTHONUNBUFFERED: '1',
@@ -1210,6 +1221,17 @@ async function handle(method, params, { access } = {}) {
   if (method === 'storage.get') result = storage.info();
   else if (method === 'diagnostics.copy') {
     await clipboard.writeText(await diagnostics.report(diagnosticFacts()));
+    result = { ok: true };
+  } else if (method === 'web.open_exports') {
+    // The Wiki folder's exports folder, where the web records' CSV files go (web_capture.py export): the folder is
+    // the main process's own, never a path the screen sends.
+    if (!storage.initialized) throw new Error('Wiki 저장 위치를 먼저 정해 주세요.');
+    const exports = path.join(storage.directory, 'exports');
+    await fs.mkdir(exports, { recursive: true });
+    if (await shell.openPath(exports))
+      throw new Error(
+        '내보내기 폴더를 열지 못했습니다. 탐색기에서 Wiki 폴더의 exports 폴더를 열어 주세요.',
+      );
     result = { ok: true };
   } else if (method === 'diagnostics.open_folder') {
     await fs.mkdir(diagnostics.directory, { recursive: true });

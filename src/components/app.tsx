@@ -17,6 +17,7 @@ import {
   unmaskSecrets,
   watchDrafts,
 } from './app-control';
+import AgentChat from './agent-chat';
 import Dashboard from './dashboard';
 import ErrorBoundary from './error-boundary';
 import { useJobsFeed } from './import-jobs';
@@ -35,6 +36,7 @@ import {
 } from './state';
 import StorageSetup from './storage-setup';
 import Toasts, { useToasts } from './toast';
+import WebRecords from './web-records';
 import WorkspacePage, { WorkspaceSidebar, WORKSPACE_VIEWS, type WorkspaceView } from './workspace';
 import { AssistantData } from './widgets/assistant-data';
 
@@ -410,6 +412,10 @@ function Shell({
               <ErrorBoundary key={`${view}:${admin.n}`} message="이 화면을 표시하지 못했습니다.">
                 {view === 'home' ? (
                   <Dashboard />
+                ) : view === 'chat' ? (
+                  <AgentChat />
+                ) : view === 'records' ? (
+                  <WebRecords />
                 ) : view === 'admin' ? (
                   <>
                     <header className="page-heading">

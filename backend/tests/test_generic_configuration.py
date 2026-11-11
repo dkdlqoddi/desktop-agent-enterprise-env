@@ -50,6 +50,7 @@ def test_the_routine_catalog_and_a_local_file_routine(tmp_path):
         "source_refresh",
         "analyze_new",
         "work_report",
+        "web_capture",
     }
     refresh = RECIPES["source_refresh"]
     with pytest.raises(UserError, match="경로"):

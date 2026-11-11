@@ -123,7 +123,8 @@ const LIBRARY: Method[] = ['prompts.list', 'stats'];
 
 export function createAppStores(): AppStores {
   const session = createStore<Session>({
-    view: 'home',
+    // The agent chat is the first screen; the dashboard is a click away (홈).
+    view: 'chat',
     workspaceTab: '',
     admin: { section: 'llm', n: 0 },
     reader: null,

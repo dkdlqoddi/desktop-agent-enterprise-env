@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>테스트 상점 - 노트북</title>
+    <style>
+      body { margin: 0; padding-top: 48px; font-family: sans-serif; background: #fff; }
+      h1 { font-size: 20px; margin: 0 12px 8px; }
+      ul { list-style: none; margin: 0; padding: 0 12px; }
+      li { display: block; margin: 0 0 10px; border: 1px solid #ccc; border-radius: 8px; }
+      li a { display: block; min-height: 96px; padding: 12px; color: #111; text-decoration: none; }
+      .ad-label, em { font-size: 12px; color: #a00; font-style: normal; }
+      .price-value { display: block; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <!-- A fake search page for the instrumented tests: three ad cards (labelled "광고" or "Sponsored"), four plain
+         product cards and one hidden ad card, all linking to the reserved example domain. -->
+    <h1>노트북 검색 결과</h1>
+    <ul id="productList">
+      <li class="search-product" id="ad-1">
+        <a href="https://shop.example.com/vp/products/101?src=ad">
+          <span class="ad-label">광고</span>
+          <div class="name">테스트 노트북 A</div>
+          <strong class="price-value">1,299,000원</strong>
+        </a>
+      </li>
+      <li class="search-product">
+        <a href="https://shop.example.com/vp/products/201">
+          <div class="name">일반 노트북 1</div>
+          <strong class="price-value">899,000원</strong>
+        </a>
+      </li>
+      <li class="search-product" id="ad-2">
+        <a href="https://shop.example.com/vp/products/102">
+          <em>Sponsored</em>
+          <div class="name">Test Laptop B</div>
+          <strong class="price-value">$999.00</strong>
+        </a>
+      </li>
+      <li class="search-product">
+        <a href="https://shop.example.com/vp/products/202">
+          <div class="name">일반 노트북 2</div>
+          <strong class="price-value">1,099,000원</strong>
+        </a>
+      </li>
+      <li class="search-product">
+        <a href="https://shop.example.com/vp/products/203">
+          <div class="name">일반 노트북 3</div>
+          <strong class="price-value">749,000원</strong>
+        </a>
+      </li>
+      <li class="search-product" id="ad-3">
+        <a href="https://shop.example.com/vp/products/103">
+          <span>광고</span>
+          <div class="name">테스트 노트북 C</div>
+          <strong class="price-value">1,499,000원</strong>
+        </a>
+      </li>
+      <li class="search-product">
+        <a href="https://shop.example.com/vp/products/204">
+          <div class="name">일반 노트북 4</div>
+          <strong class="price-value">599,000원</strong>
+        </a>
+      </li>
+      <li class="search-product" style="display: none">
+        <a href="https://shop.example.com/vp/products/999">
+          <span>광고</span>
+          <div class="name">숨은 광고</div>
+        </a>
+      </li>
+    </ul>
+  </body>
+</html>
