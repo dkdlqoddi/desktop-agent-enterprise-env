@@ -1,0 +1,52 @@
+psutil 7.2.2 on Android: the two source changes of upstream psutil pull request 2891 (commit
+380bd2b59c67b0e1b04bbf3a90b11744f4f96644, not in a release yet). CPython for Android reports sys.platform
+"android", which psutil 7.2.2 rejects when it builds and when it is imported; Android also denies
+/proc/filesystems, which disk_partitions() reads. Hermes Agent pins that commit for Android for the same reason.
+
+--- a/psutil/_common.py
++++ b/psutil/_common.py
+@@ -71,7 +71,7 @@
+ 
+ POSIX = os.name == "posix"
+ WINDOWS = os.name == "nt"
+-LINUX = sys.platform.startswith("linux")
++LINUX = sys.platform.startswith(("linux", "android"))
+ MACOS = sys.platform.startswith("darwin")
+ OSX = MACOS  # deprecated alias
+ FREEBSD = sys.platform.startswith(("freebsd", "midnightbsd"))
+--- a/psutil/_pslinux.py
++++ b/psutil/_pslinux.py
+@@ -1209,7 +1209,8 @@
+     """Return mounted disk partitions as a list of namedtuples."""
+     fstypes = set()
+     procfs_path = get_procfs_path()
+-    if not all:
++
++    def fstypes_from_filesystems():
+         with open_text(f"{procfs_path}/filesystems") as f:
+             for line in f:
+                 line = line.strip()
+@@ -1220,6 +1221,23 @@
+                     fstype = line.split("\t")[1]
+                     if fstype == "zfs":
+                         fstypes.add("zfs")
++        return fstypes
++
++    def fstypes_from_mountinfo():
++        with open_text(f"{procfs_path}/self/mountinfo") as f:
++            for line in f:
++                line = line.strip().split()
++                if len(line) > 1:
++                    for i in range(len(line) - 1):
++                        if line[i] == "-":
++                            fstypes.add(line[i + 1])
++        return fstypes
++
++    if not all:
++        try:
++            fstypes = fstypes_from_filesystems()
++        except PermissionError:
++            fstypes = fstypes_from_mountinfo()
+ 
+     # See: https://github.com/giampaolo/psutil/issues/1307
+     if procfs_path == "/proc" and os.path.isfile('/etc/mtab'):

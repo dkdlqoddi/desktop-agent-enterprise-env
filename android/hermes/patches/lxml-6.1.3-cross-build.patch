@@ -1,0 +1,16 @@
+lxml 6.1.3, for its cross build only: setupinfo.py runs pkg-config through the shell, and in cibuildwheel's
+Android build environment CPython's subprocess runs shell commands with /system/bin/sh, which the build machine has
+not. The command runs without a shell instead (its words split as the shell would). The built module is unchanged.
+
+--- a/setupinfo.py
++++ b/setupinfo.py
+@@ -360,7 +360,8 @@
+     if args:
+         cmd = ' '.join((cmd,) + args)
+ 
+-    p = subprocess.Popen(cmd, shell=True,
++    import shlex
++    p = subprocess.Popen(shlex.split(cmd),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+     stdout_data, errors = p.communicate()
+ 

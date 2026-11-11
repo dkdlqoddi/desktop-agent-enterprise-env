@@ -1,0 +1,238 @@
+package dev.privateagent.android.ui.chat
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import dev.privateagent.android.R
+import dev.privateagent.android.agent.ChatAgent
+import dev.privateagent.android.agent.HermesChat
+import dev.privateagent.android.hermes.HermesSession
+import dev.privateagent.android.util.strings
+import dev.privateagent.android.util.text
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Which planner the chat uses, as the desktop's badge shows it. */
+@Composable
+fun EngineBadge(engine: ChatAgent.Engine) {
+    val (label, description) = when (engine) {
+        ChatAgent.Engine.HERMES -> R.string.engine_hermes to R.string.engine_hermes_description
+        ChatAgent.Engine.DIRECT -> R.string.engine_direct to R.string.engine_direct_description
+    }
+    val explanation = stringResource(description)
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .padding(end = 12.dp)
+            .semantics { contentDescription = explanation },
+    ) {
+        Text(
+            stringResource(label),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+/**
+ * The answer being made: the steps Hermes took, its draft, and the approval or the questions the turn waits on (the
+ * desktop's pending bubble).
+ */
+@Composable
+fun HermesPending(
+    view: HermesChat.TurnView,
+    onDecide: (String, String) -> Unit,
+    onAnswer: (String, JSONObject) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth()) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.widthIn(max = 340.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val steps = stringResource(R.string.hermes_steps)
+                if (view.steps.isNotEmpty()) {
+                    Column(Modifier.semantics { contentDescription = steps }) {
+                        for (step in view.steps.takeLast(6)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (step.done) {
+                                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(14.dp))
+                                } else {
+                                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                                }
+                                Spacer(Modifier.size(6.dp))
+                                Text(
+                                    step.text,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                ) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        HermesChat.visibleDraft(view.draft).ifEmpty { stringResource(R.string.hermes_working) },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                val interaction = view.interaction
+                when (interaction?.kind) {
+                    HermesSession.InteractionKind.APPROVAL -> ApprovalPrompt(interaction, onDecide)
+                    HermesSession.InteractionKind.CLARIFY -> ClarifyPrompt(interaction, onAnswer)
+                    null -> Unit
+                }
+            }
+        }
+    }
+}
+
+/** A command Hermes' guard escalated: the user allows it once or always, or refuses it, and the turn goes on. */
+@Composable
+private fun ApprovalPrompt(interaction: HermesChat.Interaction, onDecide: (String, String) -> Unit) {
+    val payload = interaction.payload
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.approval_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                payload.text("command"),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 8,
+            )
+            payload.text("description").takeIf { it.isNotEmpty() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+            if (payload.optBoolean("smart_denied")) {
+                Text(
+                    stringResource(R.string.approval_smart_denied),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onDecide(interaction.id, "deny") }) { Text(stringResource(R.string.approval_deny)) }
+                OutlinedButton(onClick = { onDecide(interaction.id, "always") }) {
+                    Text(stringResource(R.string.approval_always))
+                }
+                Spacer(Modifier.size(6.dp))
+                Button(onClick = { onDecide(interaction.id, "once") }) { Text(stringResource(R.string.approval_once)) }
+            }
+        }
+    }
+}
+
+/** The questions Hermes asked to go on: a choice (or several) or a short answer each. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ClarifyPrompt(interaction: HermesChat.Interaction, onAnswer: (String, JSONObject) -> Unit) {
+    val questions = remember(interaction.id) { questions(interaction.payload) }
+    val answers = remember(interaction.id) { mutableStateMapOf<String, List<String>>() }
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.clarify_title), style = MaterialTheme.typography.titleSmall)
+            for (question in questions) {
+                Text(question.text, style = MaterialTheme.typography.bodyMedium)
+                if (question.choices.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (choice in question.choices) {
+                            val chosen = answers[question.id].orEmpty()
+                            FilterChip(
+                                selected = choice in chosen,
+                                onClick = {
+                                    answers[question.id] = when {
+                                        !question.multiple -> listOf(choice)
+                                        choice in chosen -> chosen - choice
+                                        else -> chosen + choice
+                                    }
+                                },
+                                label = { Text(choice) },
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = answers[question.id]?.firstOrNull().orEmpty(),
+                        onValueChange = { answers[question.id] = listOf(it) },
+                        placeholder = { Text(stringResource(R.string.clarify_answer_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 3,
+                    )
+                }
+            }
+            Button(
+                onClick = { onAnswer(interaction.id, answerJson(questions, answers)) },
+                modifier = Modifier.align(Alignment.End),
+            ) {
+                Text(stringResource(R.string.clarify_send))
+            }
+        }
+    }
+}
+
+private class Question(val id: String, val text: String, val choices: List<String>, val multiple: Boolean)
+
+private fun questions(payload: JSONObject): List<Question> {
+    val list = payload.optJSONArray("questions") ?: JSONArray()
+    return (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { question ->
+        Question(
+            id = question.text("qid"),
+            text = question.text("question"),
+            choices = question.optJSONArray("choices")?.strings().orEmpty(),
+            multiple = question.optBoolean("multi_select"),
+        )
+    }
+}
+
+/** {qid: answer}, a list of choices for a multi-select question; unanswered questions are left out. */
+private fun answerJson(questions: List<Question>, answers: Map<String, List<String>>): JSONObject {
+    val json = JSONObject()
+    for (question in questions) {
+        val values = answers[question.id].orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
+        if (values.isEmpty()) continue
+        json.put(question.id, if (question.multiple) JSONArray(values) else values.first())
+    }
+    return json
+}

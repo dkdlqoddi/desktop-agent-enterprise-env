@@ -1,12 +1,16 @@
 package dev.privateagent.android
 
 import android.app.Application
+import dev.privateagent.android.agent.AppActions
 import dev.privateagent.android.agent.ChatAgent
+import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.AppDatabase
 import dev.privateagent.android.data.MessageStore
 import dev.privateagent.android.data.RecordStore
 import dev.privateagent.android.data.ScheduleStore
+import dev.privateagent.android.hermes.HermesRuntime
+import dev.privateagent.android.hermes.HermesSession
 import dev.privateagent.android.llm.LlmService
 import dev.privateagent.android.schedule.Notifications
 import dev.privateagent.android.schedule.ScheduleManager
@@ -31,18 +35,24 @@ class AppGraph(app: Application) {
     val notifications = Notifications(app, settings) { sites }
     val scheduler = ScheduleManager(app, schedules)
     val browser = BrowserController(records, settings, { sites }, { scripts })
+    val actions = AppActions(app, records, browser, scheduler, notifications, navigator, { sites }, texts)
+
+    /** The bundled Hermes agent (android/hermes/build_runtime.py); a build without it chats with the LLM directly. */
+    val hermesRuntime = HermesRuntime(app)
+    val hermesSession = HermesSession(hermesRuntime)
+    val hermes = HermesChat(app, messages, actions, navigator, { sites }, texts, hermesSession)
+
     val agent = ChatAgent(
         context = app,
         messages = messages,
-        records = records,
         schedules = schedules,
         settings = settings,
         llm = llm,
-        browser = browser,
-        scheduler = scheduler,
-        notifications = notifications,
+        actions = actions,
         navigator = navigator,
         sites = { sites },
         texts = texts,
+        runtime = hermesRuntime,
+        hermes = hermes,
     )
 }

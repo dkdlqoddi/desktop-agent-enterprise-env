@@ -67,6 +67,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.privateagent.android.AppGraph
 import dev.privateagent.android.R
 import dev.privateagent.android.agent.AgentTools
+import dev.privateagent.android.agent.ChatAgent
+import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.agent.RecordKindFilter
 import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.ActionState
@@ -76,8 +78,13 @@ import dev.privateagent.android.data.MessageRole
 import dev.privateagent.android.data.NoticeKind
 import dev.privateagent.android.ui.Tab
 import dev.privateagent.android.util.text
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONException
 import org.json.JSONObject
+
+/** The turn view of a build without Hermes: never a turn. */
+private val NO_TURN: StateFlow<HermesChat.TurnView?> = MutableStateFlow(null)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +94,9 @@ fun ChatScreen(graph: AppGraph) {
     var messages by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     LaunchedEffect(changes) { messages = graph.messages.all() }
     val busy by agent.busy.collectAsStateWithLifecycle()
+    val hermes = agent.hermes
+    val turn by (hermes?.view ?: NO_TURN).collectAsStateWithLifecycle()
+    val engine = remember { agent.engine }
     val llm by graph.settings.llm.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -126,7 +136,7 @@ fun ChatScreen(graph: AppGraph) {
             .fillMaxSize()
             .imePadding(),
     ) {
-        TopAppBar(title = { Text(stringResource(R.string.chat_title)) })
+        TopAppBar(title = { Text(stringResource(R.string.chat_title)) }, actions = { EngineBadge(engine) })
         if (!llm.configured) SetupCard(onOpen = { graph.navigator.show(Tab.SETTINGS) }, Modifier.padding(horizontal = 16.dp))
         LazyColumn(
             state = listState,
@@ -136,7 +146,7 @@ fun ChatScreen(graph: AppGraph) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (messages.isEmpty()) item(key = "hint") { ChatHint(onExample = { input = it }) }
+            if (messages.isEmpty()) item(key = "hint") { ChatHint(engine, onExample = { input = it }) }
             items(messages, key = { it.id }) { message ->
                 MessageItem(
                     message = message,
@@ -149,7 +159,16 @@ fun ChatScreen(graph: AppGraph) {
                     onOpenSettings = { graph.navigator.show(Tab.SETTINGS) },
                 )
             }
-            if (busy) item(key = "waiting") { Waiting() }
+            if (busy) {
+                item(key = "waiting") {
+                    val current = turn
+                    if (hermes != null && current != null) {
+                        HermesPending(current, onDecide = hermes::decide, onAnswer = hermes::answer)
+                    } else {
+                        Waiting()
+                    }
+                }
+            }
         }
         Row(
             Modifier
@@ -182,7 +201,7 @@ fun ChatScreen(graph: AppGraph) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChatHint(onExample: (String) -> Unit) {
+private fun ChatHint(engine: ChatAgent.Engine, onExample: (String) -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -192,7 +211,9 @@ private fun ChatHint(onExample: (String) -> Unit) {
     ) {
         Text(stringResource(R.string.chat_empty_title), style = MaterialTheme.typography.titleLarge)
         Text(
-            stringResource(R.string.chat_empty_body),
+            stringResource(
+                if (engine == ChatAgent.Engine.HERMES) R.string.chat_empty_body_hermes else R.string.chat_empty_body,
+            ),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

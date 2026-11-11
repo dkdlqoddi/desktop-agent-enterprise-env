@@ -148,6 +148,7 @@ class Texts(private val context: Context, private val sites: () -> Sites) {
                 s(R.string.describe_schedule, days(days), args.text("time"), siteName(site), query)
             }
             AgentTools.LIST_RECORDS -> s(R.string.describe_list_records, filterSummary(args))
+            AgentTools.CAPTURE_PAGE -> s(R.string.describe_capture_page)
             else -> s(R.string.describe_unknown)
         }
     }
@@ -166,6 +167,7 @@ class Texts(private val context: Context, private val sites: () -> Sites) {
         AgentTools.OPEN_SITE -> s(R.string.action_open_site)
         AgentTools.SCHEDULE_CAPTURE -> s(R.string.action_schedule)
         AgentTools.LIST_RECORDS -> s(R.string.action_list_records)
+        AgentTools.CAPTURE_PAGE -> s(R.string.action_capture_page)
         else -> s(R.string.describe_unknown)
     }
 

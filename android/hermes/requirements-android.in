@@ -1,0 +1,6 @@
+# Hermes for the phone, on top of runtime/hermes/requirements.txt (the core lock the desktop and the phone share):
+# keyless web search and extraction (Hermes' web toolset) with DuckDuckGo through ddgs. Compiled with the core lock as
+# constraints, so a package of both is at the core's version:
+#   uv pip compile android/hermes/requirements-android.in --python-version 3.14 --universal --generate-hashes
+#     --constraint runtime/hermes/requirements.txt --output-file android/hermes/requirements-android.txt
+ddgs==9.16.0

@@ -32,6 +32,38 @@ abstract class CopyWebCaptureAssets : DefaultTask() {
     }
 }
 
+// The Hermes runtime that ../hermes/build_runtime.py writes (not in Git): Python files as assets, the Python executable
+// and libpython as native libraries. Without it the app builds and runs as before, and HermesRuntime reports that this
+// build has no Hermes. -PhermesAbis=x86_64 (comma-separated) packs only those ABIs, for an emulator or to measure one.
+val hermesRuntimeDir: Directory = rootProject.layout.projectDirectory.dir("hermes/build/runtime")
+val hermesAbis: List<String> = providers.gradleProperty("hermesAbis").orNull
+    ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+
+abstract class CopyHermesRuntimeAssets : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val sources: ConfigurableFileCollection
+
+    @get:Input
+    abstract val abis: ListProperty<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val target = outputDir.get().asFile.resolve("hermes")
+        target.deleteRecursively()
+        val wanted = abis.get()
+        for (file in sources.files) {
+            val abi = Regex("runtime-(.+)\\.zip").matchEntire(file.name)?.groupValues?.get(1)
+            if (abi == null || abi == "common" || wanted.isEmpty() || abi in wanted) {
+                file.copyTo(target.resolve(file.name), overwrite = true)
+            }
+        }
+    }
+}
+
 android {
     namespace = "dev.privateagent.android"
     compileSdk = 36
@@ -43,6 +75,15 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (hermesAbis.isNotEmpty()) {
+            ndk { abiFilters += hermesAbis }
+        }
+    }
+
+    sourceSets {
+        getByName("main").jniLibs.srcDir(hermesRuntimeDir.dir("jniLibs"))
+        // The script HermesRuntimeTest runs in the Hermes runtime.
+        getByName("androidTest").assets.srcDir(rootProject.layout.projectDirectory.dir("hermes/smoke"))
     }
 
     buildTypes {
@@ -66,6 +107,18 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // Android executes app files only from the native library directory, and the installer fills it only for
+            // compressed (legacy) packaging: libhermes_python.so is the Hermes runtime's Python executable.
+            useLegacyPackaging = true
+            // build_runtime.py strips them already; stripping again would need the NDK.
+            keepDebugSymbols += "**/*.so"
+        }
+    }
+
+    androidResources {
+        // The Hermes runtime archives are deflated already.
+        noCompress += "zip"
     }
 }
 
@@ -78,6 +131,14 @@ androidComponents {
         }
         // Registered as a generated source directory: the variant's merge*Assets task depends on the copy.
         variant.sources.assets?.addGeneratedSourceDirectory(copyTask, CopyWebCaptureAssets::outputDir)
+
+        val hermesTask = tasks.register<CopyHermesRuntimeAssets>(
+            "copy${variant.name.replaceFirstChar { it.uppercase() }}HermesRuntimeAssets",
+        ) {
+            sources.from(hermesRuntimeDir.dir("assets/hermes").asFileTree)
+            abis.set(hermesAbis)
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(hermesTask, CopyHermesRuntimeAssets::outputDir)
     }
 }
 

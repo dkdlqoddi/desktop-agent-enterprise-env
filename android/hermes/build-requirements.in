@@ -1,0 +1,20 @@
+# Build machine (Linux x86-64) packages that compile the Android wheels. build_runtime.py downloads them by hash into
+# a local wheelhouse and gives cibuildwheel only that wheelhouse (PIP_NO_INDEX), so no build fetches anything else.
+#
+# cibuildwheel 4.3.5's own Android tools, at the versions of its constraints-python314.txt (cibuildwheel installs
+# them with that file as a constraint, so the lock below is resolved with it too):
+pip==26.2.2
+build==1.6.1
+auditwheel==6.8.2
+patchelf==0.19.1.0
+pkgconf==3.0.7.post0
+# Audits abi3 wheels (cryptography, psutil); its dependencies resolve to the same constraints file.
+abi3audit==0.0.26
+# The build backends the native sdists declare (pyproject.toml [build-system]):
+setuptools==84.1.0
+wheel==0.48.0
+maturin==1.16.0
+pybind11==3.1.0
+Cython==3.2.9
+# cryptography's build script generates its OpenSSL bindings with cffi on the build machine.
+cffi==2.1.1

@@ -8,14 +8,21 @@ Kotlin과 Jetpack Compose(Material 3)로 만들었고 Android 8.0(API 26) 이상
 
 | 탭     | 하는 일                                                                                                                                                                                                                                 |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 채팅   | 대화 하나를 이어 갑니다(기기의 SQLite에 저장). "쿠팡에서 노트북 광고 기록해 줘", "오늘 기록한 광고 요약해 줘", "매일 9시에 쿠팡 노트북 광고 기록해 줘"처럼 적습니다. 사이트를 열거나 예약을 만드는 작업은 카드로 먼저 보여 주고, **확인 후 실행**을 눌러야 실행합니다. |
+| 채팅   | 대화 하나를 이어 갑니다(기기의 SQLite에 저장). "쿠팡에서 노트북 광고 기록해 줘", "오늘 기록한 광고 요약해 줘", "매일 9시에 쿠팡 노트북 광고 기록해 줘"처럼 적습니다. 내장 Hermes가 있으면 Hermes가 바로 처리하고(배지 **Hermes**), 없는 빌드에서는 작업을 카드로 먼저 보여 주고 **확인 후 실행**을 눌러야 실행합니다(배지 **기본 계획기**). |
 | 브라우저 | 앱 안의 WebView입니다. 주소창, 뒤로·앞으로·새로고침, **이 페이지 기록** 버튼이 있습니다. 사용자가 직접 로그인하고 둘러볼 수 있고, 쿠키는 남습니다.                                                                                                  |
 | 기록   | 기록한 페이지(시각, 사이트, 검색어, 개수, 출처)와 항목(최신순)을 봅니다. 사이트, 종류(광고·상품·검색 결과·누른 광고), 검색어로 거르고, 항목을 누르면 제목·가격·표시 URL·링크·도착 페이지를 봅니다. **CSV 내보내기**로 거른 항목을 공유합니다. |
 | 설정   | LLM 연결(API 형식, 전체 API 엔드포인트, 모델 이름, API Key, **연결 확인**), 예약한 기록, 브라우저 데이터, 대화·기록 지우기.                                                                                                                 |
 
 ### 채팅의 작업
 
-앱은 대화의 최근 메시지와 도구 목록을 설정한 LLM에 보냅니다. LLM이 쓸 수 있는 도구는 넷입니다.
+내장 Hermes 실행 환경(아래 「내장 Hermes 실행 환경」)을 넣은 빌드에서는 데스크톱 앱처럼 Hermes 에이전트가 채팅을 처리합니다.
+
+- Hermes는 자기 도구(웹 검색·페이지 읽기, 메모리, 기술, 할 일 목록, 지난 대화 찾기, 하위 에이전트, 이미지 분석, 질문하기)와 앱의 도구(아래 표와 `capture_page`)를 직접 부릅니다. 앱의 도구는 Hermes가 부를 때 바로 실행되고, 앱이 인자를 확인한 뒤 실행해 무엇을 했는지 카드로 보여 줍니다. 터미널, 코드 실행, 파일, 브라우저 자동화, 컴퓨터 사용은 휴대폰에서 켜지 않습니다.
+- Hermes가 모델을 부를 때마다 요청이 앱으로 돌아오고, 앱이 설정한 LLM 연결로 보냅니다. API Key는 Hermes 프로세스에 들어가지 않습니다.
+- Hermes가 묻는 질문(선택지나 짧은 답)과 Hermes의 안전 검사가 올린 명령 확인은 채팅의 답 자리에 나타나고, 답할 때까지 턴이 기다립니다. 5분 안에 답하지 않으면 질문은 취소, 명령은 거부로 처리합니다. 진행한 도구와 작성 중인 답도 그 자리에 보입니다.
+- **요청 중지**는 Hermes 프로세스를 끝냅니다. 다음 요청은 새 프로세스로 시작합니다(몇 초). 쓰지 않는 Hermes 프로세스는 5분 뒤 끝납니다.
+
+내장 Hermes가 없는 빌드에서는 앱이 대화의 최근 메시지와 도구 목록을 설정한 LLM에 보냅니다. LLM이 쓸 수 있는 도구는 넷입니다.
 
 | 도구               | 하는 일                                                                       | 실행                          |
 | ------------------ | ----------------------------------------------------------------------------- | ----------------------------- |
@@ -43,9 +50,12 @@ Kotlin과 Jetpack Compose(Material 3)로 만들었고 Android 8.0(API 26) 이상
 | 앱 저장소의 설정 파일               | API 형식, 엔드포인트, 모델 이름, 암호화한 API Key(입력한 서버의 주소와 함께)                  |
 | WebView 데이터                     | 사용자가 브라우저 탭에서 로그인하거나 둘러본 사이트의 쿠키와 캐시                            |
 | 캐시의 `exports/`                  | 마지막으로 내보낸 CSV(새로 내보내면 지워짐)                                                  |
+| 앱 저장소의 `hermes/`               | Hermes의 메모리, 기술, 지난 대화(세션), 설정(키 없음). 대화·기록 지우기로는 지워지지 않습니다 |
+| code cache의 `hermes-runtime/`      | 풀어 둔 Hermes 실행 환경(앱을 업데이트하면 Android가 지움)                                   |
 
-- **LLM으로 가는 것**: 채팅의 최근 메시지(30개, 12,000자까지)와 작업 카드의 한 줄 요약, 앱의 규칙과 도구 목록, 현재 시각. `list_records`의 결과는 개수와 최근 항목(최대 50개)의 사이트·검색어·종류·제목(80자)·가격·기록 시각·누름 여부만 보냅니다. 링크와 페이지 본문, API Key는 프롬프트에 넣지 않습니다.
-- **사이트로 가는 것**: 사용자가 승인한 작업이나 사용자가 직접 연 페이지만 엽니다. 일반 브라우저처럼 그 페이지와 페이지가 부르는 자원(광고 포함)을 받습니다.
+- **LLM으로 가는 것(Hermes)**: Hermes가 만드는 요청 그대로입니다. 시스템 프롬프트, 최근 대화(6,000자까지)와 작업 카드의 결과, Hermes의 메모리와 기술, 도구 목록과 도구 결과(앱의 기록, 웹 검색 결과와 읽은 페이지 내용).
+- **LLM으로 가는 것(기본 계획기)**: 채팅의 최근 메시지(30개, 12,000자까지)와 작업 카드의 한 줄 요약, 앱의 규칙과 도구 목록, 현재 시각. `list_records`의 결과는 개수와 최근 항목(최대 50개)의 사이트·검색어·종류·제목(80자)·가격·기록 시각·누름 여부만 보냅니다. 링크와 페이지 본문, API Key는 프롬프트에 넣지 않습니다.
+- **사이트로 가는 것**: 앱의 브라우저는 작업(Hermes가 부른 것이나 사용자가 승인한 것)이나 사용자가 직접 연 페이지만 엽니다. 일반 브라우저처럼 그 페이지와 페이지가 부르는 자원(광고 포함)을 받습니다. Hermes의 웹 검색과 페이지 읽기는 휴대폰에서 검색 엔진(DuckDuckGo 등, ddgs)과 그 페이지에 직접 요청합니다.
 - 원격 측정, 사용 통계, 오류 보고가 없습니다. WebView의 사용 통계 보내기도 끕니다(`MetricsOptOut`). 백업과 기기 간 이전에서 앱 데이터를 모두 뺍니다.
 - 로그에 요청 본문, 키, 헤더를 쓰지 않습니다. 오류는 한국어 문장으로만 보여 주고 스택은 보여 주지 않습니다.
 
@@ -90,17 +100,38 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
   - `StoresTest`(SQLite 거르기·누른 광고·한 번만 실행되는 카드·CSV 파일), `SecretBoxTest`(Keystore 암호화), `ActionCardTest`(카드의 승인 대기·완료·실패 표시).
 - 릴리스 빌드는 서명 설정이 없습니다. 배포하려면 서명 키를 따로 만들어 `signingConfigs`에 지정합니다(키 파일은 커밋하지 않습니다).
 
+## 내장 Hermes 실행 환경
+
+데스크톱 앱과 같은 고정 버전의 Hermes Agent(`runtime/hermes/manifest.json`)를 휴대폰에서 실행하는 Python 실행 환경입니다. 채팅이 이 환경으로 Hermes를 실행합니다(앱 코드의 `hermes` 패키지: `HermesRuntime`, `HermesProcess`, `HermesSession`, `HermesModel`).
+
+- `hermes/build_runtime.py`가 python.org의 CPython 3.14.0 Android 패키지, Hermes 소스(`build/hermes-source`), `runtime/hermes/requirements.txt`(데스크톱과 같은 핵심 의존성)와 `hermes/requirements-android.txt`(웹 검색용 ddgs)의 wheel, `runtime/hermes/worker.py`를 모아 `hermes/build/runtime/`(Git 제외)에 씁니다. Gradle은 이 폴더가 있으면 APK에 넣고, 없으면 Hermes 없이 빌드합니다. 넣으면 APK가 ABI 하나면 약 113 MB, 둘이면 약 134 MB 커지고, 처음 실행할 때 약 285 MB(파일 약 1만 7천 개)를 풉니다. 앱은 시작할 때 미리 풀어 둡니다.
+- PyPI에 Android wheel이 없는 cffi, cryptography, jiter, lxml, Pillow, primp, psutil, pydantic-core, ruamel.yaml.clib는 sdist에서 cibuildwheel로 컴파일하고, wheel의 SHA-256을 `hermes/wheels.lock.json`에 적습니다. psutil 7.2.2에는 Android를 인식하게 하는 상위 프로젝트의 수정을, lxml에는 교차 빌드용 수정(`hermes/patches/`)을 적용합니다. 모든 다운로드는 고정 버전과 SHA-256으로 확인합니다(`hermes/pins.json`, `toolchain.txt`, `build-requirements.txt`).
+- Android는 앱 데이터 폴더의 파일을 실행하지 못하게 합니다. 그래서 Python 실행 파일(`hermes/launcher/hermes_python.c`)을 `lib/<abi>/libhermes_python.so`로 넣고, 설치할 때 네이티브 라이브러리 폴더에 풀리게 합니다(`useLegacyPackaging`). Python 파일은 미리 컴파일한 바이트코드와 함께 처음 실행할 때 code cache 폴더에 한 번 풀고(앱을 업데이트하면 Android가 지움), Hermes의 데이터(`HERMES_HOME`)는 앱 파일 폴더의 `hermes/`에 둡니다.
+- 워커는 데스크톱처럼 별도 프로세스(`-I -B`)로 실행하고 stdin·stdout으로 JSON 줄을 주고받습니다(`HermesSession`이 데스크톱의 `hermes.py`처럼 처리). 중지하면 프로세스를 끝냅니다. 환경 변수는 데스크톱의 `child_environment`처럼 최소한만 넘깁니다.
+
+```bash
+python3 android/hermes/build_runtime.py --setup-toolchain   # 처음 한 번: NDK·CMake·Rust를 설치하고 빌드
+python3 android/hermes/build_runtime.py                     # 다시 빌드(입력이 바뀐 wheel만 다시 컴파일)
+python3 android/hermes/build_runtime.py --abi x86_64        # 에뮬레이터용 ABI만
+cd android && ./gradlew :app:assembleDebug -PhermesAbis=x86_64   # 한 ABI만 넣은 APK
+```
+
+- JDK 17, Android SDK(cmdline-tools), git, patch가 필요합니다. NDK 27.3.13750724, CMake 3.31.6, Rust 1.99.1(Android 대상 2개)은 `--setup-toolchain`이 사용자 폴더에 설치하고, 나머지 작업 파일은 `build/android-hermes/`에 둡니다.
+- wheel 빌드는 비트 단위로 같게 나온다는 보장이 없으므로, 다시 컴파일한 wheel은 잠금 파일의 해시를 바꿉니다. `--frozen`은 다시 컴파일하지 않고 잠금 파일과 맞는 캐시만 씁니다. 같은 입력이면 실행 환경 압축 파일은 같게 나오므로, 앱은 무언가 바뀌었을 때만 다시 풉니다.
+- 계측 테스트 `HermesRuntimeTest`는 실행 환경을 풀고, `hermes/smoke/hermes_smoke.py`로 Hermes 한 턴(도구 호출 1번)을 네트워크 없이 실행한 뒤 확장 모듈을 모두 불러 봅니다. `HermesChatTest`는 실제 워커로 채팅 한 턴을 실행합니다: 대신 답하는 모델이 `list_records`를 부르게 하고, 앱이 실행한 카드와 Hermes의 답을 확인합니다. 질문에 답하기와 중지도 확인합니다. 실제 웹 검색은 `am instrument -e hermesNetwork true`로 따로 실행합니다. 실행 환경이 없는 APK에서는 모두 건너뜁니다.
+
 ## 코드 구조
 
 ```text
 app/src/main/java/dev/privateagent/android/
-  agent/     채팅 흐름(ChatAgent), 도구 정의와 인자 검사, 시스템 프롬프트, 화면 문구
+  agent/     채팅 흐름(ChatAgent, Hermes는 HermesChat), 앱의 작업(AppActions), 도구 정의와 인자 검사, 시스템 프롬프트, 화면 문구
   data/      SQLite(messages, captures, items, schedules)와 저장소
   llm/       엔드포인트 규칙, 요청·응답 형식(OpenAI 호환·Anthropic, JSON 계획), HTTPS 클라이언트
   web/       보이는 브라우저(BrowserController), WebView 설정, PaBridge, 사이트 목록, capture.js 결과 읽기
   schedule/  다음 실행 시각, WorkManager 작업, 알림
   security/  Keystore 암호화(SecretBox), 설정 저장
   export/    CSV(UTF-8 BOM, RFC 4180, 수식 무력화)와 공유
+  hermes/    내장 Hermes: 풀기(HermesRuntime), Python 프로세스(HermesProcess), 워커 프로토콜(HermesSession), LLM 연결(HermesModel)
   ui/        Compose 화면(채팅, 브라우저, 기록, 설정)과 테마
 ```
 

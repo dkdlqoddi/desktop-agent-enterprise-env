@@ -5,27 +5,24 @@ import dev.privateagent.android.R
 import dev.privateagent.android.data.ActionState
 import dev.privateagent.android.data.CaptureSource
 import dev.privateagent.android.data.ChatMessage
-import dev.privateagent.android.data.ItemFilter
 import dev.privateagent.android.data.MessageRole
 import dev.privateagent.android.data.MessageStore
 import dev.privateagent.android.data.NoticeKind
-import dev.privateagent.android.data.RecordStore
 import dev.privateagent.android.data.ScheduleStore
+import dev.privateagent.android.hermes.HermesModel
+import dev.privateagent.android.hermes.HermesRuntime
+import dev.privateagent.android.hermes.LlmHermesModel
 import dev.privateagent.android.llm.ChatTurn
-import dev.privateagent.android.llm.Endpoint
+import dev.privateagent.android.llm.LlmClient
 import dev.privateagent.android.llm.LlmException
 import dev.privateagent.android.llm.LlmReply
 import dev.privateagent.android.llm.LlmService
 import dev.privateagent.android.llm.ToolDefinition
 import dev.privateagent.android.llm.ToolRound
-import dev.privateagent.android.schedule.Notifications
-import dev.privateagent.android.schedule.ScheduleManager
 import dev.privateagent.android.security.LlmConnection
 import dev.privateagent.android.security.SettingsStore
 import dev.privateagent.android.ui.Navigator
 import dev.privateagent.android.ui.Tab
-import dev.privateagent.android.web.BrowserController
-import dev.privateagent.android.web.CaptureOutcome
 import dev.privateagent.android.web.Sites
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -37,37 +34,39 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
-import java.time.Instant
-import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 
 /**
- * The chat: sends the conversation to the LLM, turns its tool calls into action cards, and runs an action only after
- * the user approves it on its card (list_records, which only reads, runs at once). A card says what happened only once
- * it happened.
+ * The chat. With the bundled Hermes runtime (android/hermes), Hermes runs each turn with its own tools and the app's
+ * actions, live ([HermesChat]), as on the desktop. A build without it plans with the LLM's own tool calls instead: the
+ * calls become action cards, and an action runs only after the user approves it on its card (list_records, which only
+ * reads, runs at once). A card says what happened only once it happened.
  */
 class ChatAgent(
     private val context: Context,
     private val messages: MessageStore,
-    private val records: RecordStore,
     private val schedules: ScheduleStore,
     private val settings: SettingsStore,
     private val llm: LlmService,
-    private val browser: BrowserController,
-    private val scheduler: ScheduleManager,
-    private val notifications: Notifications,
+    private val actions: AppActions,
     private val navigator: Navigator,
     private val sites: () -> Sites,
     private val texts: Texts,
+    private val runtime: HermesRuntime? = null,
+    val hermes: HermesChat? = null,
+    private val hermesModel: (LlmConnection) -> HermesModel = { LlmHermesModel(LlmClient(), it) },
 ) {
+    /** Which planner the next message uses: the bundled Hermes agent, or the LLM's own tool calls (no runtime). */
+    enum class Engine { HERMES, DIRECT }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val busyState = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = busyState
     private var job: Job? = null
+
+    val engine: Engine get() = if (hermes != null && runtime?.isBundled == true) Engine.HERMES else Engine.DIRECT
 
     /** At app start: actions that were running when the app stopped end as failed. */
     fun start() {
@@ -96,9 +95,14 @@ class ChatAgent(
         }
     }
 
-    /** The stop button: ends the request; nothing of it is shown. */
+    /** The stop button: ends the request (Hermes' worker is stopped too); nothing of it is shown. */
     fun stop() {
         job?.cancel()
+    }
+
+    /** Waits for the current request to end (tests). */
+    suspend fun join() {
+        job?.join()
     }
 
     fun approve(messageId: Long) {
@@ -125,22 +129,30 @@ class ChatAgent(
                 messages.addNotice(NoticeKind.INFO, context.getString(R.string.schedule_run_missing))
                 return@launch
             }
-            val args = AgentAction.WebCapture(site.key, row.query).toJson().put("schedule_id", row.id)
-            val id = messages.addAction(AgentTools.WEB_CAPTURE, args.toString(), ActionState.RUNNING)
+            val action = AgentAction.WebCapture(site.key, row.query)
+            val id = messages.addAction(
+                AgentTools.WEB_CAPTURE,
+                action.toJson().put("schedule_id", row.id).toString(),
+                ActionState.RUNNING,
+            )
             navigator.show(Tab.BROWSER)
-            val outcome = runCatchingCapture {
-                browser.capture(site, row.query, CaptureSource.SCHEDULE, sites().searchUrl(site, row.query))
-            }
-            finishCapture(id, outcome)
+            finish(id, actions.run(action, CaptureSource.SCHEDULE))
         }
     }
 
     private suspend fun converse(message: String) {
+        // The conversation before this message, for Hermes' context.
+        val before = messages.all(HISTORY_MESSAGES)
         messages.addUser(message)
         // The key is opened with the Keystore, off the main thread, for this request only.
         val connection = withContext(Dispatchers.IO) { settings.connection() }
         if (connection == null) {
             messages.addNotice(NoticeKind.SETUP, context.getString(R.string.chat_setup_body))
+            return
+        }
+        val chat = hermes
+        if (chat != null && engine == Engine.HERMES) {
+            chat.converse(hermesModel(connection), connection.model, message, before)
             return
         }
         val siteList = sites()
@@ -180,7 +192,7 @@ class ChatAgent(
                 }
                 is Validation.Valid -> when (val action = validation.action) {
                     is AgentAction.ListRecords -> {
-                        val found = listRecords(action)
+                        val found = actions.listRecords(action)
                         messages.addAction(action.tool, action.toJson().toString(), ActionState.DONE, found.line)
                         results[call.id] = found.forLlm
                         summaries += found.plain
@@ -222,129 +234,11 @@ class ChatAgent(
             }
         }
         if (!messages.moveAction(messageId, ActionState.PENDING, ActionState.RUNNING)) return
-        try {
-            when (action) {
-                is AgentAction.WebCapture -> {
-                    val site = sites().byKey(action.site)!!
-                    navigator.show(Tab.BROWSER)
-                    val outcome = runCatchingCapture {
-                        browser.capture(site, action.query, CaptureSource.CHAT, sites().searchUrl(site, action.query))
-                    }
-                    finishCapture(messageId, outcome)
-                }
-                is AgentAction.OpenSite -> {
-                    navigator.show(Tab.BROWSER)
-                    val failure = browser.open(action.url)
-                    if (failure == null) {
-                        val name = action.site?.let { sites().byKey(it)?.name } ?: Endpoint.host(action.url)
-                        messages.moveAction(
-                            messageId,
-                            ActionState.RUNNING,
-                            ActionState.DONE,
-                            context.getString(R.string.result_opened, name),
-                        )
-                    } else {
-                        messages.moveAction(messageId, ActionState.RUNNING, ActionState.FAILED, texts.failure(failure))
-                    }
-                }
-                is AgentAction.ScheduleCapture -> {
-                    val row = scheduler.create(action.site, action.query, action.time, action.days)
-                    val next = row.nextRunAt?.let { texts.time(it) }.orEmpty()
-                    var result = context.getString(R.string.result_schedule_created, next)
-                    if (!notifications.canPost()) {
-                        result += " " + context.getString(R.string.result_schedule_no_notifications)
-                    }
-                    messages.moveAction(messageId, ActionState.RUNNING, ActionState.DONE, result)
-                }
-                is AgentAction.ListRecords -> {
-                    val found = listRecords(action)
-                    messages.moveAction(messageId, ActionState.RUNNING, ActionState.DONE, found.line)
-                }
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            messages.moveAction(
-                messageId,
-                ActionState.RUNNING,
-                ActionState.FAILED,
-                context.getString(R.string.llm_error_unexpected),
-            )
-        }
+        finish(messageId, actions.run(action))
     }
 
-    private suspend fun runCatchingCapture(block: suspend () -> CaptureOutcome): CaptureOutcome? = try {
-        block()
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: Exception) {
-        null
-    }
-
-    private suspend fun finishCapture(messageId: Long, outcome: CaptureOutcome?) {
-        when (outcome) {
-            is CaptureOutcome.Saved -> messages.moveAction(
-                messageId,
-                ActionState.RUNNING,
-                ActionState.DONE,
-                texts.outcome(outcome),
-                captureId = outcome.captureId,
-            )
-            null -> messages.moveAction(
-                messageId,
-                ActionState.RUNNING,
-                ActionState.FAILED,
-                context.getString(R.string.llm_error_unexpected),
-            )
-            else -> messages.moveAction(messageId, ActionState.RUNNING, ActionState.FAILED, texts.outcome(outcome))
-        }
-    }
-
-    private class Found(val line: String, val forLlm: String, val plain: String)
-
-    /** The records list_records asked for: a line for the card, a short JSON for the LLM, and a plain summary. */
-    private suspend fun listRecords(action: AgentAction.ListRecords): Found {
-        val filter = ItemFilter(site = action.site, kind = action.kind, search = action.query.orEmpty())
-        val counts = records.counts(filter)
-        val items = records.items(filter, action.limit)
-        val zone = ZoneId.systemDefault()
-        val forLlm = JSONObject()
-            .put("now", STAMP.format(ZonedDateTime.now(zone)))
-            .put("total", counts.total)
-            .put("counts", JSONObject().put("ad", counts.ad).put("product", counts.product).put("result", counts.result))
-            .put(
-                "items",
-                JSONArray(
-                    items.map { item ->
-                        JSONObject()
-                            .put("site", texts.siteName(item.site))
-                            .put("query", item.query)
-                            .put("kind", item.kind.key)
-                            .put("title", item.title.take(80))
-                            .put("price", item.price)
-                            .put("captured_at", STAMP.format(Instant.ofEpochMilli(item.capturedAt).atZone(zone)))
-                            .apply { if (item.clickedAt != null) put("clicked", true) }
-                    },
-                ),
-            )
-            .toString()
-        val line = if (counts.total == 0) {
-            context.getString(R.string.result_list_none)
-        } else {
-            context.getString(R.string.result_list, counts.total)
-        }
-        val plain = buildString {
-            append(line)
-            if (counts.total > 0) {
-                append(" (").append(texts.countList(counts)).append(")")
-                for (item in items.take(PLAIN_ITEMS)) {
-                    append("\n• ").append(texts.siteName(item.site)).append(" · ").append(texts.kind(item.kind))
-                        .append(" · ").append(item.title.take(60))
-                    if (item.price.isNotEmpty()) append(" · ").append(item.price)
-                }
-            }
-        }
-        return Found(line, forLlm, plain)
+    private suspend fun finish(messageId: Long, outcome: AppActions.Outcome) {
+        messages.moveAction(messageId, ActionState.RUNNING, outcome.state, outcome.line, captureId = outcome.captureId)
     }
 
     /** The recent conversation as the LLM reads it: user and assistant text, and one line per action card. */
@@ -381,7 +275,5 @@ class ChatAgent(
         const val HISTORY_MESSAGES = 30
         const val MAX_MESSAGE_CHARS = 2_000
         const val MAX_HISTORY_CHARS = 12_000
-        const val PLAIN_ITEMS = 5
-        val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }
 }

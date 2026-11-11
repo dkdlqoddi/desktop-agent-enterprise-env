@@ -45,6 +45,12 @@ sealed interface AgentAction {
         override fun toJson(): JSONObject = JSONObject().put("site", site).put("query", query)
     }
 
+    /** The page the browser shows now. */
+    data object CapturePage : AgentAction {
+        override val tool get() = AgentTools.CAPTURE_PAGE
+        override fun toJson(): JSONObject = JSONObject()
+    }
+
     /** [site] is the known site [url] belongs to, if any. */
     data class OpenSite(val site: String?, val url: String) : AgentAction {
         override val tool get() = AgentTools.OPEN_SITE
@@ -100,6 +106,7 @@ object AgentTools {
     const val OPEN_SITE = "open_site"
     const val LIST_RECORDS = "list_records"
     const val SCHEDULE_CAPTURE = "schedule_capture"
+    const val CAPTURE_PAGE = "capture_page"
     const val DEFAULT_LIMIT = 20
     const val MAX_LIMIT = 50
     const val MAX_QUERY = 100
@@ -172,6 +179,71 @@ object AgentTools {
         )
     }
 
+    /**
+     * The app's actions as Hermes tools ({name, description, parameters}, as the desktop's agent_chat.tool_schemas):
+     * Hermes calls them itself, the app checks every argument ([ToolValidator]) and runs them, and Hermes reads what
+     * they did. Their arguments are the same as the chat's own tools'.
+     */
+    fun hermesSchemas(sites: Sites): JSONArray {
+        val siteNames = sites.all.joinToString(", ") { "${it.key} (${it.name})" }
+        fun site() = JSONObject().put("type", "string").put("enum", JSONArray(sites.keys)).put("description", siteNames)
+        fun text(description: String) = JSONObject().put("type", "string").put("description", description)
+        fun schema(properties: JSONObject, required: List<String>) = JSONObject().put("type", "object")
+            .put("properties", properties).put("required", JSONArray(required))
+        fun tool(name: String, description: String, parameters: JSONObject) =
+            JSONObject().put("name", name).put("description", description).put("parameters", parameters)
+        return JSONArray()
+            .put(
+                tool(
+                    LIST_RECORDS,
+                    "Search the web records this phone keeps: the ads, products and results of earlier captures, and " +
+                        "the ads the user clicked themselves (kind clicked). Returns the count and the newest items.",
+                    schema(
+                        JSONObject().put("site", site()).put("query", text("Words the records contain"))
+                            .put("kind", JSONObject().put("type", "string").put("enum", JSONArray(RecordKindFilter.entries.map { it.key })))
+                            .put("limit", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", MAX_LIMIT)),
+                        emptyList(),
+                    ),
+                ),
+            )
+            .put(
+                tool(
+                    WEB_CAPTURE,
+                    "Open a shopping or search site's results for a query in the app's visible browser and record the " +
+                        "ads, products and results the page shows. It reads the page; it never clicks anything.",
+                    schema(JSONObject().put("site", site()).put("query", text("What to search for")), listOf("site", "query")),
+                ),
+            )
+            .put(
+                tool(
+                    OPEN_SITE,
+                    "Open a site's home page or an https address in the app's visible browser for the user to browse. " +
+                        "Ads the user clicks there are recorded with their landing page. Give site or url.",
+                    schema(JSONObject().put("site", site()).put("url", text("An https address")), emptyList()),
+                ),
+            )
+            .put(
+                tool(
+                    CAPTURE_PAGE,
+                    "Record the ads and items of the page the app's browser shows now.",
+                    schema(JSONObject(), emptyList()),
+                ),
+            )
+            .put(
+                tool(
+                    SCHEDULE_CAPTURE,
+                    "Schedule a capture: at that time the phone shows a notification, and when the user taps it the " +
+                        "app records that search in its visible browser.",
+                    schema(
+                        JSONObject().put("site", site()).put("query", text("What to search for"))
+                            .put("time", text("HH:MM, 24-hour clock"))
+                            .put("days", JSONObject().put("type", "string").put("enum", JSONArray(ScheduleDays.entries.map { it.key }))),
+                        listOf("site", "query", "time"),
+                    ),
+                ),
+            )
+    }
+
     /** The 24-hour HH:MM of [value] ("9:05" reads as 09:05), or null. */
     fun parseTime(value: String): String? {
         val match = Regex("^(\\d{1,2}):(\\d{2})$").matchEntire(value.trim()) ?: return null
@@ -193,6 +265,7 @@ class ToolValidator(private val sites: Sites) {
                     AgentTools.WEB_CAPTURE -> AgentAction.WebCapture(site(input), query(input))
                     AgentTools.OPEN_SITE -> openSite(input)
                     AgentTools.LIST_RECORDS -> listRecords(input)
+                    AgentTools.CAPTURE_PAGE -> AgentAction.CapturePage
                     else -> scheduleCapture(input)
                 },
             )
@@ -276,6 +349,7 @@ class ToolValidator(private val sites: Sites) {
             AgentTools.OPEN_SITE,
             AgentTools.LIST_RECORDS,
             AgentTools.SCHEDULE_CAPTURE,
+            AgentTools.CAPTURE_PAGE,
         )
     }
 }

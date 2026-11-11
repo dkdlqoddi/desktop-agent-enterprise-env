@@ -1,0 +1,2 @@
+# The build machine tool that compiles the Android wheels of the native Hermes dependencies.
+cibuildwheel==4.3.5

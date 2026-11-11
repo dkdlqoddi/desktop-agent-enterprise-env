@@ -18,5 +18,9 @@ class PrivateAgentApp : Application() {
         graph.notifications.ensureChannel()
         graph.agent.start()
         scope.launch { runCatching { graph.scheduler.restoreAll() } }
+        // The Hermes runtime is extracted once per app version, ahead of the first chat message (seconds).
+        scope.launch(Dispatchers.IO) {
+            runCatching { if (graph.hermesRuntime.isBundled) graph.hermesRuntime.prepare() }
+        }
     }
 }
