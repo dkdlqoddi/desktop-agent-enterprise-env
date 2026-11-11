@@ -1,0 +1,4 @@
+# The overrides of Hermes' own pyproject.toml ([tool.uv] override-dependencies) that apply to this bundle:
+# browser-harness pins Pillow 12.3.0 and a few vendors cap cryptography below the fixed releases.
+Pillow==13.0.0
+cryptography==50.0.2

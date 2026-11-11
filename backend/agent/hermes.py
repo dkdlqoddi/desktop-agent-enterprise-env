@@ -1,13 +1,16 @@
-"""Lifetime and protocol of the bundled Hermes worker (runtime/hermes), the planner of the agent chat.
+"""Lifetime and protocol of the bundled Hermes worker (runtime/hermes), the agent behind the chat.
 
-The backend starts the worker with the bundled CPython and talks to it in JSON lines over its standard input and output:
-no port opens, and no Hermes installed on the PC is looked for or used. The worker's model requests come back here
-(hermes_llm.py), so the LLM settings and their secrets never reach it. Hermes gets one tool, prepare_actions, which
-only proposes app actions: agent_chat.py validates them and runs them after the user's approval. Its home is the Wiki
-folder's hermes folder (memories, sessions); one worker per Wiki is kept for the next request.
+The backend starts the worker with the bundled CPython and talks to it in JSON lines over its standard input and
+output: no port opens, and no Hermes installed on the PC is looked for or used. The worker runs Hermes' own tools
+(terminal, files, code, browser, MCP, memory, skills, computer use, web search); the app's own actions (document
+search, web records, tasks, schedules) run here, reached as "app_tool" frames; dangerous commands ask the user
+through an "approval" frame and clarify questions through a "clarify" frame. Every model request comes back here
+(hermes_llm.py), so the LLM settings and their secrets never reach the worker. Its home is the Wiki folder's hermes
+folder; one worker per Wiki is kept for the next request.
 """
 
 import atexit
+import contextlib
 import hashlib
 import json
 import os
@@ -26,6 +29,10 @@ from .llm import UserError, answer
 COMMIT = "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19"
 MAX_FRAME = 2_000_000
 RUNTIMES = weakref.WeakSet()
+# A paused turn waits this long for the user to answer one approval or clarify before it fails closed (deny).
+INTERACTION_SECONDS = 300
+# The whole turn's compute budget (not counting time the user spends answering), bounded well under the RPC limit.
+TURN_SECONDS = 900
 
 
 def shutdown_all():
@@ -36,13 +43,61 @@ def shutdown_all():
 atexit.register(shutdown_all)
 
 
-def child_environment(home):
-    # Allow only OS bootstrap values. Inherited provider keys, proxies, Hermes profiles,
-    # Python paths and user-wide configuration cannot replace the selected connection.
+@contextlib.contextmanager
+def suppress_os():
+    try:
+        yield
+    except OSError:
+        pass
+
+
+@contextlib.contextmanager
+def suppress_full():
+    try:
+        yield
+    except queue.Full:
+        pass
+
+
+_CHROMIUM = None
+
+
+def chromium_path():
+    """The app's bundled Chromium (the same Playwright build the web records use), for Hermes' browser tool, found
+    once by its known layout under PLAYWRIGHT_BROWSERS_PATH. '' when there is none, so the browser tool says so."""
+    global _CHROMIUM
+    if _CHROMIUM is not None:
+        return _CHROMIUM
+    _CHROMIUM = ""
+    root = os.environ.get("PRIVATE_AGENT_HERMES_CHROMIUM") or os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if root:
+        direct = Path(os.environ.get("PRIVATE_AGENT_HERMES_CHROMIUM") or "")
+        if direct.is_file():
+            _CHROMIUM = str(direct)
+        else:
+            relatives = (
+                "chrome-linux/chrome",
+                "chrome-win/chrome.exe",
+                "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+            )
+            for folder in sorted(Path(root).glob("chromium-*"), reverse=True):
+                for relative in relatives:
+                    found = folder / relative
+                    if found.is_file():
+                        _CHROMIUM = str(found)
+                        break
+                if _CHROMIUM:
+                    break
+    return _CHROMIUM
+
+
+def child_environment(home, extra=None):
+    # Allow only OS bootstrap values. Inherited provider keys, proxies, Hermes profiles, Python paths and
+    # user-wide configuration cannot replace the selected connection.
     env = {
         key: value
         for key, value in os.environ.items()
-        if key.upper() in {"SYSTEMROOT", "WINDIR", "COMSPEC", "SYSTEMDRIVE", "NUMBER_OF_PROCESSORS", "LANG"}
+        if key.upper() in {"SYSTEMROOT", "WINDIR", "COMSPEC", "SYSTEMDRIVE", "NUMBER_OF_PROCESSORS", "LANG", "PATH"}
     }
     env.update(
         {
@@ -64,33 +119,97 @@ def child_environment(home):
             "TMPDIR": str(home / "tmp"),
         }
     )
+    # The service keys and messenger tokens the user set (hermes.json), which Hermes reads from its environment:
+    # web-search and media providers, and the gateway's bot tokens and allowed accounts. They reach the backend only
+    # over its private pipe from the main process (agent.configure), never the renderer; no model-provider key is ever
+    # among them (hermes-settings.cjs refuses those names). A source run or test may pass them through the environment.
+    if extra is None:
+        raw = os.environ.get("PRIVATE_AGENT_HERMES_ENV")
+        extra = json.loads(raw) if raw else {}
+    for name, value in (extra or {}).items():
+        if isinstance(name, str) and isinstance(value, str):
+            env[name] = value
     return env
+
+
+class Interaction:
+    """One approval or clarify the worker is waiting on, held for the user to answer through the chat."""
+
+    def __init__(self, kind, payload):
+        self.kind = kind
+        self.payload = payload
+        self.answer = None
+        self.event = threading.Event()
+
+    def resolve(self, answer):
+        self.answer = answer
+        self.event.set()
+
+    def wait(self, deadline):
+        remaining = deadline - time.monotonic()
+        return self.answer if self.event.wait(max(0.0, remaining)) else None
 
 
 class Hermes:
     def __init__(self, service):
         self.service = service
         self.lock = threading.RLock()
-        self.child = self.watch = self.frames = self.inference = None
+        self.child = self.frames = None
         self.cancelled = threading.Event()
         self.request_id, self.preview, self.phase = "", "", "idle"
+        self.watch = None  # The model response being read now, which a stop closes so the read ends at once.
+        self.inference = None  # The thread running the current model request, polled for a stop.
+        self.progress = []  # Recent tool activity lines for the chat's live view.
+        self.interaction = None  # The approval/clarify the user is being asked, or None.
         self.closing = False
         self.home = Path(service.db.path).resolve().parent / "hermes"
+        self.write_lock = threading.Lock()
+        # The agent's service keys and messenger tokens (name -> value), set by the main process over the backend's
+        # private pipe (agent.configure); put into the worker's environment, never sent to the renderer or the model.
+        self.extra_env = None
         RUNTIMES.add(self)
+
+    # -- what the screen polls while a turn runs ---------------------------------
 
     def status(self, params):
         with self.lock:
             if params.get("request_id") != self.request_id:
-                return {"phase": "idle", "text": "", "draft": "", "can_stop": False}
+                return {
+                    "phase": "idle",
+                    "text": "",
+                    "draft": "",
+                    "progress": [],
+                    "interaction": None,
+                    "can_stop": False,
+                }
             draft = answer(self.preview)
             if draft.startswith(("{", "```")):
-                draft = ""  # Legacy JSON plans are control data, not user-facing text.
+                draft = ""  # A control response is not user-facing text.
+            interaction = None
+            if self.interaction is not None:
+                interaction = {"kind": self.interaction.kind, **self.interaction.payload}
             return {
                 "phase": self.phase,
-                "text": "응답을 작성하고 있습니다." if self.preview else "작업을 준비하고 있습니다.",
+                "text": "응답을 작성하고 있습니다." if self.preview else "작업을 진행하고 있습니다.",
                 "draft": draft,
+                "progress": list(self.progress),
+                "interaction": interaction,
                 "can_stop": self.phase in ("starting", "thinking"),
             }
+
+    def resolve(self, params, kind):
+        """The user's answer to the approval or clarify the worker is waiting on."""
+        with self.lock:
+            interaction = self.interaction
+            if (
+                params.get("request_id") != self.request_id
+                or interaction is None
+                or interaction.kind != kind
+                or params.get("interaction_id") != interaction.payload.get("interaction_id")
+            ):
+                raise UserError("응답할 작업을 찾을 수 없습니다. 화면을 새로고침해 주세요.")
+        interaction.resolve(params)
+        return {"ok": True}
 
     def stop(self, params):
         with self.lock:
@@ -98,11 +217,37 @@ class Hermes:
                 return {"stopped": False}
             self.cancelled.set()
             self.phase = "stopping"
-            if self.watch:
-                self.watch.cut()
-            if self.child and self.child.poll() is None:
-                self.child.terminate()
-            return {"stopped": True}
+            if self.interaction is not None:
+                self.interaction.resolve(None)
+            if self.watch is not None:
+                self.watch.cut()  # Unblock an in-flight model read so the turn stops without waiting it out.
+            child = self.child
+        self.send({"type": "cancel"})
+        with self.lock:
+            if child and child.poll() is None:
+                child.terminate()
+        return {"stopped": True}
+
+    def recycle(self, extra_env):
+        """Apply new service keys or MCP settings: the idle worker is dropped so the next turn starts fresh with
+        them. A turn in progress keeps the worker it started with."""
+        with self.lock:
+            self.extra_env = extra_env
+            child = self.child if self.phase in ("idle", "cancelled") else None
+            if child is None:
+                return
+            self.child = self.frames = None
+        with suppress_os():
+            if child.poll() is None:
+                child.stdin.write('{"type":"shutdown"}\n')
+                child.stdin.flush()
+        try:
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            child.kill()
+        with suppress_os():
+            child.stdin.close()
+            child.stdout.close()
 
     def shutdown(self):
         with self.lock:
@@ -111,8 +256,9 @@ class Hermes:
             child = self.child
             if child and child.poll() is None and not self.cancelled.is_set():
                 try:
-                    child.stdin.write('{"type":"shutdown"}\n')
-                    child.stdin.flush()
+                    with self.write_lock:
+                        child.stdin.write('{"type":"shutdown"}\n')
+                        child.stdin.flush()
                 except OSError:
                     pass
         if child:
@@ -121,56 +267,29 @@ class Hermes:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait(timeout=5)
-            # Active plan cleanup owns its pipes; idle shutdown owns them here.
             with self.lock:
-                if self.phase == "idle":
-                    child.stdin.close()
-                    child.stdout.close()
+                if self.phase in ("idle", "cancelled"):
+                    with suppress_os():
+                        child.stdin.close()
+                        child.stdout.close()
                     self.child = self.frames = None
 
-    def on_watch(self, watch, cancelled):
+    # -- launching the worker ----------------------------------------------------
+
+    def send(self, frame):
         with self.lock:
-            if self.cancelled is cancelled:
-                self.watch = watch
-            if cancelled.is_set():
-                watch.cut()
-
-    def on_text(self, value, cancelled):
-        with self.lock:
-            if self.cancelled is cancelled and not cancelled.is_set():
-                # Keep opening JSON/reasoning markers so a long control response
-                # cannot turn into visible text when its beginning is truncated.
-                self.preview = (self.preview + value)[:12000]
-
-    def complete(self, selected, body):
-        # Windows' synchronous socket read can remain blocked after shutdown().
-        # Keep UI/worker cancellation responsive while the bounded network request
-        # unwinds. Only one such reader is allowed, including between chat turns.
-        replies = queue.Queue(maxsize=1)
-
-        def infer():
+            child = self.child
+        if child is None or child.poll() is not None:
+            return
+        line = json.dumps(frame, ensure_ascii=False) + "\n"
+        if len(line) > MAX_FRAME:
+            raise UserError("Hermes에 전달할 내용이 너무 큽니다.")
+        with self.write_lock:
             try:
-                replies.put((True, selected.complete(body)))
-            except Exception as error:
-                replies.put((False, error))
-
-        with self.lock:
-            self.inference = threading.Thread(target=infer, daemon=True)
-            self.inference.start()
-        while time.monotonic() < selected.end:
-            if selected.cancelled.is_set():
-                raise UserError("채팅 요청을 중지했습니다.")
-            try:
-                ok, value = replies.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            self.inference.join(timeout=0.1)
-            if selected.cancelled.is_set():
-                raise UserError("채팅 요청을 중지했습니다.")
-            if ok:
-                return value
-            raise value
-        raise UserError("Hermes 모델 응답 제한 시간을 초과했습니다.")
+                child.stdin.write(line)
+                child.stdin.flush()
+            except OSError:
+                pass
 
     def launch_paths(self):
         default = Path(__file__).resolve().parents[2] / "dist" / "hermes"
@@ -187,160 +306,282 @@ class Hermes:
             worker, executable = root / "worker.py", root / expected
             if not executable.is_file() or hashlib.sha256(worker.read_bytes()).hexdigest() != manifest["worker_sha256"]:
                 raise ValueError()
-            return executable, worker
+            return executable, worker, root
         except (OSError, ValueError, KeyError):
             raise UserError(
                 "내장 Hermes 실행 환경이 없거나 손상되었습니다. 앱 배포 파일을 다시 준비해 주세요."
                 " 개발 환경에서는 npm run build:hermes가 필요합니다."
             ) from None
 
-    def plan(self, system, context, *, request_id, tools):
+    def ensure_child(self, executable, worker):
+        """The worker process, started if there is none and the old one has exited; its reader thread fills the
+        frame queue. Reused between turns so memories and sessions stay warm."""
+        self.home.mkdir(exist_ok=True, mode=0o700)
+        if self.home.is_symlink() or self.home.resolve() != self.home:
+            raise UserError("Hermes 저장 폴더는 Wiki 안의 실제 폴더여야 합니다.")
+        for name in ("tmp", "cache", "config", "data"):
+            folder = self.home / name
+            folder.mkdir(exist_ok=True, mode=0o700)
+            if folder.is_symlink():
+                raise UserError("Hermes 저장 폴더 안의 외부 경로 링크는 사용할 수 없습니다.")
+        with self.lock:
+            child = self.child
+            if child is not None and child.poll() is None:
+                return
+            if child is not None:
+                with suppress_os():
+                    child.stdin.close()
+                    child.stdout.close()
+            try:
+                child = subprocess.Popen(
+                    [str(executable), "-I", "-B", str(worker)],
+                    cwd=self.home,
+                    env=child_environment(self.home, self.extra_env),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    bufsize=1,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+            except OSError:
+                raise UserError(
+                    "내장 Hermes 실행 파일을 시작하지 못했습니다. 배포 파일과 백신 격리 기록을 확인해 주세요."
+                ) from None
+            frames = queue.Queue(maxsize=64)
+            self.child, self.frames = child, frames
+
+        def read():
+            try:
+                while line := child.stdout.readline(MAX_FRAME + 1):
+                    if len(line) > MAX_FRAME:
+                        break
+                    try:
+                        frames.put(json.loads(line), timeout=1)
+                    except (ValueError, queue.Full):
+                        continue
+            except OSError:
+                pass
+            finally:
+                with suppress_full():
+                    frames.put(None, timeout=1)
+
+        threading.Thread(target=read, daemon=True).start()
+
+    # -- running one turn --------------------------------------------------------
+
+    def plan(self, system, context, *, request_id, toolsets, app_tools, settings, on_app_tool, on_interaction):
+        """Run one chat turn on the worker. Model requests are answered with the app's LLM connection; app_tool
+        frames call on_app_tool(tool, args) -> card; approval/clarify frames call on_interaction with the payload
+        and the live Interaction. Returns {"message", "cancelled"}; the executed cards are gathered by the caller
+        through on_app_tool."""
         with self.lock:
             if self.closing:
                 raise UserError("앱이 종료 중입니다.")
             if self.phase in ("starting", "thinking", "stopping", "finishing"):
                 raise UserError("Hermes가 이전 요청을 처리하고 있습니다.")
-            if self.inference and self.inference.is_alive():
-                raise UserError("이전 모델 연결을 정리하고 있습니다. 잠시 후 다시 보내 주세요.")
             self.cancelled = threading.Event()
             cancelled = self.cancelled
             self.request_id, self.preview, self.phase = request_id, "", "starting"
-        child, finished = None, False
+            self.progress, self.interaction = [], None
+
+        selected = SelectedLLM(
+            self.service.llm,
+            cancelled,
+            lambda value: self.on_text(value, cancelled),
+            lambda watch: self.on_watch(watch, cancelled),
+        )
+        executable, worker, root = self.launch_paths()
+        self.ensure_child(executable, worker)
+        chromium = chromium_path()
+        with self.lock:
+            if self.cancelled.is_set():
+                raise UserError("채팅 요청을 중지했습니다.")
+            frames = self.frames
+            self.phase = "thinking"
+
+        budget = min(TURN_SECONDS, max(120, int(float(selected.config["timeout"]) * 4)))
+        self.send(
+            {
+                "type": "turn",
+                "system": system,
+                "context": context,
+                "model": selected.target["model_name"],
+                "session_id": "pa_" + uuid.uuid4().hex,
+                "toolsets": list(toolsets),
+                "app_tools": list(app_tools),
+                "settings": settings,
+                "chromium": chromium,
+                "budget": budget,
+            }
+        )
+        message, finished = "", False
+        # The whole turn's wall-clock bound; time the user spends answering an approval or clarify does not count.
+        deadline = time.monotonic() + budget + 30
         try:
-            selected = SelectedLLM(
-                self.service.llm,
-                cancelled,
-                lambda value: self.on_text(value, cancelled),
-                lambda watch: self.on_watch(watch, cancelled),
-            )
-            executable, worker = self.launch_paths()
-            self.home.mkdir(exist_ok=True, mode=0o700)
-            if self.home.is_symlink() or self.home.resolve() != self.home:
-                raise UserError("Hermes 저장 폴더는 Wiki 안의 실제 폴더여야 합니다.")
-            for name in ("tmp", "cache", "config", "data"):
-                folder = self.home / name
-                folder.mkdir(exist_ok=True, mode=0o700)
-                if folder.is_symlink():
-                    raise UserError("Hermes 저장 폴더 안의 외부 경로 링크는 사용할 수 없습니다.")
-            with self.lock:
+            while True:
                 if self.cancelled.is_set():
                     raise UserError("채팅 요청을 중지했습니다.")
-                child = self.child
-                fresh = child is None or child.poll() is not None
-                if fresh:
-                    if child:
-                        child.stdin.close()
-                        child.stdout.close()
-                    try:
-                        child = subprocess.Popen(
-                            [str(executable), "-I", "-B", str(worker)],
-                            cwd=self.home,
-                            env=child_environment(self.home),
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL,
-                            text=True,
-                            encoding="utf-8",
-                            bufsize=1,
-                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                        )
-                    except OSError:
-                        raise UserError(
-                            "내장 Hermes 실행 파일을 시작하지 못했습니다. 배포 파일과 백신 격리 기록을 확인해 주세요."
-                        ) from None
-                    self.frames = queue.Queue(maxsize=8)
-                self.child, self.phase = child, "thinking"
-                frames = self.frames
-
-            def read():
+                if time.monotonic() > deadline:
+                    raise UserError("Hermes 채팅 처리 제한 시간을 초과했습니다.")
                 try:
-                    while line := child.stdout.readline(MAX_FRAME + 1):
-                        if len(line) > MAX_FRAME:
-                            break
-                        frame = json.loads(line)
-                        frames.put(frame, timeout=1)
-                except (OSError, ValueError, queue.Full):
-                    pass
-                finally:
-                    try:
-                        frames.put(None, timeout=1)
-                    except queue.Full:
-                        pass
-
-            if fresh:
-                reader = threading.Thread(target=read, daemon=True)
-                reader.start()
-
-            def write(frame):
-                line = json.dumps(frame, ensure_ascii=False) + "\n"
-                if len(line) > MAX_FRAME:
-                    raise UserError("Hermes에 전달할 대화가 너무 큽니다. 대화를 비운 뒤 다시 보내 주세요.")
-                child.stdin.write(line)
-                child.stdin.flush()
-
-            write(
-                {
-                    "system": system
-                    + "\nUse prepare_actions to submit the action plan when native tools are supported."
-                    " The tool only stages actions. Never claim execution. Finish after preparing one plan.",
-                    "context": context,
-                    "tools": list(tools),
-                    "model": selected.target["model_name"],
-                    "session_id": "pa_" + uuid.uuid4().hex,
-                }
-            )
-            while time.monotonic() < selected.end:
-                if self.cancelled.is_set():
-                    raise UserError("채팅 요청을 중지했습니다.")
-                try:
-                    frame = frames.get(timeout=min(0.2, max(0.001, selected.end - time.monotonic())))
+                    frame = frames.get(timeout=0.2)
                 except queue.Empty:
                     continue
                 if frame is None:
                     raise UserError("내장 Hermes가 응답을 마치기 전에 종료되었습니다.")
-                if frame.get("type") == "inference":
+                kind = frame.get("type")
+                if kind == "inference":
                     with self.lock:
                         self.preview = ""
-                    write({"type": "completion", "body": self.complete(selected, frame["body"])})
-                elif frame.get("type") == "result":
+                    selected.renew()
+                    self.send(
+                        {"type": "completion", "id": frame.get("id"), "body": self.complete(selected, frame["body"])}
+                    )
+                elif kind == "app_tool":
+                    card = on_app_tool(frame.get("tool"), frame.get("args") or {})
+                    self.record_progress(card.get("title", ""), card.get("status", ""))
+                    self.send(
+                        {
+                            "type": "app_tool_reply",
+                            "id": frame.get("id"),
+                            "status": card.get("status", "failed"),
+                            "result": card.get("result") or {},
+                        }
+                    )
+                elif kind in ("approval", "clarify"):
+                    waited = time.monotonic()
+                    answered = self.ask(kind, frame, on_interaction)
+                    deadline += time.monotonic() - waited  # The user's thinking time is not the turn's compute time.
+                    if kind == "approval":
+                        decision = (answered or {}).get("decision", "deny")
+                        self.send(
+                            {
+                                "type": "approval_reply",
+                                "id": frame.get("id"),
+                                "decision": decision if decision in ("once", "session", "always", "deny") else "deny",
+                            }
+                        )
+                    else:
+                        self.send(
+                            {
+                                "type": "clarify_reply",
+                                "id": frame.get("id"),
+                                "answers": (answered or {}).get("answers") or {},
+                                "outcome": (answered or {}).get("outcome", "cancelled"),
+                            }
+                        )
+                elif kind == "progress":
+                    self.record_progress(
+                        frame.get("tool", ""), frame.get("event", ""), preview=frame.get("preview", "")
+                    )
+                elif kind == "draft":
+                    self.on_text(frame.get("text", ""), cancelled)
+                elif kind == "result":
                     with self.lock:
                         if self.cancelled.is_set():
                             raise UserError("채팅 요청을 중지했습니다.")
-                        # Once accepted, stop must not report a cancelled plan
-                        # that is already being returned to the app validator.
                         self.phase, finished = "finishing", True
-                    return frame["plan"]
-                elif frame.get("type") == "error":
-                    if frame.get("kind") == "BlockingIOError":
-                        raise UserError(
-                            "같은 Wiki의 Hermes가 다른 앱에서 실행 중입니다. 해당 앱을 종료한 뒤 다시 보내 주세요."
-                        )
+                    if frame.get("cancelled"):
+                        raise UserError("채팅 요청을 중지했습니다.")
+                    message = frame.get("message", "")
+                    return {"message": message if isinstance(message, str) else "", "cancelled": False}
+                elif kind == "error":
                     raise UserError(
                         "내장 Hermes 실행에 실패했습니다. 배포 환경을 확인해 주세요 ("
                         + str(frame.get("kind", "unknown"))[:60]
                         + ")."
                     )
-                else:
-                    raise UserError("내장 Hermes의 응답 형식을 확인할 수 없습니다.")
-            raise UserError("Hermes 채팅 처리 제한 시간을 초과했습니다.")
         except (BrokenPipeError, OSError):
             raise UserError(
                 "채팅 요청을 중지했습니다." if self.cancelled.is_set() else "내장 Hermes와의 연결이 종료되었습니다."
             ) from None
         finally:
-            if child and not finished:
-                try:
-                    child.stdin.close()
-                except OSError:
-                    pass
-                try:
-                    child.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait(timeout=5)
-                child.stdout.close()
             with self.lock:
-                if child and not finished:
-                    self.child = self.frames = None
+                self.interaction = None
                 self.watch = None
                 self.phase = "cancelled" if self.cancelled.is_set() else "idle"
+                # A turn that did not reach its result (an LLM error, a timeout, a stop) may leave the worker blocked
+                # waiting for a reply to a frame it already sent, so it cannot be reused: it is ended here and the
+                # next turn starts a fresh one. A clean result keeps the worker warm for the next turn.
+                stale = None if finished else self.child
+                if not finished:
+                    self.child = self.frames = None
+            if stale is not None:
+                with suppress_os():
+                    if stale.poll() is None:
+                        stale.terminate()
+                try:
+                    stale.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    stale.kill()
+                    stale.wait(timeout=5)
+                with suppress_os():
+                    stale.stdin.close()
+                    stale.stdout.close()
+
+    def ask(self, kind, frame, on_interaction):
+        """Hold an approval or clarify for the user, and wait (bounded) for the answer the chat sends back."""
+        payload = {key: value for key, value in frame.items() if key not in ("type", "id")}
+        payload["interaction_id"] = uuid.uuid4().hex
+        interaction = Interaction(kind, payload)
+        with self.lock:
+            if self.cancelled.is_set():
+                return None
+            self.interaction = interaction
+            self.phase = "waiting"
+            on_interaction(kind, payload)
+        answer = interaction.wait(time.monotonic() + INTERACTION_SECONDS)
+        with self.lock:
+            self.interaction = None
+            if not self.cancelled.is_set():
+                self.phase = "thinking"
+        return answer
+
+    def record_progress(self, name, event, preview=""):
+        line = name if not preview else f"{name}: {preview}"
+        if not line:
+            return
+        with self.lock:
+            self.progress = (self.progress + [{"event": event, "text": line[:200]}])[-20:]
+
+    def complete(self, selected, body):
+        """One model request, run in a daemon thread so a stop is answered at once even while the request is blocked
+        before the server has sent any byte (a slow gateway, or one that delays its headers)."""
+        replies = queue.Queue(maxsize=1)
+
+        def infer():
+            try:
+                replies.put((True, selected.complete(body)))
+            except Exception as error:  # Carried back to the plan loop, which raises it.
+                replies.put((False, error))
+
+        with self.lock:
+            self.inference = threading.Thread(target=infer, daemon=True)
+            self.inference.start()
+        while time.monotonic() < selected.end:
+            if self.cancelled.is_set():
+                raise UserError("채팅 요청을 중지했습니다.")
+            try:
+                ok, value = replies.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if self.cancelled.is_set():
+                raise UserError("채팅 요청을 중지했습니다.")
+            if ok:
+                return value
+            raise value
+        raise UserError("Hermes 모델 응답 제한 시간을 초과했습니다.")
+
+    def on_watch(self, watch, cancelled):
+        with self.lock:
+            if self.cancelled is cancelled:
+                self.watch = watch
+            if cancelled.is_set():
+                watch.cut()
+
+    def on_text(self, value, cancelled):
+        with self.lock:
+            if self.cancelled is cancelled and not cancelled.is_set():
+                self.preview = (self.preview + value)[:12000]

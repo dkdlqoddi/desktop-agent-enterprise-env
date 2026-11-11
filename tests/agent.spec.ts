@@ -9,7 +9,7 @@ import { chatBox, chooseStorage, connectLlm, launch, llmServer, toolCalls } from
 const PAGE = `<!doctype html><title>운동화 검색</title>
   <div class="card"><div class="badge">광고</div><a href="https://ad.example.test/x">특가 운동화 모음</a></div>
   <div class="card"><a href="https://shop.example.test/y">일반 운동화</a></div>`;
-const PLANNED = '페이지를 열고 기록할 준비를 했습니다. 확인 후 실행을 눌러 주세요.';
+const DONE = '페이지를 열고 광고를 기록했습니다.';
 
 async function request<T>(page: Page, method: string, params: Record<string, unknown> = {}) {
   const response = await page.evaluate(
@@ -20,7 +20,7 @@ async function request<T>(page: Page, method: string, params: Record<string, unk
   return response.result as T;
 }
 
-test('agent chat: proposed actions run only once approved, and the page they record is kept and exported', async () => {
+test('agent chat: the agent opens a page and records its ad live, and the record is kept and exported', async () => {
   test.setTimeout(240_000);
   const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-chat-'));
   const site = createServer((incoming, response) => {
@@ -30,18 +30,19 @@ test('agent chat: proposed actions run only once approved, and the page they rec
   });
   await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve));
   const address = `http://127.0.0.1:${(site.address() as { port: number }).port}/search`;
+  // A dev run without the bundled Hermes falls back to one JSON plan of app actions.
   const actions = [
     { tool: 'open_site', args: { url: address } },
     { tool: 'capture_page', args: {} },
-    { tool: 'add_task', args: { title: '운동화 가격 비교' } },
   ];
-  // The bundled Hermes plans with its prepare_actions tool and then says what it prepared; a source run without the
-  // Hermes build asks for the plan as JSON.
+  // The bundled Hermes acts live with its tools: the model has it open the page, then record it, then answer. A
+  // source run without the Hermes build asks for the plan as JSON (no tools in the request).
   const llm = await llmServer(({ payload }) => {
-    if (payload.messages.some((message) => message.role === 'tool')) return PLANNED;
-    if (payload.tools?.some((tool) => tool.function.name === 'prepare_actions'))
-      return toolCalls(['prepare_actions', { actions }]);
-    return { message: PLANNED, actions };
+    if (!payload.tools?.length) return { message: DONE, actions };
+    const ran = payload.messages.filter((message) => message.role === 'tool').length;
+    if (ran === 0) return toolCalls(['open_site', { url: address }]);
+    if (ran === 1) return toolCalls(['capture_page', {}]);
+    return DONE;
   });
   let app: ElectronApplication | undefined;
   try {
@@ -73,37 +74,21 @@ test('agent chat: proposed actions run only once approved, and the page they rec
     await chatBox(page).fill(`이 페이지를 열어서 광고를 기록해 줘: ${address}`);
     await chatBox(page).press('Enter');
     const log = page.getByRole('log', { name: '대화' });
-    await expect(log).toContainText(PLANNED, { timeout: 60_000 });
+    // The agent runs the actions itself and answers once done; nothing waits for 확인 후 실행.
+    await expect(log).toContainText(DONE, { timeout: 120_000 });
     const card = (title: string) => log.locator('.agent-card').filter({ hasText: title });
     const open = card(`${address} 열기`);
     const record = card('브라우저에 열린 페이지 기록');
-    const task = card('할 일 추가: 운동화 가격 비교');
-    for (const proposed of [open, record, task]) await expect(proposed).toContainText('승인 대기');
-    await expect(open).toContainText('앱은 광고를 누르지 않습니다.');
-
-    // Nothing ran before the user said so: no browser, no task.
-    expect((await request<{ open: boolean }>(page, 'web.status')).open).toBe(false);
-    const titles = async () =>
-      (await request<{ title: string }[]>(page, 'tasks.list')).map((item) => item.title);
-    expect(await titles()).not.toContain('운동화 가격 비교');
-
-    // 취소 leaves the task out.
-    await task.getByRole('button', { name: '취소' }).click();
-    await expect(task).toContainText('취소함');
-    await expect(task.getByRole('button', { name: '확인 후 실행' })).toHaveCount(0);
-    expect(await titles()).not.toContain('운동화 가격 비교');
-
-    // 확인 후 실행 opens the address in the browser, then records what the page shows without clicking it.
-    await open.getByRole('button', { name: '확인 후 실행' }).click();
-    await expect(open).toContainText('완료', { timeout: 90_000 });
+    await expect(open).toContainText('완료');
     await expect(open).toContainText('브라우저 창에서 열었습니다.');
-    expect((await request<{ open: boolean }>(page, 'web.status')).open).toBe(true);
-    await record.getByRole('button', { name: '확인 후 실행' }).click();
-    await expect(record).toContainText('완료', { timeout: 60_000 });
+    await expect(record).toContainText('완료');
     await expect(record).toContainText('광고 1건');
     await expect(record.getByRole('list', { name: '기록한 광고' })).toContainText(
       '특가 운동화 모음',
     );
+    // The actions ran without an approval card, and the browser was opened by the agent.
+    await expect(log.getByRole('button', { name: '확인 후 실행' })).toHaveCount(0);
+    expect((await request<{ open: boolean }>(page, 'web.status')).open).toBe(true);
 
     // The record is in the web records, a page at a time, and goes to a CSV file in the Wiki folder.
     await record.getByRole('button', { name: '웹 기록에서 보기' }).click();
@@ -130,7 +115,7 @@ test('agent chat: proposed actions run only once approved, and the page they rec
     await expect(chatBox(page)).toBeVisible();
     await expect(open).toContainText('완료');
     await expect(record).toContainText('광고 1건');
-    await expect(task).toContainText('취소함');
+    await expect(log).toContainText(DONE);
 
     // Clearing the conversation asks first, with the button an AI tool may press only at the "full" access level.
     await page.getByRole('button', { name: '대화 비우기' }).click();

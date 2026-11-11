@@ -428,53 +428,128 @@ function runtimes(installed, pins) {
 // --- Hermes ---------------------------------------------------------------------------------------------------------
 
 // The bundled Hermes agent (runtime/hermes, staged by scripts/build-hermes.py into the app's resources/hermes): its own
-// license, the CPython it runs on, and the hashed wheels of runtime/hermes/requirements.txt. The wheels' license files
+// license, the CPython it runs on, and the hashed wheels of runtime/hermes/requirements-desktop.txt (the core lock both
+// apps share plus the desktop's features; the core is a subset of it). The wheels' license files
 // ship with them (resources/hermes/dependencies/*.dist-info), and their wheels differ by platform, so the table names
 // each license from this list instead of reading a build. The list is checked against the requirements: a pin added,
 // removed or renamed stops the script until the list follows it.
 const HERMES_LICENSES = {
+  aiohappyeyeballs: 'PSF-2.0',
+  aiohttp: 'Apache-2.0 AND MIT',
+  aiosignal: 'Apache-2.0',
   'annotated-types': 'MIT',
   anyio: 'MIT',
+  attrs: 'MIT',
+  'audioop-lts': 'PSF-2.0',
+  brotlicffi: 'MIT',
+  'browser-harness': 'MIT',
+  'cdp-use': 'MIT',
   certifi: 'MPL-2.0',
   cffi: 'MIT-0',
   'charset-normalizer': 'MIT',
+  click: 'BSD-3-Clause',
   colorama: 'BSD-3-Clause',
   'concurrent-log-handler': 'Apache-2.0',
   croniter: 'MIT',
   cryptography: 'Apache-2.0 OR BSD-3-Clause',
+  ddgs: 'MIT',
+  defusedxml: 'PSF-2.0',
+  'discord-py': 'MIT',
   distro: 'Apache-2.0',
+  'edge-tts': 'LGPL-3.0-only (srt_composer.py: MIT)',
+  elevenlabs: 'MIT',
+  'et-xmlfile': 'MIT',
+  'exa-py': 'MIT',
+  'fal-client': 'Apache-2.0',
+  'fetch-use': 'MIT',
   fire: 'Apache-2.0',
+  'firecrawl-anydoc': 'MIT',
+  'firecrawl-py': 'MIT',
+  frozenlist: 'Apache-2.0',
+  'google-api-core': 'Apache-2.0',
+  'google-api-python-client': 'Apache-2.0',
+  'google-auth': 'Apache-2.0',
+  'google-auth-httplib2': 'Apache-2.0',
+  'google-auth-oauthlib': 'Apache-2.0',
+  'googleapis-common-protos': 'Apache-2.0',
   h11: 'MIT',
   httpcore: 'BSD-3-Clause',
+  httpcore2: 'BSD-3-Clause',
+  httplib2: 'MIT',
   httpx: 'BSD-3-Clause',
+  'httpx-sse': 'MIT',
+  httpx2: 'BSD-3-Clause',
+  'httpx2-jsfetch': 'BSD-3-Clause',
   idna: 'BSD-3-Clause',
   jinja2: 'BSD-3-Clause',
   jiter: 'MIT',
+  jsonschema: 'MIT',
+  'jsonschema-specifications': 'MIT',
+  lxml: 'BSD-3-Clause',
   markdown: 'BSD-3-Clause',
   'markdown-it-py': 'MIT',
   markupsafe: 'BSD-3-Clause',
+  mcp: 'MIT',
+  'mcp-types': 'MIT',
   mdurl: 'MIT',
+  msgpack: 'Apache-2.0',
+  multidict: 'Apache-2.0',
+  'nest-asyncio': 'BSD-2-Clause',
+  oauthlib: 'BSD-3-Clause',
   openai: 'Apache-2.0',
+  openpyxl: 'MIT',
+  'opentelemetry-api': 'Apache-2.0',
   packaging: 'Apache-2.0 OR BSD-2-Clause',
+  'parallel-web': 'MIT',
   pathspec: 'MPL-2.0',
+  'pdfminer-six': 'MIT',
+  pdfplumber: 'MIT',
   pillow: 'MIT-CMU',
+  'pillow-heif': 'BSD-3-Clause',
   portalocker: 'BSD-3-Clause',
+  primp: 'MIT',
   'prompt-toolkit': 'BSD-3-Clause',
+  propcache: 'Apache-2.0',
+  'proto-plus': 'Apache-2.0',
+  protobuf: 'BSD-3-Clause',
   psutil: 'BSD-3-Clause',
+  ptyprocess: 'ISC',
+  pyasn1: 'BSD-2-Clause',
+  'pyasn1-modules': 'BSD-2-Clause',
   pycparser: 'BSD-3-Clause',
   pydantic: 'MIT',
   'pydantic-core': 'MIT',
   pygments: 'BSD-2-Clause',
   pyjwt: 'MIT',
+  pyparsing: 'MIT',
+  pypdf: 'BSD-3-Clause',
+  pypdfium2: 'BSD-3-Clause OR Apache-2.0 (PDFium: BSD-3-Clause 등)',
+  pypng: 'MIT',
   'python-dateutil': 'BSD-3-Clause',
+  'python-docx': 'MIT',
   'python-dotenv': 'BSD-3-Clause',
+  'python-multipart': 'Apache-2.0',
+  'python-pptx': 'MIT',
+  'python-telegram-bot': 'LGPL-3.0-only',
+  pywin32: 'PSF-2.0',
+  pywinpty: 'MIT',
+  qrcode: 'BSD-3-Clause',
+  referencing: 'MIT',
+  reportlab: 'BSD-3-Clause',
   requests: 'Apache-2.0',
+  'requests-oauthlib': 'ISC',
   rich: 'MIT',
+  'rpds-py': 'MIT',
   'ruamel-yaml': 'MIT',
   'ruamel-yaml-clib': 'MIT',
+  'slack-bolt': 'MIT',
+  'slack-sdk': 'MIT',
   sniffio: 'MIT OR Apache-2.0',
   snowballstemmer: 'BSD-3-Clause',
   socksio: 'MIT',
+  'sse-starlette': 'BSD-3-Clause',
+  starlette: 'BSD-3-Clause',
+  tabulate: 'MIT',
   tenacity: 'Apache-2.0',
   termcolor: 'MIT',
   'tomli-w': 'MIT',
@@ -483,9 +558,14 @@ const HERMES_LICENSES = {
   'typing-extensions': 'PSF-2.0',
   'typing-inspection': 'MIT',
   tzdata: 'Apache-2.0',
+  uritemplate: 'BSD-3-Clause OR Apache-2.0',
   urllib3: 'MIT',
+  uvicorn: 'BSD-3-Clause',
   wcwidth: 'MIT',
   websockets: 'BSD-3-Clause',
+  xlsxwriter: 'BSD-2-Clause',
+  yarl: 'Apache-2.0',
+  'youtube-transcript-api': 'MIT',
 };
 // build/hermes-source/LICENSE at the commit runtime/hermes/manifest.json pins. Check it when the pin changes.
 const HERMES_LICENSE = `MIT License
@@ -516,7 +596,7 @@ function hermes() {
   );
   const pins = {};
   for (const line of readFileSync(
-    path.join(projectRoot, 'runtime', 'hermes', 'requirements.txt'),
+    path.join(projectRoot, 'runtime', 'hermes', 'requirements-desktop.txt'),
     'utf8',
   ).split(/\r?\n/)) {
     const match = /^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)/.exec(line);
@@ -525,12 +605,12 @@ function hermes() {
   for (const name of Object.keys(pins))
     if (!Object.hasOwn(HERMES_LICENSES, name))
       fail(
-        `runtime/hermes/requirements.txt의 ${name}이(가) scripts/third-party-notices.mjs의 HERMES_LICENSES에 없습니다. 라이선스를 확인해 넣으세요.`,
+        `runtime/hermes/requirements-desktop.txt의 ${name}이(가) scripts/third-party-notices.mjs의 HERMES_LICENSES에 없습니다. 라이선스를 확인해 넣으세요.`,
       );
   for (const name of Object.keys(HERMES_LICENSES))
     if (!Object.hasOwn(pins, name))
       fail(
-        `scripts/third-party-notices.mjs의 HERMES_LICENSES에 있는 ${name}이(가) runtime/hermes/requirements.txt에 없습니다. 목록에서 빼세요.`,
+        `scripts/third-party-notices.mjs의 HERMES_LICENSES에 있는 ${name}이(가) runtime/hermes/requirements-desktop.txt에 없습니다. 목록에서 빼세요.`,
       );
   const standalone = /\/download\/(\d+)\//.exec(pin.linux_url)?.[1] ?? '';
   return {
@@ -540,7 +620,7 @@ function hermes() {
         version: pin.version,
         license: 'MIT',
         homepage: pin.repository.replace(/\.git$/, ''),
-        note: `채팅의 작업 계획을 세우는 에이전트(Nous Research). 원본 커밋 ${pin.commit.slice(0, 12)}에서 테스트·웹 화면·플러그인 등을 뺀 Python 코드`,
+        note: `채팅을 맡는 에이전트(Nous Research). 원본 커밋 ${pin.commit.slice(0, 12)}의 Python 코드와 번들 플러그인·스킬·MCP와 플러그인 목록(테스트, Hermes 자체 앱·화면, 설치 도구 제외)`,
         texts: [HERMES_LICENSE],
       },
       {
@@ -654,7 +734,7 @@ ${table(
 
 채팅의 작업 계획에 쓰는 Hermes Agent와 그 실행 환경입니다(앱의 \`resources/hermes\`). 아래 패키지의 라이선스 파일은 \`resources/hermes/dependencies\`의 각 \`*.dist-info\` 폴더에 함께 들어 있습니다.
 
-<!-- 생성됨: runtime/hermes/manifest.json과 runtime/hermes/requirements.txt(라이선스는 scripts/third-party-notices.mjs의 HERMES_LICENSES) -->
+<!-- 생성됨: runtime/hermes/manifest.json과 runtime/hermes/requirements-desktop.txt(라이선스는 scripts/third-party-notices.mjs의 HERMES_LICENSES) -->
 
 ${table(
   ['구성 요소', '버전', '라이선스', '설명'],

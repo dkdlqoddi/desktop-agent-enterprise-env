@@ -990,11 +990,55 @@ export type AgentMessage = {
 };
 export type AgentSend = { user: AgentMessage; reply: AgentMessage };
 export type AgentEngine = { engine: 'hermes' | 'direct'; ready: boolean };
+// A dangerous command the agent paused on, or the clarify questions it asked, while a turn runs (agent.status).
+export type AgentApproval = {
+  kind: 'approval';
+  interaction_id: string;
+  command: string;
+  description: string;
+  smart_denied: boolean;
+};
+export type AgentClarifyQuestion = {
+  qid: string;
+  question: string;
+  choices: string[] | null;
+  multi_select?: boolean;
+};
+export type AgentClarify = {
+  kind: 'clarify';
+  interaction_id: string;
+  questions: AgentClarifyQuestion[];
+};
 export type AgentStatus = {
-  phase: 'idle' | 'starting' | 'thinking' | 'stopping' | 'finishing' | 'cancelled';
+  phase: 'idle' | 'starting' | 'thinking' | 'waiting' | 'stopping' | 'finishing' | 'cancelled';
   text: string;
   draft: string;
+  // The tools the agent has run this turn, newest last, for the live view.
+  progress: { event: string; text: string }[];
+  // Set while the turn is paused for the user to answer; null otherwise.
+  interaction: AgentApproval | AgentClarify | null;
   can_stop: boolean;
+};
+
+// The chat agent's own settings (hermes.*): the service keys and messenger tokens (only whether each is set), the
+// MCP servers, the allowed messenger accounts, and whether the gateway and computer use are on.
+export type HermesKey = {
+  name: string;
+  label: string;
+  group: 'web' | 'media' | 'gateway' | 'other';
+  has_value: boolean;
+};
+export type HermesSettings = {
+  workspace: string;
+  gateway: boolean;
+  computer_use: boolean;
+  users: Record<string, string>;
+  keys: HermesKey[];
+  mcp_servers: string[];
+  has_mcp: boolean;
+  secure_storage: boolean;
+  stored: boolean;
+  error: string;
 };
 
 // The web records (web.*): what a site's page showed at one time (a capture) and its items.

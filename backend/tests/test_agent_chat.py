@@ -162,14 +162,16 @@ def test_a_failed_action_says_why(service):
     assert "로봇 확인" in done["actions"][0]["result"]["text"]
 
 
-def test_without_an_llm_the_reply_says_how_to_connect(tmp_path):
+def test_without_an_llm_the_message_says_how_to_connect(tmp_path):
     class Unconnected:
         def public(self):
             return {"configured": False}
 
     service = Service(Database(tmp_path / "wiki.db"), Unconnected())
-    reply = service.dispatch("agent.send", {"text": "안녕"})["reply"]
-    assert "LLM 연결" in reply["content"] and reply["actions"] == []
+    with pytest.raises(UserError, match="LLM 연결"):
+        service.dispatch("agent.send", {"text": "안녕"})
+    # The message is not stored when the connection is missing: nothing to answer it.
+    assert service.dispatch("agent.messages", {}) == []
 
 
 def test_one_message_at_a_time_and_history_is_kept_and_cleared(service):

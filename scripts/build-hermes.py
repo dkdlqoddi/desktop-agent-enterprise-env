@@ -26,6 +26,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "runtime" / "hermes"
 PIN = json.loads((SPEC / "manifest.json").read_text())
+# The core lock (requirements.txt, which the Android runtime shares) plus the desktop's features, in one hashed lock.
+REQUIREMENTS = "requirements-desktop.txt"
 
 
 def call(args):
@@ -92,19 +94,26 @@ def build(output, platform, python):
     else:
         unpack_standalone(download(PIN["linux_url"], PIN["linux_sha256"]), stage)
         executable = "python/bin/python3.14"
-    # No CLI installers, repository hooks, default plugins, or optional external tools.
-    # Keep all core Python modules and their data, including templates and license.
-    ignored = {".git", ".github", "tests", "tests-js", "website", "web", "apps", "ui-tui", "native",
-               "evals", "assets", "contributors", "node_modules", "__pycache__", "plugins", "skills",
-               "optional-skills", "optional-mcps", "plugin-catalog", "docker", "nix"}
-    shutil.copytree(source, stage / "source", ignore=lambda directory, names: [n for n in names if n in ignored])
-    for name in ("worker.py", "manifest.json", "requirements.txt"):
+    # Every Python module with its data, the bundled plugins (browser, web search, image generation, messaging
+    # platforms, computer use, memory providers), skills and the MCP and plugin catalogs. Left out: Hermes' own
+    # apps and screens, its installers, tests and repository tooling. Only the top level is matched by name, so a
+    # plugin called web or a skill's assets folder stays.
+    top_ignored = {".git", ".github", "tests", "tests-js", "website", "web", "apps", "ui-tui", "native", "evals",
+                   "assets", "contributors", "docker", "nix"}
+    ignored = {".git", "node_modules", "__pycache__", "tests"}
+
+    def skip(directory, names):
+        top = Path(directory).resolve() == source.resolve()
+        return [name for name in names if name in ignored or (top and name in top_ignored)]
+
+    shutil.copytree(source, stage / "source", ignore=skip)
+    for name in ("worker.py", "manifest.json", "requirements.txt", REQUIREMENTS):
         shutil.copy2(SPEC / name, stage / name)
     pip = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-compile",
            "--only-binary=:all:", "--require-hashes", "--no-deps", "--target", stage / "dependencies",
            "--python-version", "3.14", "--implementation", "cp", "--abi", "cp314",
            "--platform", "win_amd64" if platform == "win32" else "manylinux_2_28_x86_64",
-           "-r", SPEC / "requirements.txt"]
+           "-r", SPEC / REQUIREMENTS]
     if platform != "win32":
         pip += ["--platform", "manylinux2014_x86_64", "--platform", "manylinux_2_17_x86_64", "--platform", "linux_x86_64"]
     call(pip)

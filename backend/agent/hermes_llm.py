@@ -130,6 +130,11 @@ class SelectedLLM:
         self.connection = connection
         self.plain = (self.target["base_url"], self.target["model_name"]) in plain
         self.cancelled, self.on_text, self.on_watch = cancelled, on_text, on_watch
+        self.renew()
+
+    def renew(self):
+        """Fresh per-call budget: one chat turn makes many model calls (one per agent iteration), so the time and
+        call limits are per request, reset before each, not shared across the whole turn as a single plan was."""
         self.end = time.monotonic() + min(RUN_SECONDS, float(self.config["timeout"]))
         self.calls = 0
 

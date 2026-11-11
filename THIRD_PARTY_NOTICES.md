@@ -47,68 +47,147 @@ Private Agent는 [MIT 라이선스](LICENSE)로 배포하며, 아래 오픈소�
 
 채팅의 작업 계획에 쓰는 Hermes Agent와 그 실행 환경입니다(앱의 `resources/hermes`). 아래 패키지의 라이선스 파일은 `resources/hermes/dependencies`의 각 `*.dist-info` 폴더에 함께 들어 있습니다.
 
-<!-- 생성됨: runtime/hermes/manifest.json과 runtime/hermes/requirements.txt(라이선스는 scripts/third-party-notices.mjs의 HERMES_LICENSES) -->
+<!-- 생성됨: runtime/hermes/manifest.json과 runtime/hermes/requirements-desktop.txt(라이선스는 scripts/third-party-notices.mjs의 HERMES_LICENSES) -->
 
 | 구성 요소                                                    | 버전   | 라이선스                             | 설명                                                                                                                                                                                                                              |
 | ------------------------------------------------------------ | ------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | 0.23.0 | MIT                                  | 채팅의 작업 계획을 세우는 에이전트(Nous Research). 원본 커밋 2bd378ed1b8d에서 테스트·웹 화면·플러그인 등을 뺀 Python 코드                                                                                                         |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | 0.23.0 | MIT                                  | 채팅을 맡는 에이전트(Nous Research). 원본 커밋 2bd378ed1b8d의 Python 코드와 번들 플러그인·스킬·MCP와 플러그인 목록(테스트, Hermes 자체 앱·화면, 설치 도구 제외)                                                                   |
 | [CPython](https://www.python.org/)                           | 3.14.0 | PSF-2.0 및 포함 구성 요소별 라이선스 | Hermes 실행 환경. Windows는 python.org의 embeddable package, Linux 빌드는 python-build-standalone 20251120입니다. 라이선스 전문은 `resources/hermes/python` 안의 LICENSE.txt와 https://docs.python.org/3/license.html 에 있습니다 |
 
-| 패키지                 | 버전       | 라이선스                   |
-| ---------------------- | ---------- | -------------------------- |
-| annotated-types        | 0.8.0      | MIT                        |
-| anyio                  | 4.16.0     | MIT                        |
-| certifi                | 2026.10.19 | MPL-2.0                    |
-| cffi                   | 2.1.1      | MIT-0                      |
-| charset-normalizer     | 3.5.2      | MIT                        |
-| colorama               | 0.4.6      | BSD-3-Clause               |
-| concurrent-log-handler | 0.9.30     | Apache-2.0                 |
-| croniter               | 6.2.4      | MIT                        |
-| cryptography           | 50.0.2     | Apache-2.0 OR BSD-3-Clause |
-| distro                 | 1.9.0      | Apache-2.0                 |
-| fire                   | 0.7.1      | Apache-2.0                 |
-| h11                    | 0.16.0     | MIT                        |
-| httpcore               | 1.0.9      | BSD-3-Clause               |
-| httpx                  | 0.28.1     | BSD-3-Clause               |
-| idna                   | 3.20       | BSD-3-Clause               |
-| jinja2                 | 3.1.6      | BSD-3-Clause               |
-| jiter                  | 0.19.0     | MIT                        |
-| markdown               | 3.11.2     | BSD-3-Clause               |
-| markdown-it-py         | 4.2.0      | MIT                        |
-| markupsafe             | 3.0.4      | BSD-3-Clause               |
-| mdurl                  | 0.1.2      | MIT                        |
-| openai                 | 2.54.0     | Apache-2.0                 |
-| packaging              | 26.3       | Apache-2.0 OR BSD-2-Clause |
-| pathspec               | 1.1.1      | MPL-2.0                    |
-| pillow                 | 13.0.0     | MIT-CMU                    |
-| portalocker            | 4.4.2      | BSD-3-Clause               |
-| prompt-toolkit         | 3.0.53     | BSD-3-Clause               |
-| psutil                 | 7.2.2      | BSD-3-Clause               |
-| pycparser              | 3.12       | BSD-3-Clause               |
-| pydantic               | 2.14.1     | MIT                        |
-| pydantic-core          | 2.50.1     | MIT                        |
-| pygments               | 2.21.0     | BSD-2-Clause               |
-| pyjwt                  | 2.15.1     | MIT                        |
-| python-dateutil        | 4.0.0      | BSD-3-Clause               |
-| python-dotenv          | 1.2.4      | BSD-3-Clause               |
-| requests               | 2.34.2     | Apache-2.0                 |
-| rich                   | 14.3.4     | MIT                        |
-| ruamel-yaml            | 0.18.16    | MIT                        |
-| ruamel-yaml-clib       | 0.2.15     | MIT                        |
-| sniffio                | 1.3.1      | MIT OR Apache-2.0          |
-| snowballstemmer        | 3.1.1      | BSD-3-Clause               |
-| socksio                | 1.0.0      | MIT                        |
-| tenacity               | 9.2.1      | Apache-2.0                 |
-| termcolor              | 3.3.0      | MIT                        |
-| tomli-w                | 1.2.0      | MIT                        |
-| tqdm                   | 4.70.1     | MPL-2.0 AND MIT            |
-| truststore             | 0.10.5     | MIT                        |
-| typing-extensions      | 4.16.0     | PSF-2.0                    |
-| typing-inspection      | 0.4.5      | MIT                        |
-| tzdata                 | 2025.3     | Apache-2.0                 |
-| urllib3                | 2.8.0      | MIT                        |
-| wcwidth                | 0.9.4      | MIT                        |
-| websockets             | 15.0.1     | BSD-3-Clause               |
+| 패키지                    | 버전         | 라이선스                                             |
+| ------------------------- | ------------ | ---------------------------------------------------- |
+| aiohappyeyeballs          | 2.7.1        | PSF-2.0                                              |
+| aiohttp                   | 3.14.5       | Apache-2.0 AND MIT                                   |
+| aiosignal                 | 1.4.0        | Apache-2.0                                           |
+| annotated-types           | 0.8.0        | MIT                                                  |
+| anyio                     | 4.16.0       | MIT                                                  |
+| attrs                     | 26.1.0       | MIT                                                  |
+| audioop-lts               | 0.2.2        | PSF-2.0                                              |
+| brotlicffi                | 1.2.1.0      | MIT                                                  |
+| browser-harness           | 0.1.13       | MIT                                                  |
+| cdp-use                   | 1.4.5        | MIT                                                  |
+| certifi                   | 2026.10.19   | MPL-2.0                                              |
+| cffi                      | 2.1.1        | MIT-0                                                |
+| charset-normalizer        | 3.5.2        | MIT                                                  |
+| click                     | 8.5.1        | BSD-3-Clause                                         |
+| colorama                  | 0.4.6        | BSD-3-Clause                                         |
+| concurrent-log-handler    | 0.9.30       | Apache-2.0                                           |
+| croniter                  | 6.2.4        | MIT                                                  |
+| cryptography              | 50.0.2       | Apache-2.0 OR BSD-3-Clause                           |
+| ddgs                      | 9.16.0       | MIT                                                  |
+| defusedxml                | 0.7.1        | PSF-2.0                                              |
+| discord-py                | 2.7.1        | MIT                                                  |
+| distro                    | 1.9.0        | Apache-2.0                                           |
+| edge-tts                  | 7.3.1        | LGPL-3.0-only (srt_composer.py: MIT)                 |
+| elevenlabs                | 1.59.0       | MIT                                                  |
+| et-xmlfile                | 2.0.0        | MIT                                                  |
+| exa-py                    | 2.26.0       | MIT                                                  |
+| fal-client                | 0.14.1       | Apache-2.0                                           |
+| fetch-use                 | 0.4.0        | MIT                                                  |
+| fire                      | 0.7.1        | Apache-2.0                                           |
+| firecrawl-anydoc          | 0.2.4        | MIT                                                  |
+| firecrawl-py              | 4.53.2       | MIT                                                  |
+| frozenlist                | 1.8.0        | Apache-2.0                                           |
+| google-api-core           | 2.44.0       | Apache-2.0                                           |
+| google-api-python-client  | 2.201.0      | Apache-2.0                                           |
+| google-auth               | 2.62.0       | Apache-2.0                                           |
+| google-auth-httplib2      | 0.4.4        | Apache-2.0                                           |
+| google-auth-oauthlib      | 1.5.0        | Apache-2.0                                           |
+| googleapis-common-protos  | 1.76.0       | Apache-2.0                                           |
+| h11                       | 0.16.0       | MIT                                                  |
+| httpcore                  | 1.0.9        | BSD-3-Clause                                         |
+| httpcore2                 | 2.15.1       | BSD-3-Clause                                         |
+| httplib2                  | 0.32.0       | MIT                                                  |
+| httpx                     | 0.28.1       | BSD-3-Clause                                         |
+| httpx-sse                 | 0.4.3        | MIT                                                  |
+| httpx2                    | 2.15.1       | BSD-3-Clause                                         |
+| httpx2-jsfetch            | 1.0          | BSD-3-Clause                                         |
+| idna                      | 3.20         | BSD-3-Clause                                         |
+| jinja2                    | 3.1.6        | BSD-3-Clause                                         |
+| jiter                     | 0.19.0       | MIT                                                  |
+| jsonschema                | 4.26.0       | MIT                                                  |
+| jsonschema-specifications | 2025.9.1     | MIT                                                  |
+| lxml                      | 6.1.3        | BSD-3-Clause                                         |
+| markdown                  | 3.11.2       | BSD-3-Clause                                         |
+| markdown-it-py            | 4.2.0        | MIT                                                  |
+| markupsafe                | 3.0.4        | BSD-3-Clause                                         |
+| mcp                       | 2.3.0        | MIT                                                  |
+| mcp-types                 | 2.3.0        | MIT                                                  |
+| mdurl                     | 0.1.2        | MIT                                                  |
+| msgpack                   | 1.2.4        | Apache-2.0                                           |
+| multidict                 | 7.2.1        | Apache-2.0                                           |
+| nest-asyncio              | 1.6.0        | BSD-2-Clause                                         |
+| oauthlib                  | 4.0.1        | BSD-3-Clause                                         |
+| openai                    | 2.54.0       | Apache-2.0                                           |
+| openpyxl                  | 3.1.5        | MIT                                                  |
+| opentelemetry-api         | 1.45.2       | Apache-2.0                                           |
+| packaging                 | 26.3         | Apache-2.0 OR BSD-2-Clause                           |
+| parallel-web              | 0.6.0        | MIT                                                  |
+| pathspec                  | 1.1.1        | MPL-2.0                                              |
+| pdfminer-six              | 20260107     | MIT                                                  |
+| pdfplumber                | 0.11.10      | MIT                                                  |
+| pillow                    | 13.0.0       | MIT-CMU                                              |
+| pillow-heif               | 1.8.1        | BSD-3-Clause                                         |
+| portalocker               | 4.4.2        | BSD-3-Clause                                         |
+| primp                     | 2.0.1        | MIT                                                  |
+| prompt-toolkit            | 3.0.53       | BSD-3-Clause                                         |
+| propcache                 | 0.5.4        | Apache-2.0                                           |
+| proto-plus                | 1.29.0       | Apache-2.0                                           |
+| protobuf                  | 7.36.2       | BSD-3-Clause                                         |
+| psutil                    | 7.2.2        | BSD-3-Clause                                         |
+| ptyprocess                | 0.7.0        | ISC                                                  |
+| pyasn1                    | 0.6.5        | BSD-2-Clause                                         |
+| pyasn1-modules            | 0.4.2        | BSD-2-Clause                                         |
+| pycparser                 | 3.12         | BSD-3-Clause                                         |
+| pydantic                  | 2.14.1       | MIT                                                  |
+| pydantic-core             | 2.50.1       | MIT                                                  |
+| pygments                  | 2.21.0       | BSD-2-Clause                                         |
+| pyjwt                     | 2.15.1       | MIT                                                  |
+| pyparsing                 | 3.3.3        | MIT                                                  |
+| pypdf                     | 6.21.4       | BSD-3-Clause                                         |
+| pypdfium2                 | 5.14.0       | BSD-3-Clause OR Apache-2.0 (PDFium: BSD-3-Clause 등) |
+| pypng                     | 0.20220715.0 | MIT                                                  |
+| python-dateutil           | 4.0.0        | BSD-3-Clause                                         |
+| python-docx               | 1.2.0        | MIT                                                  |
+| python-dotenv             | 1.2.4        | BSD-3-Clause                                         |
+| python-multipart          | 0.0.33       | Apache-2.0                                           |
+| python-pptx               | 1.0.2        | MIT                                                  |
+| python-telegram-bot       | 22.8         | LGPL-3.0-only                                        |
+| pywin32                   | 311          | PSF-2.0                                              |
+| pywinpty                  | 3.1.0        | MIT                                                  |
+| qrcode                    | 7.4.2        | BSD-3-Clause                                         |
+| referencing               | 0.37.0       | MIT                                                  |
+| reportlab                 | 5.1.0        | BSD-3-Clause                                         |
+| requests                  | 2.34.2       | Apache-2.0                                           |
+| requests-oauthlib         | 2.0.0        | ISC                                                  |
+| rich                      | 14.3.4       | MIT                                                  |
+| rpds-py                   | 2026.9.1     | MIT                                                  |
+| ruamel-yaml               | 0.18.16      | MIT                                                  |
+| ruamel-yaml-clib          | 0.2.15       | MIT                                                  |
+| slack-bolt                | 1.30.0       | MIT                                                  |
+| slack-sdk                 | 3.45.0       | MIT                                                  |
+| sniffio                   | 1.3.1        | MIT OR Apache-2.0                                    |
+| snowballstemmer           | 3.1.1        | BSD-3-Clause                                         |
+| socksio                   | 1.0.0        | MIT                                                  |
+| sse-starlette             | 3.7.0        | BSD-3-Clause                                         |
+| starlette                 | 1.9.0        | BSD-3-Clause                                         |
+| tabulate                  | 0.10.0       | MIT                                                  |
+| tenacity                  | 9.2.1        | Apache-2.0                                           |
+| termcolor                 | 3.3.0        | MIT                                                  |
+| tomli-w                   | 1.2.0        | MIT                                                  |
+| tqdm                      | 4.70.1       | MPL-2.0 AND MIT                                      |
+| truststore                | 0.10.5       | MIT                                                  |
+| typing-extensions         | 4.16.0       | PSF-2.0                                              |
+| typing-inspection         | 0.4.5        | MIT                                                  |
+| tzdata                    | 2025.3       | Apache-2.0                                           |
+| uritemplate               | 4.2.0        | BSD-3-Clause OR Apache-2.0                           |
+| urllib3                   | 2.8.0        | MIT                                                  |
+| uvicorn                   | 0.54.0       | BSD-3-Clause                                         |
+| wcwidth                   | 0.9.4        | MIT                                                  |
+| websockets                | 15.0.1       | BSD-3-Clause                                         |
+| xlsxwriter                | 3.3.1        | BSD-2-Clause                                         |
+| yarl                      | 1.25.1       | Apache-2.0                                           |
+| youtube-transcript-api    | 1.2.4        | MIT                                                  |
 
 ### npm 패키지
 

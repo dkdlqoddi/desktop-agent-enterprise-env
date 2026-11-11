@@ -144,7 +144,9 @@ export type CatalogMethod =
 
 // The methods only the screens call: those the main process allows them beyond the catalog.
 export type ScreenMethod =
+  | 'agent.answer_clarify'
   | 'agent.approve'
+  | 'agent.approve_command'
   | 'agent.clear'
   | 'agent.engine'
   | 'agent.messages'
@@ -161,6 +163,8 @@ export type ScreenMethod =
   | 'app.relaunch'
   | 'diagnostics.copy'
   | 'diagnostics.open_folder'
+  | 'hermes.get'
+  | 'hermes.update'
   | 'import.choose'
   | 'jobs.status'
   | 'storage.choose'

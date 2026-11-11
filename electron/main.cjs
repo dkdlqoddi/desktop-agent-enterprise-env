@@ -33,6 +33,7 @@ const { ImportNotices } = require('./import-notices.cjs');
 const { JobProgress } = require('./job-progress.cjs');
 const { ApiError, ACCESS_LEVELS, allows, authorize, forbidden } = require('./api-catalog.cjs');
 const { ApiSettings } = require('./api-settings.cjs');
+const { HermesSettings } = require('./hermes-settings.cjs');
 const { ApiServer } = require('./api-server.cjs');
 const { McpServer } = require('./mcp.cjs');
 const apiManual = require('./api-manual.cjs');
@@ -95,6 +96,7 @@ let notices;
 // The background jobs and routines followed for the screens (electron/job-progress.cjs).
 let jobs;
 let apiSettings;
+let hermesSettings;
 let apiServer;
 let control;
 let apiMethods;
@@ -143,9 +145,10 @@ const RPC_TIMEOUTS = {
   // A backup, and the copy of one to restore, read and write the whole Wiki: minutes for a large one on a slow drive.
   'wiki.backup': 900_000,
   'wiki.restore_backup': 900_000,
-  // The agent chat: Hermes' plan (up to two minutes and a worker start), and an action it proposed, which may open a
-  // site, scroll and read it (web_capture.py TASK_SECONDS) or wait for a run the user's import holds up.
-  'agent.send': 420_000,
+  // The chat agent runs live with its full tools: a turn can last several minutes and pause for the user to answer
+  // an approval or a clarify (hermes.py TURN_SECONDS + INTERACTION_SECONDS). The user's answers and the live status
+  // ride on their own quick requests meanwhile (agent.status / agent.approve_command / agent.answer_clarify).
+  'agent.send': 1_800_000,
   'agent.approve': 420_000,
 };
 
@@ -396,6 +399,22 @@ async function launchBackend(dataDirectory) {
   // One value at a time: a value that is no longer valid keeps its default instead of failing the start. Sent to this
   // backend itself: other requests wait for it.
   await child.request('settings.load', values);
+  // The chat agent's non-secret runtime options (computer use, MCP server names, the gateway). The secret values
+  // themselves rode in the backend's environment (PRIVATE_AGENT_HERMES_ENV); these just tell the agent what is on.
+  if (hermesSettings) await child.request('agent.configure', hermesConfigure()).catch(() => {});
+}
+
+// What the chat agent is told at each start and change: the runtime options and, over the backend's own private
+// pipe (never the renderer), the service keys and messenger tokens that go into the Hermes worker's environment.
+function hermesConfigure() {
+  const backend = hermesSettings.backend();
+  return {
+    computer_use: backend.computer_use,
+    gateway: backend.gateway,
+    mcp_servers: backend.mcp_servers,
+    extract_backend: backend.env.FIRECRAWL_API_KEY ? 'firecrawl' : 'ddgs',
+    env: backend.env,
+  };
 }
 
 // The custom headers with their values, as the backend takes them: the names settings.json lists, each with the value
@@ -1334,7 +1353,14 @@ async function handle(method, params, { access } = {}) {
     result = llmSettingsFor(await job, access);
   } else if (method === 'settings.get')
     result = llmSettingsFor({ ...(await rpc(method)), ...llmFacts() }, access);
-  else if (method === 'import.choose') result = await chooseImport(params.mode);
+  // The chat agent's settings (service keys, messenger tokens, MCP servers, computer use) live in the main process
+  // like the LLM key: the screen sees only which values are set. A change is pushed to the running backend over its
+  // private pipe, so the next chat turn uses it without a restart.
+  else if (method === 'hermes.get') result = hermesSettings.get();
+  else if (method === 'hermes.update') {
+    result = await hermesSettings.update(params);
+    await rpc('agent.configure', hermesConfigure()).catch(() => {});
+  } else if (method === 'import.choose') result = await chooseImport(params.mode);
   else if (method === 'files.import_text') result = await importText(params);
   else if (method === 'clipboard.write') {
     if (typeof params.text !== 'string' || params.text.length > 800_000)
@@ -1590,6 +1616,14 @@ else {
         decrypt: (value) => safeStorage.decryptString(value),
         canEncrypt,
       });
+      // The chat's Hermes agent: its service keys and messenger tokens (OS-encrypted, never sent to the screen or
+      // to the worker's model calls), the MCP servers, and whether computer use and the messenger gateway are on.
+      hermesSettings = new HermesSettings({
+        file: path.join(userData, 'hermes.json'),
+        encrypt: (value) => safeStorage.encryptString(value),
+        decrypt: (value) => safeStorage.decryptString(value),
+        canEncrypt,
+      });
       control = new AppControl({ window: () => window, Notification });
       jobs = new JobProgress({
         rpc,
@@ -1614,7 +1648,12 @@ else {
       });
       // The saved settings are read and the backend starts while the window opens on the screens' "preparing" page:
       // the backend's first start can take seconds, more while antivirus scans a new build. Requests wait for both.
-      const started = Promise.all([storage.load(), sites.load(), apiSettings.load()]);
+      const started = Promise.all([
+        storage.load(),
+        sites.load(),
+        apiSettings.load(),
+        hermesSettings.load(),
+      ]);
       ipcMain.handle('agent:request', async (event, method, params = {}) => {
         try {
           if (!allowedRequest(event, method, ownScreen()))

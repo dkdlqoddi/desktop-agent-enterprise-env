@@ -368,3 +368,139 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Live agent: the tools it has run this turn, and the approval or clarify it paused on ------------- */
+.agent-progress {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.agent-progress li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.agent-progress li.tool\.completed {
+  color: var(--ok-strong);
+}
+.agent-interaction {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-interaction.approval {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.agent-interaction-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 600;
+}
+.agent-interaction-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.agent-command {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--canvas-base);
+  border: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.agent-clarify-question {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.agent-clarify-question p {
+  margin: 0;
+  font-size: 13px;
+}
+.agent-clarify-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.agent-clarify-input {
+  width: 100%;
+}
+
+/* The chat agent's settings (admin → 채팅 에이전트) --------------------------------------------- */
+.hermes-settings .admin-fieldset {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hermes-settings .admin-fieldset legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.hermes-settings .admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hermes-settings .admin-field > span {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hermes-settings .admin-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hermes-settings .admin-hint,
+.hermes-settings .admin-warn {
+  font-size: 12px;
+  margin: 0;
+  color: var(--ink-soft);
+}
+.hermes-settings .admin-warn {
+  color: var(--warn);
+}
+.hermes-add-key {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.hermes-add-key input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.hermes-mcp {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  resize: vertical;
+}

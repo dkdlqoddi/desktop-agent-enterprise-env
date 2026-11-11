@@ -35,28 +35,28 @@ RECORD_KINDS = ("ad", "product", "result", "clicked")
 NOT_CONNECTED = "LLM이 연결되지 않았습니다. 관리 → LLM 연결에서 먼저 연결해 주세요."
 NO_REPLY = "요청을 이해하지 못했습니다. 무엇을 할지 조금 더 구체적으로 적어 주세요."
 
-SYSTEM = """You are the agent of Private Agent, a desktop app that keeps the user's documents, tasks and web records
-on their own PC. Reply in Korean, in short concrete sentences.
+# The system prompt for the bundled Hermes agent (live tools). The app's own actions are offered as tools the agent
+# calls itself; the app runs them and returns the result.
+SYSTEM = """You are the agent of Private Agent, a desktop app on the user's own PC that keeps their documents, tasks
+and web records. Reply in Korean, in short concrete sentences.
 
-You cannot browse or act yourself. Propose app actions; the app shows each one to the user, and anything that opens a
-website, records a page, adds a task or schedules a job runs only after the user approves it. Never say an action ran
-or claim results you do not have: say what you prepared. Do not invent records, prices or ads.
+You act directly with your tools — files, terminal, code, web search, a browser, memory and skills on this PC — and
+with the app's own tools below. Do the work; do not ask permission for ordinary steps. Dangerous commands are shown
+to the user for approval on their own, so run the command and let that happen. Never claim a result you do not have,
+and do not invent records, prices or ads.
 
-Actions (tool and args):
-- search_documents {"query"}: search the user's Wiki documents.
-- list_records {"site"?, "kind"?: "ad"|"product"|"result"|"clicked", "text"?, "since"?: "YYYY-MM-DD"}: summarize the
-  web records already kept (ads, products and results of earlier captures, and the ads the user clicked).
-- web_capture {"site", "query"}: open the site's search for the query in the visible browser and record the ads,
-  products and results the page shows. Sites: coupang (쿠팡), amazon (아마존), naver (네이버), google (구글).
-- open_site {"site"?, "url"?}: open a site's home page or an http(s) address in the visible browser for the user.
-- capture_page {}: record the ads and items of the page the browser shows now.
-- add_task {"title", "due"?: "YYYY-MM-DD"}: add a task.
-- schedule_capture {"site", "query", "time": "HH:MM", "days": "daily"|"weekdays"}: record that search on a schedule.
+The app's own tools:
+- search_documents: search the user's Wiki documents.
+- list_records: summarize the web records already kept (ads, products, results, and the ads the user clicked).
+- web_capture {site, query}: open a shopping or search site's results in the visible browser and record the ads,
+  products and results. Sites: coupang (쿠팡), amazon (아마존), naver (네이버), google (구글).
+- open_site {site?, url?}: open a site or an http(s) address in the visible browser for the user.
+- capture_page: record the ads and items of the page the browser shows now.
+- add_task {title, due?}: add a task.
+- schedule_capture {site, query, time, days}: record that search on a schedule.
 
-The app only reads pages: never propose clicking ads or anything else on a page. Ads the user clicks themselves in the
-browser are recorded with their landing page. If the request is unclear (which site? what to search?), ask one short
-question and propose no action. When native tools are unavailable, answer ONLY with JSON:
-{"message": "...", "actions": [{"tool": "...", "args": {...}}]}"""
+The app only reads shopping pages; it never clicks ads. Ads the user clicks themselves are recorded with their
+landing page. If a request is ambiguous (which site? what to search?), use the clarify tool to ask."""
 
 
 def day(value, name):
@@ -87,18 +87,24 @@ class AgentChat:
         self.hermes = Hermes(service)
         self.lock = threading.Lock()
         self.sending = False
+        # Hermes runtime settings the main process passes (hermes.configure): which messenger accounts, MCP servers
+        # and whether computer use is on. The service keys and tokens live in the worker's environment, not here.
+        self.settings = {"computer_use": True, "mcp_servers": {}, "extract_backend": "ddgs", "gateway": False}
         self.methods = {
             "agent.messages": self.messages,
             "agent.send": self.send,
             "agent.approve": self.approve,
             "agent.reject": self.reject,
+            "agent.approve_command": self.approve_command,
+            "agent.answer_clarify": self.answer_clarify,
             "agent.status": self.status,
             "agent.stop": self.stop,
             "agent.clear": self.clear,
             "agent.engine": self.engine,
+            "agent.configure": self.configure,
         }
 
-    # -- the planner -------------------------------------------------------------
+    # -- the agent ---------------------------------------------------------------
 
     def hermes_ready(self):
         try:
@@ -108,28 +114,79 @@ class AgentChat:
             return False
 
     def engine(self, _params=None):
-        """Which planner the next message uses: the bundled Hermes, or (a source run without it) the LLM's JSON."""
+        """Which engine the next message uses: the bundled Hermes agent (full tools, live actions), or — only in a
+        source run that has not built it — the connected LLM proposing app actions as cards (no tools, no live run)."""
         if self.hermes_ready():
             return {"engine": "hermes", "ready": True}
         if getattr(sys, "frozen", False):
             return {"engine": "hermes", "ready": False}
         return {"engine": "direct", "ready": True}
 
-    def plan(self, system, context, request_id):
-        if not (self.service.llm and self.service.llm.public().get("configured")):
-            raise UserError(NOT_CONNECTED)
-        engine = self.engine()
-        if engine["engine"] == "hermes":
-            # A packaged app without its Hermes (a damaged install) says so (launch_paths) instead of planning
-            # another way unannounced.
-            return self.hermes.plan(system, context, request_id=request_id, tools=list(self.tools())), "hermes"
-        return self.service.llm.structured(system, context), "direct"
+    def configure(self, params):
+        """The main process (never the renderer) sets the Hermes runtime options and, over the backend's private
+        pipe, the service keys and messenger tokens that go into the worker's environment. A change recycles the idle
+        worker so the next turn picks it up; the secret values are never returned."""
+        settings = dict(self.settings)
+        if "computer_use" in params:
+            settings["computer_use"] = bool(params["computer_use"])
+        if "gateway" in params:
+            settings["gateway"] = bool(params["gateway"])
+        if isinstance(params.get("mcp_servers"), dict):
+            settings["mcp_servers"] = params["mcp_servers"]
+        if params.get("extract_backend"):
+            settings["extract_backend"] = text(params["extract_backend"], "추출 백엔드", 40)
+        self.settings = settings
+        if "env" in params:
+            env = params["env"] if isinstance(params["env"], dict) else {}
+            extra = {name: value for name, value in env.items() if isinstance(name, str) and isinstance(value, str)}
+            self.hermes.recycle(extra or None)
+        return {"ok": True}
+
+    def toolsets(self):
+        """The Hermes toolsets the chat turns on: the app's own actions, plus files, terminal, code, web, browser,
+        memory, skills, todo, past-conversation search, subagents, vision, image generation, scheduling and clarify.
+        Computer use only when the user turned it on; MCP server tools by their configured names."""
+        names = [
+            "private_agent",
+            "file",
+            "terminal",
+            "code_execution",
+            "web",
+            "browser",
+            "memory",
+            "skills",
+            "todo",
+            "session_search",
+            "delegation",
+            "vision",
+            "image_gen",
+            "cronjob",
+            "clarify",
+        ]
+        if self.settings.get("computer_use", True):
+            names.append("computer_use")
+        names.extend(name for name in (self.settings.get("mcp_servers") or {}) if isinstance(name, str))
+        return names
 
     def status(self, params):
         return self.hermes.status(params)
 
     def stop(self, params):
         return self.hermes.stop(params)
+
+    def approve_command(self, params):
+        """The user's decision on a dangerous command the agent paused on: once | session | always | deny."""
+        decision = params.get("decision")
+        if decision not in ("once", "session", "always", "deny"):
+            raise UserError("승인 값을 확인해 주세요.")
+        return self.hermes.resolve(params, "approval")
+
+    def answer_clarify(self, params):
+        """The user's answers to the clarify questions the agent asked."""
+        answers = params.get("answers")
+        if not isinstance(answers, dict):
+            raise UserError("답변 형식을 확인해 주세요.")
+        return self.hermes.resolve({**params, "outcome": "submitted"}, "clarify")
 
     def shutdown(self):
         self.hermes.shutdown()
@@ -216,6 +273,83 @@ class AgentChat:
     @staticmethod
     def made(tool, args, title, approval):
         return {"tool": tool, "args": args, "title": title, "approval": approval, "status": "pending", "result": None}
+
+    @staticmethod
+    def tool_schemas():
+        """The app's actions as Hermes tools (OpenAI function schemas): Hermes calls them itself, the app checks every
+        argument (card) and runs them (run), and Hermes reads the result."""
+        site = {"type": "string", "description": "coupang (쿠팡), amazon (아마존), naver (네이버) or google (구글)"}
+        day = {"type": "string", "description": "A date as YYYY-MM-DD"}
+        schemas = {
+            "search_documents": (
+                "Search the user's Wiki documents kept in Private Agent. Returns the count and up to five titles.",
+                {"query": {"type": "string", "description": "Words to search for"}},
+                ["query"],
+            ),
+            "list_records": (
+                "Summarize the web records Private Agent already kept: ads, products and results of earlier captures, "
+                "and the ads the user clicked themselves.",
+                {
+                    "site": site,
+                    "kind": {"type": "string", "enum": list(RECORD_KINDS)},
+                    "text": {"type": "string", "description": "Words the records contain"},
+                    "since": day,
+                },
+                [],
+            ),
+            "web_capture": (
+                "Open a shopping or search site's results for a query in Private Agent's visible browser and record "
+                "the ads, products and results the page shows. It reads the page; it never clicks ads.",
+                {"site": site, "query": {"type": "string"}},
+                ["site", "query"],
+            ),
+            "open_site": (
+                "Open a site's home page or an http(s) address in Private Agent's visible browser for the user. Ads "
+                "the user clicks there are recorded with their landing page.",
+                {"site": site, "url": {"type": "string", "description": "An http(s) address"}},
+                [],
+            ),
+            "capture_page": ("Record the ads and items of the page Private Agent's browser shows now.", {}, []),
+            "add_task": (
+                "Add a task to the user's task list in Private Agent.",
+                {"title": {"type": "string"}, "due": day},
+                ["title"],
+            ),
+            "schedule_capture": (
+                "Record a site's search results on a schedule (a routine of Private Agent).",
+                {
+                    "site": site,
+                    "query": {"type": "string"},
+                    "time": {"type": "string", "description": "HH:MM, 24-hour clock"},
+                    "days": {"type": "string", "enum": list(DAYS)},
+                },
+                ["site", "query", "time"],
+            ),
+        }
+        return [
+            {
+                "name": name,
+                "description": description,
+                "parameters": {"type": "object", "properties": properties, "required": required},
+            }
+            for name, (description, properties, required) in schemas.items()
+        ]
+
+    def call_tool(self, name, args):
+        """One of the app's tools as Hermes calls it: the card that shows it in the chat, with what it did or why it
+        could not run. The card is checked exactly as a proposed action is."""
+        try:
+            card = self.card({"tool": name, "args": args if isinstance(args, dict) else {}})
+        except UserError as error:
+            return {
+                "tool": name if name in self.tools() else "unknown",
+                "args": {},
+                "title": "확인할 수 없는 작업",
+                "approval": False,
+                "status": "failed",
+                "result": {"text": str(error)},
+            }
+        return self.run({**card, "status": "running"})
 
     def run(self, card):
         """Carry out a checked action: the card with its result line (and details), or its failure."""
@@ -363,6 +497,8 @@ class AgentChat:
     def send(self, params):
         message = text(params.get("text"), "메시지", MESSAGE_CHARS)
         request_id = text(params.get("request_id") or "chat", "요청 ID", 80)
+        if not (self.service.llm and self.service.llm.public().get("configured")):
+            raise UserError(NOT_CONNECTED)
         with self.lock:
             if self.sending:
                 raise BusyError("이전 메시지를 처리하고 있습니다. 끝난 뒤 다시 보내 주세요.")
@@ -371,34 +507,68 @@ class AgentChat:
             context = self.context(message)
             with self.service.db.connect() as db:
                 user_seq = self.store(db, "user", message)
-            try:
-                plan, engine = self.plan(SYSTEM, context, request_id)
-            except UserError as error:
-                with self.service.db.connect() as db:
-                    seq = self.store(db, "assistant", str(error), engine="error")
-                return {"user": self.public(self.row(user_seq)), "reply": self.public(self.row(seq))}
-            reply = spoken(plan.get("message")) if isinstance(plan, dict) else ""
-            proposed = plan.get("actions") if isinstance(plan, dict) else []
-            cards, dropped = [], 0
-            for action in (proposed if isinstance(proposed, list) else [])[:MAX_ACTIONS]:
-                try:
-                    cards.append(self.card(action))
-                except UserError:
-                    dropped += 1
-            if dropped:
-                reply += ("\n" if reply else "") + f"제안 중 확인할 수 없는 작업 {dropped}개는 뺐습니다."
-            if not reply and not cards:
-                reply = NO_REPLY
-            if any(card["approval"] for card in cards) and not reply:
-                reply = "아래 작업을 확인한 뒤 실행해 주세요."
-            # What only reads the app's own records runs at once; the rest waits for the user.
-            cards = [card if card["approval"] else self.run(card) for card in cards]
+            if self.engine()["engine"] == "hermes":
+                reply = self.run_agent(context, request_id)
+            else:
+                reply = self.run_direct(context)
             with self.service.db.connect() as db:
-                seq = self.store(db, "assistant", reply, cards, engine)
+                seq = self.store(db, "assistant", reply["content"], reply["actions"], reply["engine"])
             return {"user": self.public(self.row(user_seq)), "reply": self.public(self.row(seq))}
         finally:
             with self.lock:
                 self.sending = False
+
+    def run_agent(self, context, request_id):
+        """The bundled Hermes agent runs the turn with its full tools, acting live. The app's own actions run here as
+        they are called (checked first); dangerous commands pause for the user. Returns the stored message's fields."""
+        executed = []
+
+        def on_app_tool(tool, args):
+            card = self.call_tool(tool, args)
+            executed.append(card)
+            return card
+
+        try:
+            result = self.hermes.plan(
+                SYSTEM,
+                context,
+                request_id=request_id,
+                toolsets=self.toolsets(),
+                app_tools=self.tool_schemas(),
+                settings=self.settings,
+                on_app_tool=on_app_tool,
+                on_interaction=lambda kind, payload: None,
+            )
+        except UserError as error:
+            return {"content": str(error), "actions": executed, "engine": "error"}
+        reply = spoken(result.get("message"))
+        if not reply and not executed:
+            reply = NO_REPLY
+        return {"content": reply, "actions": executed, "engine": "hermes"}
+
+    def run_direct(self, context):
+        """A source run without the bundled Hermes: the connected LLM proposes app actions as cards, read-only ones
+        run at once and the rest wait for the user's approval. No tools, no live actions — the badge says so."""
+        try:
+            plan = self.service.llm.structured(SYSTEM, context)
+        except UserError as error:
+            return {"content": str(error), "actions": [], "engine": "error"}
+        reply = spoken(plan.get("message")) if isinstance(plan, dict) else ""
+        proposed = plan.get("actions") if isinstance(plan, dict) else []
+        cards, dropped = [], 0
+        for action in (proposed if isinstance(proposed, list) else [])[:MAX_ACTIONS]:
+            try:
+                cards.append(self.card(action))
+            except UserError:
+                dropped += 1
+        if dropped:
+            reply += ("\n" if reply else "") + f"제안 중 확인할 수 없는 작업 {dropped}개는 뺐습니다."
+        if not reply and not cards:
+            reply = NO_REPLY
+        if any(card["approval"] for card in cards) and not reply:
+            reply = "아래 작업을 확인한 뒤 실행해 주세요."
+        cards = [card if card["approval"] else self.run(card) for card in cards]
+        return {"content": reply, "actions": cards, "engine": "direct"}
 
     def card_of(self, params, status):
         """The message and card the user acts on, after checking it still waits ("pending")."""

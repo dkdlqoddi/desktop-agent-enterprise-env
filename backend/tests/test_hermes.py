@@ -74,12 +74,18 @@ def sse(*values):
 
 
 PLAN = {"actions": [{"tool": "web_capture", "args": {"site": "coupang", "query": "노트북"}}]}
+# The live agent calls an app tool itself; the model drives it: ask search_documents, then answer in words.
+SEARCH = {"query": "회의록"}
 
 
 def openai_tool_reply(request):
     if any(m["role"] == "tool" for m in request["messages"]):
-        return 200, completion({"content": "쿠팡 검색을 준비했습니다."}, request["model"]), False
-    call = {"id": "call_1", "type": "function", "function": {"name": "prepare_actions", "arguments": json.dumps(PLAN)}}
+        return 200, completion({"content": "회의록 문서를 찾았습니다."}, request["model"]), False
+    call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "search_documents", "arguments": json.dumps(SEARCH)},
+    }
     return 200, completion({"content": None, "tool_calls": [call]}, request["model"]), False
 
 
@@ -90,17 +96,21 @@ def anthropic_tool_reply(request):
         if isinstance(m["content"], list)
         for block in m["content"]
     ):
-        return 200, {"content": [{"type": "text", "text": "준비했습니다."}], "usage": {}}, False
-    return 200, {"content": [{"type": "tool_use", "id": "toolu_1", "name": "prepare_actions", "input": PLAN}]}, False
+        return 200, {"content": [{"type": "text", "text": "회의록 문서를 찾았습니다."}], "usage": {}}, False
+    return 200, {"content": [{"type": "tool_use", "id": "toolu_1", "name": "search_documents", "input": SEARCH}]}, False
 
 
 def test_environment_drops_user_hermes_provider_python_and_proxy_settings(tmp_path, monkeypatch):
-    for key in ("HERMES_HOME", "HERMES_PROFILE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PYTHONPATH", "HTTP_PROXY"):
+    for key in ("HERMES_PROFILE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PYTHONPATH", "HTTP_PROXY", "HERMES_HOME"):
         monkeypatch.setenv(key, "personal-secret")
+    # The app's own Hermes keys (web search, media, bot tokens) are injected; model-provider keys never are
+    # (electron/hermes-settings.cjs refuses those names before they reach here).
+    monkeypatch.setenv("PRIVATE_AGENT_HERMES_ENV", '{"EXA_API_KEY": "exa-key", "TELEGRAM_BOT_TOKEN": "tg"}')
     env = child_environment(tmp_path)
     assert "personal-secret" not in str(env)
     assert env["HERMES_HOME"] == str(tmp_path)
-    assert "PATH" not in env
+    assert env.get("EXA_API_KEY") == "exa-key" and env.get("TELEGRAM_BOT_TOKEN") == "tg"
+    assert env.get("PYTHONPATH") is None and "HTTP_PROXY" not in env
 
 
 @pytest.mark.parametrize("prefix", ['{"actions":', "<think>"])
@@ -193,29 +203,59 @@ def chat(tmp_path, llm):
 
 @bundled
 @pytest.mark.parametrize(("api_format", "reply"), [("openai", openai_tool_reply), ("anthropic", anthropic_tool_reply)])
-def test_bundled_hermes_plans_and_nothing_runs_before_approval(tmp_path, model_server, api_format, reply):
+def test_bundled_hermes_runs_an_app_tool_live_and_keeps_the_secrets(tmp_path, model_server, api_format, reply):
     model_server.reply = reply
     service = chat(tmp_path, connection(model_server, api_format))
     assert service.agent.engine() == {"engine": "hermes", "ready": True}
-    calls = []
-    service.web.capture = lambda *args, **kwargs: calls.append(args)
+    searched = []
+    # The app tool the model calls runs here (checked first); the model never reaches the Wiki or a key.
+    service.wiki_search = lambda params: (
+        searched.append(params) or {"total": 3, "documents": [{"id": "d1", "title": "회의록"}]}
+    )
     try:
-        sent = service.dispatch("agent.send", {"text": "쿠팡에서 노트북 광고 기록해 줘", "request_id": "r1"})
+        sent = service.dispatch("agent.send", {"text": "회의록 문서가 있는지 찾아 줘", "request_id": "r1"})
     finally:
         service.agent.shutdown()
     assert sent["reply"]["engine"] == "hermes"
-    # What Hermes said once the plan was staged goes with the cards.
-    assert sent["reply"]["content"] in ("쿠팡 검색을 준비했습니다.", "준비했습니다.")
+    assert sent["reply"]["content"] == "회의록 문서를 찾았습니다."
+    # The app tool ran live, with the checked query, and its result card is kept with the message.
+    assert searched and searched[0]["query"] == "회의록"
     card = sent["reply"]["actions"][0]
-    assert card["tool"] == "web_capture" and card["status"] == "pending" and card["args"]["site"] == "coupang"
-    assert calls == []
-    # The model saw the tool and the app's rules; the secrets stayed in the backend.
-    first = model_server.requests[0]
-    names = [tool["function"]["name"] if "function" in tool else tool["name"] for tool in first["tools"]]
-    assert names == ["prepare_actions"]
+    assert card["tool"] == "search_documents" and card["status"] == "done"
+    assert "3" in card["result"]["text"]
+    # The model saw the app's tools (and its own); the secrets stayed in the backend's own process.
+    names = [
+        tool["function"]["name"] if "function" in tool else tool["name"] for tool in model_server.requests[0]["tools"]
+    ]
+    assert "search_documents" in names
     home = tmp_path / "hermes"
     written = "".join(path.read_text(encoding="utf-8", errors="ignore") for path in home.rglob("*") if path.is_file())
     assert not any(secret in written for secret in SECRETS)
+
+
+@bundled
+def test_a_turn_that_fails_does_not_wedge_the_next_one(tmp_path, model_server):
+    # The first turn's model call fails; the worker is mid-request, so it must be ended, not reused wedged.
+    calls = {"n": 0}
+
+    def reply(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 500, {"error": {"message": "nope"}}, False
+        return openai_tool_reply(request)
+
+    model_server.reply = reply
+    service = chat(tmp_path, connection(model_server))
+    service.wiki_search = lambda params: {"total": 1, "documents": [{"id": "d1", "title": "회의록"}]}
+    try:
+        first = service.dispatch("agent.send", {"text": "회의록 찾아 줘", "request_id": "r1"})
+        assert first["reply"]["engine"] == "error"
+        # The next turn starts a fresh worker and completes normally.
+        second = service.dispatch("agent.send", {"text": "다시 찾아 줘", "request_id": "r2"})
+        assert second["reply"]["engine"] == "hermes"
+        assert second["reply"]["content"] == "회의록 문서를 찾았습니다."
+    finally:
+        service.agent.shutdown()
 
 
 @bundled
@@ -226,7 +266,10 @@ def test_bundled_hermes_stops_when_asked(tmp_path, model_server):
     outcome = {}
 
     def send():
-        outcome["sent"] = service.dispatch("agent.send", {"text": "구글 laptop", "request_id": "r-stop"})
+        try:
+            outcome["sent"] = service.dispatch("agent.send", {"text": "회의록 찾아 줘", "request_id": "r-stop"})
+        except Exception as error:  # A stop surfaces as a UserError to the caller.
+            outcome["error"] = error
 
     thread = threading.Thread(target=send)
     thread.start()
@@ -239,6 +282,12 @@ def test_bundled_hermes_stops_when_asked(tmp_path, model_server):
     thread.join(30)
     try:
         assert not thread.is_alive()
-        assert "중지" in outcome["sent"]["reply"]["content"] and outcome["sent"]["reply"]["actions"] == []
+        # The turn ends, cancelled; the caller hears that it stopped (message or UserError).
+        said = (
+            outcome.get("sent", {}).get("reply", {}).get("content", "")
+            if "sent" in outcome
+            else str(outcome.get("error", ""))
+        )
+        assert "중지" in said
     finally:
         service.agent.shutdown()

@@ -15,6 +15,7 @@ import { useActions, usePreferences, useStats, useStorageDirectory } from './sta
 import ApiSection from './admin/api';
 import ApiManualSection from './admin/api-manual';
 import BackupsSection from './admin/backups';
+import HermesSection from './admin/hermes';
 import LlmSettings from './admin/llm';
 import SitesSection from './admin/sites';
 import TemplatesSection from './admin/templates';
@@ -25,12 +26,13 @@ import { saveTheme, storedTheme, THEMES, type Theme } from './theme';
 import { layoutOf, templateOf } from './widgets';
 
 export type AdminSection =
-  'llm' | 'sites' | 'templates' | 'preferences' | 'api' | 'manual' | 'about';
+  'llm' | 'sites' | 'chat' | 'templates' | 'preferences' | 'api' | 'manual' | 'about';
 // A new site account the admin page opens with, e.g. for the link being imported.
 export type SiteDraft = { url: string; kind?: SiteKind };
 const SECTIONS: [AdminSection, string, typeof Unplug][] = [
   ['llm', 'LLM 연결', Unplug],
   ['sites', '사이트 계정', KeyRound],
+  ['chat', '채팅 에이전트', Bot],
   ['templates', '프롬프트 템플릿', MessageSquareText],
   ['preferences', '화면·검색·대시보드', LayoutGrid],
   ['api', 'AI 도구 연동', Bot],
@@ -82,6 +84,7 @@ export default function Admin({
         <ErrorBoundary key={section} message="이 관리 항목을 표시하지 못했습니다.">
           {section === 'llm' && <LlmSettings />}
           {section === 'sites' && <SitesSection draft={draft} />}
+          {section === 'chat' && <HermesSection />}
           {section === 'templates' && <TemplatesSection />}
           {section === 'preferences' && <Preferences />}
           {section === 'api' && <ApiSection onManual={() => setSection('manual')} />}

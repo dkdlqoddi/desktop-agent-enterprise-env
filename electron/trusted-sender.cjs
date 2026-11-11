@@ -142,15 +142,20 @@ const ALLOWED = new Set([
   'api.copy',
   'api.manual',
   'api.open_docs',
-  // The agent chat (agent_chat.py): its conversation, the planner's state and the actions the user approves.
+  // The agent chat (agent_chat.py): its conversation, the agent's live state, and the user's answers to the
+  // approval and clarify it pauses on. The chat agent's own settings (keys, MCP servers, computer use).
   'agent.messages',
   'agent.send',
   'agent.approve',
   'agent.reject',
+  'agent.approve_command',
+  'agent.answer_clarify',
   'agent.status',
   'agent.stop',
   'agent.clear',
   'agent.engine',
+  'hermes.get',
+  'hermes.update',
   // The web records (web_capture.py) and their visible browser; the exports folder opens in the main process.
   'web.sites',
   'web.status',

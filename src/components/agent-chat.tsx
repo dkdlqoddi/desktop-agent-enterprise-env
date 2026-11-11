@@ -7,13 +7,16 @@ import {
   ExternalLink,
   FileSearch,
   Globe2,
+  HelpCircle,
   ListChecks,
   LoaderCircle,
   MessageSquare,
   ScanSearch,
   Send,
+  ShieldAlert,
   Square,
   Table2,
+  Terminal,
   Trash2,
   X,
   type LucideIcon,
@@ -22,7 +25,9 @@ import {
   api,
   dayTime,
   type AgentCard,
+  type AgentClarify,
   type AgentEngine,
+  type AgentApproval,
   type AgentMessage,
   type AgentSend,
   type AgentStatus,
@@ -65,15 +70,112 @@ function EngineBadge({ engine }: { engine: AgentEngine | null }) {
   const [label, title] = !engine.ready
     ? ['Hermes 준비 안 됨', '내장 Hermes 실행 환경이 없습니다. 앱 배포 파일을 다시 준비해 주세요.']
     : engine.engine === 'hermes'
-      ? ['Hermes', '내장 Hermes 에이전트가 작업을 계획합니다.']
+      ? [
+          'Hermes',
+          '내장 Hermes 에이전트가 직접 도구를 써서 작업을 실행합니다. 위험한 명령만 확인을 받습니다.',
+        ]
       : [
           '기본 계획기',
-          '내장 Hermes가 없는 개발 실행입니다. 연결한 LLM이 JSON으로 작업을 계획합니다. npm run build:hermes로 Hermes를 준비할 수 있습니다.',
+          '내장 Hermes가 없는 개발 실행입니다. 연결한 LLM이 작업을 카드로 제안만 합니다. npm run build:hermes로 Hermes를 준비할 수 있습니다.',
         ];
   return (
     <span className={`agent-engine ${engine.ready ? '' : 'warn'}`} title={title}>
       <Bot size={14} /> {label}
     </span>
+  );
+}
+
+// A dangerous command the agent paused on: the user allows it (once/always) or refuses it, and the turn goes on.
+function ApprovalPrompt({
+  approval,
+  onDecide,
+}: {
+  approval: AgentApproval;
+  onDecide: (decision: 'once' | 'always' | 'deny') => void;
+}) {
+  return (
+    <div className="agent-interaction approval" role="group" aria-label="명령 실행 확인">
+      <p className="agent-interaction-head">
+        <ShieldAlert size={15} /> 이 명령을 실행할까요?
+      </p>
+      <pre className="agent-command">
+        <Terminal size={13} aria-hidden="true" /> {approval.command}
+      </pre>
+      {approval.description && <p className="agent-interaction-note">{approval.description}</p>}
+      <div className="agent-card-actions">
+        <button className="button primary small" onClick={() => onDecide('once')}>
+          <Check size={14} /> 이번만 실행
+        </button>
+        <button className="button secondary small" onClick={() => onDecide('always')}>
+          항상 허용
+        </button>
+        <button
+          className="button secondary small"
+          data-destructive
+          onClick={() => onDecide('deny')}
+        >
+          <X size={14} /> 거부
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The questions the agent asked to go on: one choice or a short answer each.
+function ClarifyPrompt({
+  clarify,
+  onSubmit,
+}: {
+  clarify: AgentClarify;
+  onSubmit: (answers: Record<string, string>) => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  return (
+    <form
+      className="agent-interaction clarify"
+      aria-label="추가 질문"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit(answers);
+      }}
+    >
+      <p className="agent-interaction-head">
+        <HelpCircle size={15} /> 조금 더 알려 주세요
+      </p>
+      {clarify.questions.map((question) => (
+        <div key={question.qid} className="agent-clarify-question">
+          <p>{question.question}</p>
+          {question.choices?.length ? (
+            <div className="agent-clarify-choices" role="group" aria-label={question.question}>
+              {question.choices.map((choice) => (
+                <button
+                  type="button"
+                  key={choice}
+                  className={`button small ${answers[question.qid] === choice ? 'primary' : 'secondary'}`}
+                  onClick={() => setAnswers((current) => ({ ...current, [question.qid]: choice }))}
+                >
+                  {choice}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <input
+              className="agent-clarify-input"
+              aria-label={question.question}
+              value={answers[question.qid] ?? ''}
+              onChange={(event) =>
+                setAnswers((current) => ({ ...current, [question.qid]: event.target.value }))
+              }
+            />
+          )}
+        </div>
+      ))}
+      <div className="agent-card-actions">
+        <button type="submit" className="button primary small">
+          <Check size={14} /> 보내기
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -284,6 +386,37 @@ export default function AgentChat() {
     }
   };
 
+  // The user's answer to an approval or clarify the agent paused on; the turn then goes on.
+  const decide = async (decision: 'once' | 'always' | 'deny') => {
+    const interaction = status?.interaction;
+    if (!sending || interaction?.kind !== 'approval') return;
+    setStatus((current) => (current ? { ...current, interaction: null } : current));
+    try {
+      await api('agent.approve_command', {
+        request_id: sending.id,
+        interaction_id: interaction.interaction_id,
+        decision,
+      });
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), true);
+    }
+  };
+
+  const answerClarify = async (answers: Record<string, string>) => {
+    const interaction = status?.interaction;
+    if (!sending || interaction?.kind !== 'clarify') return;
+    setStatus((current) => (current ? { ...current, interaction: null } : current));
+    try {
+      await api('agent.answer_clarify', {
+        request_id: sending.id,
+        interaction_id: interaction.interaction_id,
+        answers,
+      });
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), true);
+    }
+  };
+
   const clear = async () => {
     await api('agent.clear');
     setMessages([]);
@@ -295,7 +428,7 @@ export default function AgentChat() {
         <div>
           <p className="eyebrow">AGENT</p>
           <h1>채팅</h1>
-          <p>말로 맡기면 계획을 보여 드리고, 확인한 작업만 실행합니다.</p>
+          <p>말로 맡기면 에이전트가 바로 처리하고, 위험한 명령만 확인을 받습니다.</p>
         </div>
         <div className="agent-heading-tools">
           <EngineBadge engine={engine} />
@@ -347,12 +480,33 @@ export default function AgentChat() {
                 </li>
                 <li className="agent-message assistant pending">
                   <div className="agent-bubble">
+                    {!!status?.progress?.length && (
+                      <ul className="agent-progress" aria-label="진행한 작업">
+                        {status.progress.slice(-6).map((step, index) => (
+                          <li key={index} className={step.event}>
+                            {step.event === 'tool.completed' ? (
+                              <Check size={12} />
+                            ) : (
+                              <LoaderCircle className="spin" size={12} />
+                            )}{' '}
+                            {step.text}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <p className="agent-text">
                       <LoaderCircle className="spin" size={14} />{' '}
-                      {status?.draft || status?.text || '작업을 준비하고 있습니다.'}
+                      {status?.draft || status?.text || '작업을 진행하고 있습니다.'}
                     </p>
-                    {status?.draft && (
-                      <span className="agent-card-note">작성 중인 응답 · 실행 전</span>
+                    {status?.interaction?.kind === 'approval' && (
+                      <ApprovalPrompt approval={status.interaction} onDecide={decide} />
+                    )}
+                    {status?.interaction?.kind === 'clarify' && (
+                      <ClarifyPrompt
+                        key={status.interaction.interaction_id}
+                        clarify={status.interaction}
+                        onSubmit={answerClarify}
+                      />
                     )}
                   </div>
                 </li>
