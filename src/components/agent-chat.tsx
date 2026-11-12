@@ -31,6 +31,7 @@ import {
   type AgentMessage,
   type AgentTool,
 } from '@/lib/api';
+import { useChatFocus } from './chat-focus';
 import Confirm from './confirm';
 import EmptyState from './empty-state';
 import { useActions, useAgentTurn, useStores } from './state';
@@ -286,6 +287,7 @@ export default function AgentChat() {
   const [text, setText] = useState('');
   const list = useRef<HTMLOListElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  useChatFocus(input);
   // The turns that ended before this screen was shown are in the conversation it loads.
   const taken = useRef(ended.n);
   // Only the conversation read last is shown: one asked for earlier may answer later, without what was saved since.

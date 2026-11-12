@@ -2123,6 +2123,32 @@ dialog.drawer {
 .setting small {
   font-weight: 400;
 }
+/* 빠른 호출 (admin → 화면·검색·대시보드): its settings in a card of their own. */
+.quick-access {
+  padding: 2px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+.quick-access legend {
+  padding: 0 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.quick-access .setting:last-child {
+  border-bottom: 0;
+}
+.quick-access .setting > select {
+  flex: none;
+  width: auto;
+  min-width: 190px;
+}
+.quick-access small.danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
 .sites,
 .templates {
   display: flex;

@@ -8,6 +8,9 @@ const {
   session,
   clipboard,
   Menu,
+  Tray,
+  globalShortcut,
+  nativeImage,
   Notification,
   powerMonitor,
   shell,
@@ -52,6 +55,7 @@ const { Recorder, PRIVILEGES: RECORDER_SCHEME } = require('./recorder.cjs');
 const { DemoRun, demoLaunch, renderAgain } = require('./demo.cjs');
 const demoPlan = require('./demo-plan.cjs');
 const { ScreenZoom } = require('./zoom.cjs');
+const { QuickAccess } = require('./quick-access.cjs');
 
 // The backend, which runs every browser of the app with Python Playwright, uses the Chromium packaged with the app.
 if (app.isPackaged)
@@ -121,6 +125,9 @@ let demo;
 let demoRunning;
 // The zoom of the window's screen (electron/zoom.cjs).
 let zoom;
+// The chat from anywhere on the desktop: the shortcut, the tray icon and keeping the app running there
+// (electron/quick-access.cjs).
+let quick;
 
 // Tests shorten the schedule check; bounded so it can never poll the backend in a tight loop.
 const SCHEDULE_INTERVAL = Math.min(
@@ -1322,6 +1329,10 @@ async function handle(method, params, { access } = {}) {
   else if (method === 'app.status') result = await appStatus();
   else if (['app.window', 'app.screenshot', 'app.reload'].includes(method))
     result = await control.perform(method, params, { access });
+  // The screens' own settings of the quick access to the chat (quick-access.cjs), which no AI tool reaches: they are
+  // not in the local API's catalog.
+  else if (method === 'quick.get') result = await quick.read();
+  else if (method === 'quick.update') result = await quick.update(params);
   else if (!storage.initialized)
     throw new ApiError(503, 'unavailable', '먼저 Wiki 저장 위치를 선택해 주세요.');
   else if (method.startsWith('app.')) {
@@ -1491,6 +1502,8 @@ function createWindow() {
   let warned = 0;
   current.on('close', (event) => {
     if (stopping || leaving) return;
+    // Kept running in the tray (the user's choice, off by default): the window hides instead, with what is on it.
+    if (quick?.keepOnClose(event)) return;
     event.preventDefault();
     if (asking) return;
     asking = true;
@@ -1760,6 +1773,21 @@ else {
         if (trustedSender(event, ownScreen())) control.settle(reply);
       });
       createWindow();
+      // The shortcut and the tray icon, which show this window; a demo records without them, and its settings change
+      // nothing the user's next start reads.
+      quick = new QuickAccess({
+        app,
+        Tray,
+        Menu,
+        globalShortcut,
+        nativeImage,
+        window: () => window,
+        file: plan ? null : path.join(userData, 'quick-access.json'),
+        icon: path.join(ROOT, 'assets', 'icon.png'),
+        failed: (error) =>
+          void diagnostics.record(`빠른 호출을 준비하지 못했습니다: ${error.message}`),
+      });
+      if (!plan && !stopping) void quick.start();
       await started;
       if (stopping) return; // The window was closed while the app started.
       // The checks of reminders, schedules and routines ask the backend only while it runs with its settings:
@@ -1857,6 +1885,8 @@ app.on('before-quit', (event) => {
   notices?.stop();
   jobs?.stop();
   control?.stop();
+  // The shortcut goes back to the system and the tray icon away, before the backend's stop that may take seconds.
+  quick?.stop();
   clearTimeout(changeTimer);
   // A demo still recording keeps what it recorded, with its captions, without making the video.
   demo?.abort({ quitting: true });

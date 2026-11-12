@@ -46,6 +46,8 @@ export type Session = {
   reader: ReaderTarget | null;
   // The automatic routine to show with its results (a notification was clicked), counted so the same one shows again.
   routineFocus: { id: string; n: number } | null;
+  // How often the quick-access shortcut or the tray asked for the chat's message box (chat-focus.ts meets each once).
+  chatFocus: number;
   storageDirectory: string;
 };
 
@@ -78,6 +80,8 @@ export type Actions = {
   openAdmin: (section?: AdminSection, draft?: SiteDraft) => void;
   setAdminSection: (section: AdminSection) => void;
   showRoutine: (id: string) => void;
+  // Shows the chat with the caret in its message box (the quick-access shortcut, the tray's 채팅 열기).
+  focusChat: () => void;
   // Reads the jobs again after one was started, stopped or cleared; its progress then comes by itself.
   watchJobs: () => void;
 };
@@ -132,6 +136,7 @@ export function createAppStores(): AppStores {
     admin: { section: 'llm', n: 0 },
     reader: null,
     routineFocus: null,
+    chatFocus: 0,
     storageDirectory: '',
   });
   const config = createStore<Config>({
@@ -269,6 +274,10 @@ export function createAppStores(): AppStores {
         ...current,
         routineFocus: { id, n: (current.routineFocus?.n ?? 0) + 1 },
       }));
+    },
+    focusChat: () => {
+      navigate('chat');
+      session.set((current) => ({ ...current, chatFocus: current.chatFocus + 1 }));
     },
     watchJobs: () => void feed.refresh(),
   };
@@ -456,7 +465,7 @@ export function useDocumentPages(filters: DocumentQuery | null) {
 // Everything at once, as the screens read it before the state was split: a component that uses it draws again with
 // any change of any slice. Kept for code written against it; the screens use the hooks above.
 export type AppState = Actions &
-  Omit<Session, 'admin' | 'reader'> & {
+  Omit<Session, 'admin' | 'reader' | 'chatFocus'> & {
     settings: Settings;
     configured: boolean;
     preferences: Preferences;

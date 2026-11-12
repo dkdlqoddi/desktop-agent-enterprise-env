@@ -8,6 +8,8 @@ declare global {
   interface Window {
     privateAgent?: {
       onAssistantOpen?: (callback: () => void) => () => void;
+      // The quick-access shortcut or the tray's 채팅 열기: the chat, with the caret in its message box.
+      onChatFocus?: (callback: () => void) => () => void;
       // An answer as the LLM writes it, for a question asked with stream (assistant.ask).
       onAssistantDelta?: (callback: (event: AssistantStreamEvent) => void) => () => void;
       onScheduleEvent?: (callback: (event: ScheduleEvent) => void) => () => void;

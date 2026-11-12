@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('assistant:open', listener);
       return () => ipcRenderer.removeListener('assistant:open', listener);
     },
+    // The quick-access shortcut or the tray's 채팅 열기 (electron/quick-access.cjs): show the chat with the caret in its
+    // message box. It carries nothing, and the callback is given nothing.
+    onChatFocus: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on('chat:focus', listener);
+      return () => ipcRenderer.removeListener('chat:focus', listener);
+    },
     onScheduleEvent: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on('schedule:event', listener);

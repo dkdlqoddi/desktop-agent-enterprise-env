@@ -781,6 +781,20 @@ export type Preferences = {
   web_assist: boolean;
 };
 
+// The quick access to the chat from anywhere on the desktop (quick.*, electron/quick-access.cjs): the system-wide
+// shortcut ('' for none, otherwise one of `presets`), the tray icon, and whether closing the window keeps the app
+// running in the tray. `registered` is false while the shortcut could not be registered (another program holds it);
+// `tray_available` is false where this system could make no tray icon.
+export type QuickAccessPreset = { shortcut: string; label: string };
+export type QuickAccess = {
+  shortcut: string;
+  tray: boolean;
+  keep_running: boolean;
+  registered: boolean;
+  tray_available: boolean;
+  presets: QuickAccessPreset[];
+};
+
 // The local API and MCP server for AI tools (electron/api-*.cjs). The token itself stays in the main process.
 export type ApiAccess = 'read' | 'write' | 'full';
 export type ApiLevel = { id: ApiAccess; label: string; description: string };

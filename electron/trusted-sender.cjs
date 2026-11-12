@@ -177,6 +177,10 @@ const ALLOWED = new Set([
   'web.export',
   'web.open_exports',
   'web.delete_capture',
+  // The quick access to the chat (quick-access.cjs): its shortcut, tray icon and keep-running switch, kept and applied
+  // by the main process; the screens' own, never an AI tool's.
+  'quick.get',
+  'quick.update',
   // What to send when reporting a problem; also from the first-run screen, when the backend fails to start.
   'diagnostics.copy',
   'diagnostics.open_folder',

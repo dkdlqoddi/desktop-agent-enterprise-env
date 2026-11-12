@@ -18,6 +18,7 @@ import ApiManualSection from './admin/api-manual';
 import BackupsSection from './admin/backups';
 import HermesSection from './admin/hermes';
 import LlmSettings from './admin/llm';
+import QuickAccessSettings from './admin/quick-access';
 import SitesSection from './admin/sites';
 import TemplatesSection from './admin/templates';
 import TrashSection from './admin/trash';
@@ -145,6 +146,7 @@ function Preferences() {
           </small>
         </span>
       </div>
+      <QuickAccessSettings />
       <label className="setting">
         <span>
           <strong>검색할 때 AI 답변 만들기</strong>

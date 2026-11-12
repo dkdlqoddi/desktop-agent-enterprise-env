@@ -112,6 +112,20 @@ function useMainProcess(stores: AppStores) {
   );
   useEffect(
     () =>
+      window.privateAgent?.onChatFocus?.(() => {
+        // The quick-access shortcut or the tray's 채팅 열기: the chat, with the caret in its message box. The document
+        // panel would stand in front of it and closes, unless the user is writing in it.
+        if (editingDocument())
+          actions.notify(
+            '작성 중인 문서가 있어 문서 창을 그대로 두었습니다. 저장하거나 닫으면 채팅이 보입니다.',
+          );
+        else actions.closeReader();
+        actions.focusChat();
+      }),
+    [actions],
+  );
+  useEffect(
+    () =>
       window.privateAgent?.onScheduleEvent?.((event) => {
         if (event.type === 'open') {
           // A document being written stays: the run waits in the history.

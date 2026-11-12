@@ -95,6 +95,7 @@
     "files": [
       "electron/**/*",
       "out/**/*",
+      "assets/icon.png",
       "package.json",
       "!node_modules/**/*"
     ],

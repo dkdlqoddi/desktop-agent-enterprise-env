@@ -173,6 +173,8 @@ export type ScreenMethod =
   | 'hermes.update'
   | 'import.choose'
   | 'jobs.status'
+  | 'quick.get'
+  | 'quick.update'
   | 'storage.choose'
   | 'storage.initialize'
   | 'web.capture'
