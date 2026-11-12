@@ -16,7 +16,7 @@ const ACCESS_LEVELS = [
     id: 'write',
     label: '조회·변경·앱 제어',
     description:
-      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 할 일·프롬프트·예약·자동 작업·대화·실행 기록의 삭제는 휴지통 없이 바로 지워집니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 가져온 Office 문서의 원본 파일에 반영하기와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
+      '문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(대화·실행 기록을 포함해 지운 것은 모두 휴지통으로 가고, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 가져온 Office 문서의 원본 파일에 반영하기와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.',
   },
   {
     id: 'full',
@@ -34,7 +34,7 @@ const SCOPES = {
   // Importing this PC's files: the app reads them with the user's own rights.
   files: { label: '파일 가져오기', levels: ['full'] },
   admin: { label: '설정', levels: ['full'] },
-  // Emptying the trash, where nothing brings a purged document back, and putting a backup in the Wiki's place.
+  // Emptying the trash, where nothing brings back what was purged, and putting a backup in the Wiki's place.
   destructive: { label: '영구 삭제·백업 복원', levels: ['full'] },
 };
 
@@ -79,6 +79,7 @@ const ADMIN_SECTIONS = [
   'preferences',
   'api',
   'manual',
+  'trash',
   'about',
 ];
 const WINDOW_ACTIONS = [
@@ -183,7 +184,7 @@ const METHODS = {
   'assistant.cancel': method('write', '진행 중인 답변 중지 (받은 데까지 대화에 저장)'),
   'assistant.conversations': method('read', '최근 대화 50개, 또는 limit·cursor로 나누어 받기'),
   'assistant.history': method('read', '대화의 메시지와 근거'),
-  'assistant.delete': method('write', '대화 삭제'),
+  'assistant.delete': method('write', '대화를 휴지통으로 (30일 보관, trash.restore로 복원)'),
   'briefing.get': method('read', '오늘의 브리핑 자료 (할 일·알림·최근 문서)'),
   'briefing.generate': method('read', 'LLM이 쓰는 오늘의 브리핑', { slow: true }),
 
@@ -191,7 +192,7 @@ const METHODS = {
   'tasks.list': method('read', '전체 할 일 목록'),
   'tasks.save': method('write', '할 일 만들기·고치기'),
   'tasks.save_many': method('write', '할 일 여러 개 저장 (최대 20개)'),
-  'tasks.delete': method('write', '할 일 삭제'),
+  'tasks.delete': method('write', '할 일을 휴지통으로 (30일 보관, trash.restore로 복원)'),
   'tasks.extract': method('read', '글이나 문서에서 할 일 후보 추출 (저장하지 않음)', {
     slow: true,
   }),
@@ -202,18 +203,21 @@ const METHODS = {
 
   'prompts.list': method('read', '프롬프트 템플릿 목록'),
   'prompts.save': method('write', '프롬프트 템플릿 만들기·고치기'),
-  'prompts.delete': method('write', '프롬프트 템플릿 삭제'),
+  'prompts.delete': method(
+    'write',
+    '프롬프트 템플릿을 그 예약과 함께 휴지통으로 (30일 보관, trash.restore로 복원)',
+  ),
   'prompts.run': method('write', '프롬프트 실행 (실행 기록에 저장)', { slow: true }),
   'runs.list': method('read', '실행 기록 목록'),
   'runs.get': method('read', '실행 기록 하나 (입력·출력)'),
-  'runs.delete': method('write', '실행 기록 삭제'),
+  'runs.delete': method('write', '실행 기록을 휴지통으로 (30일 보관, trash.restore로 복원)'),
   'runs.stats': method('read', '기간별 실행 통계'),
   'runs.active': method('read', '지금 실행 중인 프롬프트'),
 
   'schedules.list': method('read', '예약 실행 목록'),
   'schedules.save': method('write', '예약 만들기·고치기'),
   'schedules.toggle': method('write', '예약 켜기·끄기'),
-  'schedules.delete': method('write', '예약 삭제'),
+  'schedules.delete': method('write', '예약을 휴지통으로 (30일 보관, trash.restore로 복원)'),
   'schedules.run': method('write', '예약을 지금 한 번 실행', { slow: true }),
 
   'routines.catalog': method(
@@ -231,12 +235,25 @@ const METHODS = {
     '자동 작업 만들기·고치기 (이 PC의 파일을 읽는 작업은 전체 허용 범위에서만)',
   ),
   'routines.toggle': method('write', '자동 작업 켜기·끄기'),
-  'routines.delete': method('write', '자동 작업 삭제'),
+  'routines.delete': method(
+    'write',
+    '자동 작업을 실행 기록과 함께 휴지통으로 (30일 보관, trash.restore로 복원)',
+  ),
   'routines.run': method(
     'write',
     '자동 작업을 지금 한 번 실행 (백그라운드, routines.runs로 결과 확인)',
   ),
   'routines.cancel': method('write', '실행 중이거나 실행을 기다리는 자동 작업 중지'),
+
+  'trash.list': method(
+    'read',
+    '휴지통 목록: 지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업 (30일 보관, 문서는 wiki.trash)',
+  ),
+  'trash.restore': method(
+    'write',
+    '휴지통의 항목 복원 (ids는 trash.list의 id. 함께 지워진 메시지·예약·실행 기록도 돌아옴)',
+  ),
+  'trash.purge': method('destructive', '휴지통의 항목 영구 삭제 (ids, 또는 all: true로 비우기)'),
 
   'import.start': method(
     'write',
@@ -354,6 +371,11 @@ const IDS = (max) =>
     { type: 'string' },
     { required: true },
   );
+const TRASH_IDS = array(
+  '휴지통 항목 ID 목록 (1~1,000개): trash.list의 id, 또는 삭제 응답의 trash_ids',
+  { type: 'string' },
+  { required: true },
+);
 const TIMEZONE = integer(
   '현지 시간대: JavaScript getTimezoneOffset() 값(분). 한국은 -540. 비우면 이 PC의 시간대',
 );
@@ -766,7 +788,9 @@ const GROUPS = [
       route('GET', '/conversations/{id}', 'assistant.history', '대화의 메시지·근거·검색 과정', {
         id: ID,
       }),
-      route('DELETE', '/conversations/{id}', 'assistant.delete', '대화 삭제', { id: ID }),
+      route('DELETE', '/conversations/{id}', 'assistant.delete', '대화를 휴지통으로 (30일 보관)', {
+        id: ID,
+      }),
       route('GET', '/briefing', 'briefing.get', '오늘의 브리핑 자료', {
         timezone_offset: TIMEZONE,
       }),
@@ -792,7 +816,7 @@ const GROUPS = [
         ...TASK_FIELDS,
         expected_updated_at: string('이 시각 이후 바뀌었으면 거절 (동시 수정 방지)'),
       }),
-      route('DELETE', '/tasks/{id}', 'tasks.delete', '할 일 삭제', { id: ID }),
+      route('DELETE', '/tasks/{id}', 'tasks.delete', '할 일을 휴지통으로 (30일 보관)', { id: ID }),
       route('POST', '/tasks/batch', 'tasks.save_many', '할 일 여러 개를 한 번에 저장', {
         tasks: array('할 일 (1~20개)', { type: 'object' }, { required: true }),
       }),
@@ -830,7 +854,13 @@ const GROUPS = [
         id: ID,
         ...PROMPT_FIELDS,
       }),
-      route('DELETE', '/prompts/{id}', 'prompts.delete', '프롬프트 템플릿 삭제', { id: ID }),
+      route(
+        'DELETE',
+        '/prompts/{id}',
+        'prompts.delete',
+        '프롬프트 템플릿을 그 예약과 함께 휴지통으로 (30일 보관)',
+        { id: ID },
+      ),
       route('POST', '/prompts/{prompt_id}/run', 'prompts.run', '프롬프트 실행', {
         prompt_id: string('프롬프트 ID', { required: true }),
         variables: object('{{변수}} 값 {"변수": "값"}'),
@@ -851,7 +881,9 @@ const GROUPS = [
       }),
       route('GET', '/runs/active', 'runs.active', '지금 실행 중인 프롬프트'),
       route('GET', '/runs/{id}', 'runs.get', '실행 기록 하나 (입력·출력)', { id: ID }),
-      route('DELETE', '/runs/{id}', 'runs.delete', '실행 기록 삭제', { id: ID }),
+      route('DELETE', '/runs/{id}', 'runs.delete', '실행 기록을 휴지통으로 (30일 보관)', {
+        id: ID,
+      }),
     ],
   },
   {
@@ -866,7 +898,9 @@ const GROUPS = [
         id: ID,
         ...SCHEDULE_FIELDS,
       }),
-      route('DELETE', '/schedules/{id}', 'schedules.delete', '예약 삭제', { id: ID }),
+      route('DELETE', '/schedules/{id}', 'schedules.delete', '예약을 휴지통으로 (30일 보관)', {
+        id: ID,
+      }),
       route('POST', '/schedules/{id}/toggle', 'schedules.toggle', '예약 켜기·끄기', {
         id: ID,
         enabled: boolean('켜기', { required: true }),
@@ -894,7 +928,13 @@ const GROUPS = [
         id: ID,
         ...ROUTINE_FIELDS,
       }),
-      route('DELETE', '/routines/{id}', 'routines.delete', '자동 작업 삭제', { id: ID }),
+      route(
+        'DELETE',
+        '/routines/{id}',
+        'routines.delete',
+        '자동 작업을 실행 기록과 함께 휴지통으로 (30일 보관)',
+        { id: ID },
+      ),
       route('POST', '/routines/{id}/toggle', 'routines.toggle', '자동 작업 켜기·끄기', {
         id: ID,
         enabled: boolean('켜기', { required: true }),
@@ -919,6 +959,37 @@ const GROUPS = [
         id: ID,
         limit: integer('최대 개수 1~30', { default: 10, minimum: 1, maximum: 30 }),
       }),
+    ],
+  },
+  {
+    id: 'trash',
+    title: '휴지통',
+    description:
+      '지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업은 30일 동안 휴지통에 있다가 지워집니다(문서의 휴지통은 ‘문서’의 /documents/trash). 삭제 응답의 trash_ids나 목록의 id로 복원하면 함께 지워진 것(대화의 메시지, 템플릿의 예약, 자동 작업의 실행 기록)도 돌아옵니다. 복원한 예약과 자동 작업은 휴지통에 있던 동안 지난 실행을 건너뛰고 다음 차례부터 실행합니다. 영구 삭제는 허용 범위 ‘전체’에서만 됩니다.',
+    routes: [
+      route(
+        'GET',
+        '/trash',
+        'trash.list',
+        '휴지통 목록 (최근 삭제 순, 최대 1,000개): id·kind(conversation·run·task·prompt·schedule·routine)·item_id·title·detail·deleted_at, 전체 개수 total과 보관 일수 days',
+      ),
+      route(
+        'POST',
+        '/trash/restore',
+        'trash.restore',
+        '휴지통의 항목 복원 (모두 또는 전혀). restored는 돌아온 개수, notes는 꺼 둔 채로 복원한 예약·자동 작업 안내',
+        { ids: TRASH_IDS },
+      ),
+      route(
+        'POST',
+        '/trash/purge',
+        'trash.purge',
+        '휴지통의 항목 영구 삭제: ids, 또는 all: true로 모두 (허용 범위 ‘전체’)',
+        {
+          ids: array('휴지통 항목 ID 목록 (1~1,000개); all이 true면 생략', { type: 'string' }),
+          all: boolean('휴지통을 모두 비우기', { default: false }),
+        },
+      ),
     ],
   },
   {

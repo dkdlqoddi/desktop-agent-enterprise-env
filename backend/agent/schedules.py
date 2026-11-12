@@ -186,11 +186,13 @@ class Schedules:
             return self.public(self.get(db, ident))
 
     def delete(self, p):
+        """Move a schedule to the trash (trash.py), where it does not run; its runs stay in the history."""
         ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            db.execute("DELETE FROM schedules WHERE id=?", (ident,))
+            db.execute("BEGIN IMMEDIATE")
+            result = self.service.trash.discard(db, "schedule", ident)
         self.service.routines.withdraw_schedule(ident)
-        return {"ok": True}
+        return result
 
     def finish(self, ident, run):
         with self.db.connect() as db:

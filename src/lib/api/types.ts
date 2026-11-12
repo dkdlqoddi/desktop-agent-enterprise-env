@@ -303,6 +303,32 @@ export type Stats = { prompts: number; documents: number; keywords: number; rela
 export type Trash = { documents: WikiDocument[]; days: number };
 // What a deletion answers: the ids moved to the trash, for 되돌리기 (wiki.restore).
 export type Deleted = { deleted: number; ids: string[] };
+// What is deleted beside documents waits in a trash of its own (trash.list): a conversation, a prompt run, a task, a
+// prompt template (with its schedules), a schedule or an automatic routine (with its runs), the last deleted first.
+// `id` names the entry for trash.restore and trash.purge, `item_id` what was deleted; `detail` tells entries of the
+// same title apart, and a routine's entry names its recipe. `total` counts every entry (the list answers the newest
+// 1,000), and each waits `days` days before it is deleted for good by itself.
+export type TrashKind = 'conversation' | 'run' | 'task' | 'prompt' | 'schedule' | 'routine';
+export type TrashEntry = {
+  id: string;
+  kind: TrashKind;
+  item_id: string;
+  title: string;
+  detail: string;
+  deleted_at: string;
+  recipe?: string;
+};
+export type TrashEntries = { items: TrashEntry[]; total: number; days: number };
+// What deleting one of those answers: whether there was one to delete, and the entry it became, for 되돌리기
+// (trash.restore).
+export type Trashed = { ok: true; deleted: number; trash_ids: string[] };
+// What trash.restore answers: the entries that came back (a template that came back for its schedule among them) and
+// what did not come back as it was, such as a schedule restored turned off.
+export type TrashRestored = {
+  restored: number;
+  items: { id: string; kind: TrashKind; item_id: string; title: string }[];
+  notes: string[];
+};
 // Two texts compared line by line (backend/agent/changes.py diff): hunks of changed lines (+ added, - removed) among a
 // few unchanged ones, each starting at those line numbers of the two texts; `more` counts changed lines left out.
 export type DiffLine = { op: ' ' | '+' | '-'; text: string };

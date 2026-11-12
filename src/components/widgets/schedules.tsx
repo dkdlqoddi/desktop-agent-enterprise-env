@@ -10,12 +10,14 @@ import {
   type ScheduleDraft,
 } from '../prompt-schedules';
 import { useActiveRuns, useNow } from '../run-history';
+import { useDiscard } from '../trashed';
 import { useActions, useConfigured, usePrompts, useQuery } from '../state';
 
 export default function SchedulesWidget() {
   const prompts = usePrompts();
   const configured = useConfigured();
   const { openAdmin, notify, bumpRuns } = useActions();
+  const discard = useDiscard();
   // Loaded again when the runs or the templates change (its tags).
   const { data, error } = useQuery<Schedule[]>('schedules.list');
   const schedules = data ?? null;
@@ -199,13 +201,14 @@ export default function SchedulesWidget() {
                     name={`${schedule.name} 삭제`}
                     label="삭제"
                     icon={<Trash2 size={15} />}
-                    question="예약을 삭제할까요? 실행 기록은 남습니다."
+                    question="예약을 휴지통으로 옮길까요? 30일 안에 복원할 수 있고, 실행 기록은 남습니다."
                     disabled={!!busy}
                     onConfirm={() =>
-                      act('delete', async () => {
-                        await api('schedules.delete', { id: schedule.id });
-                        notify('예약을 삭제했습니다.');
-                      })
+                      act('delete', () =>
+                        discard('schedules.delete', schedule.id, '예약을 휴지통으로 옮겼습니다.', [
+                          'runs',
+                        ]),
+                      )
                     }
                   />
                 </div>

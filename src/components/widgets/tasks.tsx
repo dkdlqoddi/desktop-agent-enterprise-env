@@ -6,6 +6,7 @@ import { useActions, useConfigured, useDocuments } from '../state';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
 import { blankTask, TaskFields } from '../task-editor';
+import { useDiscard } from '../trashed';
 import { Loaded, useAssistantData } from './assistant-data';
 
 const FILTERS = { open: '진행 중', paused: '보류', done: '완료', all: '전체' };
@@ -80,6 +81,7 @@ function changed(task: Task, next: Task) {
 export default function TasksWidget() {
   const configured = useConfigured();
   const { openAdmin, notify } = useActions();
+  const discard = useDiscard();
   const { tasks, refresh } = useAssistantData();
   const [filter, setFilter] = useState<keyof typeof FILTERS>('open');
   const [editing, setEditing] = useState<{ id: string; changes: Partial<Task> } | null>(null);
@@ -246,10 +248,15 @@ export default function TasksWidget() {
                           <Confirm
                             label="삭제"
                             icon={<Trash2 size={14} />}
-                            question="이 할 일과 알림을 삭제할까요?"
+                            question="이 할 일을 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다."
                             onConfirm={() =>
                               void act(async () => {
-                                await api('tasks.delete', { id: task.id });
+                                await discard(
+                                  'tasks.delete',
+                                  task.id,
+                                  '할 일을 휴지통으로 옮겼습니다.',
+                                  ['tasks'],
+                                );
                                 setEditing(null);
                               })
                             }

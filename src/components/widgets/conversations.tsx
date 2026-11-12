@@ -1,13 +1,15 @@
 import { useEffect } from 'react';
 import { LoaderCircle, MessageSquareText, Trash2 } from 'lucide-react';
-import { api, date, type Conversation } from '@/lib/api';
+import { date, type Conversation } from '@/lib/api';
 import Confirm from '../confirm';
 import { WidgetHead } from '../dashboard';
 import { useActions, useLiveConversations, useQuery, useSearch } from '../state';
+import { useDiscard } from '../trashed';
 
 export default function ConversationsWidget() {
   const search = useSearch();
   const { notify } = useActions();
+  const discard = useDiscard();
   // Loaded again whenever a conversation is saved or deleted (the search session invalidates them).
   const { data: items, error } = useQuery<Conversation[]>('assistant.conversations');
   // The answers the search box is waiting for: their conversations say so, and a new conversation shows before it is
@@ -96,11 +98,13 @@ export default function ConversationsWidget() {
               name={`${item.title} 대화 삭제`}
               label="삭제"
               icon={<Trash2 size={14} />}
-              question="대화와 근거 발췌를 삭제할까요?"
+              question="대화를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다."
               disabled={answering.has(item.id)}
               onConfirm={async () => {
                 try {
-                  await api('assistant.delete', { id: item.id });
+                  await discard('assistant.delete', item.id, '대화를 휴지통으로 옮겼습니다.', [
+                    'conversations',
+                  ]);
                   search.forget(item.id);
                 } catch (e) {
                   notify((e as Error).message, true);

@@ -337,6 +337,50 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
       webRoutine,
     );
     expect((untouched.result as { name: string }).name).toBe('노트북 광고 기록');
+    // Nor is it a tool's in the trash, where the user's delete puts it: a tool neither sees it there nor brings it
+    // back. What the tool deleted itself it sees and restores; deleting it for good needs the "full" level.
+    const binned = await page.evaluate(
+      (id) => window.privateAgent!.request('routines.delete', { id }),
+      webRoutine,
+    );
+    const hidden = (binned.result as { trash_ids: string[] }).trash_ids[0];
+    const made = (await ai.rest('POST', '/tasks', { title: 'API가 지울 할 일' })).json.result.id;
+    const own = (await ai.rest('DELETE', `/tasks/${made}`)).json.result.trash_ids[0];
+    const bin = (await ai.rest('GET', '/trash')).json.result;
+    expect(bin.items.map((item: { id: string }) => item.id)).toEqual([own]);
+    expect(bin.total).toBe(1);
+    expect((await ai.rest('POST', '/trash/purge', { ids: [own] })).status).toBe(403);
+    const restored = (await ai.rest('POST', '/trash/restore', { ids: [hidden, own] })).json.result;
+    expect(restored.items.map((item: { id: string }) => item.id)).toEqual([own]);
+    // A routine that reads this PC's files comes back only at the level that may have them read.
+    const reader = await page.evaluate(
+      (folder) =>
+        window.privateAgent!.request('routines.save', {
+          kind: 'source_refresh',
+          name: '파일 업데이트',
+          config: { paths: folder },
+          enabled: false,
+        }),
+      directory,
+    );
+    expect(reader.ok, JSON.stringify(reader)).toBe(true);
+    const readerBinned = await page.evaluate(
+      (id) => window.privateAgent!.request('routines.delete', { id }),
+      (reader.result as { id: string }).id,
+    );
+    const files = await ai.rest('POST', '/trash/restore', {
+      ids: (readerBinned.result as { trash_ids: string[] }).trash_ids,
+    });
+    expect(files.status).toBe(403);
+    expect(files.json.error.message).toContain('파일 가져오기');
+    // The user's own screen sees all of it and brings the web routine back.
+    const whole = await page.evaluate(() => window.privateAgent!.request('trash.list'));
+    expect((whole.result as { total: number }).total).toBe(2);
+    const back = await page.evaluate(
+      (id) => window.privateAgent!.request('trash.restore', { ids: [id] }),
+      hidden,
+    );
+    expect((back.result as { restored: number }).restored).toBe(1);
 
     // The admin page and its inputs stay out of reach below the "full" level.
     const admin = await ai.tool('app_navigate', { view: 'admin', section: 'llm' });

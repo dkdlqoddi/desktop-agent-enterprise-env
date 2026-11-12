@@ -3,6 +3,7 @@ import { Braces, LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api, variablesOf, type Prompt, type Schedule } from '@/lib/api';
 import { useActions, usePrompts } from '../state';
 import Confirm from '../confirm';
+import { useDiscard } from '../trashed';
 
 const blank = {
   title: '',
@@ -16,6 +17,7 @@ type Draft = typeof blank & { id?: string };
 export default function TemplatesSection() {
   const prompts = usePrompts();
   const { refresh, notify } = useActions();
+  const discard = useDiscard();
   const [editing, setEditing] = useState<Draft | null>(null);
   return (
     <div className="templates">
@@ -69,12 +71,16 @@ export default function TemplatesSection() {
                   name={`${prompt.title} 삭제`}
                   label="삭제"
                   icon={<Trash2 size={15} />}
-                  question="템플릿과 그 예약을 삭제할까요? 실행 기록은 남습니다."
+                  question="템플릿과 그 예약을 휴지통으로 옮길까요? 30일 안에 복원할 수 있고, 실행 기록은 남습니다."
                   onConfirm={async () => {
                     try {
-                      await api('prompts.delete', { id: prompt.id });
+                      await discard(
+                        'prompts.delete',
+                        prompt.id,
+                        '템플릿을 휴지통으로 옮겼습니다.',
+                        ['prompts'],
+                      );
                       await refresh();
-                      notify('템플릿을 삭제했습니다.');
                     } catch (e) {
                       notify((e as Error).message, true);
                     }

@@ -32,6 +32,7 @@ const {
   RoutineRunner,
   onWake,
   readsFiles,
+  WEB_ROUTINE,
   webRoutine,
   withoutWebRoutines,
 } = require('./routines.cjs');
@@ -661,6 +662,28 @@ async function checkRoutineAccess(method, params, access) {
   if (readsFiles(method, params, saved)) throw forbidden(access, 'files');
   for (const need of await routineNeedsOf(method, params, saved))
     checkLinkAccess(sites.match(need.url, need.kind), access);
+}
+
+// The trash of what is deleted beside documents (backend trash.py): conversations, runs, tasks, templates, schedules
+// and routines. The screens see and restore all of it. An AI tool meets a routine there as it meets the routines
+// themselves (checkRoutineAccess): one of the web records is none of its, so the backend leaves those out of what it
+// lists, restores and purges (without_recipes), and one that reads this PC's files or opens a site the user did not
+// register comes back only with the "full" access level. Neither is ever a value of the tool's own request.
+async function trashRequest(method, params, access) {
+  const values = method === 'trash.list' ? {} : { ids: params.ids };
+  if (method === 'trash.purge') values.all = params.all;
+  if (!access)
+    return rpc(method, method === 'trash.restore' ? { ...values, allow_files: true } : values);
+  values.without_recipes = [WEB_ROUTINE];
+  if (method === 'trash.restore') {
+    values.allow_files = mayReadFiles(access);
+    if (!values.allow_files)
+      for (const routine of await rpc('trash.routines', { ids: params.ids })) {
+        if (routine.files) throw forbidden(access, 'files');
+        for (const need of routine.needs) checkLinkAccess(sites.match(need.url, need.kind), access);
+      }
+  }
+  return rpc(method, values);
 }
 
 // The sites a routine opens, as the backend's recipes name them (routines.needs): for one being saved, from the links
@@ -1371,7 +1394,9 @@ async function handle(method, params, { access } = {}) {
     } else if (method === 'routines.delete' || method === 'routines.cancel')
       result = await rpc(method, params);
     else result = await rpc(method, { ...params, allow_files: allowed });
-  } else if (access && ['routines.catalog', 'routines.list', 'routines.runs'].includes(method)) {
+  } else if (['trash.list', 'trash.restore', 'trash.purge'].includes(method))
+    result = await trashRequest(method, params, access);
+  else if (access && ['routines.catalog', 'routines.list', 'routines.runs'].includes(method)) {
     // What an AI tool reads of the routines leaves the web records' out, and the runs of one are not its to ask for.
     if (method === 'routines.runs' && typeof params.id === 'string')
       await checkRoutineAccess(method, params, access);

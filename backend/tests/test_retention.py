@@ -60,7 +60,7 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
     with service.db.connect() as db:
         db.execute("UPDATE documents SET deleted_at=? WHERE id=?", (ago(days=service_module.TRASH_DAYS + 1), old))
     service.backup("manual")  # Which still holds what the policy removes.
-    assert service.retain() == {"runs": 6, "conversations": 1, "messages": 4, "documents": 1}
+    assert service.retain() == {"runs": 6, "conversations": 1, "messages": 4, "trash": 0, "documents": 1}
     with service.db.connect() as db:
         assert [row[0] for row in db.execute("SELECT id FROM runs ORDER BY created_at DESC")] == [
             f"run-{index}" for index in range(3, 8)
@@ -77,7 +77,7 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
     }
     assert [doc["id"] for doc in service.wiki_trash({})["documents"]] == [recent]
     # Nothing more to remove: the same again changes nothing.
-    assert service.retain() == {"runs": 0, "conversations": 0, "messages": 0, "documents": 0}
+    assert service.retain() == {"runs": 0, "conversations": 0, "messages": 0, "trash": 0, "documents": 0}
     # What was written since that backup is in no backup yet: it stays, however much of it there is, until the next
     # backup has it. What it pushes out of the newest goes, as the backup holds that.
     add_conversation(service, "방금", ago(seconds=-2), messages=9)
@@ -86,7 +86,7 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
             "INSERT INTO runs (id,prompt_id,title,input,output,created_at) VALUES (?,NULL,'실행','입력','출력',?)",
             [(f"new-{index}", ago(seconds=-2 - index)) for index in range(9)],
         )
-    assert service.retain() == {"runs": 5, "conversations": 1, "messages": 0, "documents": 0}
+    assert service.retain() == {"runs": 5, "conversations": 1, "messages": 0, "trash": 0, "documents": 0}
     with service.db.connect() as db:
         assert db.execute("SELECT count(*) FROM messages WHERE conversation_id='방금'").fetchone()[0] == 9
         assert [row[0] for row in db.execute("SELECT id FROM runs ORDER BY id")] == [f"new-{i}" for i in range(9)]

@@ -637,11 +637,13 @@ const TOOLS = [
     'delete_task',
     '할 일 삭제',
     'write',
-    'Delete a task.',
+    'Move a task to the trash. The user can restore it for 30 days (call_api trash.restore with the trash id brings it back; trash.purge, at the "full" level, deletes for good).',
     { id: string('Task id.', { required: true }) },
     async (args, ctx) => {
-      await ctx.call('tasks.delete', { id: args.id });
-      return `Deleted task ${args.id}.`;
+      const { deleted, trash_ids: ids } = await ctx.call('tasks.delete', { id: args.id });
+      return deleted
+        ? `Moved task ${args.id} to the trash (restorable for 30 days) — trash id: ${ids[0]}.`
+        : `No task ${args.id}: nothing was deleted.`;
     },
     { annotations: destroys },
   ),

@@ -127,19 +127,33 @@ test('automation: scheduled prompts run by themselves and the history widget sho
     const failure = await page.evaluate(() =>
       window.privateAgent!.request('runs.list', { status: 'error' }),
     );
-    await app.evaluate(
-      ({ BrowserWindow }, id) =>
-        BrowserWindow.getAllWindows()[0].webContents.send('schedule:event', {
-          type: 'open',
-          run_id: id,
-        }),
-      (failure.result as { id: string }[])[0].id,
-    );
+    const failedId = (failure.result as { id: string }[])[0].id;
+    const openRun = () =>
+      app!.evaluate(
+        ({ BrowserWindow }, id) =>
+          BrowserWindow.getAllWindows()[0].webContents.send('schedule:event', {
+            type: 'open',
+            run_id: id,
+          }),
+        failedId,
+      );
+    await openRun();
     const failedRun = page.getByRole('dialog', { name: '업무 메일 작성' });
     await expect(failedRun).toContainText('HTTP 503');
     await failedRun.getByRole('button', { name: '삭제', exact: true }).click();
     await failedRun.getByRole('button', { name: '삭제', exact: true }).click();
-    await expect(page.getByText('실행 기록을 삭제했습니다.')).toBeVisible();
+    const moved = page
+      .getByRole('status')
+      .filter({ hasText: '실행 기록을 휴지통으로 옮겼습니다.' });
+    await expect(moved).toBeVisible();
+    await expect(history.locator('.run-row')).toHaveCount(2);
+    // It waits in the trash: 되돌리기 on the message brings it back to the history, where it is deleted again.
+    await moved.getByRole('button', { name: '되돌리기' }).click();
+    await expect(history.locator('.run-row')).toHaveCount(3);
+    await openRun();
+    await expect(failedRun).toContainText('HTTP 503');
+    await failedRun.getByRole('button', { name: '삭제', exact: true }).click();
+    await failedRun.getByRole('button', { name: '삭제', exact: true }).click();
     await expect(history.locator('.run-row')).toHaveCount(2);
 
     await expect(
@@ -148,6 +162,11 @@ test('automation: scheduled prompts run by themselves and the history widget sho
     await schedules.getByRole('button', { name: '주간 보고 초안 삭제' }).click();
     await schedules.getByRole('button', { name: '삭제', exact: true }).click();
     await expect(schedules.locator('.schedule-row')).toHaveCount(1);
+    // The messages with 되돌리기 stay ten seconds, and later ones wait their turn behind them: closed, they make room.
+    const undo = page.getByRole('status').filter({ hasText: '휴지통으로 옮겼습니다.' });
+    await expect(undo.filter({ hasText: '예약을' })).toBeVisible();
+    while (await undo.count())
+      await undo.first().getByRole('button', { name: '알림 닫기' }).click();
 
     // A template that gains an input asks first when a schedule has no value for it, and the schedule's run says
     // where to fill it in.

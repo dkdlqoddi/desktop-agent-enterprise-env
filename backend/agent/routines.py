@@ -2033,11 +2033,13 @@ class Routines:
             return self.public(self.row(db, row["id"]), db)
 
     def delete(self, p):
+        """Stop the routine's run and move it to the trash with its runs (trash.py), where it does not run; the
+        documents it made stay."""
         ident = text(p.get("id"), "ID", 80)
         self.cancel({"id": ident})
         with self.db.connect() as db:
-            db.execute("DELETE FROM routines WHERE id=?", (ident,))
-        return {"ok": True}
+            db.execute("BEGIN IMMEDIATE")
+            return self.service.trash.discard(db, "routine", ident)
 
     def needs(self, p):
         """The sites a run of the routine signs in to, for Electron to give their login plans."""

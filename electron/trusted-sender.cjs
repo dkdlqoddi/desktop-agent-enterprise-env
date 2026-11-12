@@ -45,6 +45,10 @@ const ALLOWED = new Set([
   'wiki.trash',
   'wiki.restore',
   'wiki.purge',
+  // The trash of what is deleted beside documents: conversations, runs, tasks, templates, schedules and routines.
+  'trash.list',
+  'trash.restore',
+  'trash.purge',
   // Backups of the Wiki in its backups folder, and the restore of one at the next start.
   'wiki.backup',
   'wiki.backups',

@@ -49,6 +49,7 @@ import { activeJob, type ImportKind } from './import-jobs';
 import Markdown from './markdown';
 import Modal, { type ModalHandle } from './modal';
 import { rove } from './roving';
+import { useDiscard } from './trashed';
 import WritebackBackupsList from './writeback-backups';
 
 // A document opened from search results shows where the search words and chosen sections are.
@@ -1276,6 +1277,7 @@ const kindLabel = (run: Pick<Run, 'kind' | 'schedule_id' | 'schedule_name'>) =>
 
 function RunReader({ id, terms, onClose }: { id: string; terms?: string[]; onClose: () => void }) {
   const { notify, refresh, bumpRuns } = useActions();
+  const discard = useDiscard();
   const [run, setRun] = useState<Run | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -1338,13 +1340,12 @@ function RunReader({ id, terms, onClose }: { id: string; terms?: string[]; onClo
       <Confirm
         label="삭제"
         icon={<Trash2 size={14} />}
-        question="이 실행 기록을 삭제할까요?"
+        question="이 실행 기록을 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다."
         disabled={!!busy}
         onConfirm={() =>
           act('delete', async () => {
-            await api('runs.delete', { id: run.id });
+            await discard('runs.delete', run.id, '실행 기록을 휴지통으로 옮겼습니다.', ['runs']);
             bumpRuns();
-            notify('실행 기록을 삭제했습니다.');
             onClose();
           })
         }

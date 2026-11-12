@@ -274,7 +274,7 @@ function guard(element: Element, target: Target) {
   if (target.allow_admin) return;
   if (element.closest('[data-destructive]'))
     throw new Error(
-      '삭제·비우기처럼 되돌리기 어려운 동작의 확인 버튼은 API 허용 범위가 ‘전체’일 때만 누를 수 있습니다. 문서는 call_api의 wiki.delete로 휴지통에 보낼 수 있습니다.',
+      '삭제·비우기처럼 되돌리기 어려운 동작의 확인 버튼은 API 허용 범위가 ‘전체’일 때만 누를 수 있습니다. 문서는 call_api의 wiki.delete로, 할 일·대화·실행 기록·프롬프트·예약·자동 작업은 각각의 delete 메서드로 휴지통에 보낼 수 있습니다.',
     );
   if (element.closest('.admin, [data-requires-full]') || secret(element))
     throw new Error(

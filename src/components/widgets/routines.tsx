@@ -49,6 +49,7 @@ import RoutineForm, {
 } from '../routine-form';
 import { useNow } from '../run-history';
 import { useActions, useQuery, useRoutineFocus } from '../state';
+import { useDiscard } from '../trashed';
 import { Loading, Metrics } from './parts';
 
 export const ROUTINE_ICONS: Record<string, LucideIcon> = {
@@ -113,6 +114,7 @@ function useCatalog() {
 export default function RoutinesWidget() {
   const routineFocus = useRoutineFocus();
   const { notify, invalidate, watchJobs } = useActions();
+  const discard = useDiscard();
   const { catalog, error: catalogError, retry: retryCatalog } = useCatalog();
   // The routines load with the widget and again when they change (a run ended, an AI tool changed one). While a run is
   // queued or running, the main process sends them as they change (electron/job-progress.cjs), with what the run is
@@ -383,13 +385,17 @@ export default function RoutinesWidget() {
                       name={`${routine.name} 삭제`}
                       label="삭제"
                       icon={<Trash2 size={15} />}
-                      question="자동 작업을 삭제할까요? 만든 Wiki 문서는 남습니다."
+                      question="자동 작업을 휴지통으로 옮길까요? 30일 안에 복원할 수 있고, 만든 Wiki 문서는 남습니다."
                       disabled={!!busy}
                       onConfirm={() =>
-                        act('delete', async () => {
-                          await api('routines.delete', { id: routine.id });
-                          notify('자동 작업을 삭제했습니다.');
-                        })
+                        act('delete', () =>
+                          discard(
+                            'routines.delete',
+                            routine.id,
+                            '자동 작업을 휴지통으로 옮겼습니다.',
+                            ['routines'],
+                          ),
+                        )
                       }
                     />
                   </div>

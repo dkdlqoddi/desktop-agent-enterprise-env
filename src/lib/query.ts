@@ -23,6 +23,8 @@ export const TAGS: Partial<Record<Method, readonly Tag[]>> = {
   'briefing.get': ['tasks', 'documents'],
   'reminders.status': ['tasks'],
   'assistant.conversations': ['conversations'],
+  // What a delete or a restore of any of its kinds changes.
+  'trash.list': ['prompts', 'runs', 'routines', 'tasks', 'conversations'],
 };
 
 // An answer as the screens see it: the last data that came (kept while it loads again, so that a reload draws nothing

@@ -338,6 +338,40 @@ test('backs the Wiki up with the write level, and restores a backup only with th
   }
 });
 
+test('lists the trash with the read level, restores with the write level and purges only with the full level', async () => {
+  calls.length = 0;
+  const restore = { path: '/api/v1/trash/restore', method: 'POST', body: { ids: ['e1'] } };
+  const purge = { path: '/api/v1/trash/purge', method: 'POST', body: { all: true } };
+  assert.deepEqual((await request({ path: '/api/v1/trash' })).json, {
+    ok: true,
+    result: { method: 'trash.list' },
+  });
+  assert.equal((await request(restore)).status, 200);
+  assert.deepEqual(calls.at(-1), { method: 'trash.restore', params: { ids: ['e1'] } });
+  // What the six deletes move there comes back with the same level that deleted it; nothing below "full" purges it.
+  for (const path of ['/tasks/t1', '/conversations/c1', '/prompts/p1', '/runs/r1', '/schedules/s1'])
+    assert.equal((await request({ path: `/api/v1${path}`, method: 'DELETE' })).status, 200);
+  const refused = await request(purge);
+  assert.equal(refused.status, 403);
+  assert.match(refused.json.error.message, /영구 삭제/);
+  assert.equal(calls.at(-1).method, 'schedules.delete');
+  settings.access = 'full';
+  try {
+    assert.equal((await request(purge)).status, 200);
+    assert.deepEqual(calls.at(-1), { method: 'trash.purge', params: { all: true } });
+  } finally {
+    settings.access = 'write';
+  }
+  settings.access = 'read';
+  try {
+    assert.equal((await request({ path: '/api/v1/trash' })).status, 200);
+    assert.equal((await request(restore)).status, 403);
+    assert.equal((await request({ path: '/api/v1/tasks/t1', method: 'DELETE' })).status, 403);
+  } finally {
+    settings.access = 'write';
+  }
+});
+
 test('speaks MCP over Streamable HTTP', async () => {
   const mcp = (body, headers) => request({ path: '/mcp', method: 'POST', body, headers });
   const init = await mcp({

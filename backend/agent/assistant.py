@@ -264,9 +264,11 @@ class Assistant:
             return [self._save(db, task) for task in tasks]
 
     def tasks_delete(self, p):
+        """Move a task to the trash (trash.py), where it reminds of nothing until it is restored."""
+        ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            db.execute("DELETE FROM tasks WHERE id=?", (text(p.get("id"), "ID", 80),))
-        return {"ok": True}
+            db.execute("BEGIN IMMEDIATE")
+            return self.service.trash.discard(db, "task", ident)
 
     def tasks_snooze(self, p):
         ident = text(p.get("id"), "ID", 80)
@@ -493,14 +495,15 @@ class Assistant:
             ]
 
     def delete_conversation(self, p):
+        """Move a conversation to the trash with its messages (trash.py)."""
         ident = text(p.get("id"), "대화 ID", 80)
         with self.lock:
             # Held while it deletes, so no answer of the conversation starts meanwhile.
             if ident in self.running:
                 raise UserError("대화 응답이 완료된 뒤 삭제해 주세요.")
             with self.db.connect() as db:
-                db.execute("DELETE FROM conversations WHERE id=?", (ident,))
-        return {"ok": True}
+                db.execute("BEGIN IMMEDIATE")
+                return self.service.trash.discard(db, "conversation", ident)
 
     def ask(self, p):
         """Answer a question from the Wiki's documents and save both in their conversation. Different conversations

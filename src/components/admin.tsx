@@ -8,6 +8,7 @@ import {
   KeyRound,
   LayoutGrid,
   MessageSquareText,
+  Trash2,
   Unplug,
 } from 'lucide-react';
 import { api, type SiteKind } from '@/lib/api';
@@ -19,6 +20,7 @@ import HermesSection from './admin/hermes';
 import LlmSettings from './admin/llm';
 import SitesSection from './admin/sites';
 import TemplatesSection from './admin/templates';
+import TrashSection from './admin/trash';
 import Confirm from './confirm';
 import ErrorBoundary from './error-boundary';
 import { rove } from './roving';
@@ -26,7 +28,7 @@ import { saveTheme, storedTheme, THEMES, type Theme } from './theme';
 import { layoutOf, templateOf } from './widgets';
 
 export type AdminSection =
-  'llm' | 'sites' | 'chat' | 'templates' | 'preferences' | 'api' | 'manual' | 'about';
+  'llm' | 'sites' | 'chat' | 'templates' | 'preferences' | 'api' | 'manual' | 'trash' | 'about';
 // A new site account the admin page opens with, e.g. for the link being imported.
 export type SiteDraft = { url: string; kind?: SiteKind };
 const SECTIONS: [AdminSection, string, typeof Unplug][] = [
@@ -37,6 +39,7 @@ const SECTIONS: [AdminSection, string, typeof Unplug][] = [
   ['preferences', '화면·검색·대시보드', LayoutGrid],
   ['api', 'AI 도구 연동', Bot],
   ['manual', 'API 매뉴얼', BookOpenText],
+  ['trash', '휴지통', Trash2],
   ['about', '저장 위치·정보', Database],
 ];
 
@@ -89,6 +92,7 @@ export default function Admin({
           {section === 'preferences' && <Preferences />}
           {section === 'api' && <ApiSection onManual={() => setSection('manual')} />}
           {section === 'manual' && <ApiManualSection />}
+          {section === 'trash' && <TrashSection />}
           {section === 'about' && <About />}
         </ErrorBoundary>
       </section>

@@ -68,6 +68,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 - 출처: `office_sources`, `rtf_sources`, `image_sources`, `text_sources`, `markdown_sources`, `confluence_sources`, `jira_sources`, `ignored_sources`(영구 삭제한 출처), `writeback_backups`(원본 백업 기록)
 - 프롬프트와 자동화: `prompts`, `runs`, `schedules`, `routines`, `routine_runs`
 - 비서: `tasks`, `conversations`, `messages`
+- 휴지통: `trash`(지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업의 행과 함께 지워진 행을 JSON으로 30일 보관. 문서는 `documents.deleted_at`)
 - 채팅과 웹 기록: `agent_messages`(채팅 대화와 작업 카드, 최근 1,000개), `web_captures`(기록한 페이지), `web_items`(광고·상품·검색 결과, 직접 누른 광고의 도착 페이지)
 - `metadata`: 검색·대시보드 설정(`preferences`)과 색인 상태
 
@@ -105,6 +106,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/search.py`, `agent/paging.py`                                                                                   | BM25·trigram 단어 검색, 키워드 별칭, LLM이 고르는 AI 검색, 목록·검색 결과의 나누어 받기  |
 | `agent/llm.py`                                                                                                         | LLM 설정, OpenAI·Anthropic 형식, 재시도, 우선순위, 스트리밍, 중지                        |
 | `agent/assistant.py`                                                                                                   | 문서를 근거로 한 대화, 할 일과 알림, 오늘의 브리핑                                       |
+| `agent/trash.py`                                                                                                       | 지운 대화·실행 기록·할 일·템플릿·예약·자동 작업의 휴지통: 보관, 복원, 영구 삭제          |
 | `agent/pageindex.py`, `agent/batch_analysis.py`                                                                        | 긴 문서의 목차 색인, 여러 문서의 백그라운드 AI 분석                                      |
 | `agent/routines.py`, `agent/schedules.py`                                                                              | 자동 작업과 예약 프롬프트를 하나의 대기열과 작업자 3개로 실행                            |
 | `agent/sources.py`, `agent/parts.py`                                                                                   | 가져온 출처의 기록, 다시 가져오기와 이동한 파일 연결, 긴 자료를 여러 문서로 나누기       |
@@ -148,7 +150,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `components/app.tsx`, `components/state.tsx`            | 시작 상태와 이벤트 연결, 따로 바뀌는 상태 조각과 선택자 훅(`useView`, `useQuery` 등)           |
 | `components/workspace.tsx`, `dashboard.tsx`, `widgets/` | 사이드바와 화면 전환, 위젯 대시보드                                                            |
 | `components/reader.tsx`, `search-panel.tsx`             | 문서·실행 기록 보기와 편집(충돌 비교 포함), 검색창과 AI 답변                                   |
-| `components/admin.tsx`, `admin/`                        | 관리 화면: LLM 연결, 채팅 에이전트, 사이트 계정, 템플릿, AI 도구 연동, API 매뉴얼              |
+| `components/admin.tsx`, `admin/`                        | 관리 화면: LLM 연결, 채팅 에이전트, 사이트 계정, 템플릿, AI 도구 연동, API 매뉴얼, 휴지통      |
 | `components/html-document.tsx`, `lib/html-document.ts`  | 가져온 HTML을 허용 목록으로 정제해 shadow DOM에 표시                                           |
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |
 | `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시와 나누어 받는 목록, 선택자로 읽는 작은 상태 저장소                 |
@@ -217,7 +219,7 @@ Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 asset
 - 비밀 값은 메인 프로세스가 운영체제 보안 저장소(Electron `safeStorage`)로 암호화해 앱 설정 폴더에 둡니다. 사이트 비밀번호는 그 사이트의 로그인 계획에 담아 필요한 요청에만 백엔드로 넘깁니다.
 - 백엔드는 포트를 열지 않습니다. 로컬 API는 기본으로 꺼져 있고, 켜도 `127.0.0.1`에서 토큰과 허용 범위로만 받습니다.
 - 사이트 주소는 HTTPS가 기본이며 HTTP로 내려가지 않습니다. 브라우저 자동화는 Chromium 샌드박스를 켠 채 실행합니다.
-- 문서 삭제는 휴지통으로 가고, 영구 삭제·백업 복원·파일 가져오기·설정 변경은 허용 범위 ‘전체’에서만 AI 도구가 할 수 있습니다.
+- 문서와 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업의 삭제는 휴지통으로 가고, 영구 삭제·백업 복원·파일 가져오기·설정 변경은 허용 범위 ‘전체’에서만 AI 도구가 할 수 있습니다.
 - 로그와 진단 복사본은 키·토큰·비밀번호를 가립니다.
 - 채팅의 에이전트(Hermes)는 자기 도구로 바로 실행하고, 위험한 명령만 사용자의 확인을 받습니다. 운영체제 샌드박스가 아니라 승인 기반 통제입니다. 모델 호출은 모두 앱의 LLM 연결로 보내고, 앱의 웹 기록은 페이지의 광고나 링크를 누르지 않습니다.
 - 채팅 화면과 에이전트의 설정(**관리 → 채팅 에이전트**)은 사용자만 다룹니다(`data-user-only`). 로컬 API의 화면 제어는 허용 범위와 관계없이 그곳에 입력하거나 그 버튼(명령 확인, 메신저 계정 포함)을 누르지 못합니다.

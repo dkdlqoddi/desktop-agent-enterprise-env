@@ -168,11 +168,17 @@ test('routines: pick a ready-made job, let it run by itself and now, see what ch
     await expect(files).toContainText('꺼져 있음');
     await row.getByRole('button', { name: 'JIRA 티켓 변경 확인 삭제' }).click();
     await row.getByRole('button', { name: '삭제', exact: true }).click();
-    await expect(page.getByText('자동 작업을 삭제했습니다.')).toBeVisible();
+    await expect(page.getByText('자동 작업을 휴지통으로 옮겼습니다.')).toBeVisible();
     await expect(box.locator('.routine-row')).toHaveCount(1);
 
     // Only the main process may take due runs and their logins.
-    for (const method of ['routines.due', 'routines.execute', 'routines.events', 'routines.needs'])
+    for (const method of [
+      'routines.due',
+      'routines.execute',
+      'routines.events',
+      'routines.needs',
+      'trash.routines',
+    ])
       expect((await page.evaluate((m) => window.privateAgent!.request(m), method)).ok).toBe(false);
 
     // The dashboard shows the latest results.

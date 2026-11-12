@@ -37,7 +37,7 @@ Private Agent 0.1.0이 AI 도구(Claude Code, Codex, OpenCode, Antigravity 등)�
 사용자가 고른 허용 범위가 AI 도구가 부를 수 있는 메서드를 정합니다. 각 수준은 앞 수준을 포함합니다.
 
 - `read`(조회만): 검색과 문서·할 일·대화·실행 기록 조회만 허용합니다. 아무것도 바꾸지 않습니다.
-- `write`(조회·변경·앱 제어): 문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(문서 삭제는 휴지통으로, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 할 일·프롬프트·예약·자동 작업·대화·실행 기록의 삭제는 휴지통 없이 바로 지워집니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 가져온 Office 문서의 원본 파일에 반영하기와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.
+- `write`(조회·변경·앱 제어): 문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(대화·실행 기록을 포함해 지운 것은 모두 휴지통으로 가고, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 가져온 Office 문서의 원본 파일에 반영하기와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.
 - `full`(전체): 이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅 화면과 관리 → 채팅 에이전트만은 어느 범위에서도 AI 도구가 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 AI 도구로 다룰 수 없습니다.
 
 메서드마다 범위가 있고, 범위마다 쓸 수 있는 허용 범위가 정해져 있습니다.
@@ -451,11 +451,11 @@ Wiki 백업 지금 만들기 (Wiki 폴더의 backups, 직접 만든 백업은 �
 
 #### `assistant.delete`
 
-대화 삭제
+대화를 휴지통으로 (30일 보관, trash.restore로 복원)
 
 - 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `call_api`
-- `DELETE /api/v1/conversations/{id}` — 대화 삭제
+- `DELETE /api/v1/conversations/{id}` — 대화를 휴지통으로 (30일 보관)
   - `id` (path, string, 필수) ID
 
 #### `briefing.get`
@@ -535,11 +535,11 @@ LLM이 쓰는 오늘의 브리핑
 
 #### `tasks.delete`
 
-할 일 삭제
+할 일을 휴지통으로 (30일 보관, trash.restore로 복원)
 
 - 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `delete_task`, `call_api`
-- `DELETE /api/v1/tasks/{id}` — 할 일 삭제
+- `DELETE /api/v1/tasks/{id}` — 할 일을 휴지통으로 (30일 보관)
   - `id` (path, string, 필수) ID
 
 #### `tasks.extract`
@@ -623,11 +623,11 @@ LLM이 쓰는 오늘의 브리핑
 
 #### `prompts.delete`
 
-프롬프트 템플릿 삭제
+프롬프트 템플릿을 그 예약과 함께 휴지통으로 (30일 보관, trash.restore로 복원)
 
 - 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `call_api`
-- `DELETE /api/v1/prompts/{id}` — 프롬프트 템플릿 삭제
+- `DELETE /api/v1/prompts/{id}` — 프롬프트 템플릿을 그 예약과 함께 휴지통으로 (30일 보관)
   - `id` (path, string, 필수) ID
 
 #### `prompts.run`
@@ -666,11 +666,11 @@ LLM이 쓰는 오늘의 브리핑
 
 #### `runs.delete`
 
-실행 기록 삭제
+실행 기록을 휴지통으로 (30일 보관, trash.restore로 복원)
 
 - 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `call_api`
-- `DELETE /api/v1/runs/{id}` — 실행 기록 삭제
+- `DELETE /api/v1/runs/{id}` — 실행 기록을 휴지통으로 (30일 보관)
   - `id` (path, string, 필수) ID
 
 #### `runs.stats`
@@ -746,11 +746,11 @@ LLM이 쓰는 오늘의 브리핑
 
 #### `schedules.delete`
 
-예약 삭제
+예약을 휴지통으로 (30일 보관, trash.restore로 복원)
 
 - 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `call_api`
-- `DELETE /api/v1/schedules/{id}` — 예약 삭제
+- `DELETE /api/v1/schedules/{id}` — 예약을 휴지통으로 (30일 보관)
   - `id` (path, string, 필수) ID
 
 #### `schedules.run`
@@ -845,11 +845,11 @@ LLM이 쓰는 오늘의 브리핑
 
 #### `routines.delete`
 
-자동 작업 삭제
+자동 작업을 실행 기록과 함께 휴지통으로 (30일 보관, trash.restore로 복원)
 
 - 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `call_api`
-- `DELETE /api/v1/routines/{id}` — 자동 작업 삭제
+- `DELETE /api/v1/routines/{id}` — 자동 작업을 실행 기록과 함께 휴지통으로 (30일 보관)
   - `id` (path, string, 필수) ID
 
 #### `routines.run`
@@ -869,6 +869,37 @@ LLM이 쓰는 오늘의 브리핑
 - MCP: `call_api`
 - `POST /api/v1/routines/{id}/cancel` — 실행 중이거나 기다리는 실행 중지
   - `id` (path, string, 필수) ID
+
+### 휴지통 (`trash`)
+
+지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업은 30일 동안 휴지통에 있다가 지워집니다(문서의 휴지통은 ‘문서’의 /documents/trash). 삭제 응답의 trash_ids나 목록의 id로 복원하면 함께 지워진 것(대화의 메시지, 템플릿의 예약, 자동 작업의 실행 기록)도 돌아옵니다. 복원한 예약과 자동 작업은 휴지통에 있던 동안 지난 실행을 건너뛰고 다음 차례부터 실행합니다. 영구 삭제는 허용 범위 ‘전체’에서만 됩니다.
+
+#### `trash.list`
+
+휴지통 목록: 지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업 (30일 보관, 문서는 wiki.trash)
+
+- 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
+- MCP: `query_api`
+- `GET /api/v1/trash` — 휴지통 목록 (최근 삭제 순, 최대 1,000개): id·kind(conversation·run·task·prompt·schedule·routine)·item_id·title·detail·deleted_at, 전체 개수 total과 보관 일수 days
+
+#### `trash.restore`
+
+휴지통의 항목 복원 (ids는 trash.list의 id. 함께 지워진 메시지·예약·실행 기록도 돌아옴)
+
+- 범위 `write`(변경) · 허용 범위 ‘조회·변경·앱 제어’ 이상
+- MCP: `call_api`
+- `POST /api/v1/trash/restore` — 휴지통의 항목 복원 (모두 또는 전혀). restored는 돌아온 개수, notes는 꺼 둔 채로 복원한 예약·자동 작업 안내
+  - `ids` (body, string[], 필수) 휴지통 항목 ID 목록 (1~1,000개): trash.list의 id, 또는 삭제 응답의 trash_ids
+
+#### `trash.purge`
+
+휴지통의 항목 영구 삭제 (ids, 또는 all: true로 비우기)
+
+- 범위 `destructive`(영구 삭제·백업 복원) · 허용 범위 ‘전체’에서만
+- MCP: `call_api`
+- `POST /api/v1/trash/purge` — 휴지통의 항목 영구 삭제: ids, 또는 all: true로 모두 (허용 범위 ‘전체’)
+  - `ids` (body, string[]) 휴지통 항목 ID 목록 (1~1,000개); all이 true면 생략
+  - `all` (body, boolean) 휴지통을 모두 비우기 [기본 false]
 
 ### 자료 가져오기 (`imports`)
 
@@ -1123,7 +1154,7 @@ LLM 연결 설정 바꾸기
 - `POST /api/v1/app/navigate` — 화면 이동
   - `view` (body, string, 필수) 화면 [chat · home · tasks · library · automation · records · activity · admin]
   - `tab` (body, string) 탭 — library: documents·import·knowledge · automation: prompt·schedules·routines · activity: history·conversations · tasks: reminders
-  - `section` (body, string) view=admin의 관리 항목 [llm · sites · chat · templates · preferences · api · manual · about]
+  - `section` (body, string) view=admin의 관리 항목 [llm · sites · chat · templates · preferences · api · manual · trash · about]
 
 #### `app.search`
 
@@ -1591,7 +1622,7 @@ Create a task, or update one by id (only the fields given change). Dates are ISO
 
 할 일 삭제 · 범위 `write` · 메서드 `tasks.delete`
 
-Delete a task.
+Move a task to the trash. The user can restore it for 30 days (call_api trash.restore with the trash id brings it back; trash.purge, at the "full" level, deletes for good).
 
 - `id` (string, 필수) Task id.
 
@@ -1767,11 +1798,11 @@ Control the app window: show (bring to front), minimize, maximize, restore, full
 
 화면 이동 · 범위 `control` · 메서드 `app.navigate`
 
-Show a screen of the app: chat, home, tasks (tabs reminders), library (tabs documents, import, knowledge), automation (tabs prompt, schedules, routines), records, activity (tabs history, conversations), admin (sections llm, sites, chat, templates, preferences, api, manual, about). Refused while the user writes a document in the panel or has changed a form on the screen without saving it.
+Show a screen of the app: chat, home, tasks (tabs reminders), library (tabs documents, import, knowledge), automation (tabs prompt, schedules, routines), records, activity (tabs history, conversations), admin (sections llm, sites, chat, templates, preferences, api, manual, trash, about). Refused while the user writes a document in the panel or has changed a form on the screen without saving it.
 
 - `view` (string, 필수) Screen. [chat · home · tasks · library · automation · records · activity · admin]
 - `tab` (string) Tab of the screen.
-- `section` (string) Admin section, with view admin. [llm · sites · chat · templates · preferences · api · manual · about]
+- `section` (string) Admin section, with view admin. [llm · sites · chat · templates · preferences · api · manual · trash · about]
 
 #### `app_open_document`
 
@@ -1870,7 +1901,7 @@ API 매뉴얼 · 범위 `read`
 
 The manual of Private Agent's local API: every method with its parameters, the REST routes, and the access levels.
 
-- `group` (string) Only this group (system, search, documents, backups, assistant, tasks, prompts, schedules, routines, imports, sites, settings, app).
+- `group` (string) Only this group (system, search, documents, backups, assistant, tasks, prompts, schedules, routines, trash, imports, sites, settings, app).
 
 ### 리소스
 

@@ -251,6 +251,7 @@ function onWake(powerMonitor, check, delay = WAKE_DELAY) {
 module.exports = {
   RoutineRunner,
   readsFiles,
+  WEB_ROUTINE,
   webRoutine,
   withoutWebRoutines,
   onWake,

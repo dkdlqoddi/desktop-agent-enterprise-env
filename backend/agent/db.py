@@ -324,6 +324,16 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_web_items_capture ON web_items(capture_id,position);
                 CREATE INDEX IF NOT EXISTS idx_web_items_clicked ON web_items(clicked_at);
+                -- The trash of what is deleted beside documents (trash.py): a conversation, prompt run, task, prompt
+                -- template, schedule or routine (kind, item_id) leaves its table and waits here to be restored: its
+                -- row (payload) and the rows that went with it (related), as JSON by column name. recipe is a
+                -- routine's kind, by which the main process keeps the web records' routines from AI tools.
+                CREATE TABLE IF NOT EXISTS trash (
+                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, item_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '', recipe TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL,
+                    related TEXT NOT NULL DEFAULT '{}', deleted_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_trash_deleted ON trash(deleted_at);
             """)  # noqa: E501
             for name, (columns, key) in SOURCE_TABLES.items():
                 db.execute(source_table(name, columns, key))

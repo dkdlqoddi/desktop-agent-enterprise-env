@@ -130,9 +130,9 @@ LIVE = "deleted_at IS NULL"
 # The retention policy of what the Wiki logs, applied at each start of the backend and once a day while the app runs
 # (Service.retain): the history of prompt runs keeps its newest RUNS_KEPT runs of the last RUNS_DAYS days; each
 # conversation keeps its newest MESSAGES_KEPT messages (the screen shows the last 100) and the newest CONVERSATIONS_KEPT
-# conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS. The logs lose only
-# what a backup of the Wiki holds: what was written before the newest one was made. The automatic routines keep their
-# last 30 runs each by themselves (routines.MAX_RUNS).
+# conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS, the documents in it and
+# what else the user deleted (trash.py). The logs lose only what a backup of the Wiki holds: what was written before the
+# newest one was made. The automatic routines keep their last 30 runs each by themselves (routines.MAX_RUNS).
 RUNS_KEPT = 2000
 RUNS_DAYS = 90
 MESSAGES_KEPT = 200
@@ -210,6 +210,9 @@ class Service:
         from .agent_chat import AgentChat
 
         self.agent = AgentChat(self)
+        from .trash import Trash
+
+        self.trash = Trash(self)
         self.active, self.active_lock = {}, threading.Lock()
         # One backup, or copy of a backup to restore, at a time: the daily one and those asked for.
         self.backup_lock = threading.Lock()
@@ -357,6 +360,7 @@ class Service:
             **self.routines.methods,
             **self.web.methods,
             **self.agent.methods,
+            **self.trash.methods,
         }
         if method not in methods or not isinstance(params, dict):
             raise UserError("지원하지 않는 요청입니다.")
@@ -486,9 +490,11 @@ class Service:
             return dict(db.execute("SELECT * FROM prompts WHERE id=?", (ident,)).fetchone())
 
     def prompts_delete(self, p):
+        """Move a template to the trash with the schedules that run it (trash.py); its runs stay in the history."""
+        ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            db.execute("DELETE FROM prompts WHERE id=?", (text(p.get("id"), "ID", 80),))
-        return {"ok": True}
+            db.execute("BEGIN IMMEDIATE")
+            return self.trash.discard(db, "prompt", ident)
 
     def prompt_row(self, ident):
         with self.db.connect() as db:
@@ -695,9 +701,11 @@ class Service:
         }
 
     def runs_delete(self, p):
+        """Move a run of the history to the trash (trash.py)."""
+        ident = text(p.get("id"), "ID", 80)
         with self.db.connect() as db:
-            db.execute("DELETE FROM runs WHERE id=?", (text(p.get("id"), "ID", 80),))
-        return {"ok": True}
+            db.execute("BEGIN IMMEDIATE")
+            return self.trash.discard(db, "run", ident)
 
     @staticmethod
     def attach(db, docs):
@@ -1003,8 +1011,8 @@ class Service:
         conversations, messages) lose only what the newest backup of the Wiki still holds, which is what was written
         before it was made: the first start of this version leaves them to the upkeep, which trims them after its first
         backup, and what was written since stays until the next backup has it. The trash is emptied either way, as it
-        always was: PURGE_AT_ONCE documents a transaction, and for `seconds` at most when given (`trash_left` then
-        says that documents wait for the next look)."""
+        always was: what else the user deleted (`trash`, trash.py) at once, the documents PURGE_AT_ONCE a transaction
+        and for `seconds` at most when given (`trash_left` then says that documents wait for the next look)."""
 
         def cutoff(days):
             return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -1037,6 +1045,7 @@ class Service:
                     WHERE position>? AND created_at<?)""",
                     (MESSAGES_KEPT, backed),
                 ).rowcount
+            removed["trash"] = self.trash.expire(db, cutoff(TRASH_DAYS))
             expired = [
                 row[0]
                 for row in db.execute(

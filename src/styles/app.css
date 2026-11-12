@@ -1446,6 +1446,34 @@ button.tag:hover {
   color: var(--muted);
   font-size: 0.8125rem;
 }
+/* Admin: the trash of conversations, runs, tasks, templates, schedules and routines. */
+.trash-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trash-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+.trash-entries li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.trash-entries li > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.trash-entries time {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
 .document-tools .document-filter {
   flex: 1 1 240px;
 }

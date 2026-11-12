@@ -125,6 +125,7 @@ async function visit(page: Page, theme: string, found: Finding[]) {
     '화면·검색·대시보드',
     'AI 도구 연동',
     'API 매뉴얼',
+    '휴지통',
     '저장 위치·정보',
   ]) {
     await openAdmin(page, section);
