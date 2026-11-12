@@ -1445,10 +1445,23 @@ async function handle(method, params, { access } = {}) {
     await rpc('agent.configure', hermesConfigure()).catch(() => {});
   } else if (method === 'hermes.choose') {
     const picked = await dialog.showOpenDialog(window, {
-      title: '채팅 에이전트의 작업 폴더 선택',
+      title:
+        params.purpose === 'protect'
+          ? '에이전트가 건드리지 않을 폴더 선택'
+          : '채팅 에이전트의 작업 폴더 선택',
       properties: ['openDirectory', 'createDirectory'],
     });
     result = picked.canceled ? null : picked.filePaths[0] || null;
+  } else if (method === 'agent.approve_command') {
+    result = await rpc(method, params);
+    // "Always" for a command: the backend names the command it had asked about (never one the request named), and it
+    // is kept with the app's settings on this PC, then handed back to the backend with the rest of the list. One that
+    // could not be kept holds until the app closes, and the chat says so (stored: false).
+    if (typeof result?.allowed === 'string' && result.allowed) {
+      const stored = await hermesSettings.allow(result.allowed).catch(() => false);
+      if (stored) await rpc('agent.configure', hermesConfigure()).catch(() => {});
+      result = { ...result, stored };
+    }
   } else if (method === 'import.choose') result = await chooseImport(params.mode);
   else if (method === 'files.import_text') result = await importText(params);
   else if (method === 'clipboard.write') {
@@ -1714,6 +1727,10 @@ else {
         encrypt: (value) => safeStorage.encryptString(value),
         decrypt: (value) => safeStorage.decryptString(value),
         canEncrypt,
+        // The app's settings folder is closed to the agent; the Wiki folder, which holds its home, cannot be closed
+        // by the user (the backend closes the database and the backups in it: agent_guard.py).
+        zones: () => [userData],
+        reachable: () => [storage.directory],
       });
       control = new AppControl({ window: () => window, Notification });
       jobs = new JobProgress({

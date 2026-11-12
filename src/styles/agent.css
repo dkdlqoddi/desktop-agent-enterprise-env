@@ -449,6 +449,72 @@
 .agent-clarify-input {
   width: 100%;
 }
+/* How far each answer to a command reaches, under its buttons. */
+.agent-interaction-scopes {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.agent-interaction-scopes:empty {
+  display: none;
+}
+
+/* What a turn did, folded under its answer ----------------------------------------------------- */
+.agent-activity {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.agent-activity summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.agent-activity ol {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.agent-activity li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.agent-step-kind {
+  flex: none;
+  min-width: 58px;
+  color: var(--ink-soft);
+}
+.agent-step-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.agent-activity li.tool .agent-step-text,
+.agent-activity li.approval .agent-step-text {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.agent-step-result {
+  flex: none;
+  color: var(--ok-strong);
+}
+.agent-step-result.refused {
+  color: var(--warn);
+}
+.agent-activity-more {
+  margin: 4px 0 0;
+}
 
 /* The chat agent's settings (admin → 채팅 에이전트) --------------------------------------------- */
 .hermes-settings .admin-fieldset {
@@ -501,6 +567,78 @@
 .hermes-add-key input {
   flex: 1 1 auto;
   min-width: 0;
+}
+/* A list of the settings: commands allowed, folders protected, commands asked about. */
+.hermes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.hermes-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.hermes-list code {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.hermes-list-note {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.hermes-list-result {
+  flex: none;
+  font-size: 12px;
+  color: var(--ok-strong);
+}
+.hermes-list-result.refused {
+  color: var(--warn);
+}
+.hermes-list-note.over {
+  color: var(--warn);
+}
+/* What the agent remembers: one block a list, each entry with its buttons. */
+.hermes-memory {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--rule);
+}
+.hermes-memory-list li {
+  align-items: flex-start;
+}
+.hermes-memory-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  resize: vertical;
+}
+.hermes-memory-entry {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+}
+.hermes-history {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.hermes-history summary {
+  cursor: pointer;
+}
+.hermes-history .hermes-list {
+  margin-top: 6px;
 }
 .hermes-mcp {
   width: 100%;

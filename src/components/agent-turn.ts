@@ -1,4 +1,11 @@
-import type { AgentActive, AgentSend, AgentStatus, Method } from '@/lib/api';
+import type {
+  AgentActive,
+  AgentApproved,
+  AgentDecision,
+  AgentSend,
+  AgentStatus,
+  Method,
+} from '@/lib/api';
 import type { Store } from '@/lib/store';
 
 // The chat's turn in progress, kept apart from the chat screen. A turn of the agent takes minutes and may stop to ask
@@ -30,6 +37,8 @@ export const NO_TURN: AgentTurnState = {
 export const POLL_MS = 700;
 const WAITING = '채팅 에이전트가 확인을 기다리고 있습니다. 채팅에서 답해 주세요.';
 const ENDED = '채팅 에이전트가 작업을 마쳤습니다.';
+const NOT_KEPT =
+  '이 명령의 ‘항상 허용’을 설정에 저장하지 못했습니다. 앱을 닫을 때까지만 묻지 않습니다.';
 
 const words = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -110,18 +119,21 @@ export class AgentTurn {
     }
   }
 
-  // The user's decision on the dangerous command the turn paused on; the turn then goes on.
-  async decide(decision: 'once' | 'always' | 'deny') {
+  // The user's decision on the dangerous command the turn paused on; the turn then goes on. 'always' is kept with the
+  // app's settings by the main process, which says when it could not.
+  async decide(decision: AgentDecision) {
     const sending = this.state.sending;
     const interaction = this.state.status?.interaction;
     if (!sending || interaction?.kind !== 'approval') return;
     this.answered();
     try {
-      await this.deps.request('agent.approve_command', {
+      const applied = await this.deps.request<AgentApproved>('agent.approve_command', {
         request_id: sending.id,
         interaction_id: interaction.interaction_id,
         decision,
       });
+      if (applied?.decision === 'always' && applied.stored === false)
+        this.deps.notify(NOT_KEPT, true);
     } catch (error) {
       this.deps.notify(words(error), true);
     }

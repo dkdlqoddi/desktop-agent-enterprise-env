@@ -8,13 +8,14 @@ browser, MCP, memory, skills, computer use, web search); the app's own actions (
 tasks, schedules) run in the parent, reached as "app_tool" frames.
 
 A process serves one of two things, by the first frame it gets. A "turn" runs one message of the chat: dangerous
-commands ask the user through an "approval" frame, clarify questions through a "clarify" frame, and progress and
-draft text stream up as "progress" and "draft" frames; the process is kept for the next turn. A "gateway" runs
+commands ask the user through an "approval" frame (what a "this conversation" answer covers follows as a "grant"
+frame), clarify questions through a "clarify" frame, and progress and draft text stream up as "progress" and "draft"
+frames; the process is kept for the next turn. A "gateway" runs
 Hermes' messenger gateway until it is shut down (run_gateway): the accounts the user listed write to their bot in
 Telegram, Discord or Slack, and the agent answers there, asking them there before a dangerous command. Either way its
 home is the Wiki's hermes folder.
 
-Frames to the parent: inference, approval, app_tool, clarify, progress, draft, result, error, gateway.
+Frames to the parent: inference, approval, grant, app_tool, clarify, progress, draft, result, error, gateway.
 Frames from the parent: turn, gateway, completion, approval_reply, app_tool_reply, clarify_reply, cancel, shutdown.
 """
 import contextlib
@@ -57,6 +58,14 @@ GATEWAY_OPENINGS = re.compile(
 # An ID no messenger gives an account: with it as the only "admin", every listed account is an ordinary user of
 # Hermes' command tiers and runs GATEWAY_COMMANDS alone.
 NO_ADMIN = "private-agent-no-admin"
+# The protected paths of the turn (or gateway) this process serves, as real paths: what Hermes' file tools refuse
+# to read or write (guard_files). Replaced whole each time (protect).
+PROTECTED = []
+# The command a person is being asked about on this thread, as Hermes would run it (remember_asked).
+ASKED = threading.local()
+# The longest command "always" keeps to the letter, and how many commands and deny patterns a config takes.
+EXACT_COMMAND = 1000
+MAX_ALLOWED, MAX_DENIED = 200, 600
 
 
 def emit(frame):
@@ -196,6 +205,45 @@ def own_settings_only(managed=None):
     hermes_config.reload_env = lambda *args, **kwargs: 0
 
 
+def protect(request):
+    """The paths the user (and the app, for its own files) put out of the agent's reach, as this turn has them: each
+    as it was written and as it resolves, without the root of a drive. Kept for the file tools (guard_files) and
+    returned for the commands (denied_commands)."""
+    paths = []
+    for value in request.get("protected") or []:
+        if not isinstance(value, str) or not value.strip() or not os.path.isabs(value):
+            continue
+        for path in (os.path.normpath(value), os.path.realpath(value)):
+            if os.path.dirname(path) != path and path not in paths:
+                paths.append(path)
+    PROTECTED[:] = [os.path.normcase(path) for path in paths]
+    return paths
+
+
+def denied_commands(request):
+    """Hermes' approvals.deny: a command matching one of these patterns is refused before any approval, whatever
+    was allowed earlier. One for each way a protected path is spelled in a command, and the patterns the user wrote
+    themselves. A pattern is matched against the command's text, so this stops a command that names the path, not
+    one that reaches it another way (a script, a link, a path put together at run time)."""
+    blocked = request.get("blocked") or []
+    patterns = [value.strip() for value in blocked if isinstance(value, str) and value.strip()]
+    for path in protect(request):
+        # A command may spell a Windows path with either slash, and Hermes also reads it with its backslashes taken
+        # for escapes (dropped).
+        for spelled in dict.fromkeys((path, path.replace("\\", "/"), path.replace("\\", ""))):
+            patterns.append("*" + re.sub(r"([*?\[])", r"[\1]", spelled) + "*")
+    return patterns[:MAX_DENIED]
+
+
+def allowed_commands(request):
+    """Hermes' command_allowlist: the commands the user chose to always allow, each to the letter (exact_command).
+    The app keeps them with its settings on this PC and hands them over with every turn, so config.yaml, a file in
+    the Wiki folder that may be copied or restored, never decides what runs unasked."""
+    allowed = request.get("allowed") or []
+    commands = {value.strip() for value in allowed if isinstance(value, str) and exact_text(value.strip())}
+    return sorted(commands)[:MAX_ALLOWED]
+
+
 def prepare_home(request):
     """The agent's home and app-owned config for this turn. It carries no secret (the API key never reaches here,
     and the MCP servers' own values stay in the environment: mcp_servers) and is regenerated for each selected
@@ -228,7 +276,9 @@ def prepare_home(request):
         "memory": {"memory_enabled": True, "user_profile_enabled": True, "nudge_interval": 0},
         "agent": {"max_iterations": request.get("max_iterations", 24), "api_max_retries": 1,
                   "auto_recovery_cycles": 0, "clarify_timeout": 600},
-        "approvals": {"mode": "smart", "timeout": 300, "cron_mode": "deny", "unattended_mode": "deny"},
+        "approvals": {"mode": "smart", "timeout": 300, "cron_mode": "deny", "unattended_mode": "deny",
+                      "deny": denied_commands(request)},
+        "command_allowlist": allowed_commands(request),
         "security": {"allow_lazy_installs": False},
         "tools": {"tool_search": {"enabled": "off"}},
         "auxiliary": auxiliary,
@@ -326,16 +376,145 @@ def register_app_tools(registry, tools):
                           handler=make(tool["name"]))
 
 
-def approval_callback(command, description="", *, allow_permanent=True, allow_session=True, smart_denied=False, **kw):
-    """A dangerous command the smart guardian escalated: ask the user and wait. deny/timeout/raise block; any other
-    value runs it (once)."""
+def exact_text(command):
+    """Whether Hermes' allowlist would read this text as one command and nothing else: a single line without shell
+    operators, and without a wildcard (an entry holding one is a pattern of many commands)."""
+    if not command or len(command) > EXACT_COMMAND or re.search(r"[\r\n*?\[]", command):
+        return False
     try:
-        reply = CHANNEL.request("approval", {"command": str(command)[:4000], "description": str(description)[:2000],
-                                             "smart_denied": bool(smart_denied)})
+        from tools.approval_floors import _has_allowlist_shell_operator
+
+        return not _has_allowlist_shell_operator(command)
+    except Exception:
+        return False
+
+
+def exact_command(shown):
+    """Whether "always" may be offered for the command a person is shown: it is then kept to the letter. It must be
+    the very text Hermes runs (what is shown has secrets masked, and a masked command is neither kept nor would it
+    match), a terminal command Hermes' detector flagged (not a script or a tool's name), and a text its allowlist
+    takes as one command (exact_text)."""
+    raw = getattr(ASKED, "command", None)
+    if not isinstance(raw, str) or raw.strip() != shown.strip() or not exact_text(raw.strip()):
+        return False
+    try:
+        from tools.approval import _command_findings
+
+        return bool(_command_findings(raw))
+    except Exception:
+        return False
+
+
+def remember_asked():
+    """Keep, for the thread's approval callback, the command Hermes asks a person about as it would run it
+    (exact_command): the callback itself is handed the text with secrets masked."""
+    from tools import approval
+
+    ask = approval.prompt_dangerous_approval
+    if getattr(ask, "private_agent", False):
+        return
+
+    def asking(command, *args, **kwargs):
+        ASKED.command = command
+        try:
+            return ask(command, *args, **kwargs)
+        finally:
+            ASKED.command = None
+
+    asking.private_agent = True
+    approval.prompt_dangerous_approval = asking
+
+
+def tell_grants(messenger=False):
+    """What a "this conversation" answer covers. Hermes remembers the kinds of command it was allowed (its
+    detector's keys) for the session they were asked in, and a turn of the chat is a session of its own: so each
+    grant is told to the parent, which hands the keys back with every later turn of the conversation (run_turn)
+    until the user clears it. Hermes' own "always" (a kind of command, for good, written to config.yaml) is never
+    used: the chat keeps "always" as one exact command with the app's settings (approval_callback), and in a
+    messenger it counts for the conversation only, as what runs unasked for good is decided at the PC."""
+    from tools import approval
+
+    persist = approval._persist_choice
+    if getattr(persist, "private_agent", False):
+        return
+
+    def persisted(session_key, choice, keys):
+        if choice == "always":
+            choice = "session"
+        persist(session_key, choice, keys)
+        if choice == "session" and not messenger:
+            emit({"type": "grant", "keys": [str(key)[:200] for key in keys][:20]})
+
+    persisted.private_agent = True
+    approval._persist_choice = persisted
+
+
+def guard_files():
+    """Hermes' file tools refuse the protected paths (protect) as they refuse its own credential files: its rules
+    for reads and for writes, deletes and moves (agent.file_safety) are asked first, and here they also say no to
+    a path inside a protected one. Like those rules it is a second line, not a wall: a script or a command that
+    does not name the path is not stopped by it."""
+    from agent import file_safety
+
+    read, write, denied = (file_safety.get_read_block_error, file_safety.get_write_denied_error,
+                           file_safety.is_write_denied)
+    if getattr(read, "private_agent", False):
+        return
+    told = ("is in a folder the user protected in Private Agent's settings. Do not read, change or copy it by "
+            "another way; tell the user it is protected.")
+
+    def inside(path):
+        try:
+            resolved = os.path.normcase(os.path.realpath(os.path.expanduser(str(path))))
+        except (OSError, ValueError):
+            return False
+        return any(resolved == zone or resolved.startswith(zone.rstrip("/\\") + os.sep) for zone in PROTECTED)
+
+    def read_error(path, *args, **kwargs):
+        return f"Access denied: {path} {told}" if inside(path) else read(path, *args, **kwargs)
+
+    def write_error(path, *args, **kwargs):
+        return f"Access denied: {path} {told}" if inside(path) else write(path, *args, **kwargs)
+
+    def write_denied(path, *args, **kwargs):
+        return inside(path) or denied(path, *args, **kwargs)
+
+    read_error.private_agent = True
+    swaps = (("get_read_block_error", read, read_error), ("get_write_denied_error", write, write_error),
+             ("is_write_denied", denied, write_denied))
+    # The module itself, and any module that took the functions by name before this ran.
+    for module in [file_safety, *list(sys.modules.values())]:
+        for name, old, new in swaps:
+            if getattr(module, name, None) is old:
+                with contextlib.suppress(Exception):
+                    setattr(module, name, new)
+
+
+def approval_callback(command, description="", *, allow_permanent=True, allow_session=True, smart_denied=False, **kw):
+    """A dangerous command the smart guardian escalated: ask the user and wait. The frame says which answers the
+    chat may offer beside "once" and "deny": "session" (this kind of command, for the conversation: tell_grants)
+    and "always" (this very command, for good: exact_command). An override of the guardian's own refusal is one
+    run only. deny, a timeout or a stop block the command; "always" runs it once here and puts the command on
+    this process's list for the rest of the turn, while the app keeps it for the turns after."""
+    command, description = str(command), str(description)
+    scoped = bool(allow_session and not smart_denied)
+    exact = bool(allow_permanent and not smart_denied and exact_command(command))
+    try:
+        reply = CHANNEL.request("approval", {"command": command[:4000], "description": description[:2000],
+                                             "smart_denied": bool(smart_denied), "allow_session": scoped,
+                                             "allow_permanent": exact})
     except Cancelled:
         return "deny"
     decision = (reply or {}).get("decision", "deny")
-    return decision if decision in ("once", "session", "always", "deny") else "deny"
+    if decision == "always" and exact:
+        with contextlib.suppress(Exception):
+            from tools.approval import approve_permanent
+
+            approve_permanent(command.strip())
+        return "once"
+    if decision == "session" and scoped:
+        return "session"
+    return "once" if decision in ("once", "session", "always") else "deny"
 
 
 def clarify_callback(questions, **kw):
@@ -381,6 +560,17 @@ def build_agent(request, config):
     set_hermes_interactive_context(True)
     set_current_session_key(request["session_id"])
     set_approval_callback(approval_callback)
+    remember_asked()
+    tell_grants()
+    # What runs unasked is what this turn was handed, no more: the commands allowed for good are read again from
+    # the config just written (a list a turn before left in this process goes), and the kinds of command allowed
+    # for this conversation are given to the turn's own session.
+    from tools.approval import approve_session, load_permanent_allowlist
+
+    load_permanent_allowlist()
+    for key in request.get("session_allowed") or []:
+        if isinstance(key, str) and key:
+            approve_session(request["session_id"], key)
 
     database = SessionDB(HOME / "state.db")
     # The tools the agent is built with say how a delegation ends (joined_delegation).
@@ -425,6 +615,7 @@ def prepare_tools(request):
 def run_turn(request):
     bundled_paths()
     own_settings_only()
+    guard_files()
     config = prepare_home(request)
     patch_model_calls()
     prepare_tools(request)
@@ -567,10 +758,12 @@ def run_gateway(request, requests):
     policy = HOME / "gateway"
     policy.mkdir(exist_ok=True, mode=0o700)
     own_settings_only(policy)
+    guard_files()
     config = prepare_home(request)
     write_config(policy / "config.yaml", gateway_policy(request, config, accounts))
     patch_model_calls()
     prepare_tools(request)
+    tell_grants(messenger=True)
 
     from gateway.config import Platform
     from gateway.run import GatewayRunner, load_gateway_config_for_runner

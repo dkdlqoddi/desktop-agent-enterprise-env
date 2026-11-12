@@ -148,12 +148,18 @@ export type CatalogMethod =
 // The methods only the screens call: those the main process allows them beyond the catalog.
 export type ScreenMethod =
   | 'agent.active'
+  | 'agent.activity'
   | 'agent.answer_clarify'
   | 'agent.approve'
   | 'agent.approve_command'
   | 'agent.clear'
   | 'agent.engine'
+  | 'agent.forget_grants'
   | 'agent.gateway'
+  | 'agent.grants'
+  | 'agent.memory'
+  | 'agent.memory_forget'
+  | 'agent.memory_save'
   | 'agent.messages'
   | 'agent.reject'
   | 'agent.send'

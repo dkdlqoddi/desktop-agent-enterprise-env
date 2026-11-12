@@ -313,6 +313,13 @@ class Database:
                     content TEXT NOT NULL DEFAULT '', actions TEXT NOT NULL DEFAULT '[]',
                     engine TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
+                -- What the turn an answer ended did on the way (agent_chat.py): the tools it ran, the app's actions,
+                -- the commands it asked about with how each was decided, and its questions (steps: JSON, in order;
+                -- more: the steps beyond those kept). It goes with its answer (seq of agent_messages).
+                CREATE TABLE IF NOT EXISTS agent_activity (
+                    seq INTEGER PRIMARY KEY, steps TEXT NOT NULL DEFAULT '[]', more INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
                 -- Web records (web_capture.py): what a site's page showed at one time (a capture) and the ads,
                 -- products and results on it (items), with the landing page of an item the user clicked.
                 CREATE TABLE IF NOT EXISTS web_captures (

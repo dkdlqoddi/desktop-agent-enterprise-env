@@ -13,6 +13,8 @@ import {
 import { api, type HermesGateway, type HermesKey, type HermesSettings } from '@/lib/api';
 import { useActions } from '../state';
 import SecretInput from '../secret-input';
+import HermesGuard from './hermes-guard';
+import HermesMemory from './hermes-memory';
 
 // The key groups listed as plain keys. The messenger gateway's bot tokens (group 'gateway') are set with the gateway,
 // beside the accounts each bot answers.
@@ -53,8 +55,9 @@ const GATEWAY_STATES: Record<HermesGateway['state'], string> = {
 };
 
 // The chat agent's own settings: the folder its terminal and file tools start in, the service keys it reads from its
-// environment (only whether each is set ever reaches this screen), the MCP servers, the computer-use toggle and the
-// messenger gateway. Model calls always go through 관리 → LLM 연결, so model-provider keys are refused here. All of
+// environment (only whether each is set ever reaches this screen), the MCP servers, the computer-use toggle, what it
+// runs without asking and may not touch (hermes-guard.tsx), what it remembers (hermes-memory.tsx) and the messenger
+// gateway. Model calls always go through 관리 → LLM 연결, so model-provider keys are refused here. All of
 // it is the user's alone (data-user-only): an AI tool's screen control cannot type or press here at any access level.
 export default function HermesSection() {
   const { notify } = useActions();
@@ -342,6 +345,10 @@ export default function HermesSection() {
           <p className="admin-hint">등록된 MCP 서버: {state.mcp_servers.join(', ')}</p>
         )}
       </fieldset>
+
+      <HermesGuard state={state} busy={busy} update={update} notify={notify} />
+
+      <HermesMemory notify={notify} />
 
       <fieldset className="admin-fieldset">
         <legend>

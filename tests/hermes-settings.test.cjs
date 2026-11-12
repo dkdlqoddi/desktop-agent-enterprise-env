@@ -141,13 +141,20 @@ test("the chat is run with the folder, the tools and the service keys; the bot t
   const { directory, make } = await setup(t);
   const settings = make();
   await settings.load();
-  // Nothing set: the agent's own folder, computer use, no MCP server, pages read without a service, no gateway.
+  // Nothing set: the agent's own folder, computer use, no MCP server, pages read without a service, no gateway;
+  // nothing runs unasked, and the places credentials are kept are protected.
+  const guard = {
+    allowed: [],
+    protected: { app: [], credentials: true, folders: [] },
+    blocked: [],
+  };
   assert.deepEqual(settings.agent(), {
     workspace: '',
     computer_use: true,
     mcp_servers: {},
     search_backend: 'ddgs',
     extract_backend: 'ddgs',
+    ...guard,
     env: {},
     gateway: { enabled: false, users: {}, env: {} },
   });
@@ -173,6 +180,7 @@ test("the chat is run with the folder, the tools and the service keys; the bot t
     mcp_servers: { files: { command: 'npx' } },
     search_backend: 'firecrawl',
     extract_backend: 'firecrawl',
+    ...guard,
     env: { FIRECRAWL_API_KEY: 'fc-secret', MY_SKILL_TOKEN: 'skill-secret' },
   };
   const off = settings.agent();
@@ -265,4 +273,132 @@ test('a damaged file gives the defaults, and one that cannot be read is never wr
   assert.match((await unreadable.load()).error, /hermes\.json/);
   await assert.rejects(unreadable.update({ gateway: true }), /hermes\.json/);
   assert.ok((await fs.stat(file)).isDirectory());
+});
+
+test('a command is allowed for good only by the answer to a question, and taken back on the screen', async (t) => {
+  const { file, make } = await setup(t);
+  const settings = make();
+  await settings.load();
+  assert.deepEqual(settings.get().allowed, []);
+  assert.equal(await settings.allow('  git push --force origin main  '), true);
+  assert.equal(await settings.allow('git push --force origin main'), true);
+  // Not a single line of text: nothing is kept.
+  assert.equal(await settings.allow('rm -rf a\nrm -rf b'), false);
+  assert.equal(await settings.allow(''), false);
+  assert.equal(await settings.allow(7), false);
+  const shown = settings.get().allowed;
+  assert.deepEqual(
+    shown.map((entry) => entry.command),
+    ['git push --force origin main'],
+  );
+  assert.match(shown[0].added_at, /^\d{4}-\d{2}-\d{2}T/);
+  // The backend is handed the commands; the screens cannot add one through the settings they save.
+  assert.deepEqual(settings.agent().allowed, ['git push --force origin main']);
+  await settings.update({ allowed: [{ command: 'rm -rf /' }], computer_use: false });
+  assert.deepEqual(settings.agent().allowed, ['git push --force origin main']);
+  // A new start reads the list back, and a command is taken back by its text.
+  const again = make();
+  await again.load();
+  assert.deepEqual(again.agent().allowed, ['git push --force origin main']);
+  await assert.rejects(again.update({ disallow: 'all' }), /허용을 취소할 명령/);
+  await again.update({ disallow: ['git push --force origin main', 'never allowed'] });
+  assert.deepEqual(again.get().allowed, []);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')).allowed, []);
+});
+
+test('the list of allowed commands is read strictly from the file', async (t) => {
+  const { file, make } = await setup(t);
+  await fs.writeFile(
+    file,
+    JSON.stringify({
+      allowed: [
+        { command: 'npm publish', added_at: '2026-01-02T03:04:05.000Z' },
+        { command: 'npm publish' },
+        { command: 'two\nlines' },
+        { command: 'x'.repeat(1001) },
+        'npm unpublish',
+        null,
+      ],
+    }),
+  );
+  const settings = make();
+  await settings.load();
+  assert.deepEqual(settings.get().allowed, [
+    { command: 'npm publish', added_at: '2026-01-02T03:04:05.000Z' },
+  ]);
+});
+
+test('protected folders and refused commands are saved, and what the agent works in stays open', async (t) => {
+  const { directory, file } = await setup(t);
+  const wiki = path.join(directory, 'wiki');
+  const work = path.join(directory, 'projects', 'site');
+  await fs.mkdir(wiki);
+  await fs.mkdir(work, { recursive: true });
+  const make = () =>
+    new HermesSettings({
+      file,
+      encrypt,
+      decrypt,
+      canEncrypt: () => true,
+      zones: () => [path.join(directory, 'app-settings')],
+      reachable: () => [wiki],
+    });
+  const settings = make();
+  await settings.load();
+  // The places credentials are kept are protected until the user turns that off; the app's own folder always is.
+  assert.deepEqual(settings.get().protected, { credentials: true, folders: [] });
+  assert.deepEqual(settings.agent().protected, {
+    app: [path.join(directory, 'app-settings')],
+    credentials: true,
+    folders: [],
+  });
+  const vault = path.join(directory, 'vault');
+  const shown = await settings.update({
+    protected: { credentials: false, folders: [vault, ` ${vault} `] },
+    blocked: [' git push --force* ', '', '*shutdown*', 'git push --force*'],
+  });
+  assert.deepEqual(shown.protected, { credentials: false, folders: [vault] });
+  assert.deepEqual(shown.blocked, ['git push --force*', '*shutdown*']);
+  assert.deepEqual(settings.agent().protected.folders, [vault]);
+  assert.deepEqual(settings.agent().blocked, ['git push --force*', '*shutdown*']);
+
+  // Not a full path, the top of a drive, or a pattern that would refuse every command: refused, nothing changes.
+  for (const refused of [
+    { protected: { folders: ['relative/folder'] } },
+    { protected: { folders: [path.parse(directory).root] } },
+    { protected: { folders: 'vault' } },
+    { protected: { credentials: 'no' } },
+    { protected: [] },
+    { blocked: ['*'] },
+    { blocked: ['* ?'] },
+    { blocked: 'rm' },
+    { blocked: ['x'.repeat(201)] },
+  ])
+    await assert.rejects(settings.update(refused), (error) => error.name === 'Error');
+  assert.deepEqual(settings.get().protected, { credentials: false, folders: [vault] });
+
+  // A folder holding the Wiki folder or the agent's work folder cannot be protected, nor a work folder be chosen
+  // inside a protected one.
+  await assert.rejects(
+    settings.update({ protected: { folders: [directory] } }),
+    /함께 쓸 수 없습니다/,
+  );
+  await assert.rejects(settings.update({ protected: { folders: [wiki] } }), /함께 쓸 수 없습니다/);
+  await settings.update({ workspace: work });
+  await assert.rejects(
+    settings.update({ protected: { folders: [path.join(directory, 'projects')] } }),
+    /함께 쓸 수 없습니다/,
+  );
+  await settings.update({ workspace: '' });
+  await settings.update({ protected: { folders: [path.join(directory, 'projects')] } });
+  await assert.rejects(settings.update({ workspace: work }), /함께 쓸 수 없습니다/);
+
+  // A new start reads it all back.
+  const again = make();
+  await again.load();
+  assert.deepEqual(again.get().protected, {
+    credentials: false,
+    folders: [path.join(directory, 'projects')],
+  });
+  assert.deepEqual(again.get().blocked, ['git push --force*', '*shutdown*']);
 });

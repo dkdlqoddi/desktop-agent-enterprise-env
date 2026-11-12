@@ -142,6 +142,9 @@ class Gateway:
                     "users": accounts,
                     "workspace": self.chat.folder(),
                     "telegram_api": self.telegram_api,
+                    # What runs unasked and what may not be touched, as in the chat; a messenger's own "always" counts
+                    # for its conversation only (runtime/hermes/worker.py, tell_grants).
+                    **self.chat.limits(conversation=False),
                 },
                 "env": {**(env or {}), **tokens},
             }

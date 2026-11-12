@@ -11,6 +11,12 @@ const { readJsonFile, writeFileSafely } = require('./files.cjs');
 //
 // The bot tokens go to the gateway's process alone (backend/agent/hermes_gateway.py), and only while the gateway is
 // on: the chat's own worker has no use for them.
+//
+// What the agent may run without asking and what it may not touch are kept here too, with the app's settings on this
+// PC and not in the Wiki folder (which may be copied, synced or restored from elsewhere): the commands the user chose
+// to always allow (allowed: each to the letter, added only by an answer to the agent's own question — allow — and
+// taken back on the settings screen), the folders the user protected (folders), whether the places credentials are
+// kept are protected (credentials, on unless turned off) and the command patterns the user refuses (blocked).
 
 const VERSION = 1;
 // The keys the settings screen lists, by what each is for; any other name the user adds goes the same way (a skill's
@@ -91,6 +97,11 @@ const MAX_VALUE = 8192;
 const MAX_USERS = 2000;
 const MAX_MCP = 65536;
 const MAX_PATH = 1024;
+const MAX_ALLOWED = 200;
+const MAX_COMMAND = 1000;
+const MAX_FOLDERS = 50;
+const MAX_BLOCKED = 50;
+const MAX_PATTERN = 200;
 // Reject control characters in the short single-line fields (names, values, paths, account IDs).
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f]/;
@@ -123,6 +134,92 @@ function users(value) {
   if (ids.some((id) => !/^[A-Za-z0-9@._:-]{1,100}$/.test(id)))
     throw new HermesSettingsError('계정 ID에는 영문, 숫자와 @ . _ : - 만 쓸 수 있습니다.');
   return [...new Set(ids)].join(',');
+}
+
+/** A command kept to the letter: one line of text. */
+function command(value) {
+  if (typeof value !== 'string' || CONTROL.test(value)) return '';
+  const text = value.trim();
+  return text && text.length <= MAX_COMMAND ? text : '';
+}
+
+/** The commands the user always allows, as they are kept: [{command, added_at}], each command once. */
+function allowedList(value) {
+  const kept = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    const text = command(item?.command);
+    if (!text || kept.some((entry) => entry.command === text)) continue;
+    kept.push({ command: text, added_at: typeof item.added_at === 'string' ? item.added_at : '' });
+  }
+  return kept.slice(0, MAX_ALLOWED);
+}
+
+/** Whether `inner` is `outer` or lies inside it. */
+function within(inner, outer) {
+  const relative = path.relative(outer, inner);
+  return !relative || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+/** The folders the user protects: absolute paths, each once. A stored list is read leniently (strict: false). */
+function folderList(value, strict = true) {
+  if (!Array.isArray(value)) {
+    if (strict) throw new HermesSettingsError('보호할 폴더 목록을 확인해 주세요.');
+    return [];
+  }
+  const kept = [];
+  for (const item of value) {
+    const folder = typeof item === 'string' ? item.trim() : '';
+    const valid =
+      folder &&
+      folder.length <= MAX_PATH &&
+      !CONTROL.test(folder) &&
+      path.isAbsolute(folder) &&
+      path.dirname(path.resolve(folder)) !== path.resolve(folder);
+    if (!valid) {
+      if (strict)
+        throw new HermesSettingsError(
+          '보호할 폴더는 전체 경로로 적어 주세요. 드라이브의 최상위 폴더는 넣을 수 없습니다.',
+        );
+      continue;
+    }
+    if (!kept.includes(folder)) kept.push(folder);
+  }
+  if (kept.length > MAX_FOLDERS) {
+    if (strict)
+      throw new HermesSettingsError(`보호할 폴더는 ${MAX_FOLDERS}개까지 넣을 수 있습니다.`);
+    return kept.slice(0, MAX_FOLDERS);
+  }
+  return kept;
+}
+
+/** The command patterns the user refuses outright (Hermes' approvals.deny: * and ? stand for any text). */
+function blockedList(value, strict = true) {
+  if (!Array.isArray(value)) {
+    if (strict) throw new HermesSettingsError('실행하지 않을 명령 목록을 확인해 주세요.');
+    return [];
+  }
+  const kept = [];
+  for (const item of value) {
+    const pattern = typeof item === 'string' ? item.trim() : '';
+    if (!pattern) continue;
+    // A pattern of wildcards alone would refuse every command.
+    const valid =
+      pattern.length <= MAX_PATTERN && !CONTROL.test(pattern) && /[^*?\s]{2}/.test(pattern);
+    if (!valid) {
+      if (strict)
+        throw new HermesSettingsError(
+          `실행하지 않을 명령은 한 줄에 하나씩, ${MAX_PATTERN}자 이내로 적어 주세요. *만으로 된 줄은 넣을 수 없습니다.`,
+        );
+      continue;
+    }
+    if (!kept.includes(pattern)) kept.push(pattern);
+  }
+  if (kept.length > MAX_BLOCKED) {
+    if (strict)
+      throw new HermesSettingsError(`실행하지 않을 명령은 ${MAX_BLOCKED}개까지 넣을 수 있습니다.`);
+    return kept.slice(0, MAX_BLOCKED);
+  }
+  return kept;
 }
 
 /** The MCP servers as Hermes' config.yaml mcp_servers takes them, from the JSON the user wrote: {} when empty. */
@@ -176,13 +273,37 @@ function mcpServers(text) {
 }
 
 class HermesSettings {
-  constructor({ file, encrypt, decrypt, canEncrypt, stat = fs.stat }) {
+  // `zones`: the app's own folders the agent may not touch (its settings folder). `reachable`: the folders the agent
+  // must be able to use beside its work folder (the Wiki folder, which holds its home), which the user therefore
+  // cannot protect.
+  constructor({
+    file,
+    encrypt,
+    decrypt,
+    canEncrypt,
+    stat = fs.stat,
+    zones = /** @type {() => string[]} */ (() => []),
+    reachable = /** @type {() => string[]} */ (() => []),
+    now = () => new Date().toISOString(),
+  }) {
     this.file = file;
     this.encrypt = encrypt;
     this.decrypt = decrypt;
     this.canEncrypt = canEncrypt;
     this.stat = stat;
-    this.values = { workspace: '', gateway: false, computer_use: true, users: {} };
+    this.zones = zones;
+    this.reachable = reachable;
+    this.now = now;
+    this.values = {
+      workspace: '',
+      gateway: false,
+      computer_use: true,
+      users: {},
+      allowed: /** @type {{command: string, added_at: string}[]} */ ([]),
+      credentials: true,
+      folders: /** @type {string[]} */ ([]),
+      blocked: /** @type {string[]} */ ([]),
+    };
     // {env: {NAME: value}, mcp: '<the JSON the user wrote>'}: never written in plain text.
     this.secrets = { env: {}, mcp: '' };
     this.stored = false;
@@ -213,6 +334,10 @@ class HermesSettings {
           }
         }),
       ),
+      allowed: allowedList(record.allowed),
+      credentials: record.credentials !== false,
+      folders: folderList(record.folders, false),
+      blocked: blockedList(record.blocked, false),
     };
     if (typeof record.encrypted === 'string' && record.encrypted)
       try {
@@ -258,6 +383,9 @@ class HermesSettings {
       }),
       mcp_servers: servers,
       has_mcp: !!this.secrets.mcp.trim(),
+      allowed: this.values.allowed.map((entry) => ({ ...entry })),
+      protected: { credentials: this.values.credentials, folders: [...this.values.folders] },
+      blocked: [...this.values.blocked],
       secure_storage: this.canEncrypt(),
       stored: this.stored,
       error: this.unavailable,
@@ -285,8 +413,10 @@ class HermesSettings {
   /** What the agent is run with, as the backend's agent.configure takes it (backend/agent/agent_chat.py): the folder
    *  it works in, computer use, the MCP servers, the services that search the web and read pages, the keys of the
    *  chat worker's environment (env), and the messenger gateway: whether it is on, the accounts each bot answers and,
-   *  only while it is on, the bot tokens, apart from env so that the chat's worker is never given them. Only the main
-   *  process ever calls this. */
+   *  only while it is on, the bot tokens, apart from env so that the chat's worker is never given them. With them go
+   *  the commands that run without asking (allowed), what the agent may not touch (protected: the app's own folders,
+   *  whether the places credentials are kept count, the user's folders) and the command patterns refused (blocked).
+   *  Only the main process ever calls this. */
   agent() {
     const backend = this.backend();
     const [env, tokens] = [{}, {}];
@@ -298,6 +428,13 @@ class HermesSettings {
       mcp_servers: backend.mcp_servers,
       search_backend: serviceOf(SEARCH_SERVICES, env),
       extract_backend: serviceOf(EXTRACT_SERVICES, env),
+      allowed: this.values.allowed.map((entry) => entry.command),
+      protected: {
+        app: this.zones().filter((folder) => typeof folder === 'string' && folder),
+        credentials: this.values.credentials,
+        folders: [...this.values.folders],
+      },
+      blocked: [...this.values.blocked],
       env,
       gateway: {
         enabled: backend.gateway,
@@ -316,8 +453,33 @@ class HermesSettings {
     return job;
   }
 
+  /** Keeps a command the user chose to always allow, as the backend told it from the agent's own question
+   *  (agent.approve_command): true when it is on the list. The screens cannot name one: they can only take one back
+   *  (update: disallow). */
+  allow(text) {
+    return this.change(async () => {
+      const kept = command(text);
+      if (!kept) return false;
+      if (this.values.allowed.some((entry) => entry.command === kept)) return true;
+      if (this.values.allowed.length >= MAX_ALLOWED) return false;
+      const previous = this.values;
+      this.values = {
+        ...previous,
+        allowed: [...previous.allowed, { command: kept, added_at: this.now() }],
+      };
+      try {
+        await this.write();
+      } catch {
+        this.values = previous;
+        return false;
+      }
+      return true;
+    });
+  }
+
   /** Saves what was sent: {workspace?, gateway?, computer_use?, users?: {platform: ids}, keys?: {NAME: value, or ''
-   *  to clear}, mcp?: '<JSON>'}. A value nobody typed again stays as it was. */
+   *  to clear}, mcp?: '<JSON>', disallow?: [commands to ask about again], protected?: {credentials?, folders?},
+   *  blocked?: [command patterns]}. A value nobody typed again stays as it was. */
   update(params) {
     return this.change(async () => {
       const values = { ...this.values, users: { ...this.values.users } };
@@ -340,6 +502,36 @@ class HermesSettings {
             throw new HermesSettingsError('켜기 설정을 확인해 주세요.');
           values[field] = params[field];
         }
+      if (Object.hasOwn(params, 'disallow')) {
+        if (
+          !Array.isArray(params.disallow) ||
+          params.disallow.some((item) => typeof item !== 'string')
+        )
+          throw new HermesSettingsError('허용을 취소할 명령을 확인해 주세요.');
+        const taken = new Set(params.disallow.map((item) => item.trim()));
+        values.allowed = values.allowed.filter((entry) => !taken.has(entry.command));
+      }
+      if (Object.hasOwn(params, 'protected')) {
+        const given = params.protected;
+        if (!given || typeof given !== 'object' || Array.isArray(given))
+          throw new HermesSettingsError('보호 구역 설정을 확인해 주세요.');
+        if (Object.hasOwn(given, 'credentials')) {
+          if (typeof given.credentials !== 'boolean')
+            throw new HermesSettingsError('켜기 설정을 확인해 주세요.');
+          values.credentials = given.credentials;
+        }
+        if (Object.hasOwn(given, 'folders')) values.folders = folderList(given.folders);
+      }
+      if (Object.hasOwn(params, 'blocked')) values.blocked = blockedList(params.blocked);
+      // A folder the agent itself works in cannot be closed to it: its work folder, and the Wiki folder with its home.
+      const open = [values.workspace, ...this.reachable()].filter(
+        (folder) => typeof folder === 'string' && folder,
+      );
+      const closing = values.folders.find((folder) => open.some((used) => within(used, folder)));
+      if (closing && (Object.hasOwn(params, 'protected') || Object.hasOwn(params, 'workspace')))
+        throw new HermesSettingsError(
+          `${closing}에는 에이전트의 작업 폴더나 Wiki 폴더가 들어 있어 함께 쓸 수 없습니다. 보호할 폴더나 작업 폴더를 바꿔 주세요.`,
+        );
       if (Object.hasOwn(params, 'users')) {
         if (!params.users || typeof params.users !== 'object')
           throw new HermesSettingsError('허용할 계정을 확인해 주세요.');

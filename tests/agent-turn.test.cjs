@@ -35,6 +35,8 @@ const approval = (id) => ({
   command: 'rm -r build',
   description: '',
   smart_denied: false,
+  allow_session: true,
+  allow_permanent: true,
 });
 const clarify = (id) => ({
   kind: 'clarify',
@@ -49,7 +51,12 @@ function setup() {
   const notices = [];
   const prompts = [];
   const screen = { shown: true };
-  const backend = { status: status(), active: { request_id: '', text: '' }, fails: {} };
+  const backend = {
+    status: status(),
+    active: { request_id: '', text: '' },
+    fails: {},
+    answers: {},
+  };
   let settle;
   const turn = new AgentTurn({
     store: createStore(NO_TURN),
@@ -60,7 +67,7 @@ function setup() {
         return new Promise((resolve, reject) => (settle = { resolve, reject }));
       if (method === 'agent.status') return Promise.resolve(backend.status);
       if (method === 'agent.active') return Promise.resolve(backend.active);
-      return Promise.resolve({ ok: true });
+      return Promise.resolve(backend.answers[method] ?? { ok: true });
     },
     notify: (text, error) => notices.push([text, !!error]),
     prompt: (text, waits) => prompts.push([text, waits]),
@@ -166,6 +173,45 @@ test('the decision and the answers go to the question shown, which leaves the sc
 
   await turn.stop();
   assert.deepEqual(sent('agent.stop'), [{ request_id: 'r1' }]);
+});
+
+test('always is told to the user only when the app could not keep it', async () => {
+  const { turn, sent, backend, notices } = setup();
+  void turn.send('빌드 폴더 지워 줘', 'r1');
+  backend.status = status({ phase: 'waiting', interaction: approval('i1') });
+  await turn.poll('r1');
+  backend.answers['agent.approve_command'] = {
+    ok: true,
+    decision: 'always',
+    allowed: 'rm -r build',
+    stored: true,
+  };
+  await turn.decide('always');
+  assert.deepEqual(sent('agent.approve_command'), [
+    { request_id: 'r1', interaction_id: 'i1', decision: 'always' },
+  ]);
+  assert.deepEqual(notices, []);
+
+  // The settings file could not be written: the command holds until the app closes, and the user hears it.
+  backend.status = status({ phase: 'waiting', interaction: approval('i2') });
+  await turn.poll('r1');
+  backend.answers['agent.approve_command'] = {
+    ok: true,
+    decision: 'always',
+    allowed: 'rm -r build',
+    stored: false,
+  };
+  await turn.decide('always');
+  assert.equal(notices.length, 1);
+  assert.match(notices[0][0], /저장하지 못했습니다/);
+  assert.equal(notices[0][1], true);
+
+  // For the conversation only, nothing is kept and nothing is told.
+  backend.status = status({ phase: 'waiting', interaction: approval('i3') });
+  await turn.poll('r1');
+  backend.answers['agent.approve_command'] = { ok: true, decision: 'session' };
+  await turn.decide('session');
+  assert.equal(notices.length, 1);
 });
 
 test('a request that failed gives its words back once and tells why', async () => {

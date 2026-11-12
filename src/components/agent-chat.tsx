@@ -12,6 +12,7 @@ import {
   FileText,
   Globe2,
   HelpCircle,
+  History,
   ListChecks,
   ListTodo,
   LoaderCircle,
@@ -31,8 +32,10 @@ import {
   api,
   clock,
   dayTime,
+  type AgentActivity,
   type AgentCard,
   type AgentClarify,
+  type AgentDecision,
   type AgentEngine,
   type AgentApproval,
   type AgentMessage,
@@ -71,6 +74,29 @@ const STATUS: Record<AgentCard['status'], string> = {
   cancelled: '취소함',
 };
 const KIND_NAMES = { ad: '광고', product: '상품', result: '검색 결과' } as const;
+// What a step of a turn's activity was, and how it ended.
+const STEP_KINDS = {
+  tool: '도구',
+  action: '앱 작업',
+  approval: '명령 확인',
+  question: '질문',
+} as const;
+const STEP_RESULTS: Record<string, string> = {
+  once: '이번만 실행',
+  session: '이 대화에서 허용',
+  always: '항상 허용',
+  deny: '거부',
+  timeout: '응답 없음',
+  stopped: '중지함',
+  done: '완료',
+  failed: '실패',
+  submitted: '답함',
+  cancelled: '답하지 않음',
+};
+// How the agent marks the choice it recommends (the first of a question's); shown in the app's language, sent as it is.
+const RECOMMENDED = / \(Recommended\)$/;
+// The results that mean the step did not go through.
+const STEP_REFUSED = new Set(['deny', 'timeout', 'stopped', 'failed', 'cancelled']);
 // The words of the task board and the routines widget.
 const TASK_STATUS: Record<AgentTaskLine['status'], string> = {
   open: '진행 중',
@@ -105,14 +131,17 @@ function EngineBadge({ engine }: { engine: AgentEngine | null }) {
   );
 }
 
-// A dangerous command the agent paused on: the user allows it (once/always) or refuses it, and the turn goes on. The
-// decision is the user's alone: the whole conversation is out of an AI tool's reach (data-user-only on its section).
+// A dangerous command the agent paused on: the user allows it or refuses it, and the turn goes on. How far an answer
+// reaches is said beside it: this run, this kind of command for the conversation, or this very command for good. A
+// command the safety check itself refused can only be run this once, and one that is not a single plain command
+// cannot be allowed for good. The decision is the user's alone: the whole conversation is out of an AI tool's reach
+// (data-user-only on its section).
 function ApprovalPrompt({
   approval,
   onDecide,
 }: {
   approval: AgentApproval;
-  onDecide: (decision: 'once' | 'always' | 'deny') => void;
+  onDecide: (decision: AgentDecision) => void;
 }) {
   return (
     <div className="agent-interaction approval" role="group" aria-label="명령 실행 확인">
@@ -127,18 +156,75 @@ function ApprovalPrompt({
         <button className="button primary small" onClick={() => onDecide('once')}>
           <Check size={14} /> 이번만 실행
         </button>
-        <button className="button secondary small" onClick={() => onDecide('always')}>
-          항상 허용
-        </button>
+        {approval.allow_session && (
+          <button className="button secondary small" onClick={() => onDecide('session')}>
+            이 대화에서 허용
+          </button>
+        )}
+        {approval.allow_permanent && (
+          <button className="button secondary small" onClick={() => onDecide('always')}>
+            항상 허용
+          </button>
+        )}
         <button className="button secondary small" onClick={() => onDecide('deny')}>
           <X size={14} /> 거부
         </button>
       </div>
+      <ul className="agent-interaction-scopes">
+        {approval.smart_denied && (
+          <li>안전 검사가 위험하다고 본 명령입니다. 실행하더라도 이번 한 번뿐입니다.</li>
+        )}
+        {approval.allow_session && (
+          <li>
+            이 대화에서 허용: 대화를 비우거나 앱을 닫을 때까지 같은 종류의 명령을 다시 묻지
+            않습니다.
+          </li>
+        )}
+        {approval.allow_permanent && (
+          <li>
+            항상 허용: 글자까지 같은 이 명령만 앞으로 묻지 않습니다. 관리 → 채팅 에이전트에서 취소할
+            수 있습니다.
+          </li>
+        )}
+      </ul>
     </div>
   );
 }
 
-// The questions the agent asked to go on: one choice or a short answer each.
+// What the turn an answer ended did on the way, folded under the answer: the tools the agent ran, the app's actions, the
+// commands it asked about with how each was decided, and its questions.
+function Activity({ activity }: { activity: AgentActivity | undefined }) {
+  if (!activity?.steps.length) return null;
+  return (
+    <details className="agent-activity">
+      <summary>
+        <History size={13} aria-hidden="true" /> 한 일 {activity.steps.length + activity.more}건
+      </summary>
+      <ol aria-label="이 답을 만들며 한 일">
+        {activity.steps.map((step, index) => (
+          <li key={index} className={step.kind}>
+            <span className="agent-step-kind">{STEP_KINDS[step.kind] ?? step.kind}</span>
+            <span className="agent-step-text" title={step.note || undefined}>
+              {step.text}
+            </span>
+            {step.result && (
+              <span
+                className={`agent-step-result ${STEP_REFUSED.has(step.result) ? 'refused' : ''}`}
+              >
+                {STEP_RESULTS[step.result] ?? step.result}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+      {activity.more > 0 && (
+        <p className="agent-activity-more">그 뒤의 {activity.more}건은 적지 않았습니다.</p>
+      )}
+    </details>
+  );
+}
+
+// The questions the agent asked to go on: one of the choices, or an answer in the user's own words, each.
 function ClarifyPrompt({
   clarify,
   onSubmit,
@@ -147,6 +233,8 @@ function ClarifyPrompt({
   onSubmit: (answers: Record<string, string>) => void;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // The answers written out by hand, by question: one of those is sent in place of a choice.
+  const [written, setWritten] = useState<Record<string, string>>({});
   return (
     <form
       className="agent-interaction clarify"
@@ -163,18 +251,45 @@ function ClarifyPrompt({
         <div key={question.qid} className="agent-clarify-question">
           <p>{question.question}</p>
           {question.choices?.length ? (
-            <div className="agent-clarify-choices" role="group" aria-label={question.question}>
-              {question.choices.map((choice) => (
-                <button
-                  type="button"
-                  key={choice}
-                  className={`button small ${answers[question.qid] === choice ? 'primary' : 'secondary'}`}
-                  onClick={() => setAnswers((current) => ({ ...current, [question.qid]: choice }))}
-                >
-                  {choice}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="agent-clarify-choices" role="group" aria-label={question.question}>
+                {question.choices.map((choice) => (
+                  <button
+                    type="button"
+                    key={choice}
+                    aria-pressed={!written[question.qid] && answers[question.qid] === choice}
+                    className={`button small ${
+                      !written[question.qid] && answers[question.qid] === choice
+                        ? 'primary'
+                        : 'secondary'
+                    }`}
+                    onClick={() => {
+                      setWritten((current) => ({ ...current, [question.qid]: '' }));
+                      setAnswers((current) => ({ ...current, [question.qid]: choice }));
+                    }}
+                  >
+                    {choice.replace(RECOMMENDED, ' (추천)')}
+                  </button>
+                ))}
+              </div>
+              <input
+                className="agent-clarify-input"
+                aria-label={`${question.question} (직접 입력)`}
+                placeholder="보기에 없으면 직접 적어 주세요"
+                maxLength={2000}
+                value={written[question.qid] ?? ''}
+                onChange={(event) => {
+                  const typed = event.target.value;
+                  setWritten((current) => ({ ...current, [question.qid]: typed }));
+                  setAnswers((current) => {
+                    const next = { ...current };
+                    if (typed.trim()) next[question.qid] = typed.trim();
+                    else delete next[question.qid];
+                    return next;
+                  });
+                }}
+              />
+            </>
           ) : (
             <input
               className="agent-clarify-input"
@@ -556,7 +671,7 @@ export default function AgentChat() {
           {!!messages?.length && (
             <Confirm
               label="대화 비우기"
-              question="대화를 모두 지울까요? 웹 기록과 할 일은 그대로 둡니다."
+              question="대화를 모두 지울까요? 답마다 남긴 ‘한 일’도 함께 지우고, 이 대화에서 허용한 명령은 다시 묻습니다. 웹 기록과 할 일은 그대로 둡니다."
               icon={<Trash2 size={15} />}
               onConfirm={clear}
               disabled={!!sending}
@@ -591,6 +706,7 @@ export default function AgentChat() {
                       onReject={() => void act(message, index, false)}
                     />
                   ))}
+                  <Activity activity={message.activity} />
                 </div>
                 <span className="agent-time">{dayTime(message.created_at)}</span>
               </li>

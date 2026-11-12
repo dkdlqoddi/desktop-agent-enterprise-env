@@ -4,7 +4,8 @@ The backend starts the worker with the bundled CPython and talks to it in JSON l
 output: no port opens, and no Hermes installed on the PC is looked for or used. The worker runs Hermes' own tools
 (terminal, files, code, browser, MCP, memory, skills, computer use, web search); the app's own actions (document
 search, web records, tasks, schedules) run here, reached as "app_tool" frames; dangerous commands ask the user
-through an "approval" frame and clarify questions through a "clarify" frame. Every model request comes back here
+through an "approval" frame and clarify questions through a "clarify" frame. What a turn may run without asking and
+what it may not touch are handed to it with the turn (plan: limits). Every model request comes back here
 (hermes_llm.py), so the LLM settings and their secrets never reach the worker. Its home is the Wiki folder's hermes
 folder; one worker per Wiki is kept for the next request.
 """
@@ -199,8 +200,11 @@ class Hermes:
                 "can_stop": self.phase in STOPPABLE,
             }
 
-    def resolve(self, params, kind):
-        """The user's answer to the approval or clarify the worker is waiting on."""
+    def resolve(self, params, kind, settle=None):
+        """The user's answer to the approval or clarify the worker is waiting on, given once: a second answer to the
+        same question (a second click, a second window) finds it gone. `settle(asked)` makes the answer the turn gets
+        out of the request and of what was asked (the question's payload); without it the request is the answer.
+        Returns that answer."""
         with self.lock:
             interaction = self.interaction
             if (
@@ -208,10 +212,12 @@ class Hermes:
                 or interaction is None
                 or interaction.kind != kind
                 or params.get("interaction_id") != interaction.payload.get("interaction_id")
+                or interaction.event.is_set()
             ):
                 raise UserError("응답할 작업을 찾을 수 없습니다. 화면을 새로고침해 주세요.")
-        interaction.resolve(params)
-        return {"ok": True}
+            answer = settle(dict(interaction.payload)) if settle else params
+            interaction.resolve(answer)
+        return answer
 
     def stop(self, params):
         with self.lock:
@@ -396,13 +402,32 @@ class Hermes:
     # -- running one turn --------------------------------------------------------
 
     def plan(
-        self, system, context, *, request_id, toolsets, app_tools, settings, on_app_tool, on_interaction, workspace=""
+        self,
+        system,
+        context,
+        *,
+        request_id,
+        toolsets,
+        app_tools,
+        settings,
+        on_app_tool,
+        on_interaction,
+        workspace="",
+        limits=None,
+        on_event=None,
     ):
         """Run one chat turn on the worker. Model requests are answered with the app's LLM connection; app_tool
         frames call on_app_tool(tool, args) -> card; approval/clarify frames call on_interaction with the payload
         and the live Interaction. `workspace`: the folder the agent's terminal and file tools start in ('' for its own
-        home in the Wiki folder). Returns {"message", "cancelled"}; the executed cards are gathered by the caller
-        through on_app_tool."""
+        home in the Wiki folder). `limits`: what the turn runs without asking and what it may not touch, as the
+        worker takes them: {"allowed": commands, "session_allowed": kinds of command, "protected": paths, "blocked":
+        command patterns}. `on_event(kind, data)` hears what the turn did, for the activity kept with its answer:
+        "tool" {tool, preview}, "approval" {command, description, decision}, "clarify" {questions, outcome} and
+        "grant" {keys} (the kinds of command a "this conversation" answer covers). A question nobody answered has
+        the decision or outcome "timeout", or "stopped" when the turn was stopped meanwhile. Returns {"message",
+        "cancelled"}; the executed cards are gathered by the caller through on_app_tool."""
+        limits = limits or {}
+        told = on_event or (lambda kind, data: None)
         with self.lock:
             if self.closing:
                 raise UserError("앱이 종료 중입니다.")
@@ -442,6 +467,10 @@ class Hermes:
                 "chromium": chromium,
                 "budget": budget,
                 "workspace": workspace,
+                **{
+                    name: [value for value in limits.get(name) or () if isinstance(value, str)]
+                    for name in ("allowed", "session_allowed", "protected", "blocked")
+                },
             }
         )
         message, finished = "", False
@@ -483,28 +512,41 @@ class Hermes:
                     waited = time.monotonic()
                     answered = self.ask(kind, frame, on_interaction)
                     deadline += time.monotonic() - waited  # The user's thinking time is not the turn's compute time.
+                    unanswered = "stopped" if self.cancelled.is_set() else "timeout"
                     if kind == "approval":
                         decision = (answered or {}).get("decision", "deny")
-                        self.send(
+                        decision = decision if decision in ("once", "session", "always", "deny") else "deny"
+                        self.send({"type": "approval_reply", "id": frame.get("id"), "decision": decision})
+                        told(
+                            "approval",
                             {
-                                "type": "approval_reply",
-                                "id": frame.get("id"),
-                                "decision": decision if decision in ("once", "session", "always", "deny") else "deny",
-                            }
+                                "command": frame.get("command", ""),
+                                "description": frame.get("description", ""),
+                                "decision": decision if answered else unanswered,
+                            },
                         )
                     else:
+                        outcome = (answered or {}).get("outcome", "cancelled")
                         self.send(
                             {
                                 "type": "clarify_reply",
                                 "id": frame.get("id"),
                                 "answers": (answered or {}).get("answers") or {},
-                                "outcome": (answered or {}).get("outcome", "cancelled"),
+                                "outcome": outcome,
                             }
                         )
+                        told(
+                            "clarify",
+                            {"questions": frame.get("questions"), "outcome": outcome if answered else unanswered},
+                        )
+                elif kind == "grant":
+                    told("grant", {"keys": [key for key in frame.get("keys") or () if isinstance(key, str)]})
                 elif kind == "progress":
                     self.record_progress(
                         frame.get("tool", ""), frame.get("event", ""), preview=frame.get("preview", "")
                     )
+                    if frame.get("event") == "tool.started":
+                        told("tool", {"tool": frame.get("tool", ""), "preview": frame.get("preview", "")})
                 elif kind == "draft":
                     self.on_text(frame.get("text", ""), cancelled)
                 elif kind == "result":

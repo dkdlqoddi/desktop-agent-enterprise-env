@@ -42,7 +42,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 - 백엔드가 스스로 보내는 이벤트는 `id` 없는 줄 `{"event", "params"}`입니다. 메인 프로세스는 `BACKEND_EVENTS`에 있는 `assistant.delta`(LLM이 쓰는 답변의 조각)와 `assistant.done`(끝)만 창의 `assistant:delta` 채널로 넘기고, 나머지는 버립니다.
 - 화면은 `stream`과 자기 `request_id`를 붙여 물은 답변의 이벤트만 상태 조각 하나(`src/components/answers.ts`)에 모읍니다. 검색창은 그 글을 쓰는 대로(150ms마다) 그리고, 최근 대화 목록은 답변 중인 대화와 아직 저장되지 않은 새 대화를 보여 줍니다. ‘답변 중지’는 `assistant.cancel {request_id}`를 보냅니다.
-- 메인 프로세스가 보내는 이벤트: `job:progress`(가져오기·AI 분석·자동 작업의 진행, `electron/job-progress.cjs`가 따라가며 번호를 붙임), `schedule:event`, `routine:event`, `import:notice`, `assistant:open`, `api:changed`, `control:command`(로컬 API의 화면 명령, 화면은 `control:result`로 답함)
+- 메인 프로세스가 보내는 이벤트: `job:progress`(가져오기·AI 분석·자동 작업의 진행, `electron/job-progress.cjs`가 따라가며 번호를 붙임), `schedule:event`, `routine:event`, `import:notice`, `assistant:open`, `api:changed`, `control:command`(로컬 API의 화면 명령, 화면은 `control:result`로 답함), `chat:focus`(빠른 호출의 바로 가기 키와 트레이의 ‘채팅 열기’: 채팅을 열고 입력란에 커서를 둠. 실어 보내는 내용 없음)
 - 화면은 백엔드의 응답을 메서드와 매개변수별로 캐시합니다(`src/lib/query.ts`). 변경, 끝난 작업, 메인 프로세스의 알림이 태그(`documents`, `prompts`, `runs`, `routines`, `tasks`, `conversations`)를 무효로 하면 그 태그를 가진 응답만 다시 읽습니다. 보관함의 문서 목록은 같은 캐시의 나누어 받는 목록(`QueryCache.list`, `useDocumentPages`)으로 100개씩 불러오고, 무효가 되면 보이던 만큼을 첫 쪽부터 다시 읽으며, 보이는 줄만 그립니다(`src/components/windowing.ts`).
 
 ## 데이터 위치
@@ -69,7 +69,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 - 프롬프트와 자동화: `prompts`, `runs`, `schedules`, `routines`, `routine_runs`
 - 비서: `tasks`, `conversations`, `messages`
 - 휴지통: `trash`(지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업의 행과 함께 지워진 행을 JSON으로 30일 보관. 문서는 `documents.deleted_at`)
-- 채팅과 웹 기록: `agent_messages`(채팅 대화와 작업 카드, 최근 1,000개), `web_captures`(기록한 페이지), `web_items`(광고·상품·검색 결과, 직접 누른 광고의 도착 페이지)
+- 채팅과 웹 기록: `agent_messages`(채팅 대화와 작업 카드, 최근 1,000개), `agent_activity`(답마다 그 턴이 한 일: 쓴 도구, 앱 작업, 확인을 받은 명령과 결정), `web_captures`(기록한 페이지), `web_items`(광고·상품·검색 결과, 직접 누른 광고의 도착 페이지)
 - `metadata`: 검색·대시보드 설정(`preferences`)과 색인 상태
 
 가져온 이미지는 별도 파일 없이 HTML 안의 `data:` URI로 저장합니다. Office 그림을 내보낼 때 쓰는 임시 폴더(`private-agent-office-…`, `private-agent-pictures-…`)는 시스템 임시 폴더에 생기고, 백엔드가 시작할 때 10분 넘은 것을 지웁니다.
@@ -78,18 +78,19 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agent`, `npm run dev`에서는 `.local-data/dev-user-data`이며 `PRIVATE_AGENT_USER_DATA`로 바꿀 수 있습니다.
 
-| 경로                                     | 내용                                                                                                                                                                                                             |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `storage.json`                           | 고른 Wiki 폴더                                                                                                                                                                                                   |
-| `settings.json`                          | LLM 연결 설정. API Key(`encrypted_api_key`)와 헤더 값(`encrypted_headers`)은 암호화하고 헤더는 이름만 둡니다. 보안 저장소를 쓸 수 없으면 새 API Key는 실행 중 메모리에만 두고 헤더 값은 파일에 그대로 저장합니다 |
-| `sites.json`                             | 사이트 계정, 로그인 방식, 고정한 로그인 주소. 비밀번호는 `encrypted_password`                                                                                                                                    |
-| `api.json`                               | 로컬 API의 켜짐, 포트(기본 47615), 허용 범위(기본 `read`), 암호화한 토큰                                                                                                                                         |
-| `hermes.json`                            | 채팅 에이전트 설정: 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키와 MCP 서버 설정(`encrypted`). 보안 저장소를 쓸 수 없으면 키와 MCP 설정은 실행 중 메모리에만 둡니다                                                |
-| `window.json`                            | 화면 배율                                                                                                                                                                                                        |
-| `logs/app.log`, `logs/backend.log`       | 메인 프로세스와 백엔드의 로그. 각각 1MB를 넘으면 `.1`로 하나 남깁니다                                                                                                                                            |
-| `confluence-profiles/`, `jira-profiles/` | 사이트 주소(origin)마다 하나인 Chromium 프로필. 그 사이트의 마지막 계정을 지우면 함께 지웁니다                                                                                                                   |
-| `web-profiles/default/`                  | 웹 기록용 보이는 브라우저의 Chromium 프로필(쿠키와 로그인 상태). 사용자가 그 창에서 로그인한 사이트의 세션이 남습니다                                                                                            |
-| `mcp/private-agent-mcp.cjs`              | stdio로만 연결하는 AI 도구가 실행하는 MCP 연결 프로그램. 로컬 API를 켤 때 씁니다                                                                                                                                 |
+| 경로                                     | 내용                                                                                                                                                                                                                             |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage.json`                           | 고른 Wiki 폴더                                                                                                                                                                                                                   |
+| `settings.json`                          | LLM 연결 설정. API Key(`encrypted_api_key`)와 헤더 값(`encrypted_headers`)은 암호화하고 헤더는 이름만 둡니다. 보안 저장소를 쓸 수 없으면 새 API Key는 실행 중 메모리에만 두고 헤더 값은 파일에 그대로 저장합니다                 |
+| `sites.json`                             | 사이트 계정, 로그인 방식, 고정한 로그인 주소. 비밀번호는 `encrypted_password`                                                                                                                                                    |
+| `api.json`                               | 로컬 API의 켜짐, 포트(기본 47615), 허용 범위(기본 `read`), 암호화한 토큰                                                                                                                                                         |
+| `hermes.json`                            | 채팅 에이전트 설정: 작업 폴더, 컴퓨터 사용, 항상 허용한 명령(`allowed`), 보호할 폴더와 실행하지 않을 명령, 암호화한 서비스 키와 MCP 서버 설정(`encrypted`). 보안 저장소를 쓸 수 없으면 키와 MCP 설정은 실행 중 메모리에만 둡니다 |
+| `window.json`                            | 화면 배율                                                                                                                                                                                                                        |
+| `quick-access.json`                      | 빠른 호출: 채팅 바로 가기 키(정해 둔 키 가운데 하나, 기본은 꺼진 빈 값), 트레이 아이콘, 창을 닫아도 계속 실행(기본 꺼짐)                                                                                                         |
+| `logs/app.log`, `logs/backend.log`       | 메인 프로세스와 백엔드의 로그. 각각 1MB를 넘으면 `.1`로 하나 남깁니다                                                                                                                                                            |
+| `confluence-profiles/`, `jira-profiles/` | 사이트 주소(origin)마다 하나인 Chromium 프로필. 그 사이트의 마지막 계정을 지우면 함께 지웁니다                                                                                                                                   |
+| `web-profiles/default/`                  | 웹 기록용 보이는 브라우저의 Chromium 프로필(쿠키와 로그인 상태). 사용자가 그 창에서 로그인한 사이트의 세션이 남습니다                                                                                                            |
+| `mcp/private-agent-mcp.cjs`              | stdio로만 연결하는 AI 도구가 실행하는 MCP 연결 프로그램. 로컬 API를 켤 때 씁니다                                                                                                                                                 |
 
 화면 테마는 창의 localStorage(`private-agent:theme`)에 있습니다. 배포용 exe는 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀어 실행합니다.
 
@@ -119,28 +120,30 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                                             |
 | `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 에이전트가 부른 앱 작업의 검사·실행과 카드, 진행 중인 턴(`agent.*`)                     |
 | `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계                 |
+| `agent/agent_guard.py`, `agent/agent_memory.py`                                                                        | 보호 구역의 경로 계산, 에이전트의 기억(메모·사용자 정보) 읽기·저장과 작업 기록 지우기                    |
 | `agent/hermes_gateway.py`                                                                                              | 메신저 게이트웨이: 두 번째 워커 프로세스의 시작·재시작·종료, 모델 호출과 앱 작업의 중계                  |
 | `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)                     |
 
 ### electron
 
-| 모듈                                                    | 역할                                                                                                          |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `main.cjs`                                              | 앱 시작과 종료, 창, `handle()`, 백엔드 실행, `settings.json`, 각 부분의 연결                                  |
-| `protocol.cjs`                                          | `agent://bundle/` 프로토콜: `out/` 밖의 경로를 거절하고 파일 종류와 스크립트 해시 CSP를 붙여 정적 화면 제공   |
-| `trusted-sender.cjs`                                    | IPC를 보낸 곳 확인(`trustedSender`: 메인 창의 메인 프레임과 화면 주소)과 화면이 부를 수 있는 메서드 `ALLOWED` |
-| `preload.cjs`                                           | 화면에 여는 `window.privateAgent`: 요청 하나와 이벤트 구독                                                    |
-| `backend-process.cjs`, `restarts.cjs`                   | 백엔드 프로세스 하나의 요청·응답·이벤트·제한 시간, 예기치 않게 끝난 백엔드의 재시작                           |
-| `storage.cjs`                                           | Wiki 폴더 선택(`storage.json`), 이전 버전 Wiki 복사, 폴더 쓰기 확인                                           |
-| `sites.cjs`, `login-methods.json`                       | 사이트 계정(`sites.json`, 암호화한 비밀번호)과 로그인 계획, 로그인 방식 목록                                  |
-| `hermes-settings.cjs`                                   | 채팅 에이전트 설정(`hermes.json`): 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키·봇 토큰·MCP 서버, 메신저 계정   |
-| `api-catalog.cjs`                                       | 로컬 API의 모든 메서드, 범위, REST 경로. REST·MCP·매뉴얼·OpenAPI가 모두 이 표에서 만들어집니다                |
-| `api-server.cjs`, `mcp.cjs`, `mcp-stdio.cjs`            | 127.0.0.1 REST·MCP 서버, MCP 도구·리소스·프롬프트, stdio 연결 프로그램                                        |
-| `api-manual.cjs`, `api-settings.cjs`, `api-methods.cjs` | 매뉴얼(JSON·Markdown·HTML·OpenAPI), `api.json`, AI 도구 전용 메서드와 경로 검사                               |
-| `app-control.cjs`                                       | 로컬 API가 창과 화면을 다루는 명령                                                                            |
-| `job-progress.cjs`, `routines.cjs`, `reminders.cjs`     | 작업 진행 알림, 자동 작업·예약 실행 시각 확인(30초), 할 일 알림(15초)                                         |
-| `diagnostics.cjs`, `zoom.cjs`, `files.cjs`              | `app.log`와 진단 복사본, 화면 배율, 원자적 JSON 파일 쓰기                                                     |
-| `demo.cjs`, `demo-plan.cjs`, `recorder.cjs`, `mp4.cjs`  | 데모 녹화(`record-demo.cmd`)                                                                                  |
+| 모듈                                                    | 역할                                                                                                                                     |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `main.cjs`                                              | 앱 시작과 종료, 창, `handle()`, 백엔드 실행, `settings.json`, 각 부분의 연결                                                             |
+| `protocol.cjs`                                          | `agent://bundle/` 프로토콜: `out/` 밖의 경로를 거절하고 파일 종류와 스크립트 해시 CSP를 붙여 정적 화면 제공                              |
+| `trusted-sender.cjs`                                    | IPC를 보낸 곳 확인(`trustedSender`: 메인 창의 메인 프레임과 화면 주소)과 화면이 부를 수 있는 메서드 `ALLOWED`                            |
+| `preload.cjs`                                           | 화면에 여는 `window.privateAgent`: 요청 하나와 이벤트 구독                                                                               |
+| `backend-process.cjs`, `restarts.cjs`                   | 백엔드 프로세스 하나의 요청·응답·이벤트·제한 시간, 예기치 않게 끝난 백엔드의 재시작                                                      |
+| `storage.cjs`                                           | Wiki 폴더 선택(`storage.json`), 이전 버전 Wiki 복사, 폴더 쓰기 확인                                                                      |
+| `sites.cjs`, `login-methods.json`                       | 사이트 계정(`sites.json`, 암호화한 비밀번호)과 로그인 계획, 로그인 방식 목록                                                             |
+| `hermes-settings.cjs`                                   | 채팅 에이전트 설정(`hermes.json`): 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키·봇 토큰·MCP 서버, 메신저 계정, 항상 허용한 명령, 보호 구역 |
+| `api-catalog.cjs`                                       | 로컬 API의 모든 메서드, 범위, REST 경로. REST·MCP·매뉴얼·OpenAPI가 모두 이 표에서 만들어집니다                                           |
+| `api-server.cjs`, `mcp.cjs`, `mcp-stdio.cjs`            | 127.0.0.1 REST·MCP 서버, MCP 도구·리소스·프롬프트, stdio 연결 프로그램                                                                   |
+| `api-manual.cjs`, `api-settings.cjs`, `api-methods.cjs` | 매뉴얼(JSON·Markdown·HTML·OpenAPI), `api.json`, AI 도구 전용 메서드와 경로 검사                                                          |
+| `app-control.cjs`                                       | 로컬 API가 창과 화면을 다루는 명령                                                                                                       |
+| `job-progress.cjs`, `routines.cjs`, `reminders.cjs`     | 작업 진행 알림, 자동 작업·예약 실행 시각 확인(30초), 할 일 알림(15초)                                                                    |
+| `diagnostics.cjs`, `zoom.cjs`, `files.cjs`              | `app.log`와 진단 복사본, 화면 배율, 원자적 JSON 파일 쓰기                                                                                |
+| `quick-access.cjs`                                      | 빠른 호출: 시스템 전체 바로 가기 키, 트레이 아이콘과 메뉴, 창을 닫아도 트레이에서 계속 실행(`quick-access.json`)                         |
+| `demo.cjs`, `demo-plan.cjs`, `recorder.cjs`, `mp4.cjs`  | 데모 녹화(`record-demo.cmd`)                                                                                                             |
 
 ### src
 
@@ -155,7 +158,8 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |
 | `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시와 나누어 받는 목록, 선택자로 읽는 작은 상태 저장소                 |
 | `components/windowing.ts`                               | 긴 목록에서 보이는 줄만 그리기(측정한 줄 높이)                                                 |
-| `components/agent-chat.tsx`, `agent-turn.ts`            | 첫 화면인 채팅(진행·명령 확인·질문·작업 카드), 화면을 옮겨도 이어지는 진행 중인 턴             |
+| `components/agent-chat.tsx`, `agent-turn.ts`            | 첫 화면인 채팅(진행·명령 확인·질문·작업 카드·한 일), 화면을 옮겨도 이어지는 진행 중인 턴       |
+| `components/admin/hermes*.tsx`                          | 채팅 에이전트 설정: 키·도구·게이트웨이, 묻지 않는 명령과 보호 구역, 에이전트의 기억            |
 | `components/web-records.tsx`                            | 웹 기록 표와 CSV 내보내기                                                                      |
 
 ### scripts
@@ -189,14 +193,16 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 채팅은 첫 화면입니다. 메시지를 보내면(`agent.send`) 백엔드가 최근 대화와 함께 내장 Hermes 에이전트에 넘기고, 에이전트가 턴 하나를 끝낼 때까지 실행합니다.
 
 1. `agent/hermes.py`가 `resources/hermes`(개발 중에는 `dist/hermes`)의 CPython으로 `worker.py`를 띄웁니다(`-I`). 실행 전에 `manifest.json`의 `worker_sha256`을 확인하고, 환경 변수는 사용자의 Hermes·프록시·Python 설정을 버린 최소한에 사용자가 넣은 서비스 키만 더해 넘깁니다(`child_environment`). 워커는 Wiki마다 하나이며 다음 턴에 다시 씁니다. 끝까지 가지 못한 턴의 워커는 끝내고 새로 띄웁니다.
-2. 워커와 백엔드는 표준 입출력으로 JSON 줄(프레임)을 주고받습니다. 워커가 보내는 것은 `inference`(모델 요청), `app_tool`(앱의 작업), `approval`(위험한 명령의 확인), `clarify`(사용자에게 묻는 질문), `progress`·`draft`(진행과 작성 중인 답), `result`·`error`이고, 백엔드는 `turn`, `completion`, `app_tool_reply`, `approval_reply`, `clarify_reply`, `cancel`, `shutdown`을 보냅니다.
+2. 워커와 백엔드는 표준 입출력으로 JSON 줄(프레임)을 주고받습니다. 워커가 보내는 것은 `inference`(모델 요청), `app_tool`(앱의 작업), `approval`(위험한 명령의 확인), `grant`(‘이 대화에서 허용’이 덮는 명령 종류), `clarify`(사용자에게 묻는 질문), `progress`·`draft`(진행과 작성 중인 답), `result`·`error`이고, 백엔드는 `turn`, `completion`, `app_tool_reply`, `approval_reply`, `clarify_reply`, `cancel`, `shutdown`을 보냅니다.
 3. Hermes는 자기 도구(터미널, 파일, 코드 실행, 웹 검색, 브라우저, 메모리, 스킬, 컴퓨터 사용, MCP 서버)를 워커 안에서 바로 실행합니다. 모델을 부를 때마다(보조 모델과 하위 에이전트 포함) 요청이 `inference`로 백엔드에 오고, `agent/hermes_llm.py`가 앱의 LLM 연결(키, 헤더, CA)로 보냅니다. 키는 워커에 들어가지 않습니다. 모델 요청 하나는 120초(연결의 응답 제한 시간이 더 짧으면 그 시간), 턴 전체는 그 제한 시간의 4배(2분~15분)까지이며, 사용자의 답을 기다린 시간은 세지 않습니다.
-4. 앱의 작업(문서 찾기, 웹 기록 요약, 사이트 열기, 페이지 기록, 할 일 추가, 예약)은 Hermes가 도구로 부르면 `agent/agent_chat.py`가 이름과 인수를 검사해(`card`) 실행하고(`run`), 결과를 카드로 남깁니다.
-5. Hermes의 검사가 위험하다고 본 명령은 `approval` 프레임으로 멈춥니다. 화면이 `agent.status`로 이를 읽어 묻고, 사용자의 결정(`agent.approve_command`)이나 질문의 답(`agent.answer_clarify`)을 돌려보냅니다. 5분 안에 답이 없으면 거부·취소로 처리하고, **중지**(`agent.stop`)는 기다리는 중에도 턴을 끝냅니다.
+4. 앱의 작업(문서 찾기·읽기·새 문서 저장, 웹 기록 요약, 사이트 열기, 페이지 기록, 할 일 보기·추가·완료, 자동 작업 보기, 예약, 오늘 현황)은 Hermes가 도구로 부르면 `agent/agent_chat.py`가 이름과 인수를 검사해(`card`) 실행하고(`run`), 결과를 카드로 남깁니다.
+5. Hermes의 검사가 위험하다고 본 명령은 `approval` 프레임으로 멈춥니다. 화면이 `agent.status`로 이를 읽어 묻고, 사용자의 결정(`agent.approve_command`)이나 질문의 답(`agent.answer_clarify`)을 돌려보냅니다. 5분 안에 답이 없으면 거부·취소로 처리하고, **중지**(`agent.stop`)는 기다리는 중에도 턴을 끝냅니다. 명령의 결정은 네 가지입니다. ‘이번만 실행’은 그 한 번, ‘이 대화에서 허용’은 Hermes가 분류한 같은 종류의 명령을 대화를 비우거나 앱을 닫을 때까지(백엔드 메모리의 `session_allowed`, 턴마다 워커에 다시 넘김), ‘항상 허용’은 글자까지 같은 그 명령(메인 프로세스가 `hermes.json`의 `allowed`에 두고 `agent.configure`로 넘기면 워커가 턴마다 `config.yaml`의 `command_allowlist`로 씀), ‘거부’는 실행하지 않습니다. 턴이 한 일(쓴 도구, 앱 작업, 확인을 받은 명령과 결정, 질문)은 답과 함께 `agent_activity`에 남습니다.
 6. 진행 중인 턴은 화면 밖에 둡니다(`src/components/agent-turn.ts`). 다른 화면으로 옮겨도 요청과 진행 확인이 이어지고, 에이전트가 답을 기다리거나 끝나면 알림으로 알립니다. 화면을 다시 불러오면 `agent.active`로 진행 중인 턴을 찾아 이어서 보여 줍니다.
 7. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있어 Android 앱도 같은 스크립트를 씁니다.
 
 에이전트의 설정(**관리 → 채팅 에이전트**)은 메인 프로세스가 `hermes.json`에 두고(`electron/hermes-settings.cjs`), 시작할 때와 바뀔 때 `agent.configure`로 백엔드에 넘깁니다: 작업 폴더(터미널과 파일 도구가 시작하는 곳), 컴퓨터 사용, MCP 서버, 서비스 키, 메신저 게이트웨이(켜기, 봇마다 답할 계정, 봇 토큰). MCP 서버 설정의 값(env, headers, 인수, 주소)은 워커가 `config.yaml`에 쓰지 않고 환경 변수 참조로 바꿔 넘깁니다(`worker.py`의 `mcp_servers`). 워커는 시작할 때 받은 설정만 씁니다: Wiki의 `hermes` 폴더에 놓인 `.env`와 이 PC의 `/etc/hermes` 설정은 읽지 않습니다(`own_settings_only`).
+
+보호 구역은 턴마다 백엔드가 경로 목록으로 만들어(`agent/agent_guard.py`: 앱의 설정 폴더, Wiki의 데이터베이스와 백업, 자격 증명이 있는 곳, 사용자가 더한 폴더. 에이전트의 홈과 작업 폴더는 그 안에 있어도 열어 둠) 워커에 넘깁니다. 워커는 그 경로를 Hermes 파일 도구의 읽기·쓰기 거절 규칙에 더하고(`guard_files`), 경로를 적은 명령과 사용자가 적은 패턴을 Hermes의 `approvals.deny`로 넘겨 승인과 관계없이 거절하게 합니다(`denied_commands`). 에이전트의 기억은 `hermes/memories`의 두 파일(`MEMORY.md`, `USER.md`)이고, 턴이 돌지 않을 때 `agent/agent_memory.py`가 읽고 저장합니다.
 
 메신저 게이트웨이(`agent/hermes_gateway.py`)는 Hermes의 게이트웨이를 같은 `worker.py`의 두 번째 프로세스로 실행합니다(`run_gateway`). 사용자가 켜고, 봇 토큰과 답할 계정을 모두 넣은 메신저가 하나라도 있을 때만 띄웁니다.
 
@@ -234,7 +240,7 @@ Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 asset
 3. `scripts/build-python.mjs`: PyInstaller `--onedir`로 백엔드를 `dist/backend/private-agent-backend/`에 만듭니다. UTF-8 모드로 실행되게 하고, setuptools와 debugpy는 넣지 않습니다. Windows에서는 만든 백엔드가 모든 표준 확장 모듈을 불러오는지 확인합니다(`--check-build`).
 4. `scripts/build-browser.mjs`: 백엔드의 Playwright가 쓰는 Chromium을 `dist/browsers`에 설치합니다. 패키징한 앱은 `PLAYWRIGHT_BROWSERS_PATH`를 이 폴더로 정합니다.
 5. `scripts/build-hermes.mjs`: `runtime/hermes/manifest.json`에 고정한 Hermes 소스(태그와 커밋 확인), CPython 3.14.0(Windows는 python.org embeddable package, Linux는 python-build-standalone, 둘 다 SHA-256 확인), `runtime/hermes/requirements-desktop.txt`의 해시 고정 wheel(Android와 함께 쓰는 핵심 `requirements.txt`에 데스크톱 기능을 더한 것)과 Hermes의 번들 플러그인·스킬을 `dist/hermes`에 모읍니다.
-6. electron-builder(`package.json`의 `build`): `electron/`, `out/`, `package.json`을 `app.asar`에 넣고, `dist/browsers`, `dist/backend`, `dist/hermes`를 `resources/`에, `LICENSE`와 `THIRD_PARTY_NOTICES.md`를 앱 폴더에 넣으며 Electron fuses를 적용합니다. nsis 대상과 `scripts/launcher.nsi`로 `release/Private-Agent-<버전>-x64.exe` 하나를 만듭니다. 백신 검사 때문에 `EPERM`·`EBUSY`로 멈추면 세 번까지 다시 시도합니다.
+6. electron-builder(`package.json`의 `build`): `electron/`, `out/`, `assets/icon.png`(트레이 아이콘), `package.json`을 `app.asar`에 넣고, `dist/browsers`, `dist/backend`, `dist/hermes`를 `resources/`에, `LICENSE`와 `THIRD_PARTY_NOTICES.md`를 앱 폴더에 넣으며 Electron fuses를 적용합니다. nsis 대상과 `scripts/launcher.nsi`로 `release/Private-Agent-<버전>-x64.exe` 하나를 만듭니다. 백신 검사 때문에 `EPERM`·`EBUSY`로 멈추면 세 번까지 다시 시도합니다.
 
 이 exe는 설치 프로그램이 아니라 실행기입니다. 빌드마다 처음 실행할 때 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀고, 그 뒤에는 바로 실행합니다. 레지스트리, 바로 가기, 제거 프로그램을 만들지 않으며, 실행 중인 앱이 없을 때 더 오래된 빌드의 폴더를 지웁니다.
 

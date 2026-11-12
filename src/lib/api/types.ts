@@ -1026,6 +1026,17 @@ export type AgentCard = {
     overview?: AgentOverview;
   } | null;
 };
+// What the turn an answer ended did on the way: a tool the agent ran, one of the app's actions, a command it asked about
+// (`note`: why it was asked; `result`: how it was decided, or 'timeout' / 'stopped' when nobody answered) or a question.
+export type AgentStep = {
+  kind: 'tool' | 'action' | 'approval' | 'question';
+  text: string;
+  note: string;
+  result: string;
+  at: string;
+};
+// `more`: the steps beyond those kept.
+export type AgentActivity = { steps: AgentStep[]; more: number };
 // The tasks, routines and documents the chat's app tools give (agent_chat.py), times on this PC's clock.
 export type AgentTaskLine = Pick<Task, 'id' | 'title' | 'status' | 'due_at'> & { overdue: boolean };
 export type AgentRoutineLine = Pick<
@@ -1067,18 +1078,40 @@ export type AgentMessage = {
   actions: AgentCard[];
   // The planner of an answer: the bundled Hermes, the LLM's JSON in a source run without it, or '' for the user's.
   engine: 'hermes' | 'direct' | 'error' | '';
+  activity: AgentActivity;
   created_at: string;
   updated_at: string;
 };
 export type AgentSend = { user: AgentMessage; reply: AgentMessage };
 export type AgentEngine = { engine: 'hermes' | 'direct'; ready: boolean };
+// The user's decision on a command: this run, this kind of command for the conversation, this very command for good, or
+// not at all.
+export type AgentDecision = 'once' | 'session' | 'always' | 'deny';
 // A dangerous command the agent paused on, or the clarify questions it asked, while a turn runs (agent.status).
+// `allow_session` / `allow_permanent`: whether 'session' and 'always' may be chosen for it (never for a command the
+// safety check itself refused; 'always' only for one plain command without secrets).
 export type AgentApproval = {
   kind: 'approval';
   interaction_id: string;
   command: string;
   description: string;
   smart_denied: boolean;
+  allow_session: boolean;
+  allow_permanent: boolean;
+};
+// The answer to agent.approve_command: the decision that was applied and, for 'always', the command now allowed and
+// whether the app could keep it with its settings (false: it holds until the app closes).
+export type AgentApproved = {
+  ok: boolean;
+  decision: AgentDecision;
+  allowed?: string;
+  stored?: boolean;
+};
+// The kinds of command allowed for this conversation (agent.grants).
+export type AgentGrants = { session: string[] };
+// The commands the agent asked about, newest first (agent.activity); `seq`: the answer of that turn.
+export type AgentApprovals = {
+  approvals: (Pick<AgentStep, 'text' | 'note' | 'result' | 'at'> & { seq: number })[];
 };
 export type AgentClarifyQuestion = {
   qid: string;
@@ -1106,9 +1139,21 @@ export type AgentStatus = {
 // The message being carried out now (agent.active), which a chat loaded meanwhile shows again; '' and '' for none.
 export type AgentActive = { request_id: string; text: string };
 
+// What the agent remembers between turns (agent.memory): its own notes (`memory`) and what it keeps about the user
+// (`user`), each a list of entries with the characters used and the limit, and how much it recorded of its turns.
+export type AgentMemoryList = { entries: string[]; chars: number; limit: number };
+export type AgentMemory = {
+  memory: AgentMemoryList;
+  user: AgentMemoryList;
+  records: { files: number; bytes: number };
+};
+
 // The chat agent's own settings (hermes.*): the folder it works in, the service keys (only whether each is set), the
 // MCP servers, whether computer use is on, and the messenger gateway: whether it is on (`gateway`), the accounts each
 // bot answers (`users`, IDs separated by commas, by messenger) and its bot tokens (the keys of the group 'gateway').
+// Also what it runs without asking and what it may not touch: the commands the user chose to always allow (`allowed`),
+// the protected folders (`protected`: the places credentials are kept, unless turned off, and the user's own folders;
+// the app's own folders are always protected) and the command patterns refused outright (`blocked`).
 export type HermesKey = {
   name: string;
   label: string;
@@ -1123,6 +1168,9 @@ export type HermesSettings = {
   keys: HermesKey[];
   mcp_servers: string[];
   has_mcp: boolean;
+  allowed: { command: string; added_at: string }[];
+  protected: { credentials: boolean; folders: string[] };
+  blocked: string[];
   secure_storage: boolean;
   stored: boolean;
   error: string;
