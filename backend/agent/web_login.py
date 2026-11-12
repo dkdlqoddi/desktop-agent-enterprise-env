@@ -23,8 +23,8 @@ opened once more when the LLM expects that to work.
 The ID and the password are typed only into a page the sign-in may give them to (Hosts): the site's own host, the
 hosts the site sent the browser on to by itself or through the login method's clicks, never a host a click the LLM
 chose led to; over https, unless the site's own address is http. The password goes only into a password field, and
-the ID and the user's texts only into text fields. The hosts the account was typed into besides the site's own (its
-identity provider) come back as `hosts`: Electron keeps them with the site (login_hosts), and from then on the plan
+the ID and the user's texts only into text fields. The hosts the account was typed into (the site's own, its
+identity provider's) come back as `hosts`: Electron keeps them with the site (login_hosts), and from then on the plan
 names them and the account goes to no other host, whatever the site sends the browser on to (an open redirect on
 the site, a changed page), until the user resets them.
 
@@ -77,11 +77,13 @@ CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # JIRA and Confluence name the signed-in user in these page metadata (Server/Data Center and Cloud).
 SIGNED_IN = """() => ['ajs-remote-user', 'ajs-atlassian-account-id'].some((name) =>
     !!document.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim())"""
-# A field to type into: the address of its page, its kind (an input's type, else its tag) and its mark, which tells it
-# from another field at the same place, e.g. a one-time code's where the password was (its kind and its name or id).
+# A field to type into: its kind (an input's type, else its tag) and its mark, which tells it from another field at
+# the same place, e.g. a one-time code's where the password was (its kind and its name or id). The address of its page
+# is not asked of the page (_fill): this runs among the page's own scripts, which can make a document report any
+# address.
 FIELD = """(element) => {
   const kind = element.localName === 'input' ? element.type : element.localName;
-  return {url: element.ownerDocument.URL, kind, mark: [kind, element.getAttribute('name') || element.id || '']};
+  return {kind, mark: [kind, element.getAttribute('name') || element.id || '']};
 }"""
 # Where a click on an element takes the browser by itself: the address of its link, or of the form it sends.
 LEADS = """(element) => {
@@ -185,8 +187,9 @@ class Hosts:
     """The hosts one sign-in may type the account into, as it follows the page: the host of the address it opens (the
     site's own), every host the browser goes on to without a click the LLM chose (the site's redirects, form posts and
     scripts, and the clicks of the login methods, e.g. JIRA → AD SSO → ADFS), the hosts a click the LLM chose leads to
-    through the site's own redirects. A host the LLM's click took the browser to by itself is none of them: the page may
-    have misled the LLM, e.g. with a link to another site that says "로그인". The account goes only to https pages,
+    through the site's own redirects. A host the LLM's click took the browser to by itself is none of them, nor is one
+    that page then goes on to by itself: the page may have misled the LLM, e.g. with a link to another site that says
+    "로그인". The account goes only to https pages,
     unless the site's own address is http (the user's choice). With `pinned` hosts (the site's login_hosts, learned from
     the first logins) the account goes only to the site's own host and those, however the browser got to another: `used`
     are the hosts it was typed into this time."""
@@ -198,8 +201,10 @@ class Hosts:
         self.pinned = {host.lower() for host in pinned}
         self.used = set()
         self.page, self.clicking = page, False
-        # The navigations a click the LLM chose started toward another host, and the redirects that followed them.
+        # The navigations a click the LLM chose started toward another host, and the redirects that followed them;
+        # `astray` while the browser is where such a navigation took it.
         self.misled = set()
+        self.astray = False
         page.on("request", self._request)
 
     def close(self):
@@ -217,8 +222,14 @@ class Hosts:
             if not host:
                 return
             before = request.redirected_from
-            # A redirect is the server's: it counts as where the navigation it follows was going.
-            misled = before in self.misled if before is not None else self.clicking and not self.trusts(host)
+            if before is not None:
+                # A redirect is the server's: it counts as where the navigation it follows was going.
+                misled = before in self.misled
+            else:
+                # A click the LLM chose leads astray, and so does whatever the page it led to opens next by itself (a
+                # script, a refresh, a form of its own): only a host the site has led to before brings the browser back.
+                misled = (self.clicking or self.astray) and not self.trusts(host)
+            self.astray = misled
             if misled:
                 self.misled.add(request)
             else:
@@ -586,10 +597,17 @@ async def _fill(locator, value, text, hosts, seconds):
         except Exception:
             raise StepError(FIELDS[value]) from None
         try:
-            # The element is the one checked and filled: a page that navigated meanwhile has another.
-            found = await element.evaluate(FIELD)
-            hosts.require(found["url"])
+            # The element is the one checked and filled: a page that navigated meanwhile has another. Where it is, the
+            # browser tells (the address its frame navigated to), not the page: a script there could name the site's
+            # own address and have the account typed into another host's form, or into one sent in plain text.
+            frame = await element.owner_frame()
+            where = frame.url if frame is not None else ""
+            hosts.require(where)
+            found = {**await element.evaluate(FIELD), "url": where}
             if found["kind"] not in KINDS[value]:
+                raise StepError(FIELDS[value])
+            # The password's field is one by its attribute too, which the page's scripts cannot answer for.
+            if value == "password" and (await element.get_attribute("type") or "").strip().lower() != "password":
                 raise StepError(FIELDS[value])
             await element.fill(text, timeout=max(deadline - loop.time(), 0.1) * 1000)
             return element, found
@@ -885,8 +903,8 @@ async def sign_in(
     be in the middle of an approval. A login screen on a page the account must not be typed into (Hosts) ends the
     sign-in before anything is typed there. Returns {"method", "label", "detected"}, with method None when the page
     needed no login (a public page, or the profile's session signed in), `learned` when the LLM found the fields,
-    `tried` when other methods were tried first and `hosts` when the account went to hosts besides the site's own;
-    raises LoginError, with `sent` when a login was sent.
+    `tried` when other methods were tried first and `hosts` when the account was typed: the hosts it went to, the
+    site's own among them; raises LoginError, with `sent` when a login was sent.
     """
     mode, credentials = plan["mode"], plan["credentials"]
     # The method the user chose for the site, which fixed mode sends first.
@@ -897,8 +915,10 @@ async def sign_in(
     hosts = Hosts(page, url, plan.get("hosts") or ())
 
     def signed(result):
-        elsewhere = sorted(hosts.used - {hosts.home})
-        found = {**result, **({"hosts": elsewhere} if elsewhere else {})}
+        # Every host the account was typed into, the site's own among them: kept with the site, they are the only
+        # ones it is typed into from then on. A site that signed in on its own form is held to that form as well.
+        typed = sorted(hosts.used)
+        found = {**result, **({"hosts": typed} if typed else {})}
         return {**found, "tried": list(notes)} if notes and result["method"] else found
 
     try:

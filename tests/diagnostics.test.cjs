@@ -118,6 +118,29 @@ test('secrets quoted by what is logged are redacted, and the report leaves the u
   );
   assert.equal(redact('cookie: sid=abc123; theme=dark'), 'cookie: [REDACTED]');
   assert.equal(anonymize('D:\\data\\wiki.db'), 'D:\\data\\wiki.db');
+  // A secret's name with something before or after the word, and a name in the quotes Python prints a dict with.
+  for (const [written, kept] of [
+    ['TAVILY_API_KEY=tvly-abc123def456 next', 'TAVILY_API_KEY=[REDACTED] next'],
+    ['GITHUB_TOKEN=ghp_abcdefghijklmnop', 'GITHUB_TOKEN=[REDACTED]'],
+    [
+      'https://sso.example.test/cb?access_token=abc123def456&x=1',
+      'https://sso.example.test/cb?access_token=[REDACTED]&x=1',
+    ],
+    ['client_secret=s3cr3tvalue', 'client_secret=[REDACTED]'],
+    ['"refresh_token": "abcdefgh"', '"refresh_token": [REDACTED]'],
+    ["{'password': 'hunter2', 'name': 'kim'}", "{'password': [REDACTED], 'name': 'kim'}"],
+    ["headers={'Authorization': 'Basic dXNlcjpwYXNz'}", "headers={'Authorization': [REDACTED]}"],
+    ['TELEGRAM_BOT_TOKEN=123456:abcdef', 'TELEGRAM_BOT_TOKEN=[REDACTED]'],
+    // A count of tokens is no secret.
+    ['max_tokens=4096, prompt_tokens: 12', 'max_tokens=4096, prompt_tokens: 12'],
+  ])
+    assert.equal(redact(written), kept);
+  // A path as Python quotes it in an error's message, with every backslash doubled, and in lower case.
+  assert.equal(
+    anonymize("No such file: 'C:\\\\Users\\\\gildong\\\\Documents\\\\a.docx'"),
+    "No such file: 'C:\\\\Users\\\\<user>\\\\Documents\\\\a.docx'",
+  );
+  assert.equal(anonymize('c:\\users\\gildong\\a.txt'), 'c:\\users\\<user>\\a.txt');
 });
 
 test('a log that cannot be written never stops the app', async (t) => {

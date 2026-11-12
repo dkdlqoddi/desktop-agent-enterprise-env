@@ -208,6 +208,18 @@ function readsFiles(method, params, saved) {
   return kind === 'source_refresh';
 }
 
+// The web records are closed to AI tools (AGENTS.md: web.* is not in the API catalog), and so is the routine that
+// records a site's search on a schedule, which the chat makes: it opens the visible browser with the user's own
+// sessions, and its runs list what the user searched for and the ads found. An AI tool neither sees one nor makes,
+// changes, starts, stops or deletes one, at any access level. `saved` is the routine as routines.get gives it, null for
+// a new one.
+const WEB_ROUTINE = 'web_capture';
+const webRoutine = (params, saved) => (saved?.kind ?? params?.kind) === WEB_ROUTINE;
+/** What an AI tool reads of the routines (routines.catalog, routines.list, routines.runs): a list without the web
+ *  records' kind, its routines and their runs. */
+const withoutWebRoutines = (result) =>
+  Array.isArray(result) ? result.filter((item) => item?.kind !== WEB_ROUTINE) : result;
+
 // How long after the computer resumes from sleep, or its screen is unlocked, it looks at what is due: Windows tells of
 // the resume before Wi-Fi and a VPN are back, and the runs it starts reach sites and the LLM.
 const WAKE_DELAY = 5_000;
@@ -236,4 +248,11 @@ function onWake(powerMonitor, check, delay = WAKE_DELAY) {
   };
 }
 
-module.exports = { RoutineRunner, readsFiles, onWake, WAKE_DELAY };
+module.exports = {
+  RoutineRunner,
+  readsFiles,
+  webRoutine,
+  withoutWebRoutines,
+  onWake,
+  WAKE_DELAY,
+};

@@ -664,8 +664,8 @@ class SiteStore {
 
   /** How an automatic login went: a detected method, or the fields the LLM found (learned), is kept for
    *  the next login of an auto site; a failure keeps its message and the LLM's analysis of it. The hosts the account
-   *  was typed into besides the site's own (hosts) are kept once, by the first login that signed in: the account
-   *  goes to no other host from then on.
+   *  was typed into (hosts: the site's own form, its identity provider's) are kept once, by the first login that
+   *  typed it and signed in: the account goes to no other host from then on.
    *  @param {string} id
    *  @param {{ ok?: boolean, method?: string, detected?: boolean, learned?: any, hosts?: any, error?: string,
    *    diagnosis?: any }} [login] */

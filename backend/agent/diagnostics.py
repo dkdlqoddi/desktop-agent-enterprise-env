@@ -39,15 +39,18 @@ SECRETS = (
     # the token, and a cookie header hides every cookie, not the first alone.
     (
         re.compile(
-            r"\b(authorization|proxy-authorization|cookie|set-cookie)\b(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\r\n]+)",
+            r"\b(authorization|proxy-authorization|cookie|set-cookie)\b([\"']?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\r\n]+)",
             re.I,
         ),
         r"\1\2[REDACTED]",
     ),
+    # A value named as a secret, whatever comes before or after the word in its name (TAVILY_API_KEY, access_token,
+    # client_secret, x-api-key) and whichever quotes the name is written in ({'password': '…'}, as Python prints a
+    # dict). A count of tokens (max_tokens, prompt_tokens) is none.
     (
         re.compile(
-            r"\b(password|passwd|pwd|api[_-]?key|x-api-key|token|secret)\b"
-            r"(\"?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)",
+            r"\b([A-Za-z0-9_-]*(?:password|passwd|pwd|api[_-]?key|token(?!s)|secret)[A-Za-z0-9_-]*)"
+            r"([\"']?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)",
             re.I,
         ),
         r"\1\2[REDACTED]",

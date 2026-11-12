@@ -294,6 +294,50 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
     expect((await ai.tool('app_navigate', { view: 'home' })).isError).toBe(false);
 
+    // The web records are not open to AI tools, and neither is the routine that records a site's search on a schedule
+    // (the chat makes those): a tool sees none of the user's, and makes, runs or deletes none by any route.
+    const scheduled = await page.evaluate(() =>
+      window.privateAgent!.request('routines.save', {
+        kind: 'web_capture',
+        name: '노트북 광고 기록',
+        config: { site: 'google', query: '노트북' },
+        frequency: 'daily',
+        run_time: '09:00',
+        enabled: false,
+      }),
+    );
+    expect(scheduled.ok, JSON.stringify(scheduled)).toBe(true);
+    const webRoutine = (scheduled.result as { id: string }).id;
+    const kinds = async (route: string) =>
+      ((await ai.rest('GET', route)).json.result as { kind: string }[]).map((item) => item.kind);
+    expect(await kinds('/routines')).not.toContain('web_capture');
+    expect(await kinds('/routines/catalog')).not.toContain('web_capture');
+    expect(await kinds('/routines/runs')).not.toContain('web_capture');
+    for (const [method, params] of [
+      ['routines.save', { kind: 'web_capture', config: { site: 'google', query: 'x' } }],
+      ['routines.save', { id: webRoutine, name: '다른 이름' }],
+      ['routines.get', { id: webRoutine }],
+      ['routines.run', { id: webRoutine }],
+      ['routines.toggle', { id: webRoutine, enabled: true }],
+      ['routines.runs', { id: webRoutine }],
+      ['routines.delete', { id: webRoutine }],
+    ] as const) {
+      const closed = await ai.rest('POST', '/rpc', { method, params });
+      expect(closed.status, method).toBe(403);
+      expect(closed.json.error.message).toContain('웹 기록의 자동 작업');
+    }
+    const viaTool = await ai.tool('call_api', {
+      method: 'routines.run',
+      params: { id: webRoutine },
+    });
+    expect(viaTool.isError).toBe(true);
+    // The user's routine is as it was.
+    const untouched = await page.evaluate(
+      (id) => window.privateAgent!.request('routines.get', { id }),
+      webRoutine,
+    );
+    expect((untouched.result as { name: string }).name).toBe('노트북 광고 기록');
+
     // The admin page and its inputs stay out of reach below the "full" level.
     const admin = await ai.tool('app_navigate', { view: 'admin', section: 'llm' });
     expect(admin.content[0].text).toContain('"view": "admin"');

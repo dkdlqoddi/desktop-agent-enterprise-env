@@ -14,7 +14,7 @@ popd
 exit /b %result%
 
 :missing_tools
-echo Node.js 22.12+ and npm are required. Install them and reopen this script.
+echo Node.js 22.13+ and npm are required. Install them and reopen this script.
 pause
 popd
 exit /b 1

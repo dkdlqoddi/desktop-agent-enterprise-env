@@ -2,10 +2,11 @@
 
 wiki.list, wiki.search and assistant.conversations with `limit` (or a `cursor`) answer one page and next_cursor, an
 opaque string the next request sends back as `cursor` to go on after the page's last entry; it is null after the last
-page. The cursor holds the keys the list is ordered by (keyset paging), so a document saved meanwhile neither repeats an
-entry nor drops one. Without `limit` and `cursor` each answers as it always did. A page of the document list or of a
-search also says how many documents its filters keep in all (`total`), which a screen shows rather than counting the
-pages it has.
+page. The cursor holds the keys the list is ordered by (keyset paging), so a page never repeats an entry. The document
+list is ordered by the time of the last change: a document saved while the pages are read moves to the top, before the
+pages already read, and is in none of those that follow (a caller that must see every document reads the list again).
+Without `limit` and `cursor` each answers as it always did. A page of the document list or of a search also says how
+many documents its filters keep in all (`total`), which a screen shows rather than counting the pages it has.
 
 On a page an import too long for one document (parts.py) is one entry: the first of its documents in the order of the
 page, with the import's live documents in `parts`, as a document window gets them (Service.document)."""

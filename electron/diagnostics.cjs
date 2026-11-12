@@ -20,17 +20,26 @@ const SECRETS = [
   // A header whose whole value is secret, to the end of its line: "Authorization: Bearer <token>" keeps nothing of
   // the token, and a cookie header hides every cookie, not the first alone.
   [
-    /\b(authorization|proxy-authorization|cookie|set-cookie)\b("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\r\n]+)/gi,
+    /\b(authorization|proxy-authorization|cookie|set-cookie)\b(["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\r\n]+)/gi,
     '$1$2[REDACTED]',
   ],
+  // A value named as a secret, whatever comes before or after the word in its name (TAVILY_API_KEY, access_token,
+  // client_secret, x-api-key) and whichever quotes the name is written in ({'password': '…'}, as Python prints a
+  // dict). A count of tokens (max_tokens, prompt_tokens) is none.
   [
-    /\b(password|passwd|pwd|api[_-]?key|x-api-key|token|secret)\b("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&}\]]+)/gi,
+    /\b([A-Za-z0-9_-]*(?:password|passwd|pwd|api[_-]?key|token(?!s)|secret)[A-Za-z0-9_-]*)(["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&}\]]+)/gi,
     '$1$2[REDACTED]',
   ],
   [/\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}/gi, '$1 [REDACTED]'],
 ];
 // The user's name in the paths of their profile folder, which the copied report leaves out.
-const USERS = [/([A-Za-z]:\\Users\\)[^\\\s"']+/g, /(\/home\/)[^/\s"']+/g, /(\/Users\/)[^/\s"']+/g];
+// A Windows path is found as it is written, and as Python quotes it in an error's message (C:\\Users\\name, with
+// every backslash doubled), in either case of its letters.
+const USERS = [
+  /([A-Za-z]:\\{1,2}Users\\{1,2})[^\\\s"']+/gi,
+  /(\/home\/)[^/\s"']+/g,
+  /(\/Users\/)[^/\s"']+/g,
+];
 
 // The commit of a packaged build and its date, which scripts/package.mjs writes into the package as
 // electron/build-info.json: { commit: <SHA, with -dirty when the tree had uncommitted changes>, date: <ISO date> }.

@@ -28,7 +28,13 @@ const { StorageManager } = require('./storage.cjs');
 const { SiteStore, addressOf } = require('./sites.cjs');
 const LOGIN_METHODS = require('./login-methods.json').methods;
 const { ReminderScheduler } = require('./reminders.cjs');
-const { RoutineRunner, onWake, readsFiles } = require('./routines.cjs');
+const {
+  RoutineRunner,
+  onWake,
+  readsFiles,
+  webRoutine,
+  withoutWebRoutines,
+} = require('./routines.cjs');
 const { ImportNotices } = require('./import-notices.cjs');
 const { JobProgress } = require('./job-progress.cjs');
 const { ApiError, ACCESS_LEVELS, allows, authorize, forbidden } = require('./api-catalog.cjs');
@@ -83,6 +89,11 @@ let window,
 let relaunching = false;
 /** @type {Record<string, any>} */
 let savedSettings = {};
+// The LLM secrets no secure storage could keep (canEncrypt() false): held here for this run alone, never written, so
+// that a backend started again after it ended by itself is given them again. The backend alone held them before, and
+// lost the API Key at its first restart.
+/** @type {Record<string, string>} */
+const unstoredSecrets = {};
 // Why settings.json could not be read; while set, the LLM settings are not saved over it.
 let settingsUnavailable = '';
 // settings.json has been read in this run: a restart of the backend hands it the settings held here.
@@ -150,6 +161,8 @@ const RPC_TIMEOUTS = {
   // ride on their own quick requests meanwhile (agent.status / agent.approve_command / agent.answer_clarify).
   'agent.send': 1_800_000,
   'agent.approve': 420_000,
+  // A part's answer cut at the output limit is asked for once more, each within the settings' limit of 300 seconds.
+  'tasks.extract': 660_000,
 };
 
 const RESTARTING = 'Python 백엔드를 다시 시작하고 있습니다. 잠시 후 다시 시도해 주세요.';
@@ -362,7 +375,11 @@ async function launchBackend(dataDirectory) {
   }
   // Header values an earlier version saved in plain text go into the encrypted form now; a file that cannot be written
   // stays as it is, and the next save moves them.
-  if (canEncrypt() && (savedSettings.headers ?? []).some((header) => header?.value)) {
+  if (
+    canEncrypt() &&
+    Array.isArray(savedSettings.headers) &&
+    savedSettings.headers.some((header) => header?.value)
+  ) {
     const headers = headerValues(savedSettings);
     const stripped = {
       ...savedSettings,
@@ -392,7 +409,7 @@ async function launchBackend(dataDirectory) {
       } catch {
         values[name] = '';
       } // Settings UI lets the user re-enter a key after OS keychain changes.
-    }
+    } else if (unstoredSecrets[name]) values[name] = unstoredSecrets[name];
   }
   delete values.encrypted_headers;
   values.headers = headerValues(savedSettings);
@@ -405,7 +422,7 @@ async function launchBackend(dataDirectory) {
 
 // What the chat agent is told at each start and change: the folder it works in, computer use, the MCP servers and,
 // over the backend's own private pipe (never the renderer), the service keys that go into the Hermes worker's
-// environment. The messenger gateway's bot tokens stay in the main process: nothing runs a gateway yet.
+// environment, and the messenger gateway (its switch, the accounts its bots answer and, while it is on, their tokens).
 function hermesConfigure() {
   return hermesSettings.agent();
 }
@@ -459,9 +476,11 @@ async function updateSettings(params) {
     const dropped = before[`has_${name}`] && !result[`has_${name}`];
     if (!Object.hasOwn(values, name) && !dropped) continue;
     delete next[`encrypted_${name}`];
+    delete unstoredSecrets[name];
     next[`${name}_cleared`] = !values[name];
     if (values[name] && canEncrypt())
       next[`encrypted_${name}`] = safeStorage.encryptString(values[name]).toString('base64');
+    else if (values[name]) unstoredSecrets[name] = values[name];
   }
   delete next.encrypted_headers;
   if (secrets.headers.some((header) => header.value)) {
@@ -629,10 +648,16 @@ function routineLogins(needs) {
 // on one only with the "full" access level, as those imports do. The backend decides again on the routine as it saves
 // it, told whether the caller may (mayReadFiles). The same level is needed for a routine that opens a site the user
 // did not register (checkLinkAccess).
+// A routine of the web records is none of an AI tool's, at any level (routines.cjs, webRoutine): the web records are
+// not open to AI tools.
 const mayReadFiles = (access) => !access || allows(access, 'files');
+const NO_WEB_ROUTINE =
+  '웹 기록의 자동 작업은 AI 도구로 다룰 수 없습니다. 채팅이나 AI 작업 → 자동 작업 화면에서 사용자가 다룹니다.';
 async function checkRoutineAccess(method, params, access) {
-  if (mayReadFiles(access)) return;
+  if (!access) return;
   const saved = typeof params.id === 'string' ? await rpc('routines.get', { id: params.id }) : null;
+  if (webRoutine(params, saved)) throw new ApiError(403, 'forbidden', NO_WEB_ROUTINE);
+  if (mayReadFiles(access)) return;
   if (readsFiles(method, params, saved)) throw forbidden(access, 'files');
   for (const need of await routineNeedsOf(method, params, saved))
     checkLinkAccess(sites.match(need.url, need.kind), access);
@@ -1322,7 +1347,15 @@ async function handle(method, params, { access } = {}) {
   else if (method === 'writeback.backups') result = await rpc(method, { doc_id: params.doc_id });
   else if (method === 'writeback.restore_backup')
     result = await rpc(method, { doc_id: params.doc_id, backup: params.backup });
-  else if (['routines.save', 'routines.toggle', 'routines.run'].includes(method)) {
+  else if (
+    [
+      'routines.save',
+      'routines.toggle',
+      'routines.run',
+      'routines.delete',
+      'routines.cancel',
+    ].includes(method)
+  ) {
     await checkRoutineAccess(method, params, access);
     // Whether the caller may have files read is never a value of its request: the screens may, an AI tool by its level.
     const allowed = mayReadFiles(access);
@@ -1335,7 +1368,17 @@ async function handle(method, params, { access } = {}) {
         allow_files: allowed,
       });
       routines?.poke();
-    } else result = await rpc(method, { ...params, allow_files: allowed });
+    } else if (method === 'routines.delete' || method === 'routines.cancel')
+      result = await rpc(method, params);
+    else result = await rpc(method, { ...params, allow_files: allowed });
+  } else if (access && ['routines.catalog', 'routines.list', 'routines.runs'].includes(method)) {
+    // What an AI tool reads of the routines leaves the web records' out, and the runs of one are not its to ask for.
+    if (method === 'routines.runs' && typeof params.id === 'string')
+      await checkRoutineAccess(method, params, access);
+    result = withoutWebRoutines(await rpc(method, params));
+  } else if (access && method === 'routines.get') {
+    result = await rpc(method, params);
+    if (webRoutine({}, result)) throw new ApiError(403, 'forbidden', NO_WEB_ROUTINE);
   } else if (method === 'office.start') {
     result = await rpc(method, params);
     // Reading a presentation may use the user's own PowerPoint; the job says so once.

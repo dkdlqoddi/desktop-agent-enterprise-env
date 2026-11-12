@@ -380,6 +380,13 @@ test('the hosts an account was typed into are kept once and reset with the site 
     (await again.save({ id: site.id, url: 'https://other.test/jira', password: 'x' })).login_hosts,
     [],
   );
+  // A login that typed nothing (the session the profile kept) keeps nothing. One on the site's own form names the
+  // site's own host: kept like an identity provider's, so a login screen the site later leads to on another host is
+  // refused until the user resets the hosts.
+  await again.record(site.id, { ok: true, method: null });
+  assert.deepEqual(again.get(site.id).login_hosts, []);
+  await again.record(site.id, { ok: true, method: 'generic', hosts: ['other.test'] });
+  assert.deepEqual(again.plan(again.get(site.id)).hosts, ['other.test']);
 });
 
 test('a change that cannot be written to sites.json changes nothing', async (t) => {

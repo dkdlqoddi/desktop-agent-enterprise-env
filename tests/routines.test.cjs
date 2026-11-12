@@ -1,7 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { RoutineRunner, WAKE_DELAY, onWake } = require('../electron/routines.cjs');
+const {
+  RoutineRunner,
+  WAKE_DELAY,
+  onWake,
+  readsFiles,
+  webRoutine,
+  withoutWebRoutines,
+} = require('../electron/routines.cjs');
 
 const due = [
   {
@@ -169,4 +176,33 @@ test('back from sleep or with the screen unlocked, it looks at what is due once,
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(lookups(), 2);
   assert.ok(WAKE_DELAY >= 1_000 && WAKE_DELAY <= 10_000);
+});
+
+test('a routine of the web records is told apart, and left out of what an AI tool reads', () => {
+  // The web records are closed to AI tools: the routine that records a site's search (the chat makes it) is neither
+  // made nor changed, started or listed for one.
+  assert.equal(
+    webRoutine({ kind: 'web_capture', config: { site: 'google', query: 'x' } }, null),
+    true,
+  );
+  // A saved one keeps its kind whatever the request says it is.
+  assert.equal(
+    webRoutine({ id: 'r1', kind: 'analyze_new' }, { id: 'r1', kind: 'web_capture' }),
+    true,
+  );
+  assert.equal(webRoutine({ id: 'r1' }, { id: 'r1', kind: 'web_capture' }), true);
+  assert.equal(webRoutine({ kind: 'jira_watch' }, null), false);
+  assert.equal(webRoutine({ id: 'r2' }, { id: 'r2', kind: 'analyze_new' }), false);
+  assert.equal(webRoutine({}, null), false);
+  const listed = [
+    { id: 'r1', kind: 'web_capture', name: '쿠팡 노트북 광고 기록' },
+    { id: 'r2', kind: 'analyze_new' },
+  ];
+  assert.deepEqual(withoutWebRoutines(listed), [{ id: 'r2', kind: 'analyze_new' }]);
+  assert.deepEqual(withoutWebRoutines({ id: 'r2', kind: 'analyze_new' }), {
+    id: 'r2',
+    kind: 'analyze_new',
+  });
+  // It reads no file of this PC, so the file rule alone never held it back.
+  assert.equal(readsFiles('routines.save', { kind: 'web_capture' }, null), false);
 });

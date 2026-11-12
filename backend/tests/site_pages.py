@@ -109,6 +109,12 @@ class SitePages:
             "/lure": f'<!doctype html><p>계정이 필요합니다.</p><a href="{self.other}/generic">로그인</a>',
             "/lure-script": f"""<!doctype html><p>계정이 필요합니다.</p>
             <button type="button" onclick="location.href = '{self.other}/generic'">로그인</button>""",
+            # A login form whose page makes its document, and its fields, answer as the site's own login screen would.
+            "/disguised": f"""<!doctype html><script>
+            Object.defineProperty(Document.prototype, 'URL', {{get: () => '{self.origin}/generic'}});
+            Object.defineProperty(Document.prototype, 'documentURI', {{get: () => '{self.origin}/generic'}});
+            </script><form method="post" action="/generic"><label>아이디 <input name="user"></label>
+            <label>암호 <input name="pw" type="password"></label><button>들어가기</button></form>""",
         }
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
@@ -138,6 +144,8 @@ class SitePages:
             return
         if path == "/away":  # Another site's login screen, as an SSO's redirect leads there.
             return self.send(handler, 302, headers={"Location": f"{self.other}/custom"})
+        if path == "/away-disguised":  # The same, to a page that passes itself off as the site's own.
+            return self.send(handler, 302, headers={"Location": f"{self.other}/disguised"})
         self.send(handler, 200, self.pages[path]) if path in self.pages else self.send(handler, 404, "Not found")
 
     def post(self, handler):

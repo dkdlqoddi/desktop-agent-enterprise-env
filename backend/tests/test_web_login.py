@@ -41,6 +41,10 @@ CUSTOM = {
 }
 
 
+# The hosts a sign-in on the site's own form reports: the site's host, which is then the only one the account goes to.
+OWN = ["127.0.0.1"]
+
+
 def plan(credentials=None, mode="auto", methods=None):
     return {
         "site_id": "site-1",
@@ -121,6 +125,7 @@ def test_saved_method_comes_first_and_fixed_mode_uses_only_its_method(server):
         "method": "generic",
         "label": METHODS["generic"]["label"],
         "detected": True,
+        "hosts": OWN,
     }
     assert attempt(server, plan(mode="fixed", methods=[METHODS["atlassian"]]))[0]["detected"] is False
     assert server.logins == [server.credentials] * 3
@@ -165,6 +170,7 @@ def test_fixed_method_that_does_not_fit_the_page(server):
         "method": "custom",
         "label": "사용자 지정",
         "detected": False,
+        "hosts": OWN,
         "tried": ["예전 화면: 비밀번호 입력란 찾지 못함"],
     }, str(result)
     assert server.logins == [server.credentials]
@@ -209,7 +215,8 @@ def test_after_a_refused_login_the_next_method_that_fits_signs_in(server):
         "method": "sso-link",
         "label": METHODS["sso-link"]["label"],
         "detected": False,
-        "hosts": ["localhost"],
+        # The site's own form took the account first and refused it; the SSO's host then signed in.
+        "hosts": [*OWN, "localhost"],
         "tried": ["JIRA·Confluence 기본 로그인: 로그인 화면이 다시 표시됨"],
     }, str(result)
     assert (url, server.form_logins, server.logins) == (server.url, [server.credentials], [server.credentials] * 2)
@@ -260,6 +267,7 @@ def test_auto_mode_moves_on_when_a_method_does_not_fit(server):
         "method": "custom",
         "label": "사용자 지정",
         "detected": True,
+        "hosts": OWN,
         "tried": ["예전 화면: 비밀번호 입력란 찾지 못함"],
     }
     assert (url, server.logins) == (server.url, [server.credentials])
@@ -286,6 +294,7 @@ def test_user_defined_and_generic_methods(server):
         "method": "custom",
         "label": "사용자 지정",
         "detected": False,
+        "hosts": OWN,
     }
     # Unusual field names and positions: the generic method finds the password field and the ID field before it.
     server.style = "generic"
@@ -525,6 +534,18 @@ def test_the_account_is_typed_only_where_the_site_led_and_over_https():
             hosts.require(url)
         assert raised.value.sent is False
     hosts.require("https://idp.corp.test/adfs")
+    # Where such a click led stays untrusted when that page goes on by itself after the click (a script, a refresh, a
+    # form of its own), to its own host or the next one, until the browser is back on a host the site led to.
+    with hosts.following():
+        page.listener(Navigation("https://evil3.test/"))
+    page.listener(Navigation("https://evil3.test/login"))
+    page.listener(Navigation("https://evil4.test/login"))
+    for url in ("https://evil3.test/login", "https://evil4.test/login"):
+        with pytest.raises(LoginError, match="사이트 주소와 다른 곳"):
+            hosts.require(url)
+    page.listener(Navigation("https://jira.test/jira/login.jsp"))
+    page.listener(Navigation("https://sso2.corp.test/login"))
+    hosts.require("https://sso2.corp.test/login")
     # Never in plain text on an https site, and never on a page without an address.
     with pytest.raises(LoginError, match="암호화되지 않은 주소"):
         hosts.require("http://jira.test/jira/login.jsp")
@@ -543,8 +564,9 @@ def test_the_account_is_typed_only_where_the_site_led_and_over_https():
     portal.require("http://portal.example.com/auth/login")
     with pytest.raises(LoginError):
         portal.require("http://www.example.com/login")
-    # The hosts the account went to besides the site's own are what Electron keeps as the site's login hosts.
-    assert {"jira.test", "idp.corp.test"} <= hosts.used and not {"evil.test", "evil2.test"} & hosts.used
+    # The hosts the account went to are what Electron keeps as the site's login hosts.
+    assert {"jira.test", "idp.corp.test"} <= hosts.used
+    assert not {"evil.test", "evil2.test", "evil3.test", "evil4.test"} & hosts.used
     # With them pinned, the account goes to the site and those alone: a host the site leads to anew (an open
     # redirect, a moved login screen) is refused until the user resets the hosts, and the LLM's clicks may not lead
     # there either.
@@ -610,7 +632,7 @@ def test_atlassian_cloud_adfs_a_plain_form_and_a_custom_screen(pages):
     result, _, _ = attempt(
         pages, plan(mode="fixed", methods=[custom]), pages.origin + "/custom", arrived=on_site(pages), product="테스트"
     )
-    assert result == {"method": "custom", "label": "사용자 지정", "detected": False}
+    assert result == {"method": "custom", "label": "사용자 지정", "detected": False, "hosts": OWN}
     assert pages.posts[-1] == {**account, "path": "/custom"}
     # Without a submit button the password field is submitted with Enter.
     enter = custom_method(
@@ -640,7 +662,7 @@ def test_a_password_field_redrawn_during_a_successful_login_is_not_a_rejection(p
     result, _, _ = attempt(
         pages, plan(mode="fixed", methods=[redraw]), pages.origin + "/redraw", arrived=on_site(pages), product="테스트"
     )
-    assert result == {"method": "custom", "label": "사용자 지정", "detected": False}
+    assert result == {"method": "custom", "label": "사용자 지정", "detected": False, "hosts": OWN}
 
 
 def test_the_password_goes_only_into_a_password_field_and_the_id_only_into_a_text_field(pages):
@@ -674,6 +696,18 @@ def test_the_password_goes_only_into_a_password_field_and_the_id_only_into_a_tex
     assert pages.posts == []
 
 
+def test_where_a_field_is_comes_from_the_browser_not_from_the_page(pages):
+    # The site's sign-in has led to one other host before (its saved login host). Now it leads to a page of another
+    # host whose script makes its document report the site's own address: the account is not typed there.
+    login = {**plan(), "hosts": ["idp.example.test"]}
+    error = attempt(pages, login, pages.origin + "/away-disguised", arrived=on_site(pages), product="테스트", form=3)[0]
+    assert isinstance(error, LoginError) and "저장된 로그인 주소에 없는 곳(localhost)" in str(error)
+    assert pages.posts == []
+    # The same page is one to sign in on while the site has no saved login host: the form is the one filled.
+    result = attempt(pages, plan(), pages.origin + "/away-disguised", arrived=on_site(pages), product="테스트", form=3)
+    assert pages.posts and pages.posts[-1]["id"] == "tester", result[0]
+
+
 def test_a_text_the_user_wrote_and_steps_only_some_screens_show(pages):
     # The user's own steps: a domain typed beside the account, and a notice and a field this screen does not show.
     def method(ident, domain, target='input[name="domain"]'):
@@ -699,7 +733,7 @@ def test_a_text_the_user_wrote_and_steps_only_some_screens_show(pages):
         arrived=on_site(pages),
         product="테스트",
     )
-    assert result == {"method": "custom", "label": "도메인 EXAMPLE", "detected": False}
+    assert result == {"method": "custom", "label": "도메인 EXAMPLE", "detected": False, "hosts": OWN}
     assert pages.posts == [{**account, "domain": "EXAMPLE"}]
     # Another text makes another login: after the one with a wrong domain was refused, the next method sends its own.
     result, _, _ = attempt(
@@ -714,6 +748,7 @@ def test_a_text_the_user_wrote_and_steps_only_some_screens_show(pages):
         "method": "right",
         "label": "도메인 EXAMPLE",
         "detected": True,
+        "hosts": OWN,
         "tried": ["도메인 XXX: 로그인 화면이 다시 표시됨"],
     }, str(result)
     assert pages.posts[1:] == [{**account, "domain": "XXX"}, {**account, "domain": "EXAMPLE"}]
@@ -750,9 +785,9 @@ def test_the_screen_of_the_method_the_user_chose_gets_a_moment_before_the_adfs_o
         arrived=on_site(pages),
         product="테스트",
     )
-    assert result == {"method": "custom", "label": "사용자 지정", "detected": False}, str(result)
+    assert result == {"method": "custom", "label": "사용자 지정", "detected": False, "hosts": OWN}, str(result)
     result, _, _ = attempt(pages, plan(), pages.origin + "/late", arrived=on_site(pages), product="테스트")
-    assert result == {"method": "adfs", "label": METHODS["adfs"]["label"], "detected": True}, str(result)
+    assert result == {"method": "adfs", "label": METHODS["adfs"]["label"], "detected": True, "hosts": OWN}, str(result)
     assert [post["path"] for post in pages.posts] == ["/generic", "/adfs"]
 
 

@@ -92,6 +92,24 @@ def test_secrets_an_exception_carries_are_redacted_in_the_log(log):
     # A bearer token after its header name goes whole, not the word "Bearer" alone.
     assert diagnostics.redact("Authorization: Bearer abcdef.ghijkl\nnext") == "Authorization: [REDACTED]\nnext"
     assert diagnostics.redact("the token count is 12") == "the token count is 12"
+    # A secret's name with something before or after the word (the keys the chat agent's worker is given are named
+    # so), and a name in the quotes Python prints a dict with.
+    for written, kept in (
+        ("TAVILY_API_KEY=tvly-abc123def456 next", "TAVILY_API_KEY=[REDACTED] next"),
+        ("GITHUB_TOKEN=ghp_abcdefghijklmnop", "GITHUB_TOKEN=[REDACTED]"),
+        (
+            "https://sso.example.test/cb?access_token=abc123def456&x=1",
+            "https://sso.example.test/cb?access_token=[REDACTED]&x=1",
+        ),
+        ("client_secret=s3cr3tvalue", "client_secret=[REDACTED]"),
+        ('"refresh_token": "abcdefgh"', '"refresh_token": [REDACTED]'),
+        ("{'password': 'hunter2', 'name': 'kim'}", "{'password': [REDACTED], 'name': 'kim'}"),
+        ("headers={'Authorization': 'Basic dXNlcjpwYXNz'}", "headers={'Authorization': [REDACTED]}"),
+        ("TELEGRAM_BOT_TOKEN=123456:abcdef", "TELEGRAM_BOT_TOKEN=[REDACTED]"),
+        # A count of tokens is no secret.
+        ("max_tokens=4096, prompt_tokens: 12", "max_tokens=4096, prompt_tokens: 12"),
+    ):
+        assert diagnostics.redact(written) == kept
 
 
 def test_without_a_folder_nothing_is_written(tmp_path):

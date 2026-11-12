@@ -310,6 +310,8 @@ def test_a_two_step_screen_no_method_fits_signs_in_with_the_fields_the_llm_picks
         "label": LEARNED_LABEL,
         "detected": True,
         "learned": {"before": [], "id": "#account", "next": "#next", "password": "#passcode", "submit": "#go"},
+        # The site's own host took the account: kept as its login host.
+        "hosts": ["127.0.0.1"],
     }, str(result)
     assert server.logins == [server.credentials]
     # The ID page, then the password step; neither the ID nor the password was in what the LLM read.
@@ -335,6 +337,7 @@ def test_a_button_before_the_form_is_clicked_through_and_a_fixed_method_gets_the
         "label": LEARNED_LABEL,
         "detected": False,
         "learned": {"before": ["#open-login"], "id": "#user", "next": "", "password": "#pass", "submit": "#go"},
+        "hosts": ["127.0.0.1"],
     }, str(result)
     assert server.logins == [server.credentials]
 
@@ -502,6 +505,7 @@ def test_a_job_reports_why_its_login_failed_and_keeps_the_fields_the_llm_found(j
         "detected": True,
         "error": "",
         "learned": {"before": [], "id": "#account", "next": "#next", "password": "#passcode", "submit": "#go"},
+        "hosts": ["127.0.0.1"],
     }
 
 
