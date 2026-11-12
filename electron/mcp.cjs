@@ -891,7 +891,10 @@ const TOOLS = [
     {
       id: string('Document id to replace; omit to create.'),
       title: string('Title (max 200 characters).', { required: true }),
-      content: string('Markdown text (max 8,000,000 characters).', { required: true }),
+      content: string(
+        'Markdown text. A document holds 8,000,000 characters; one request carries what fits its 1 MiB body.',
+        { required: true },
+      ),
       expected_revision: integer(
         'The revision you read (get_document shows it); the save is refused if the document changed since.',
       ),

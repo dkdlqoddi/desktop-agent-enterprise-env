@@ -392,7 +392,7 @@ with Database(sys.argv[1]).connect() as db:
             "title) VALUES (?,?,?,?,?,?,?,3,?)",
             (ident, "C:\\\\Docs\\\\긴 보고서.docx", "seed", "Word", text, stamp, number, title))
         ids.append(ident)
-    long = "\\n\\n".join(f"## 절 {i}\\n\\n" + "본문 " * 300 for i in range(200))
+    long = "\\n\\n".join(f"## 절 {i}\\n\\n" + "본문 " * 300 for i in range(1100))
     db.execute("INSERT INTO documents(id,title,content,created_at,updated_at) VALUES('long-markdown','긴 Markdown 문서',?,?,?)",
                (long, "2026-09-01T00:00:00+00:00", "2026-09-01T00:00:00+00:00"))
     index_text(db, ids)
@@ -418,7 +418,7 @@ test('A long file is one document, and the documents an earlier version cut it i
       env: { ...process.env, PYTHONPATH: '' },
     });
     expect(seeded.stderr).toBe('');
-    expect(Number(seeded.stdout.trim())).toBeGreaterThan(180000);
+    expect(Number(seeded.stdout.trim())).toBeGreaterThan(1_000_000);
     app = await launch(directory);
     const page = await app.firstWindow();
     const errors: string[] = [];
@@ -444,25 +444,44 @@ test('A long file is one document, and the documents an earlier version cut it i
     await page.screenshot({ path: 'test-results/document-whole.png' });
     await drawer(page).getByRole('button', { name: '닫기', exact: true }).click();
 
-    // A long Markdown document is drawn piece after piece until all of it is there.
+    // A long Markdown document (a million characters) shows its beginning at once and is drawn on as it is read.
     await rows.filter({ hasText: '긴 Markdown 문서' }).click();
     const content = drawer(page).locator('.document-content .markdown');
-    await expect(content.locator('h2').first()).toHaveText('절 0');
-    await expect(content.locator('h2')).toHaveCount(200, { timeout: 30_000 });
-    await expect(content.getByText('긴 문서의 나머지를 표시하는 중')).toHaveCount(0);
+    const headings = content.locator('h2');
+    const more = content.locator('.long-document-more');
+    await expect(headings.first()).toHaveText('절 0');
+    await expect(more).toContainText('아래로 내리면 이어서 표시합니다');
+    const first = await headings.count();
+    expect(first).toBeLessThan(200);
+    await drawer(page)
+      .locator('.document-content')
+      .evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await expect.poll(() => headings.count()).toBeGreaterThan(first);
+    expect(await headings.count()).toBeLessThan(1100);
+    // 전체 표시 draws the rest without waiting for the reader.
+    await more.getByRole('button', { name: '전체 표시' }).click();
+    await expect(headings).toHaveCount(1100, { timeout: 60_000 });
+    await expect(more).toHaveCount(0);
     await expect(content).toHaveCount(1);
-    // It is edited and saved as the one text it is, far beyond what a document held before.
+    // It is edited and saved as the one text it is: more than a request of the screens carried before.
     await drawer(page).getByRole('button', { name: '수정', exact: true }).click();
     const editor = drawer(page).locator('textarea.document-editor');
     await expect(editor).toHaveAttribute('maxlength', '8000000');
     await expect(drawer(page).getByText('/ 8,000,000자')).toBeVisible();
-    const text = await editor.inputValue();
-    expect(text.length).toBeGreaterThan(180000);
-    await editor.fill(`${text}\n\n## 맺음말\n\n끝까지 한 문서입니다.`);
+    const length = await editor.evaluate((element: HTMLTextAreaElement) => {
+      element.focus();
+      element.setSelectionRange(element.value.length, element.value.length);
+      return element.value.length;
+    });
+    expect(length).toBeGreaterThan(1_000_000);
+    await page.keyboard.insertText('\n\n## 맺음말\n\n끝까지 한 문서입니다.');
     await drawer(page).getByRole('button', { name: '문서 저장' }).click();
-    await expect(page.locator('.toast').filter({ hasText: '문서를 저장했습니다.' })).toBeVisible();
-    await expect(content.locator('h2')).toHaveCount(201, { timeout: 30_000 });
-    await expect(content.locator('h2').last()).toHaveText('맺음말');
+    await expect(page.locator('.toast').filter({ hasText: '문서를 저장했습니다.' })).toBeVisible({
+      timeout: 30_000,
+    });
+    await more.getByRole('button', { name: '전체 표시' }).click();
+    await expect(headings).toHaveCount(1101, { timeout: 60_000 });
+    await expect(headings.last()).toHaveText('맺음말');
     expect(errors).toEqual([]);
   } finally {
     await app?.close();

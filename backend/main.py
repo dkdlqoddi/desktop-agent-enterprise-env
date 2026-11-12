@@ -66,10 +66,14 @@ INTERACTIVE_METHODS = frozenset(
 )
 SLOW_SLOTS = 4
 QUICK_SLOTS = 24
-# Electron sends a request's parameters as at most 900,000 characters of JSON.
+# Electron sends a request's parameters as at most 900,000 characters of JSON; those of the screens' requests that
+# carry a document's text (up to markdown_import.MAX_DOCUMENT_CHARS, a comparison two of them) as many more
+# (electron/main.cjs DOCUMENT_PARAMS).
 MAX_LINE = 1_000_000
-# Electron writes the id first: {"id":"…","method":…}.
+DOCUMENT_LINES = {"wiki.save": 21_000_000, "wiki.compare": 41_000_000}
+# Electron writes the id first, then the method: {"id":"…","method":"…",…}.
 REQUEST_ID = re.compile(r'\s*\{\s*"id"\s*:\s*"([^"\\]{1,200})"')
+REQUEST_METHOD = re.compile(r'\s*\{\s*"id"\s*:\s*"[^"\\]{1,200}"\s*,\s*"method"\s*:\s*"([a-z_.]{1,60})"')
 
 
 def request_id(line):
@@ -77,6 +81,13 @@ def request_id(line):
     instead of waiting out its time limit."""
     match = REQUEST_ID.match(line)
     return match.group(1) if match else None
+
+
+def line_limit(line):
+    """The most characters a request line may have, by the method it names at its start: read from the line as it is,
+    so that one too long is refused without being parsed."""
+    match = REQUEST_METHOD.match(line)
+    return DOCUMENT_LINES.get(match.group(1), MAX_LINE) if match else MAX_LINE
 
 
 def slow(request):
@@ -212,7 +223,7 @@ def main():
         for line in sys.stdin:
             ident = None
             try:
-                if len(line) > MAX_LINE:
+                if len(line) > MAX_LINE and len(line) > line_limit(line):
                     write({"id": request_id(line), "error": "요청이 너무 큽니다."})
                     continue
                 request = json.loads(line)

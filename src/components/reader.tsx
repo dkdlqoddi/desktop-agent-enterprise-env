@@ -137,12 +137,13 @@ function DocumentReader({
   const [error, setError] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const modal = useRef<ModalHandle>(null);
-  // Whether the whole text is drawn: a long one is drawn piece after piece (LongMarkdown), all of it at once when a
-  // section further down is asked for (`hurry`, with the section that waits for it).
-  const [drawn, setDrawn] = useState(true);
+  // How much of the text is drawn: a long one is drawn piece after piece as it is read (LongMarkdown), and on to
+  // its end while a section further down is waited for (`wanted`, which `hurry` says is there).
+  const [drawing, setDrawing] = useState({ drawn: true, shown: 0 });
+  const drawn = drawing.drawn;
   const [hurry, setHurry] = useState(false);
   const wanted = useRef<OutlineNode | null>(null);
-  // Another text is drawn piece after piece again.
+  // Another text is drawn as it is read again.
   useEffect(() => {
     setHurry(false);
     wanted.current = null;
@@ -341,17 +342,20 @@ function DocumentReader({
   function showSection(node: OutlineNode) {
     const heading = headingOf(node);
     if (heading) return heading.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    // In the part of a long text not drawn yet: the rest is drawn now, and the section shown once it is.
+    // In the part of a long text not drawn yet: the text is drawn on, and the section shown once it is there.
     if (drawn) return;
     wanted.current = node;
     setHurry(true);
   }
   useEffect(() => {
     const node = wanted.current;
-    if (!drawn || !node) return;
+    if (!node) return;
+    const heading = headingOf(node);
+    if (!heading && !drawing.drawn) return;
     wanted.current = null;
-    headingOf(node)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [drawn]);
+    setHurry(false);
+    heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [drawing]);
   // Writing: in the editor, or choosing how to save what a refused save held (the conflict view).
   const editing = mode === 'edit' || mode === 'conflict';
   const title =
@@ -610,7 +614,12 @@ function DocumentReader({
               {doc.format === 'html' && doc.html ? (
                 <HtmlDocument html={doc.html} highlight={focus?.terms} />
               ) : (
-                <LongMarkdown highlight={focus?.terms} hurry={hurry} onDrawn={setDrawn}>
+                <LongMarkdown
+                  highlight={focus?.terms}
+                  // Search words are found and counted throughout the text.
+                  whole={hurry || !!focus?.terms.length}
+                  onDrawn={(drawn, shown) => setDrawing({ drawn, shown })}
+                >
                   {doc.content || ''}
                 </LongMarkdown>
               )}

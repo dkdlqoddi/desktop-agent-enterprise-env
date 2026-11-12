@@ -253,11 +253,11 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 - MCP: `save_document`, `call_api`
 - `POST /api/v1/documents` — 새 Markdown 문서 저장
   - `title` (body, string, 필수) 제목 (최대 200자)
-  - `content` (body, string, 필수) 본문 Markdown (최대 8,000,000자)
+  - `content` (body, string, 필수) 본문 Markdown (문서 하나는 8,000,000자까지, 이 API로는 요청 본문 1MiB에 드는 만큼)
 - `PUT /api/v1/documents/{id}` — 문서 고치기. 제목과 본문을 모두 보냅니다. 본문이 바뀌면 AI 분석 결과를 지웁니다.
   - `id` (path, string, 필수) ID
   - `title` (body, string, 필수) 제목 (최대 200자)
-  - `content` (body, string, 필수) 본문 Markdown (최대 8,000,000자)
+  - `content` (body, string, 필수) 본문 Markdown (문서 하나는 8,000,000자까지, 이 API로는 요청 본문 1MiB에 드는 만큼)
   - `expected_revision` (body, integer) 읽은 문서의 revision. 그 뒤에 다른 곳에서 문서가 바뀌었으면 저장하지 않고 거절합니다
 
 #### `wiki.compare`
@@ -1717,7 +1717,7 @@ Create a Markdown document in the wiki, or replace the title and text of one by 
 
 - `id` (string) Document id to replace; omit to create.
 - `title` (string, 필수) Title (max 200 characters).
-- `content` (string, 필수) Markdown text (max 8,000,000 characters).
+- `content` (string, 필수) Markdown text. A document holds 8,000,000 characters; one request carries what fits its 1 MiB body.
 - `expected_revision` (integer) The revision you read (get_document shows it); the save is refused if the document changed since.
 
 #### `delete_documents`

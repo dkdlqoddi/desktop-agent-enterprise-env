@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { highlighter, rehypeHighlight } from './highlight';
@@ -110,28 +110,55 @@ const later: (run: () => void) => () => void =
         return () => clearTimeout(id);
       };
 
-// A document's text, drawn as Markdown does it; a long one piece after piece (pieces), in one element all the same.
-// `onDrawn` hears whether all of it is drawn, at first and when that changes; `hurry` draws what is left at once, for
-// a place further down that the user asked for.
+// How far below what the reader sees a long text is drawn ahead, in pixels.
+const AHEAD = 3000;
+
+// The element that scrolls `node`: the nearest one above it whose content scrolls down.
+function scroller(node: HTMLElement) {
+  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+    const overflow = getComputedStyle(parent).overflowY;
+    if (overflow === 'auto' || overflow === 'scroll') return parent;
+  }
+  return null;
+}
+
+// A document's text, drawn as Markdown does it, in one element. A long one is drawn piece after piece (pieces): on
+// as the reader comes near the end of what is drawn, so that a text of millions of characters opens at once and
+// costs what is read of it; or on to its end without waiting, piece by piece between the reader's own doings, when
+// all of it is wanted (`whole`: search words to find throughout, a section further down to go to) or asked for
+// (전체 표시). `onDrawn` hears whether all is drawn and how many pieces are, at first and whenever that changes.
 export function LongMarkdown({
   children,
   highlight,
-  hurry = false,
+  whole = false,
   onDrawn,
-}: Props & { hurry?: boolean; onDrawn?: (drawn: boolean) => void }) {
+}: Props & { whole?: boolean; onDrawn?: (drawn: boolean, shown: number) => void }) {
   const parts = useMemo(() => pieces(children), [children]);
-  const [progress, setProgress] = useState({ parts, shown: 1 });
+  const [progress, setProgress] = useState({ parts, shown: 1, all: false });
   // Another text begins again with its first piece, within this very render.
-  const shown = hurry ? parts.length : progress.parts === parts ? progress.shown : 1;
+  const { shown, all } = progress.parts === parts ? progress : { shown: 1, all: false };
   const drawn = shown >= parts.length;
+  const more = useRef<HTMLParagraphElement>(null);
+  const hurried = whole || all;
   useEffect(() => {
     if (drawn) return;
-    return later(() => setProgress({ parts, shown: shown + 1 }));
-  }, [drawn, parts, shown]);
+    const next = () => setProgress({ parts, shown: shown + 1, all });
+    const note = more.current;
+    if (hurried || !note || typeof IntersectionObserver !== 'function') return later(next);
+    // Seen again with every piece drawn: the next one follows at once while the end is still near.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) next();
+      },
+      { root: scroller(note), rootMargin: `0px 0px ${AHEAD}px 0px` },
+    );
+    observer.observe(note);
+    return () => observer.disconnect();
+  }, [drawn, parts, shown, all, hurried]);
   useEffect(() => {
-    onDrawn?.(drawn);
+    onDrawn?.(drawn, shown);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- told when it changes, whatever function hears it
-  }, [drawn]);
+  }, [drawn, shown]);
   return (
     <div className="markdown">
       {parts.slice(0, shown).map((part, index) => (
@@ -140,8 +167,20 @@ export function LongMarkdown({
         </Blocks>
       ))}
       {!drawn && (
-        <p className="muted" role="status">
-          긴 문서의 나머지를 표시하는 중… ({shown}/{parts.length})
+        <p className="muted long-document-more" role="status" ref={more}>
+          {hurried
+            ? '긴 문서의 나머지를 표시하는 중…'
+            : '긴 문서입니다. 아래로 내리면 이어서 표시합니다.'}{' '}
+          ({shown}/{parts.length})
+          {!hurried && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setProgress({ parts, shown, all: true })}
+            >
+              전체 표시
+            </button>
+          )}
         </p>
       )}
     </div>

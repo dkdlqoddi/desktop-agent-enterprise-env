@@ -653,7 +653,7 @@
                   },
                   "content": {
                     "type": "string",
-                    "description": "본문 Markdown (최대 8,000,000자)"
+                    "description": "본문 Markdown (문서 하나는 8,000,000자까지, 이 API로는 요청 본문 1MiB에 드는 만큼)"
                   }
                 },
                 "required": ["title", "content"]
@@ -769,7 +769,7 @@
                   },
                   "content": {
                     "type": "string",
-                    "description": "본문 Markdown (최대 8,000,000자)"
+                    "description": "본문 Markdown (문서 하나는 8,000,000자까지, 이 API로는 요청 본문 1MiB에 드는 만큼)"
                   },
                   "expected_revision": {
                     "type": "integer",

@@ -29,7 +29,7 @@ Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 에이전트: 자�
 
 1. 화면이 `api(method, params)`를 부릅니다(`src/lib/api/transport.ts`). `method`는 `src/lib/api/methods.generated.ts`의 `Method` 타입이어야 합니다.
 2. preload(`electron/preload.cjs`)가 `ipcRenderer.invoke('agent:request', method, params)`로 보냅니다.
-3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `allowedRequest()`(`electron/trusted-sender.cjs`)로 보낸 곳이 메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버인지(`trustedSender`), 메서드가 `ALLOWED`에 있는지 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다.
+3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `allowedRequest()`(`electron/trusted-sender.cjs`)로 보낸 곳이 메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버인지(`trustedSender`), 메서드가 `ALLOWED`에 있는지 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다. 문서의 글을 싣는 `wiki.save`와 `wiki.compare`만 문서 한도(800만 자)에 맞춰 더 크게 받고(`DOCUMENT_PARAMS`), 백엔드도 그 두 메서드의 줄만 길게 읽습니다(`backend/main.py`의 `DOCUMENT_LINES`). AI 도구의 요청은 로컬 API의 본문 1MiB 상한을 거치므로 900,000자 그대로입니다.
 4. `api.*`는 로컬 API 설정(`apiRequest`), `app.relaunch`(예약한 백업 복원을 적용하는 ‘지금 다시 시작’)는 앱을 닫고 같은 프로그램으로 다시 실행하며, 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
 5. `rpc()`는 백엔드가 (다시) 시작하는 동안 기다렸다가 `{"id", "method", "params"}` 한 줄을 표준 입력에 씁니다. 응답 제한 시간은 `RPC_TIMEOUTS`(`electron/main.cjs`)에 있으면 그 값, 없으면 330초입니다. 시간이 지나면 메인 프로세스 쪽만 실패로 끝나고 백엔드의 작업은 계속됩니다.
 6. 백엔드(`backend/main.py`)는 줄마다 처리 줄을 고릅니다. `SLOW`의 메서드와 `mode`가 `prompt`인 `wiki.search`는 느린 줄(4개), 나머지는 빠른 줄(24개)입니다. 줄이 차 있으면 기다리지 않고 바로 "진행 중인 요청이 많습니다"로 답합니다. `INTERACTIVE_METHODS`의 LLM 요청은 일괄 작업보다 먼저 갑니다(`agent/llm.py`의 `Slots`).

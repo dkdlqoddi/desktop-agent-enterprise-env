@@ -1259,14 +1259,25 @@ function diagnosticFacts() {
   ];
 }
 
-function checkParams(params) {
+// The most characters of JSON a request's parameters hold. A document's text is the exception, for the screens alone:
+// they save and compare documents of up to 8,000,000 characters (backend markdown_import.MAX_DOCUMENT_CHARS), a
+// comparison carrying two texts, with room for what JSON adds to line breaks and quotes. An AI tool's request came
+// through the local API, whose body holds 1 MiB (api-server.cjs MAX_BODY), and keeps the limit of every request.
+const MAX_PARAMS = 900_000;
+const DOCUMENT_PARAMS = { 'wiki.save': 20_000_000, 'wiki.compare': 40_000_000 };
+
+function checkParams(params, limit = MAX_PARAMS) {
   if (
     !params ||
     typeof params !== 'object' ||
     Array.isArray(params) ||
-    JSON.stringify(params).length > 900_000
+    JSON.stringify(params).length > limit
   )
-    throw new Error('요청 크기나 형식을 확인해 주세요.');
+    throw new Error(
+      limit > MAX_PARAMS && params && typeof params === 'object' && !Array.isArray(params)
+        ? '문서가 너무 커서 요청을 보내지 못했습니다. 글을 줄여 주세요.'
+        : '요청 크기나 형식을 확인해 주세요.',
+    );
 }
 
 // One request of the screens or of an AI tool through the local API, once each has been checked: the screens by
@@ -1725,7 +1736,7 @@ else {
         try {
           if (!allowedRequest(event, method, ownScreen()))
             throw new Error('허용되지 않은 요청입니다.');
-          checkParams(params);
+          checkParams(params, DOCUMENT_PARAMS[method]);
           await started;
           // The screens' own requests of the main process (the local API's settings, 지금 다시 시작) never pass
           // handle(), which AI tools reach through the local API too.

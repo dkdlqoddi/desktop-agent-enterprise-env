@@ -1868,6 +1868,13 @@ dialog.drawer {
 .document-source .inline-error {
   margin: 4px 0 0;
 }
+/* After what is drawn of a long text: that more follows, and the button that draws all of it. */
+.long-document-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 0;
+}
 /* An imported file's HTML page: white paper with the page's own styles inside (a shadow root). Contained,
    so nothing in the page can be positioned or painted outside it. The paper and the text the page inherits stay
    light and dark in the dark theme too, so the page's own colors, made for white paper, still read. */

@@ -196,10 +196,13 @@ def test_a_stopped_worker_that_finished_anyway_ends_without_waiting_out_the_grac
     assert time.monotonic() - started < 15
 
 
-def test_a_request_over_one_megabyte_is_refused_and_the_next_one_answered(tmp_path):
-    # Electron sends at most 900,000 characters of parameters: a longer line is refused by its ID, unread.
-    large = {"id": "large", "method": "wiki.save", "params": {"title": "큰 문서", "content": "가" * 1_000_000}}
-    lines = json.dumps(large, ensure_ascii=False) + "\n" + json.dumps({"id": "small", "method": "health"}) + "\n"
+def test_a_request_over_one_megabyte_is_refused_unless_it_carries_a_document_and_the_next_one_answered(tmp_path):
+    # Electron sends at most 900,000 characters of parameters: a longer line is refused by its ID, unread. Only a
+    # request that saves or compares a document may be longer, as a document holds up to 8,000,000 characters.
+    large = {"id": "large", "method": "prompts.save", "params": {"title": "큰 프롬프트", "template": "가" * 1_000_000}}
+    document = {"id": "document", "method": "wiki.save", "params": {"title": "긴 문서", "content": "가" * 1_000_000}}
+    lines = "".join(json.dumps(request, ensure_ascii=False) + "\n" for request in (large, document))
+    lines += json.dumps({"id": "small", "method": "health"}) + "\n"
     # The backend speaks UTF-8, and PYTHONUTF8 makes its errors UTF-8 too, as Electron starts it; text=True alone
     # would read both in the Windows code page (cp949).
     result = subprocess.run(
@@ -208,12 +211,26 @@ def test_a_request_over_one_megabyte_is_refused_and_the_next_one_answered(tmp_pa
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=20,
+        timeout=60,
         env={**os.environ, "PRIVATE_AGENT_DATA_DIR": str(tmp_path), "PYTHONUTF8": "1"},
     )
     assert result.returncode == 0, result.stderr
-    assert [json.loads(line) for line in result.stdout.splitlines()] == [
-        {"id": "large", "error": "요청이 너무 큽니다."},
-        {"id": "small", "result": {"ok": True}},
-    ]
-    assert Service(Database(tmp_path / "wiki.db"), None).wiki_list({}) == []
+    answers = {answer["id"]: answer for answer in map(json.loads, result.stdout.splitlines())}
+    assert answers["large"] == {"id": "large", "error": "요청이 너무 큽니다."}
+    assert answers["small"] == {"id": "small", "result": {"ok": True}}
+    assert len(answers["document"]["result"]["content"]) == 1_000_000
+    saved = Service(Database(tmp_path / "wiki.db"), None).wiki_list({})
+    assert [doc["title"] for doc in saved] == ["긴 문서"]
+
+
+def test_the_longest_line_a_request_may_have_follows_the_method_it_names():
+    import main
+
+    assert main.line_limit('{"id":"a","method":"health","params":{}}') == main.MAX_LINE
+    assert main.line_limit('{"id":"a","method":"wiki.save","params":{"content":"…"}}') == 21_000_000
+    assert main.line_limit(' { "id" : "a" , "method" : "wiki.compare" , "params" : {} }') == 41_000_000
+    # Only the method named where Electron writes it counts: not a name inside the parameters, nor a line that is
+    # no request.
+    assert main.line_limit('{"id":"a","method":"prompts.save","params":{"method":"wiki.save"}}') == main.MAX_LINE
+    assert main.line_limit('{"method":"wiki.save","id":"a"}') == main.MAX_LINE
+    assert main.line_limit("wiki.save " * 10) == main.MAX_LINE

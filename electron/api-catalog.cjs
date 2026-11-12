@@ -381,7 +381,12 @@ const TIMEZONE = integer(
 );
 const DOCUMENT_BODY = {
   title: string('제목 (최대 200자)', { required: true }),
-  content: string('본문 Markdown (최대 8,000,000자)', { required: true }),
+  content: string(
+    '본문 Markdown (문서 하나는 8,000,000자까지, 이 API로는 요청 본문 1MiB에 드는 만큼)',
+    {
+      required: true,
+    },
+  ),
 };
 // A list in pages (wiki.list, wiki.search, assistant.conversations): with limit or cursor the answer is one page and
 // next_cursor, which the next request sends back as cursor (null after the last page). Without either the answer is
