@@ -45,7 +45,8 @@ import java.util.Collections
 /**
  * One real chat turn on the bundled Hermes worker, with a stand-in model answering its inference frames (as the
  * desktop's test_hermes.py live test): Hermes calls the app's list_records itself, the app checks and runs it and
- * shows its card, and Hermes answers with what it found. Also a clarify question answered in the chat, and a stop.
+ * shows its card, and Hermes answers with what it found. Also a clarify question answered in the chat, a subagent
+ * whose result comes back within the turn, and a stop.
  */
 @RunWith(AndroidJUnit4::class)
 class HermesChatTest {
@@ -194,6 +195,36 @@ class HermesChatTest {
         assertEquals("쿠팡에서 찾겠습니다.", messages.all().last { it.role == MessageRole.ASSISTANT }.text)
         val result = toolResult(model.requests.first { toolResult(it) != null }).orEmpty()
         assertTrue(result, result.contains("쿠팡") && result.contains("submitted"))
+    }
+
+    /**
+     * The agent hands part of the work to a subagent (delegate_task). The tool call waits for the subagent and
+     * returns its result, so the answer of the same turn has it, and nothing asks the model once the turn is over
+     * (worker.py joined_delegation, as the desktop's test_hermes.py checks).
+     */
+    @Test
+    fun aSubagentsResultComesBackInTheSameTurn() = runBlocking {
+        val model = Model { request ->
+            when {
+                // The subagent: it may not delegate again.
+                "delegate_task" !in names(request) -> {
+                    delay(1_500)
+                    words("하위 작업 결과는 42입니다.")
+                }
+                toolResult(request) != null -> words("하위 에이전트의 답: " + toolResult(request).orEmpty().take(400))
+                else -> call("delegate_task", JSONObject().put("goal", "Compute the answer and report it."))
+            }
+        }
+        withTimeout(300_000) { chat.converse(model, "stand-in", "하위 에이전트에게 계산을 맡겨 줘", emptyList()) }
+        val asked = model.requests.size
+        delay(3_000)
+
+        val answer = messages.all().last { it.role == MessageRole.ASSISTANT }.text
+        assertTrue(answer, answer.contains("하위 작업 결과는 42입니다."))
+        // The agent, its subagent, then the agent with the subagent's result; and none after the turn.
+        assertEquals(listOf(true, false, true), model.requests.map { "delegate_task" in names(it) })
+        assertEquals(3, asked)
+        assertEquals(asked, model.requests.size)
     }
 
     @Test
