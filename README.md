@@ -21,20 +21,21 @@
 
 ## 문서
 
-| 문서                                                     | 내용                                                                        |
-| -------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)                       | 세 프로세스와 경계, 요청 경로, 데이터 위치, 모듈 지도, 기능 추가 순서, 빌드 |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                       | 개발 환경, 테스트 실행, 환경변수, 생성 파일, 커밋 메시지, CI                |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                 | 로그와 진단 정보, 메시지별 원인과 해결                                      |
-| [PRIVACY.md](PRIVACY.md)                                 | 기능별로 PC 밖으로 나가는 것과 남는 것, 비밀 값과 로그                      |
-| [SECURITY.md](SECURITY.md)                               | 보안 설계, 위협 모델, 취약점 신고                                           |
-| [docs/api.md](docs/api.md), [OpenAPI](docs/openapi.json) | 로컬 REST API와 MCP의 메서드, 허용 범위, 매개변수                           |
-| [CHANGELOG.md](CHANGELOG.md)                             | 변경 기록과 버전 정책                                                       |
-| [AGENTS.md](AGENTS.md)                                   | AI 코딩 에이전트를 위한 규약                                                |
-| [TODO.md](TODO.md)                                       | 남은 일, 결정이 필요한 것, 로드맵 밖 기능 제안                              |
-| [android/README.md](android/README.md)                   | Android 앱의 화면, 휴대폰에 남는 것, 빌드와 테스트                          |
-| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)         | 함께 배포하는 오픈소스 구성 요소의 라이선스 고지                            |
-| [LICENSE](LICENSE)                                       | MIT 라이선스                                                                |
+| 문서                                                     | 내용                                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                       | 세 프로세스와 경계, 요청 경로, 데이터 위치, 모듈 지도, 기능 추가 순서, 빌드     |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                       | 개발 환경, 테스트 실행, 환경변수, 생성 파일, 커밋 메시지, CI                    |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                 | 로그와 진단 정보, 메시지별 원인과 해결                                          |
+| [VERIFICATION.md](VERIFICATION.md)                       | 사람이 직접 확인할 것(Windows, Office, 메신저 봇, 실제 자료)의 방법과 통과 기준 |
+| [PRIVACY.md](PRIVACY.md)                                 | 기능별로 PC 밖으로 나가는 것과 남는 것, 비밀 값과 로그                          |
+| [SECURITY.md](SECURITY.md)                               | 보안 설계, 위협 모델, 취약점 신고                                               |
+| [docs/api.md](docs/api.md), [OpenAPI](docs/openapi.json) | 로컬 REST API와 MCP의 메서드, 허용 범위, 매개변수                               |
+| [CHANGELOG.md](CHANGELOG.md)                             | 변경 기록과 버전 정책                                                           |
+| [AGENTS.md](AGENTS.md)                                   | AI 코딩 에이전트를 위한 규약                                                    |
+| [TODO.md](TODO.md)                                       | 남은 일, 결정이 필요한 것, 로드맵 밖 기능 제안                                  |
+| [android/README.md](android/README.md)                   | Android 앱의 화면, 휴대폰에 남는 것, 빌드와 테스트                              |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)         | 함께 배포하는 오픈소스 구성 요소의 라이선스 고지                                |
+| [LICENSE](LICENSE)                                       | MIT 라이선스                                                                    |
 
 ## 개발 환경
 
