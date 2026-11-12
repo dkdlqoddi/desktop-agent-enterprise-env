@@ -64,7 +64,7 @@ async function visit(page: Page, theme: string, found: Finding[]) {
   const screen = (name: string) => `${theme} · ${name}`;
   await nav(page, '채팅').click();
   await expect(chatBox(page)).toBeVisible();
-  await expect(page.getByRole('group', { name: '예시' })).toBeVisible();
+  await expect(page.getByRole('group', { name: '제안' })).toBeVisible();
   await audit(page, screen('채팅'), found);
   await nav(page, '웹 기록').click();
   await expect(page.getByText('기록이 없습니다', { exact: true })).toBeVisible();

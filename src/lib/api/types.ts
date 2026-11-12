@@ -990,13 +990,20 @@ export type AgentTool =
   | 'open_site'
   | 'capture_page'
   | 'add_task'
-  | 'schedule_capture';
+  | 'schedule_capture'
+  | 'list_tasks'
+  | 'complete_task'
+  | 'read_document'
+  | 'save_document'
+  | 'list_routines'
+  | 'today';
 export type AgentCardStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
 export type AgentCard = {
   tool: AgentTool;
-  args: Record<string, string>;
+  args: Record<string, string | number>;
   title: string;
-  // Whether it waits for 확인 후 실행: what opens a site, records a page, adds a task or schedules a routine.
+  // Whether it waits for 확인 후 실행: what opens a site, records a page, adds or completes a task, saves a document
+  // or schedules a routine.
   approval: boolean;
   status: AgentCardStatus;
   result: {
@@ -1009,8 +1016,50 @@ export type AgentCard = {
     url?: string;
     task_id?: string;
     routine_id?: string;
+    // list_tasks: at most 10 of the tasks that matched (the line says how many did).
+    tasks?: AgentTaskLine[];
+    // list_routines: at most 10 automatic routines.
+    routines?: AgentRoutineLine[];
+    // read_document: the document and the part of its text read; save_document: the new document.
+    document?: AgentDocumentPart;
+    // today: the day at a glance.
+    overview?: AgentOverview;
   } | null;
 };
+// The tasks, routines and documents the chat's app tools give (agent_chat.py), times on this PC's clock.
+export type AgentTaskLine = Pick<Task, 'id' | 'title' | 'status' | 'due_at'> & { overdue: boolean };
+export type AgentRoutineLine = Pick<
+  Routine,
+  | 'id'
+  | 'name'
+  | 'kind'
+  | 'title'
+  | 'enabled'
+  | 'last_status'
+  | 'next_run_at'
+  | 'last_run_at'
+  | 'last_error'
+> & { schedule: string };
+export type AgentDocumentPart = {
+  id: string;
+  title: string;
+  offset?: number;
+  content?: string;
+  more?: boolean;
+  next_offset?: number | null;
+  length?: number;
+};
+export type AgentOverview = {
+  date: string;
+  weekday: string;
+  overdue: { count: number; tasks: AgentTaskLine[] };
+  due_today: { count: number; tasks: AgentTaskLine[] };
+  routines: { count: number; items: { id: string; name: string; next_run_at: string | null }[] };
+  documents: { count: number; items: { id: string; title: string }[] };
+  records: { count: number; ads: number };
+};
+// What the chat offers to ask above its message box (agent.suggestions), from the app's own data, and why.
+export type AgentSuggestion = { text: string; reason: string };
 export type AgentMessage = {
   seq: number;
   role: 'user' | 'assistant';

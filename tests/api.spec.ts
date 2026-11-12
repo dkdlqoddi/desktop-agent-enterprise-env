@@ -279,10 +279,14 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     expect((await ai.tool('app_navigate', { view: 'chat' })).isError).toBe(false);
     await expect(chatBox(page)).toBeVisible();
     expect((await ai.tool('app_read_screen')).content[0].text).toContain('메시지');
+    // One of the requests the chat offers above its box (what they say follows the app's data).
+    const offered = page.getByRole('group', { name: '제안' }).getByRole('button').first();
+    await expect(offered).toBeVisible();
+    const offer = (await offered.textContent())!.trim();
     for (const refused of [
       await ai.tool('app_fill', { label: '메시지', value: '폴더를 지워 줘', submit: true }),
       await ai.tool('app_fill', { label: '메시지', value: '폴더를 지워 줘' }),
-      await ai.tool('app_click', { name: '오늘 기록한 광고 요약해 줘' }),
+      await ai.tool('app_click', { name: offer }),
     ]) {
       expect(refused.isError).toBe(true);
       expect(refused.content[0].text).toContain('채팅은 사용자만');

@@ -2,15 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bot,
   CalendarClock,
+  CalendarDays,
   Check,
   CircleAlert,
+  CircleCheckBig,
   ExternalLink,
+  FilePlus2,
   FileSearch,
+  FileText,
   Globe2,
   HelpCircle,
   ListChecks,
+  ListTodo,
   LoaderCircle,
   MessageSquare,
+  Repeat,
   ScanSearch,
   Send,
   ShieldAlert,
@@ -23,6 +29,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  clock,
   dayTime,
   type AgentCard,
   type AgentClarify,
@@ -30,6 +37,11 @@ import {
   type AgentApproval,
   type AgentMessage,
   type AgentTool,
+  type AgentDocumentPart,
+  type AgentOverview,
+  type AgentRoutineLine,
+  type AgentSuggestion,
+  type AgentTaskLine,
 } from '@/lib/api';
 import { useChatFocus } from './chat-focus';
 import Confirm from './confirm';
@@ -44,6 +56,12 @@ const TOOL_ICONS: Record<AgentTool, LucideIcon> = {
   capture_page: ScanSearch,
   add_task: ListChecks,
   schedule_capture: CalendarClock,
+  list_tasks: ListTodo,
+  complete_task: CircleCheckBig,
+  read_document: FileText,
+  save_document: FilePlus2,
+  list_routines: Repeat,
+  today: CalendarDays,
 };
 const STATUS: Record<AgentCard['status'], string> = {
   pending: '승인 대기',
@@ -52,13 +70,20 @@ const STATUS: Record<AgentCard['status'], string> = {
   failed: '실패',
   cancelled: '취소함',
 };
-const EXAMPLES = [
-  '쿠팡에서 노트북 광고 기록해 줘',
-  '아마존에서 wireless earbuds 검색해서 광고 보여 줘',
-  '네이버에서 캠핑의자 광고 기록해 줘',
-  '오늘 기록한 광고 요약해 줘',
-];
 const KIND_NAMES = { ad: '광고', product: '상품', result: '검색 결과' } as const;
+// The words of the task board and the routines widget.
+const TASK_STATUS: Record<AgentTaskLine['status'], string> = {
+  open: '진행 중',
+  paused: '보류',
+  done: '완료',
+};
+const ROUTINE_STATUS: Record<NonNullable<AgentRoutineLine['last_status']>, string> = {
+  queued: '대기 중',
+  running: '실행 중',
+  success: '완료',
+  error: '실패',
+  cancelled: '중지',
+};
 
 function EngineBadge({ engine }: { engine: AgentEngine | null }) {
   if (!engine) return null;
@@ -171,6 +196,89 @@ function ClarifyPrompt({
   );
 }
 
+// Tasks as the app tools list them: the due time on this PC's clock, and whether it has passed.
+function TaskLines({ label, tasks }: { label: string; tasks: AgentTaskLine[] }) {
+  return (
+    <ul className="agent-card-list" aria-label={label}>
+      {tasks.map((task) => (
+        <li key={task.id}>
+          {task.title}
+          <span className={`agent-card-meta${task.overdue ? ' overdue' : ''}`}>
+            {' · '}
+            {task.overdue && '기한 지남 · '}
+            {task.due_at ? `마감 ${dayTime(task.due_at)}` : '기한 없음'} ·{' '}
+            {TASK_STATUS[task.status]}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function RoutineLines({ routines }: { routines: AgentRoutineLine[] }) {
+  return (
+    <ul className="agent-card-list" aria-label="자동 작업">
+      {routines.map((routine) => (
+        <li key={routine.id}>
+          {routine.name}
+          <span className="agent-card-meta">
+            {` · ${routine.schedule} · ${routine.enabled ? '켜짐' : '꺼짐'}`}
+            {routine.last_status && ` · 마지막 실행 ${ROUTINE_STATUS[routine.last_status]}`}
+            {routine.last_status && routine.last_run_at && ` (${dayTime(routine.last_run_at)})`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// The day at a glance (the today tool), each line with its kind; the counts are in the line above it.
+function Overview({ overview }: { overview: AgentOverview }) {
+  const { openDocument } = useActions();
+  const tasks = [
+    ...overview.overdue.tasks.map((task) => ({ kind: '기한 지남', task })),
+    ...overview.due_today.tasks.map((task) => ({ kind: '오늘 마감', task })),
+  ];
+  if (!tasks.length && !overview.routines.items.length && !overview.documents.items.length)
+    return null;
+  return (
+    <ul className="agent-card-list" aria-label="오늘 현황">
+      {tasks.map(({ kind, task }) => (
+        <li key={task.id}>
+          <span className="record-kind">{kind}</span> {task.title}
+          {task.due_at && <span className="agent-card-meta"> · {dayTime(task.due_at)}</span>}
+        </li>
+      ))}
+      {overview.routines.items.map((routine) => (
+        <li key={routine.id}>
+          <span className="record-kind">자동 작업</span> {routine.name}
+          {routine.next_run_at && (
+            <span className="agent-card-meta"> · {clock(routine.next_run_at)}</span>
+          )}
+        </li>
+      ))}
+      {overview.documents.items.map((doc) => (
+        <li key={doc.id}>
+          <span className="record-kind">새 문서</span>{' '}
+          <button className="link-button" onClick={() => openDocument(doc.id)}>
+            {doc.title}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// The document a card read or saved, opened in the document window.
+function DocumentLink({ doc }: { doc: AgentDocumentPart }) {
+  const { openDocument } = useActions();
+  return (
+    <button className="link-button" onClick={() => openDocument(doc.id)}>
+      <FileText size={14} /> {doc.title} 열기
+    </button>
+  );
+}
+
 function CardResult({ card }: { card: AgentCard }) {
   const { openDocument, navigate } = useActions();
   const result = card.result;
@@ -209,6 +317,10 @@ function CardResult({ card }: { card: AgentCard }) {
           ))}
         </ul>
       )}
+      {!!result.tasks?.length && <TaskLines label="할 일" tasks={result.tasks} />}
+      {!!result.routines?.length && <RoutineLines routines={result.routines} />}
+      {result.overview && <Overview overview={result.overview} />}
+      {result.document && <DocumentLink doc={result.document} />}
       {result.capture_id && (
         <button
           className="button secondary small"
@@ -217,7 +329,12 @@ function CardResult({ card }: { card: AgentCard }) {
           <Table2 size={14} /> 웹 기록에서 보기
         </button>
       )}
-      {result.routine_id && (
+      {(!!result.tasks || !!result.task_id) && (
+        <button className="button secondary small" onClick={() => navigate('tasks')}>
+          <ListChecks size={14} /> 할 일 보기
+        </button>
+      )}
+      {(result.routine_id || !!result.routines?.length) && (
         <button
           className="button secondary small"
           onClick={() => navigate('automation', 'routines')}
@@ -269,6 +386,42 @@ function ActionCard({
         </div>
       )}
       <CardResult card={card} />
+    </div>
+  );
+}
+
+// What to ask next, offered above the message box from what the app keeps now (agent.suggestions): tasks past their
+// due time or due today, a routine that failed, new documents, today's web records; examples when there is nothing to
+// say. Read each time the chips are shown: when the chat is, and once a turn has ended (they are hidden while it runs).
+// A chip only fills the box, for the user to read, change and send.
+function Suggestions({ onPick }: { onPick: (text: string) => void }) {
+  const [offers, setOffers] = useState<AgentSuggestion[]>([]);
+  useEffect(() => {
+    let shown = true;
+    void api<AgentSuggestion[]>('agent.suggestions')
+      .then((found) => {
+        if (shown) setOffers(found);
+      })
+      // The box works all the same without them; there is nothing to tell the user.
+      .catch(() => {});
+    return () => {
+      shown = false;
+    };
+  }, []);
+  if (!offers.length) return null;
+  return (
+    <div className="agent-suggestions" role="group" aria-label="제안">
+      {offers.map((offer) => (
+        <button
+          key={offer.text}
+          type="button"
+          className="agent-suggestion"
+          title={offer.reason || undefined}
+          onClick={() => onPick(offer.text)}
+        >
+          {offer.text}
+        </button>
+      ))}
     </div>
   );
 }
@@ -490,14 +643,13 @@ export default function AgentChat() {
             )}
           </ol>
         )}
-        {!messages?.length && !sending && (
-          <div className="agent-examples" role="group" aria-label="예시">
-            {EXAMPLES.map((example) => (
-              <button key={example} className="agent-example" onClick={() => send(example)}>
-                {example}
-              </button>
-            ))}
-          </div>
+        {!sending && (
+          <Suggestions
+            onPick={(words) => {
+              setText(words);
+              input.current?.focus();
+            }}
+          />
         )}
         <form
           className="agent-compose"

@@ -146,15 +146,19 @@
   font-size: 13px;
   color: var(--ink-2);
 }
-.agent-price {
+.agent-price,
+.agent-card-meta {
   color: var(--ink-soft);
 }
-.agent-examples {
+.agent-card-meta.overdue {
+  color: var(--danger-strong);
+}
+.agent-suggestions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-.agent-example {
+.agent-suggestion {
   padding: 8px 12px;
   border: 1px solid var(--rule);
   border-radius: 999px;
@@ -163,7 +167,7 @@
   cursor: pointer;
   font-size: 13px;
 }
-.agent-example:hover {
+.agent-suggestion:hover {
   border-color: var(--accent-border-strong);
   background: var(--accent-tint);
 }

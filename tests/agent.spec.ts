@@ -3,7 +3,15 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chatBox, chooseStorage, connectLlm, launch, llmServer, toolCalls } from './helpers';
+import {
+  chatBox,
+  chooseStorage,
+  connectLlm,
+  drawer,
+  launch,
+  llmServer,
+  toolCalls,
+} from './helpers';
 
 // A page of another site whose ad only its label tells apart. The words and links are made up (example.test).
 const PAGE = `<!doctype html><title>운동화 검색</title>
@@ -12,6 +20,13 @@ const PAGE = `<!doctype html><title>운동화 검색</title>
 const DONE = '페이지를 열고 광고를 기록했습니다.';
 const SLOW = '천천히 답해 줘';
 const SLOWLY = '천천히 답했습니다.';
+const DAY = 86_400_000;
+
+const openChat = (page: Page) =>
+  page
+    .getByRole('navigation', { name: '화면' })
+    .getByRole('button', { name: '채팅', exact: true })
+    .click();
 
 async function request<T>(page: Page, method: string, params: Record<string, unknown> = {}) {
   const response = await page.evaluate(
@@ -63,7 +78,7 @@ test('agent chat: the agent opens a page and records its ad live, and the record
     await chooseStorage(page, path.join(directory, 'wiki'));
     await connectLlm(page, llm.endpoint);
 
-    // The chat is the first screen after a start or a reload, with examples while it is empty.
+    // The chat is the first screen after a start or a reload, with examples while the app keeps nothing to offer.
     await page.reload();
     await expect(chatBox(page)).toBeVisible();
     await expect(
@@ -72,7 +87,7 @@ test('agent chat: the agent opens a page and records its ad live, and the record
         .getByRole('button', { name: '채팅', exact: true }),
     ).toHaveAttribute('aria-current', 'page');
     await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
-    await expect(page.getByRole('group', { name: '예시' })).toContainText(
+    await expect(page.getByRole('group', { name: '제안' })).toContainText(
       '쿠팡에서 노트북 광고 기록해 줘',
     );
     const engine = (await request<{ engine: string; ready: boolean }>(page, 'agent.engine')).engine;
@@ -192,6 +207,130 @@ test('agent chat: the agent opens a page and records its ad live, and the record
     await app?.close();
     await llm.close();
     await new Promise<void>((resolve) => site.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent chat: a request offered from the app’s own data fills the box and is not sent', async () => {
+  test.setTimeout(240_000);
+  const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-chat-'));
+  const OFFERED = '기한이 지난 할 일 1개를 정리해 줘';
+  const CHECKED = '할 일을 확인했습니다.';
+  // The answer waits until the test lets it go, so that the task can be finished while the turn runs.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const llm = await llmServer(async ({ payload }) => {
+    await held;
+    return payload.tools?.length ? CHECKED : { message: CHECKED, actions: [] };
+  });
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    await connectLlm(page, llm.endpoint);
+    const task = await request<{ id: string; updated_at: string }>(page, 'tasks.save', {
+      title: '지난 보고서',
+      due_at: new Date(Date.now() - 2 * DAY).toISOString(),
+    });
+
+    // A task past its due time: the chat offers to sort it out, and says why.
+    await openChat(page);
+    const offers = page.getByRole('group', { name: '제안' });
+    const offer = offers.getByRole('button', { name: OFFERED });
+    await expect(offer).toHaveAttribute('title', '기한 지남: 지난 보고서');
+    await offer.click();
+    // The words wait in the box for the user to read, change or send: nothing was sent.
+    await expect(chatBox(page)).toHaveValue(OFFERED);
+    await expect(chatBox(page)).toBeFocused();
+    await expect(chatBox(page)).toBeEnabled();
+    await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
+    expect(await request<unknown[]>(page, 'agent.messages')).toEqual([]);
+    expect(llm.requests.some(({ payload }) => JSON.stringify(payload).includes(OFFERED))).toBe(
+      false,
+    );
+
+    // Sent, the offers leave while the turn runs and are read again once it ended: the task finished meanwhile is
+    // offered no more, and the examples stand in.
+    await chatBox(page).press('Enter');
+    const log = page.getByRole('log', { name: '대화' });
+    await expect(log.locator('.agent-message.pending')).toBeVisible();
+    await expect(offers).toHaveCount(0);
+    await request(page, 'tasks.save', {
+      id: task.id,
+      status: 'done',
+      expected_updated_at: task.updated_at,
+    });
+    release();
+    await expect(log).toContainText(CHECKED, { timeout: 120_000 });
+    await expect(offers).toContainText('쿠팡에서 노트북 광고 기록해 줘');
+    await expect(offers.getByRole('button', { name: OFFERED })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    release();
+    await app?.close();
+    await llm.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent chat: the tasks and the document the agent reads are drawn on its cards', async () => {
+  test.setTimeout(240_000);
+  const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-chat-'));
+  const READ = '할 일과 회의록을 읽었습니다.';
+  const MINUTES = '# 회의록\n\n다음 회의는 금요일입니다.';
+  let documentId = '';
+  // The bundled Hermes calls the app's tools itself, one after the other; a source run without it plans them as JSON.
+  const llm = await llmServer(({ payload }) => {
+    const read = { tool: 'read_document', args: { document_id: documentId } };
+    if (!payload.tools?.length)
+      return { message: READ, actions: [{ tool: 'list_tasks', args: { status: 'open' } }, read] };
+    const ran = payload.messages.filter((message) => message.role === 'tool').length;
+    if (ran === 0) return toolCalls(['list_tasks', { status: 'open' }]);
+    if (ran === 1) return toolCalls(['read_document', read.args]);
+    return READ;
+  });
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    await connectLlm(page, llm.endpoint);
+    await request(page, 'tasks.save', {
+      title: '분기 보고서',
+      due_at: new Date(Date.now() + 3 * DAY).toISOString(),
+    });
+    documentId = (
+      await request<{ id: string }>(page, 'wiki.save', { title: '회의록', content: MINUTES })
+    ).id;
+
+    await openChat(page);
+    await chatBox(page).fill('진행 중인 할 일과 회의록을 보여 줘');
+    await chatBox(page).press('Enter');
+    const log = page.getByRole('log', { name: '대화' });
+    await expect(log).toContainText(READ, { timeout: 120_000 });
+    // Both only read, so they ran without a 확인 후 실행.
+    await expect(log.getByRole('button', { name: '확인 후 실행' })).toHaveCount(0);
+    const tasks = log.locator('.agent-card').filter({ hasText: '할 일 목록 (진행 중)' });
+    await expect(tasks).toContainText('할 일 1개를 찾았습니다.');
+    await expect(tasks.getByRole('list', { name: '할 일' })).toContainText('분기 보고서');
+    await expect(tasks.getByRole('list', { name: '할 일' })).toContainText('진행 중');
+    const document = log.locator('.agent-card').filter({ hasText: '문서 읽기: 회의록' });
+    await expect(document).toContainText('완료');
+    await expect(document).toContainText(`전체 ${MINUTES.length}자`);
+    await document.getByRole('button', { name: '회의록 열기' }).click();
+    await expect(drawer(page)).toContainText('다음 회의는 금요일입니다.');
+    await drawer(page).getByRole('button', { name: '닫기', exact: true }).click();
+    await tasks.getByRole('button', { name: '할 일 보기' }).click();
+    await expect(page.getByRole('heading', { name: '할 일', level: 1 })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await app?.close();
+    await llm.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

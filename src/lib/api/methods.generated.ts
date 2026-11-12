@@ -159,6 +159,7 @@ export type ScreenMethod =
   | 'agent.send'
   | 'agent.status'
   | 'agent.stop'
+  | 'agent.suggestions'
   | 'api.copy'
   | 'api.get'
   | 'api.manual'

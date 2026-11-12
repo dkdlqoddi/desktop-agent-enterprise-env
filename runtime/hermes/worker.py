@@ -311,7 +311,8 @@ def register_app_tools(registry, tools):
             card = CHANNEL.request("app_tool", {"tool": name, "args": args or {}})
             result = (card or {}).get("result") or {}
             payload = {"status": (card or {}).get("status", "failed"), "text": result.get("text", "")}
-            for key in ("documents", "records", "ads", "products", "capture_id", "task_id", "routine_id", "url"):
+            for key in ("documents", "records", "ads", "products", "capture_id", "task_id", "routine_id", "url",
+                        "tasks", "routines", "document", "overview"):
                 if key in result:
                     payload[key] = result[key]
             return json.dumps(payload, ensure_ascii=False)

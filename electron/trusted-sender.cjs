@@ -150,6 +150,7 @@ const ALLOWED = new Set([
   // approval and clarify it pauses on. The chat agent's own settings (keys, MCP servers, computer use, the messenger
   // gateway) and whether that gateway runs.
   'agent.messages',
+  'agent.suggestions',
   'agent.send',
   'agent.approve',
   'agent.reject',
