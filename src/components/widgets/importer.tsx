@@ -91,18 +91,31 @@ export default function ImportWidget() {
     .filter((job) => job && !activeJob(job.status))
     .map((job) => job!.id)
     .join();
-  // Which saved account the link will sign in with.
+  // Which saved account the link will sign in with. After an import it is read once more a little later: the main
+  // process keeps the login method a finished import detected when it next asks for the job's state, up to a second
+  // after the import ended, which may be after the first reading.
   useEffect(() => {
     if (!web) return setMatch(null);
     let live = true;
-    const timer = setTimeout(() => {
-      api<SiteMatch>('sites.match', { url: value.trim() })
-        .then((result) => live && setMatch(result))
-        .catch(() => live && setMatch({ kind: null, site: null }));
-    }, 250);
+    const read = () => api<SiteMatch>('sites.match', { url: value.trim() });
+    const timers = [
+      setTimeout(() => {
+        read()
+          .then((result) => live && setMatch(result))
+          .catch(() => live && setMatch({ kind: null, site: null }));
+      }, 250),
+    ];
+    if (settled)
+      timers.push(
+        setTimeout(() => {
+          read()
+            .then((result) => live && setMatch(result))
+            .catch(() => {});
+        }, 2000),
+      );
     return () => {
       live = false;
-      clearTimeout(timer);
+      timers.forEach(clearTimeout);
     };
   }, [value, web, settled]);
   useEffect(() => {
