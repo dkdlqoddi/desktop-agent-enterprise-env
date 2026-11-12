@@ -438,7 +438,7 @@ def found(service, query, mode="auto"):
 
 
 def long_markdown(tmp_path, name, word):
-    """A Markdown file too long for one document, which an import saves as three (parts.py), `word` in every part."""
+    """A long Markdown file, of more than 170,000 characters, with `word` in every section."""
     path = tmp_path / f"{name}.md"
     path.write_text("\n\n".join(f"## {word} 절 {i}\n\n" + "본문 " * 300 for i in range(190)), encoding="utf-8")
     return path
@@ -458,13 +458,13 @@ def test_the_trigram_index_follows_every_write_of_the_search_text(service, tmp_p
     assert found(service, "브로커") == [doc["id"]] and index_matches(service)
     service.wiki_clear_analysis({"ids": [doc["id"]]})
     assert not found(service, "브로커") and index_matches(service)
-    # The parts of a long import, updated and cut down by an import of the same file again.
+    # A long import, updated and cut down by an import of the same file again.
     path = long_markdown(tmp_path, "설계서", "아키텍처")
-    first = service.markdown_import({"path": str(path)})["doc_ids"]
-    assert len(first) == 3 and set(found(service, "아키텍처")) == set(first) and index_matches(service)
+    first = service.markdown_import({"path": str(path)})["doc_id"]
+    assert found(service, "아키텍처") == [first] and index_matches(service)
     path.write_text("## 요약본\n\n" + "짧아진 문서 " * 10, encoding="utf-8")
-    assert service.markdown_import({"path": str(path)})["doc_ids"] == first[:1]
-    assert not found(service, "아키텍처") and found(service, "요약본") == first[:1] and index_matches(service)
+    assert service.markdown_import({"path": str(path)})["doc_id"] == first
+    assert not found(service, "아키텍처") and found(service, "요약본") == [first] and index_matches(service)
     # The trash keeps the search text for a restore; emptying it takes the text out of the index with the document.
     service.wiki_delete({"id": doc["id"]})
     assert not found(service, "스트림") and index_matches(service)
@@ -687,8 +687,8 @@ def test_the_document_list_comes_in_pages_and_by_filters(service, tmp_path):
     assert ids == [d["id"] for d in reversed(docs)]
     listed = pages(service.wiki_list, {}, 3)
     assert [[d["id"] for d in page["documents"]] for page in listed] == [ids[:3], ids[3:6], ids[6:]]
-    assert [{k: v for k, v in d.items() if k != "parts"} for d in listed[0]["documents"]] == whole[:3]
-    assert all(d["parts"] == [] for page in listed for d in page["documents"])
+    assert listed[0]["documents"] == whole[:3]
+    assert all("parts" not in d for page in listed for d in page["documents"])
     with service.db.connect() as db:
         db.execute("UPDATE documents SET status='indexing' WHERE id=?", (docs[0]["id"],))
         db.execute("UPDATE documents SET status='error',error='실패' WHERE id=?", (docs[1]["id"],))
@@ -703,43 +703,35 @@ def test_the_document_list_comes_in_pages_and_by_filters(service, tmp_path):
     ranged = service.wiki_list({"updated_from": docs[2]["updated_at"], "updated_to": docs[5]["updated_at"], "limit": 9})
     assert [d["id"] for d in ranged["documents"]] == [docs[4]["id"], docs[3]["id"], docs[2]["id"]]
     assert ranged["next_cursor"] is None
-    # An import saved in parts is one entry of a page, its document updated last, with the import's documents.
-    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})["doc_ids"]
-    assert {d["id"] for d in service.wiki_list({"source": "markdown"})} == set(imported)
+    # A long import is one entry like any other document.
+    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})["doc_id"]
+    assert [d["id"] for d in service.wiki_list({"source": "markdown"})] == [imported]
     assert {d["id"] for d in service.wiki_list({"source": "manual"})} == {d["id"] for d in docs}
     assert service.wiki_list({"source": "jira", "limit": 5}) == {"documents": [], "next_cursor": None, "total": 0}
     entries = [d for page in pages(service.wiki_list, {}, 1) for d in page["documents"]]
-    assert len(entries) == 8 and len({d["id"] for d in entries}) == 8
-    entry = next(d for d in entries if d["id"] in imported)
-    assert [(p["id"], p["part"]) for p in entry["parts"]] == list(zip(imported, (1, 2, 3), strict=True))
-    assert entry["parts"][1]["title"] == "설계서 (2/3)"
-    service.wiki_save({"id": imported[1], "title": "설계서 (2/3)", "content": "아키텍처 둘째 부분을 고쳤습니다"})
+    assert len(entries) == 8 and len({d["id"] for d in entries}) == 8 and entries[0]["id"] == imported
+    service.wiki_save({"id": docs[0]["id"], "title": "문서 0", "content": "고친 내용"})
     first = service.wiki_list({"limit": 2})["documents"]
-    assert first[0]["id"] == imported[1] and first[1]["id"] not in imported
-    assert [p["id"] for p in first[0]["parts"]] == imported
-    # Filters choose among the import's documents; a part in the trash is not one of them.
-    unedited = service.wiki_list({"limit": 50, "updated_to": first[0]["updated_at"], "source": "markdown"})
-    assert len(unedited["documents"]) == 1 and unedited["documents"][0]["id"] != imported[1]
-    service.wiki_delete({"id": imported[1]})
-    entry = next(d for d in service.wiki_list({"limit": 50})["documents"] if d["id"] in imported)
-    assert [p["id"] for p in entry["parts"]] == [imported[0], imported[2]]
-    assert len(service.wiki_list({})) == 9  # Without limit: every document, as before.
+    assert [d["id"] for d in first] == [docs[0]["id"], imported]
+    service.wiki_delete({"id": imported})
+    assert imported not in {d["id"] for d in service.wiki_list({"limit": 50})["documents"]}
+    assert len(service.wiki_list({})) == 7  # Without limit: every document, as before.
 
 
 def test_every_page_of_the_document_list_counts_the_documents_its_filters_keep(service, tmp_path):
     """`total` is what a screen shows as the list's count while it holds a page or two: the documents the filters keep,
-    each part of an import counted as stats counts it, on every page and whatever the cursor."""
+    as stats counts them, on every page and whatever the cursor."""
     docs = [save(service, f"문서 {i}", f"내용 {i}") for i in range(5)]
-    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})["doc_ids"]
+    service.markdown_import({"path": str(long_markdown(tmp_path, "설계서", "아키텍처"))})
     listed = pages(service.wiki_list, {}, 2)
     assert [len(page["documents"]) for page in listed] == [2, 2, 2]
-    assert {page["total"] for page in listed} == {len(docs) + len(imported)} == {service.stats({})["documents"]}
-    assert service.wiki_list({"source": "markdown", "limit": 9})["total"] == len(imported)
+    assert {page["total"] for page in listed} == {len(docs) + 1} == {service.stats({})["documents"]}
+    assert service.wiki_list({"source": "markdown", "limit": 9})["total"] == 1
     with service.db.connect() as db:
         db.execute("UPDATE documents SET status='ready',index_mode='wiki' WHERE id=?", (docs[0]["id"],))
-    assert {page["total"] for page in pages(service.wiki_list, {"analysis": "not_analyzed"}, 2)} == {7}
+    assert {page["total"] for page in pages(service.wiki_list, {"analysis": "not_analyzed"}, 2)} == {5}
     service.wiki_delete({"id": docs[1]["id"]})
-    assert service.wiki_list({"limit": 1})["total"] == 7
+    assert service.wiki_list({"limit": 1})["total"] == 5
 
 
 def test_the_document_list_finds_a_text_where_the_screen_shows_it_and_a_keyword_by_its_aliases(service, tmp_path):
@@ -758,7 +750,7 @@ def test_the_document_list_finds_a_text_where_the_screen_shows_it_and_a_keyword_
     folder = tmp_path / "Projects 2026"
     folder.mkdir()
     (folder / "회의록.md").write_text("# 분기 계획\n\n내용", encoding="utf-8")
-    markdown = service.markdown_import({"path": str(folder / "회의록.md")})["doc_ids"][0]
+    markdown = service.markdown_import({"path": str(folder / "회의록.md")})["doc_id"]
 
     def ids(**params):
         whole = {d["id"] for d in service.wiki_list(params)}
@@ -808,24 +800,21 @@ def test_a_page_request_is_checked(service):
     assert service.wiki_list({"cursor": paging.encode("list", "9999", "z")})["next_cursor"] is None
 
 
-def test_search_results_come_in_pages_with_an_import_as_one_entry(service, tmp_path):
+def test_search_results_come_in_pages_with_a_long_import_as_one_entry(service, tmp_path):
     docs = [save(service, f"캐시 {i}", "캐시 " * (i + 1)) for i in range(5)]
-    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "캐시 설계", "캐시"))})["doc_ids"]
+    imported = service.markdown_import({"path": str(long_markdown(tmp_path, "캐시 설계", "캐시"))})["doc_id"]
     whole = service.wiki_search({"query": "캐시", "mode": "auto"})
-    assert whole["total"] == 8 and "next_cursor" not in whole
+    assert whole["total"] == 6 and "next_cursor" not in whole
     listed = pages(lambda p: service.wiki_search({**p, "query": "캐시", "mode": "auto"}), {}, 2)
-    assert [len(page["documents"]) for page in listed] == [2, 2, 2] and {page["total"] for page in listed} == {8}
+    assert [len(page["documents"]) for page in listed] == [2, 2, 2] and {page["total"] for page in listed} == {6}
     entries = [d for page in listed for d in page["documents"]]
-    entry = next(d for d in entries if d["id"] in imported)
-    assert [p["id"] for p in entry["parts"]] == imported and entry["match"]["snippets"]
-    assert [d["id"] for d in entries] == [
-        d["id"] for d in whole["documents"] if d["id"] not in imported or d["id"] == entry["id"]
-    ]
-    assert all(d["parts"] == [] for d in entries if d is not entry)
+    entry = next(d for d in entries if d["id"] == imported)
+    assert entry["match"]["snippets"] and all("parts" not in d for d in entries)
+    assert [d["id"] for d in entries] == [d["id"] for d in whole["documents"]]
     # Filters keep what they name, with or without pages.
-    assert {
+    assert [
         d["id"] for d in service.wiki_search({"query": "캐시", "mode": "auto", "source": "markdown"})["documents"]
-    } == set(imported)
+    ] == [imported]
     manual = service.wiki_search({"query": "캐시", "mode": "word", "source": "manual", "limit": 9})
     assert {d["id"] for d in manual["documents"]} == {d["id"] for d in docs} and manual["next_cursor"] is None
     assert manual["total"] == 5

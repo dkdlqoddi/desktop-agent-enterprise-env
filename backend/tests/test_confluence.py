@@ -51,7 +51,7 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
     restarted = Service(Database(service.db.path), None)
     assert restarted.wiki_source_markdown({"id": doc["id"]})["markdown"] == markdown
     updated = import_page(service, {**changed, "doc_id": doc["id"], "replace": True})
-    assert (updated["status"], updated["doc_ids"]) == ("updated", [doc["id"]])
+    assert (updated["status"], updated["doc_id"]) == ("updated", doc["id"])
     replaced = service.wiki_get({"id": doc["id"]})
     # The title the user gave stays.
     assert (replaced["title"], replaced["content"], replaced["source"]["edited"]) == ("수정", "변경된 페이지", False)
@@ -92,39 +92,50 @@ def test_limits_and_in_memory_payload_validation(service, tmp_path):
         service.dispatch("confluence.import", params)
 
 
-def test_a_page_longer_than_a_document_is_saved_as_documents_in_parts(service):
+def test_a_long_page_is_one_document(service):
     sections = "".join(f"<h2>절 {i}</h2><p>{'가' * 1000}</p>" for i in range(100))
     result = import_page(service, capture(service, sections))
-    assert result["message"] == "글이 80,000자를 넘어 Markdown 문서 2개로 나누어 Wiki에 저장했습니다."
-    first, second = (service.wiki_get({"id": ident}) for ident in result["doc_ids"])
-    assert result["doc_id"] == first["id"]
-    assert (first["title"], second["title"]) == ("Confluence 테스트 (1/2)", "Confluence 테스트 (2/2)")
-    assert first["content"].startswith("## 절 0\n\n가") and second["content"].startswith("## 절 ")
-    assert len(first["content"]) <= 80000 and len(second["content"]) <= 80000
-    assert (first["source"]["part"], second["source"]["part"], second["source"]["parts"]) == (1, 2, 2)
-    assert (
-        first["parts"]
-        == second["parts"]
-        == [
-            {"id": first["id"], "title": first["title"], "part": 1},
-            {"id": second["id"], "title": second["title"], "part": 2},
-        ]
-    )
-    assert service.wiki_source_markdown({"id": second["id"]})["markdown"] == second["content"]
-    # The same page is not saved again while any of its parts is left: a part in the trash comes back when the user
-    # imports the page again (sources.plan), so the two parts are whole once more.
-    service.wiki_delete({"id": first["id"]})
+    assert result == {
+        "status": "imported",
+        "doc_id": result["doc_id"],
+        "message": "Markdown 문서를 Wiki에 저장했습니다.",
+    }
+    doc = service.wiki_get({"id": result["doc_id"]})
+    # More than the 80,000 characters at which earlier versions began another document.
+    assert doc["title"] == "Confluence 테스트" and len(doc["content"]) > 100000
+    assert doc["content"].startswith("## 절 0\n\n가") and doc["content"].count("## 절 ") == 100
+    assert "parts" not in doc and "part" not in doc["source"]
+    assert service.wiki_source_markdown({"id": doc["id"]})["markdown"] == doc["content"]
+    assert [entry["id"] for entry in service.wiki_list({})] == [doc["id"]]
+    # The same page is not saved again: from the trash it comes back when the user imports it again (sources.plan).
+    service.wiki_delete({"id": doc["id"]})
     assert import_page(service, capture(service, sections)) == {
         "status": "skipped",
-        "doc_id": first["id"],
+        "doc_id": doc["id"],
         "message": "동일한 페이지 내용이 이미 저장되어 있습니다.",
         "reason": "same",
     }
-    assert [part["id"] for part in service.wiki_get({"id": second["id"]})["parts"]] == [first["id"], second["id"]]
-    # Purged for good, the page is saved again as new documents.
-    service.wiki_delete({"id": first["id"]})
-    assert service.wiki_purge({"ids": [first["id"]]}) == {"purged": 1}
-    assert [part["id"] for part in service.wiki_get({"id": second["id"]})["parts"]] == [second["id"]]
+    assert service.wiki_get({"id": doc["id"]})["content"] == doc["content"]
+    # Purged for good, the page is saved again as a new document.
+    service.wiki_delete({"id": doc["id"]})
+    assert service.wiki_purge({"ids": [doc["id"]]}) == {"purged": 1}
+    again = import_page(service, capture(service, sections))
+    assert again["status"] == "imported" and again["doc_id"] != doc["id"]
+
+
+def test_a_page_longer_than_a_document_holds_keeps_its_beginning(service, monkeypatch):
+    from agent.parts import CUT, CUT_MESSAGE
+
+    monkeypatch.setattr("agent.parts.MAX_DOCUMENT_CHARS", 5000)
+    sections = "".join(f"<h2>절 {i}</h2><p>{'가' * 1000}</p>" for i in range(100))
+    result = import_page(service, capture(service, sections))
+    assert result["message"] == "Markdown 문서를 Wiki에 저장했습니다. " + CUT_MESSAGE
+    content = service.wiki_get({"id": result["doc_id"]})["content"]
+    assert len(content) <= 5000 and content.startswith("## 절 0\n\n가") and content.endswith("\n\n> " + CUT)
+    # Whole sections, and no heading left without its text.
+    assert content.count("## 절 ") == content.count("가" * 1000) == 4
+    # The page as it is: the same content is known, though what is saved is its beginning.
+    assert import_page(service, capture(service, sections))["reason"] == "same"
 
 
 def test_what_a_watched_page_changed_is_compared_after_its_import_is_saved(service, monkeypatch):
@@ -162,15 +173,15 @@ def test_a_long_page_with_many_changed_lines_is_compared_quickly():
     assert change["lines"][:2] == [{"op": "-", "text": "| 0 | 값 0 |"}, {"op": "+", "text": "| 0 | 값 0 바뀜 |"}]
 
 
-def test_a_change_of_a_page_saved_in_parts_shows_no_repeated_table_header(service):
+def test_a_change_in_a_long_table_is_told_as_the_rows_that_changed(service):
     rows = "".join(f"<tr><td>{i}</td><td>{'값 ' * 60}{i}</td></tr>" for i in range(1000))
     table = f"<table><tr><th>번호</th><th>내용</th></tr>{rows}</table>"
     first = import_page(service, {**capture(service, table), "track_changes": True})
-    assert len(first["doc_ids"]) > 1
-    second = service.wiki_get({"id": first["doc_ids"][1]})["content"]
-    assert second.startswith("| 번호 | 내용 |\n| --- | --- |\n")  # each part repeats the header
+    content = service.wiki_get({"id": first["doc_id"]})["content"]
+    assert len(content) > 80000 and content.count("| 번호 | 내용 |") == 1  # one table with one header
     changed = table.replace("<td>500</td>", "<td>500번</td>")
     result = import_page(service, {**capture(service, changed), "track_changes": True})
+    assert (result["status"], result["doc_id"]) == ("updated", first["doc_id"])
     assert (result["change"]["added"], result["change"]["removed"]) == (1, 1)
     assert [line["text"][:8] for line in result["change"]["lines"]] == ["| 500 | ", "| 500번 |"]
 

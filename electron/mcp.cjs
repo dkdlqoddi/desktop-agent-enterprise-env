@@ -187,9 +187,8 @@ function sourceText(source) {
   const label = SOURCE_LABELS[source.kind] ?? source.kind;
   const detail = source.issue_key || source.application || source.file_name || '';
   const where = source.source_url || source.source_path || '';
-  const part = source.parts > 1 ? `, part ${source.part}/${source.parts}` : '';
   const taken = source.imported_at ? `, imported ${day(source.imported_at)}` : '';
-  return `${label}${detail ? ` ${detail}` : ''}${where ? ` <${where}>` : ''}${part}${taken}`;
+  return `${label}${detail ? ` ${detail}` : ''}${where ? ` <${where}>` : ''}${taken}`;
 }
 
 // A document in a list, as lines between the markers of its answer.
@@ -252,8 +251,6 @@ function documentText(doc, offset, maxChars, outline = true, limit = MAX_DATA) {
   if (doc.keywords?.length) lines.push(`keywords: ${doc.keywords.join(', ')}`);
   if (doc.summary) lines.push(`summary: ${doc.summary}`);
   if (doc.error) lines.push(`last analysis error: ${doc.error}`);
-  if (doc.parts?.length > 1)
-    lines.push(`saved in parts: ${doc.parts.map((part) => `${part.part}. ${part.id}`).join(', ')}`);
   if (outline && doc.outline?.length) {
     lines.push('outline (PageIndex):');
     for (const node of doc.outline.slice(0, 80))
@@ -894,7 +891,7 @@ const TOOLS = [
     {
       id: string('Document id to replace; omit to create.'),
       title: string('Title (max 200 characters).', { required: true }),
-      content: string('Markdown text (max 80,000 characters).', { required: true }),
+      content: string('Markdown text (max 8,000,000 characters).', { required: true }),
       expected_revision: integer(
         'The revision you read (get_document shows it); the save is refused if the document changed since.',
       ),

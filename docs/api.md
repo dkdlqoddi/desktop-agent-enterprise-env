@@ -99,7 +99,7 @@ Wiki 저장 위치
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상 · slow
 - MCP: `search_documents`, `query_api`
-- `GET /api/v1/search` — 문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만 (나누어 받으면 여러 부분으로 저장한 가져오기는 parts가 있는 하나로)
+- `GET /api/v1/search` — 문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만
   - `query` (query, string, 필수) 검색어 또는 질문 (최대 2,000자). "따옴표"는 그대로 찾을 문구
   - `mode` (query, string) auto: 검색창과 같은 단어 검색(추출 키워드와 그 한/영 별칭도 일치) · word: 모든 단어 포함 · keyword: 추출 키워드나 그 별칭(쉼표로 구분, 예: 데이터베이스 → database) · prompt: AI 검색(느림) [auto · word · keyword · prompt, 기본 "auto"]
   - `limit` (query, integer) 한 번에 받을 개수 1~100. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)
@@ -151,7 +151,7 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 
 #### `wiki.list`
 
-전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로, total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기
+전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `query_api`
@@ -253,11 +253,11 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 - MCP: `save_document`, `call_api`
 - `POST /api/v1/documents` — 새 Markdown 문서 저장
   - `title` (body, string, 필수) 제목 (최대 200자)
-  - `content` (body, string, 필수) 본문 Markdown (최대 80,000자)
+  - `content` (body, string, 필수) 본문 Markdown (최대 8,000,000자)
 - `PUT /api/v1/documents/{id}` — 문서 고치기. 제목과 본문을 모두 보냅니다. 본문이 바뀌면 AI 분석 결과를 지웁니다.
   - `id` (path, string, 필수) ID
   - `title` (body, string, 필수) 제목 (최대 200자)
-  - `content` (body, string, 필수) 본문 Markdown (최대 80,000자)
+  - `content` (body, string, 필수) 본문 Markdown (최대 8,000,000자)
   - `expected_revision` (body, integer) 읽은 문서의 revision. 그 뒤에 다른 곳에서 문서가 바뀌었으면 저장하지 않고 거절합니다
 
 #### `wiki.compare`
@@ -1717,7 +1717,7 @@ Create a Markdown document in the wiki, or replace the title and text of one by 
 
 - `id` (string) Document id to replace; omit to create.
 - `title` (string, 필수) Title (max 200 characters).
-- `content` (string, 필수) Markdown text (max 80,000 characters).
+- `content` (string, 필수) Markdown text (max 8,000,000 characters).
 - `expected_revision` (integer) The revision you read (get_document shows it); the save is refused if the document changed since.
 
 #### `delete_documents`

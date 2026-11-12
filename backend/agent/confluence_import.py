@@ -716,7 +716,7 @@ class ConfluenceImporter(BrowserImporter):
 
     async def _unchanged(self, request, source):
         """For a routine's import: the result of the page `source` when it need not be read again, or None to read
-        it. A page whose documents were all purged is left out (sources.ignored); one Confluence says is still at the
+        it. A page whose document was purged is left out (sources.ignored); one Confluence says is still at the
         version the Wiki holds, read in full within sources.RECHECK, is skipped (sources.fresh). Its version is asked
         for unless the subpage list gave it, and a link that names its page by title is looked up; both go into
         `source`. A page whose version cannot be asked for is read in full."""
@@ -729,7 +729,7 @@ class ConfluenceImporter(BrowserImporter):
             link = f"{source['base']}/pages/viewpage.action?pageId={source['id']}"
             with self.service.db.connect() as db:
                 if sources.ignored(db, "confluence_sources", link):
-                    return sources.skipped(sources.Plan("skip", [], "ignored"), "")
+                    return sources.skipped(sources.Plan("skip", None, "ignored"), "")
             # Asked for also when the Wiki has no version to compare with yet: the import records it with the page.
             if not source.get("version"):
                 source["version"] = await page_version(request, source)
@@ -737,16 +737,14 @@ class ConfluenceImporter(BrowserImporter):
             return None
         with self.service.db.connect() as db:
             found = sources.fresh(db, "confluence_sources", link, "version", source["version"])
-        return sources.unmodified(found) if found else None
+        return sources.unmodified(found) if found is not None else None
 
     async def _analyze(self, job, result):
-        """A long page is saved as several documents; each is analyzed."""
-        for ident in result["doc_ids"]:
-            try:
-                await asyncio.to_thread(self.service.wiki_analyze, {"id": ident})
-            except Exception:
-                result["analysis_error"] = ANALYSIS_ERROR
-        if "analysis_error" in result:
+        """Analyze the document a page was saved as."""
+        try:
+            await asyncio.to_thread(self.service.wiki_analyze, {"id": result["doc_id"]})
+        except Exception:
+            result["analysis_error"] = ANALYSIS_ERROR
             with self.lock:
                 job["analysis_failed"] += 1
 

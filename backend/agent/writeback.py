@@ -3,7 +3,11 @@
 Before a write the file is copied into the Wiki folder's 원본 백업 folder and the copy recorded (writeback_backups); the
 newest KEEP_BACKUPS copies of each file stay, and one of them can be put back in the file's place (restore_backup). A
 write that a crash or a kill cuts short leaves its record unfinished: the next write to the file looks at what the file
-holds now (classify) and tells the user before it writes anything."""
+holds now (classify) and tells the user before it writes anything.
+
+The texts of a document are worked with as lists (`parts`, `bases`, `texts`): earlier versions saved a long file as
+several documents and wrote the changes of all of them at once. An import is one document now (parts.py), so each list
+holds one text."""
 
 import contextlib
 import hashlib
@@ -23,7 +27,7 @@ from .html_document import validate_html
 from .llm import UserError
 from .office_converter import OfficeConverter
 from .office_write import OfficeWriter
-from .parts import page_parts
+from .parts import fit_page
 from .source_edits import Unchanged, changes, excel_changes, excel_witness, units, witness
 
 ACTIVE = ("scanning", "login", "running", "cancelling")
@@ -222,11 +226,14 @@ class Writeback:
     # -- RPC ----------------------------------------------------------------
 
     def start(self, params):
-        """Write the changes of the document `id` (every part of a long one) into the file it came from: a background
-        job, whose `status` tells how it went."""
+        """Write the changes of the document `id` into the file it came from: a background job, whose `status` tells
+        how it went."""
         from .service import text
 
         ident = text(params.get("id"), "문서 ID", 80)
+        with self.service.db.connect() as db:
+            # A part of a long file as an earlier version saved it: the one document the parts became.
+            ident = sources.whole(db, ident)
         table, kind, row, rows = self.source(ident)
         name = row["application"]
         if name not in ("Word", "Excel", "PowerPoint", "Visio"):
@@ -437,9 +444,9 @@ class Writeback:
         return any(job and job["status"] in ACTIVE for job in jobs)
 
     def source(self, ident):
-        """(table, kind, source row, parts) of the import the document `ident` belongs to; parts are its documents in
-        order, each with doc_id, markdown (the text imported), imported_at, written (what write-backs put into the file
-        since, as JSON), content (the text now) and revision."""
+        """(table, kind, source row, parts) of the import the document `ident` is; parts lists the document with
+        doc_id, markdown (the text imported), imported_at, written (what write-backs put into the file since, as JSON),
+        content (the text now) and revision."""
         with self.service.db.connect() as db:
             if not db.execute("SELECT 1 FROM documents WHERE id=? AND deleted_at IS NULL", (ident,)).fetchone():
                 raise UserError("문서를 찾을 수 없습니다.")
@@ -738,10 +745,10 @@ class Writeback:
                 )
 
     def reread(self, path, row, name, ident, revisions):
-        """Read the written file into the document `ident` (every part), as an update from the file replacing the
-        text the user wrote, which the file now holds; unless a part is no longer at the revision the write was worked
-        out from ({doc id: revision}): the user changed it meanwhile, and that change stays. (What it did, as a
-        sentence; whether the document was read again.)"""
+        """Read the written file into the document `ident`, as an update from the file replacing the text the user
+        wrote, which the file now holds; unless the document is no longer at the revision the write was worked out
+        from ({doc id: revision}): the user changed it meanwhile, and that change stays. (What it did, as a sentence;
+        whether the document was read again.)"""
         from .service import now
 
         def edited(db):
@@ -754,7 +761,7 @@ class Writeback:
             if edited(db):
                 return EDITED_MEANWHILE, False
         digest = checksum(path)
-        split = page_parts(validate_html(self.reader(path, threading.Event())))
+        fitted = fit_page(validate_html(self.reader(path, threading.Event())))
         if checksum(path) != digest:
             raise UserError("다시 읽는 동안 원본 파일이 바뀌었습니다.")
         stat = sources.file_stat(path)
@@ -765,11 +772,11 @@ class Writeback:
             found = sources.plan(db, "office_sources", row["source_path"], {"source_hash": digest}, ident, True)
             if found.action == "skip":
                 return "같은 내용의 문서가 이미 있어 이 문서는 그대로 두었습니다.", False
-            ids, removed = sources.save(
+            sources.save(
                 db,
                 "office_sources",
                 found,
-                split,
+                fitted,
                 path.stem,
                 now(),
                 {
@@ -780,7 +787,4 @@ class Writeback:
                     "source_mtime": stat[1],
                 },
             )
-        message = "문서는 저장한 파일의 내용으로 다시 읽었습니다."
-        if removed:
-            message += f" 글이 줄어 남는 부분 문서 {removed}개는 지웠습니다."
-        return message, True
+        return "문서는 저장한 파일의 내용으로 다시 읽었습니다.", True

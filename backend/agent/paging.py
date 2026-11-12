@@ -6,10 +6,7 @@ page. The cursor holds the keys the list is ordered by (keyset paging), so a pag
 list is ordered by the time of the last change: a document saved while the pages are read moves to the top, before the
 pages already read, and is in none of those that follow (a caller that must see every document reads the list again).
 Without `limit` and `cursor` each answers as it always did. A page of the document list or of a search also says how
-many documents its filters keep in all (`total`), which a screen shows rather than counting the pages it has.
-
-On a page an import too long for one document (parts.py) is one entry: the first of its documents in the order of the
-page, with the import's live documents in `parts`, as a document window gets them (Service.document)."""
+many documents its filters keep in all (`total`), which a screen shows rather than counting the pages it has."""
 
 import base64
 import binascii
@@ -196,37 +193,3 @@ def found_keyword(value):
     if not isinstance(value, str):
         raise UserError("키워드(keyword)는 글로 입력해 주세요.")
     return keyword(value)
-
-
-def imports(db, ids):
-    """The imports saved in parts that the documents `ids` belong to: {id: (source table, the values of its key)}."""
-    from .search import chunks
-    from .service import SOURCES
-
-    found = {}
-    for table, _, _ in SOURCES:
-        columns = SOURCE_TABLES[table][1]
-        for chunk in chunks(ids):
-            for row in db.execute(
-                f"SELECT doc_id,{columns} FROM {table} WHERE doc_id IN ({','.join('?' * len(chunk))}) AND parts>1",
-                chunk,
-            ):
-                found.setdefault(row[0], (table, tuple(row)[1:]))
-    return found
-
-
-def members(db, table, key, filters=None):
-    """The live documents of an import, by part: id, part, title, updated_at, and whether each passes `filters`. They
-    are found by the import's key; the + keeps SQLite from finding the live documents first (search.LIVE_ROW)."""
-    where = " AND ".join(f"s.{column.strip()}=?" for column in SOURCE_TABLES[table][1].split(","))
-    test, args = filters.sql("d") if filters else ("1", [])
-    return db.execute(
-        f"""SELECT s.doc_id AS id, s.part, d.title, d.updated_at, ({test}) AS passes FROM {table} s
-        JOIN documents d ON d.id=s.doc_id WHERE {where} AND +d.deleted_at IS NULL ORDER BY s.part""",
-        [*args, *key],
-    ).fetchall()
-
-
-def parts(found):
-    """The `parts` of a page entry, as Service.document lists them."""
-    return [{"id": row["id"], "title": row["title"], "part": row["part"]} for row in found]

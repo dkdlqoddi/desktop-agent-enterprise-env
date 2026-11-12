@@ -1,5 +1,5 @@
-"""Imports keep where each document came from: another import of the same file or link updates its documents in
-place instead of saving new ones, an unchanged source changes nothing, and what the user wrote stays unless the update
+"""Imports keep where each document came from: another import of the same file or link updates its document in
+place instead of saving a new one, an unchanged source changes nothing, and what the user wrote stays unless the update
 is asked to replace it."""
 
 import os
@@ -24,8 +24,8 @@ URL = "https://wiki.test/confluence/pages/viewpage.action?pageId=123"
 
 
 def convert(file, cancel):
-    """The page of an RTF file whose bytes are its text; "long:<n>" makes n long paragraphs (150 fill three
-    documents)."""
+    """The page of an RTF file whose bytes are its text; "long:<n>" makes n long paragraphs (150 are more than
+    180,000 characters)."""
     words = file.read_text(encoding="utf-8")
     if words.startswith("long:"):
         body = "".join(f"<p>{index}번째 문단 {'내용 ' * 400}</p>" for index in range(int(words[5:])))
@@ -103,7 +103,6 @@ def test_an_import_of_the_same_file_again_updates_its_document_in_place(importer
         "path": str(rtf),
         "status": "updated",
         "doc_id": ident,
-        "doc_ids": [ident],
         "message": "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다.",
     }
     updated = service.wiki_get({"id": ident})
@@ -164,7 +163,7 @@ def test_what_the_user_wrote_stays_unless_the_update_replaces_it(importer, tmp_p
             importer.start({"path": str(rtf), "mode": "file", **options})
 
 
-def test_an_update_adds_or_deletes_documents_as_the_text_grows_or_shrinks(importer, tmp_path, monkeypatch):
+def test_an_update_keeps_one_document_however_long_the_text_grows(importer, tmp_path, monkeypatch):
     service = importer.service
     rtf = tmp_path / "긴 문서.rtf"
     rtf.write_text("짧은 문서", encoding="utf-8")
@@ -173,28 +172,28 @@ def test_an_update_adds_or_deletes_documents_as_the_text_grows_or_shrinks(import
     analyzed = []
     monkeypatch.setattr(service, "wiki_analyze", lambda params: analyzed.append(params["id"]))
     grown = run(importer, rtf, analyze=True)
-    assert grown["status"] == "updated" and len(grown["doc_ids"]) == 3 and grown["doc_ids"][0] == ident
-    assert grown["message"] == (
-        "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다. "
-        "글이 80,000자를 넘어 HTML 문서 3개로 나누어 Wiki에 저장했습니다."
-    )
-    assert analyzed == grown["doc_ids"]
-    docs = [service.wiki_get({"id": doc_id}) for doc_id in grown["doc_ids"]]
-    assert [doc["title"] for doc in docs] == ["긴 문서 (1/3)", "긴 문서 (2/3)", "긴 문서 (3/3)"]
-    assert all([part["id"] for part in doc["parts"]] == grown["doc_ids"] for doc in docs)
-    rtf.write_text("long:100", encoding="utf-8")
-    shrunk = run(importer, rtf)
-    assert shrunk["doc_ids"] == grown["doc_ids"][:2]
-    assert shrunk["message"].endswith(
-        "HTML 문서 2개로 나누어 Wiki에 저장했습니다. 글이 줄어 남는 부분 문서 1개는 지웠습니다."
-    )
-    assert {doc["id"] for doc in service.wiki_list({})} == set(shrunk["doc_ids"])
-    assert service.wiki_get({"id": ident})["title"] == "긴 문서 (1/2)"
-    rtf.write_text("다시 짧은 문서", encoding="utf-8")
-    assert run(importer, rtf)["doc_ids"] == [ident]
+    assert grown == {
+        "path": str(rtf),
+        "status": "updated",
+        "doc_id": ident,
+        "message": "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다.",
+    }
+    assert analyzed == [ident]
     doc = service.wiki_get({"id": ident})
-    assert (doc["title"], doc["content"], doc["parts"], doc["source"]["parts"]) == ("긴 문서", "다시 짧은 문서", [], 1)
+    # More than the 80,000 characters at which earlier versions began another document.
+    assert doc["title"] == "긴 문서" and len(doc["content"]) > 180000 and doc["html"].count("번째 문단") == 150
+    assert "parts" not in doc and "part" not in doc["source"] and "parts" not in doc["source"]
+    assert [entry["id"] for entry in service.wiki_list({"limit": 10})["documents"]] == [ident]
+    rtf.write_text("long:100", encoding="utf-8")
+    assert run(importer, rtf)["doc_id"] == ident
+    assert service.wiki_get({"id": ident})["html"].count("번째 문단") == 100
+    rtf.write_text("다시 짧은 문서", encoding="utf-8")
+    assert run(importer, rtf)["doc_id"] == ident
+    doc = service.wiki_get({"id": ident})
+    assert (doc["title"], doc["content"]) == ("긴 문서", "다시 짧은 문서")
     assert [doc["id"] for doc in service.wiki_list({})] == [ident]
+    with service.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM documents").fetchone()[0] == 1
 
 
 def test_an_update_follows_the_document_it_was_asked_for_and_otherwise_the_latest_import(tmp_path):
@@ -211,13 +210,13 @@ def test_an_update_follows_the_document_it_was_asked_for_and_otherwise_the_lates
             "VALUES ('older-copy',?,'123','hash-2','둘째 판','2999-01-01')",
             (URL,),
         )
-    assert import_page(service, capture("<p>셋째 판</p>"))["doc_ids"] == ["older-copy"]
-    assert import_page(service, {**capture("<p>넷째 판</p>"), "doc_id": first})["doc_ids"] == [first]
+    assert import_page(service, capture("<p>셋째 판</p>"))["doc_id"] == "older-copy"
+    assert import_page(service, {**capture("<p>넷째 판</p>"), "doc_id": first})["doc_id"] == first
     assert service.wiki_get({"id": first})["content"] == "넷째 판"
     assert service.wiki_get({"id": "older-copy"})["content"] == "셋째 판"
     # A document of another source is no target: the page's latest import is updated, the one updated last.
     other = service.wiki_save({"title": "메모", "content": "직접 쓴 글"})["id"]
-    assert import_page(service, {**capture("<p>다섯째 판</p>"), "doc_id": other})["doc_ids"] == [first]
+    assert import_page(service, {**capture("<p>다섯째 판</p>"), "doc_id": other})["doc_id"] == first
     # A page whose title changed brings its new title, as long as the user kept the one it had.
     renamed = import_page(service, {**capture("<p>여섯째 판</p>", "새 제목"), "doc_id": first})
     assert service.wiki_get({"id": renamed["doc_id"]})["title"] == "새 제목"
@@ -238,7 +237,6 @@ def test_markdown_files_keep_their_source_and_update_like_other_imports(tmp_path
     assert result == {
         "status": "imported",
         "doc_id": result["doc_id"],
-        "doc_ids": [result["doc_id"]],
         "message": "Markdown 문서를 Wiki에 저장했습니다.",
         "title": "노트",
         "path": str(note),
@@ -258,10 +256,12 @@ def test_markdown_files_keep_their_source_and_update_like_other_imports(tmp_path
     note.write_bytes("# 회의\r\n\r\n바뀐 결정".encode())
     assert service.dispatch("markdown.import", {"path": str(note)})["status"] == "updated"
     assert service.wiki_get({"id": doc["id"]})["content"] == "# 회의\n\n바뀐 결정"
-    # A text longer than one document is saved in parts.
-    note.write_text("\n\n".join(f"## {index}\n\n{'가' * 1000}" for index in range(100)), encoding="utf-8")
+    # A long text stays the one document.
+    text = "\n\n".join(f"## {index}\n\n{'가' * 1000}" for index in range(100))
+    note.write_text(text, encoding="utf-8")
     long = service.dispatch("markdown.import", {"path": str(note)})
-    assert long["status"] == "updated" and len(long["doc_ids"]) == 2 and long["title"] == "노트 (1/2)"
+    assert (long["status"], long["doc_id"], long["title"]) == ("updated", doc["id"], "노트")
+    assert service.wiki_get({"id": doc["id"]})["content"] == text and len(text) > 100000
     for name, data, error in (
         ("a.txt", b"x", ".md, .markdown"),
         ("빈.md", b" \n", "빈 파일"),
@@ -437,16 +437,14 @@ def test_a_purged_source_stays_out_of_routines_until_the_user_imports_it_again(i
     )
 
 
-def test_a_source_is_left_out_only_once_none_of_its_documents_is_left(tmp_path):
+def test_a_page_whose_document_was_purged_is_left_out_until_the_user_imports_it_again(tmp_path):
     service = Service(Database(tmp_path / "wiki.db"), None)
     sections = "".join(f"<h2>절 {i}</h2><p>{'가' * 1000}</p>" for i in range(100))
-    first, second = import_page(service, capture(sections))["doc_ids"]
+    ident = import_page(service, capture(sections))["doc_id"]
     tracked = {**capture(sections), "track_changes": True}
-    service.wiki_delete({"id": first})
-    service.wiki_purge({"ids": [first]})
-    # A part is left: a routine still keeps the page up to date.
-    assert import_page(service, tracked)["reason"] == "same"
-    service.wiki_delete({"id": second})
+    # In the trash a routine leaves it there, and still knows the page.
+    service.wiki_delete({"id": ident})
+    assert import_page(service, tracked)["reason"] == "trashed"
     service.wiki_purge({"all": True})
     left_out = import_page(service, tracked)
     assert (left_out["status"], left_out["reason"], left_out["doc_id"]) == ("skipped", "ignored", None)
@@ -456,7 +454,7 @@ def test_a_source_is_left_out_only_once_none_of_its_documents_is_left(tmp_path):
     assert import_page(service, tracked)["reason"] == "same"
 
 
-def test_a_moved_or_renamed_file_takes_its_documents_along(importer, tmp_path):
+def test_a_moved_or_renamed_file_takes_its_document_along(importer, tmp_path):
     service = importer.service
     old = tmp_path / "설계.rtf"
     old.write_text("설계 초안", encoding="utf-8")
@@ -482,7 +480,7 @@ def test_a_moved_or_renamed_file_takes_its_documents_along(importer, tmp_path):
         assert db.execute("SELECT source_path FROM writeback_backups").fetchone()[0] == str(moved.resolve())
     # Its next change updates the same document instead of making another.
     moved.write_text("설계 확정", encoding="utf-8")
-    assert run(importer, moved)["doc_ids"] == [ident]
+    assert run(importer, moved)["doc_id"] == ident
     assert [doc["id"] for doc in service.wiki_list({})] == [ident]
     # A copy elsewhere while the file is still in its place is the same content: the document stays with the file.
     copy = tmp_path / "사본.rtf"
@@ -528,9 +526,9 @@ def test_a_page_or_ticket_keeps_the_version_it_was_read_at(tmp_path):
     ident = import_page(service, params)["doc_id"]
     with service.db.connect() as db:
         assert sources.recorded(db, "confluence_sources", URL, "version") == "3"
-        assert [row["doc_id"] for row in sources.fresh(db, "confluence_sources", URL, "version", "3")] == [ident]
-        assert sources.fresh(db, "confluence_sources", URL, "version", "4") == []
-        assert sources.fresh(db, "confluence_sources", URL, "version", "") == []
+        assert sources.fresh(db, "confluence_sources", URL, "version", "3")["doc_id"] == ident
+        assert sources.fresh(db, "confluence_sources", URL, "version", "4") is None
+        assert sources.fresh(db, "confluence_sources", URL, "version", "") is None
     # Read again at a new version with the same text: the new version is recorded with it.
     assert import_page(service, {**params, "version": "4"})["reason"] == "same"
     with service.db.connect() as db:
@@ -539,7 +537,7 @@ def test_a_page_or_ticket_keeps_the_version_it_was_read_at(tmp_path):
         # changes what a page shows without a new version.
         db.execute("UPDATE confluence_sources SET read_at='2020-01-01T00:00:00+00:00'")
         assert sources.recorded(db, "confluence_sources", URL, "version") == ""
-        assert sources.fresh(db, "confluence_sources", URL, "version", "4") == []
+        assert sources.fresh(db, "confluence_sources", URL, "version", "4") is None
     assert import_page(service, {**params, "version": "4"})["reason"] == "same"
     # A document whose text the user changed keeps the version its imported text is of: a routine reads it again.
     service.wiki_save({"id": ident, "title": "메모", "content": "내 메모"})

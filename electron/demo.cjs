@@ -184,7 +184,7 @@ function doneText(job) {
 }
 
 const docsOf = (results = []) =>
-  results.flatMap((result) => result.doc_ids ?? (result.doc_id ? [result.doc_id] : []));
+  results.flatMap((result) => (result.doc_id ? [result.doc_id] : []));
 
 function counts(runs) {
   const total = { imported: 0, updated: 0, skipped: 0, failed: 0 };

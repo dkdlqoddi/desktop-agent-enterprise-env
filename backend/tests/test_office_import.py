@@ -230,7 +230,9 @@ def test_empty_content_is_rejected(importer, tmp_path, monkeypatch, html):
     assert importer.service.wiki_list({}) == []
 
 
-def test_a_long_presentation_is_saved_in_parts_that_each_name_the_application(importer, tmp_path):
+def test_a_long_presentation_is_one_document_and_one_too_long_is_cut_between_its_slides(
+    importer, tmp_path, monkeypatch
+):
     slides = "".join(
         f'<section class="slide"><h2>슬라이드 {i}</h2><p>{"발표 내용 " * 300}</p></section>' for i in range(60)
     )
@@ -239,17 +241,22 @@ def test_a_long_presentation_is_saved_in_parts_that_each_name_the_application(im
     source.write_bytes(b"slides")
     importer.start({"path": str(source), "mode": "file"})
     result = wait(importer)["results"][0]
-    docs = [importer.service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
-    assert len(docs) == 2 and result["message"] == "글이 80,000자를 넘어 HTML 문서 2개로 나누어 Wiki에 저장했습니다."
-    assert [(doc["source"]["application"], doc["source"]["part"], doc["source"]["parts"]) for doc in docs] == [
-        ("PowerPoint", 1, 2),
-        ("PowerPoint", 2, 2),
-    ]
-    # Slides are cut between, never inside: each part holds whole slides.
-    assert [doc["html"].count('<section class="slide">') for doc in docs] == [
-        doc["content"].count("## 슬라이드") for doc in docs
-    ]
-    assert sum(doc["content"].count("## 슬라이드") for doc in docs) == 60
+    assert result["message"] == "HTML 문서로 Wiki에 저장했습니다." and "doc_ids" not in result
+    doc = importer.service.wiki_get({"id": result["doc_id"]})
+    # More than the 80,000 characters at which earlier versions began another document.
+    assert doc["source"]["application"] == "PowerPoint" and len(doc["content"]) > 100000
+    assert doc["html"].count('<section class="slide">') == doc["content"].count("## 슬라이드") == 60
+    # Longer than a document holds, it is cut between slides, never inside one.
+    monkeypatch.setattr("agent.parts.MAX_DOCUMENT_CHARS", 40000)
+    other = tmp_path / "긴 발표.pptx"
+    other.write_bytes(b"more slides")
+    importer.start({"path": str(other), "mode": "file"})
+    result = wait(importer)["results"][0]
+    assert result["message"].endswith("앞부분만 저장했습니다. 나머지는 원본에서 확인해 주세요.")
+    cut = importer.service.wiki_get({"id": result["doc_id"]})
+    kept = cut["content"].count("## 슬라이드")
+    assert 10 < kept < 60 and cut["html"].count('<section class="slide">') == kept
+    assert cut["content"].count("발표 내용 " * 299 + "발표 내용") == kept and len(cut["content"]) <= 40000
 
 
 def test_file_limits_capabilities_and_schema_upgrade(importer, tmp_path, monkeypatch):

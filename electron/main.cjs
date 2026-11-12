@@ -947,9 +947,9 @@ async function chooseImport(mode) {
 
 // A UTF-8 Markdown file becomes a Wiki document as it is, like the other imports. The backend reads it and keeps its
 // path as the document's source: importing the same path again updates the document (doc_id and replace as for the
-// other imports), and a long text is saved in parts. The answer comes once the file is saved: the AI analysis of its
-// documents follows in the backend's background analysis (analysis.start), which the document list shows as for the
-// documents chosen there, after a run already under way.
+// other imports), however long the text is. The answer comes once the file is saved: the AI analysis of the document
+// follows in the backend's background analysis (analysis.start), which the document list shows as for the documents
+// chosen there, after a run already under way.
 async function importText(params) {
   if (typeof params.path !== 'string' || !params.path.trim() || params.path.length > 4096)
     throw new Error('가져올 Markdown 파일 경로를 입력해 주세요.');
@@ -961,7 +961,7 @@ async function importText(params) {
   });
   if (params.analyze && ['imported', 'updated'].includes(result.status))
     try {
-      await rpc('analysis.start', { ids: result.doc_ids, append: true });
+      await rpc('analysis.start', { ids: [result.doc_id], append: true });
       result.message = `${result.message} AI 분석은 이어서 진행합니다.`;
       // The screens follow the analysis as they follow one an AI tool started.
       changed();

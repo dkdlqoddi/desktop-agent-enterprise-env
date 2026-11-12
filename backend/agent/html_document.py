@@ -107,8 +107,8 @@ class IndexConverter(WikiMarkdownConverter):
 
 
 def index_markdown(html):
-    """The Markdown text of a page: what search, PageIndex and the LLM read. A text longer than a Wiki document holds
-    is saved in parts (parts.py)."""
+    """The Markdown text of a page: what search, PageIndex and the LLM read. A page whose text is longer than a Wiki
+    document holds keeps its beginning (parts.py)."""
     text = page_text(html)
     if not text:
         raise UserError("문서에 표시할 내용이 없습니다. 빈 문서인지 확인해 주세요.")

@@ -97,30 +97,30 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 
 ### backend
 
-| 모듈                                                                                                                   | 역할                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `main.py`                                                                                                              | 표준 입출력 JSON 줄 RPC 루프, 빠른·느린 줄, 이벤트 출력, Wiki를 열지 못할 때의 거절 응답 |
-| `agent/service.py`                                                                                                     | `Service.dispatch`의 메서드 표, Wiki·프롬프트·휴지통·백업 처리, 보관 정책, 종료          |
-| `agent/db.py`, `agent/migrations.py`                                                                                   | 스키마, 이전 형식의 Wiki 올리기, FTS5 색인, 스키마 버전과 번호 붙은 마이그레이션         |
-| `agent/storage.py`                                                                                                     | 시작할 때 검사(`quick_check`, 스키마 버전), 이전 Wiki 복사, 백업과 예약된 복원           |
-| `agent/search.py`, `agent/paging.py`                                                                                   | BM25·trigram 단어 검색, 키워드 별칭, LLM이 고르는 AI 검색, 목록·검색 결과의 나누어 받기  |
-| `agent/llm.py`                                                                                                         | LLM 설정, OpenAI·Anthropic 형식, 재시도, 우선순위, 스트리밍, 중지                        |
-| `agent/assistant.py`                                                                                                   | 문서를 근거로 한 대화, 할 일과 알림, 오늘의 브리핑                                       |
-| `agent/trash.py`                                                                                                       | 지운 대화·실행 기록·할 일·템플릿·예약·자동 작업의 휴지통: 보관, 복원, 영구 삭제          |
-| `agent/pageindex.py`, `agent/batch_analysis.py`                                                                        | 긴 문서의 목차 색인, 여러 문서의 백그라운드 AI 분석                                      |
-| `agent/routines.py`, `agent/schedules.py`                                                                              | 자동 작업과 예약 프롬프트를 하나의 대기열과 작업자 3개로 실행                            |
-| `agent/sources.py`, `agent/parts.py`                                                                                   | 가져온 출처의 기록, 다시 가져오기와 이동한 파일 연결, 긴 자료를 여러 문서로 나누기       |
-| `agent/file_import.py`, `office_import.py`, `rtf_import.py`, `image_import.py`, `text_import.py`, `markdown_import.py` | 파일·폴더 가져오기 작업과 종류별 변환                                                    |
-| `agent/office_converter.py`, `office_session.py`, `office_processes.py`                                                | 매크로를 막은 일회용 Office COM 워커, 남은 Office 프로세스 정리                          |
-| `agent/word_html.py`, `office_html.py`, `drawing.py`, `vml.py`                                                         | Word·Excel·PowerPoint·Visio 문서를 HTML 페이지와 SVG 그림으로                            |
-| `agent/writeback.py`, `office_write.py`, `source_edits.py`                                                             | 고친 내용을 원본 Office 파일에 반영, 원본 백업                                           |
-| `agent/browser_import.py`, `confluence_import.py`, `jira_import.py`                                                    | 사이트별 Chromium 프로필, 요청 속도 제한, Confluence 페이지와 JIRA 티켓 수집             |
-| `agent/web_login.py`, `agent/web_assist.py`                                                                            | 로그인 방식에 따른 자동 로그인, 로그인·접속 실패 시 LLM 도움(기본 꺼짐)                  |
-| `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                             |
-| `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 에이전트가 부른 앱 작업의 검사·실행과 카드, 진행 중인 턴(`agent.*`)     |
-| `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계 |
-| `agent/hermes_gateway.py`                                                                                              | 메신저 게이트웨이: 두 번째 워커 프로세스의 시작·재시작·종료, 모델 호출과 앱 작업의 중계  |
-| `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)     |
+| 모듈                                                                                                                   | 역할                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `main.py`                                                                                                              | 표준 입출력 JSON 줄 RPC 루프, 빠른·느린 줄, 이벤트 출력, Wiki를 열지 못할 때의 거절 응답                 |
+| `agent/service.py`                                                                                                     | `Service.dispatch`의 메서드 표, Wiki·프롬프트·휴지통·백업 처리, 보관 정책, 종료                          |
+| `agent/db.py`, `agent/migrations.py`                                                                                   | 스키마, 이전 형식의 Wiki 올리기, FTS5 색인, 스키마 버전과 번호 붙은 마이그레이션                         |
+| `agent/storage.py`                                                                                                     | 시작할 때 검사(`quick_check`, 스키마 버전), 이전 Wiki 복사, 백업과 예약된 복원                           |
+| `agent/search.py`, `agent/paging.py`                                                                                   | BM25·trigram 단어 검색, 키워드 별칭, LLM이 고르는 AI 검색, 목록·검색 결과의 나누어 받기                  |
+| `agent/llm.py`                                                                                                         | LLM 설정, OpenAI·Anthropic 형식, 재시도, 우선순위, 스트리밍, 중지                                        |
+| `agent/assistant.py`                                                                                                   | 문서를 근거로 한 대화, 할 일과 알림, 오늘의 브리핑                                                       |
+| `agent/trash.py`                                                                                                       | 지운 대화·실행 기록·할 일·템플릿·예약·자동 작업의 휴지통: 보관, 복원, 영구 삭제                          |
+| `agent/pageindex.py`, `agent/batch_analysis.py`                                                                        | 긴 문서의 목차 색인, 여러 문서의 백그라운드 AI 분석                                                      |
+| `agent/routines.py`, `agent/schedules.py`                                                                              | 자동 작업과 예약 프롬프트를 하나의 대기열과 작업자 3개로 실행                                            |
+| `agent/sources.py`, `agent/parts.py`                                                                                   | 가져온 출처의 기록, 다시 가져오기와 이동한 파일 연결, 문서 한도를 넘는 글 줄이기와 예전 분할 문서 합치기 |
+| `agent/file_import.py`, `office_import.py`, `rtf_import.py`, `image_import.py`, `text_import.py`, `markdown_import.py` | 파일·폴더 가져오기 작업과 종류별 변환                                                                    |
+| `agent/office_converter.py`, `office_session.py`, `office_processes.py`                                                | 매크로를 막은 일회용 Office COM 워커, 남은 Office 프로세스 정리                                          |
+| `agent/word_html.py`, `office_html.py`, `drawing.py`, `vml.py`                                                         | Word·Excel·PowerPoint·Visio 문서를 HTML 페이지와 SVG 그림으로                                            |
+| `agent/writeback.py`, `office_write.py`, `source_edits.py`                                                             | 고친 내용을 원본 Office 파일에 반영, 원본 백업                                                           |
+| `agent/browser_import.py`, `confluence_import.py`, `jira_import.py`                                                    | 사이트별 Chromium 프로필, 요청 속도 제한, Confluence 페이지와 JIRA 티켓 수집                             |
+| `agent/web_login.py`, `agent/web_assist.py`                                                                            | 로그인 방식에 따른 자동 로그인, 로그인·접속 실패 시 LLM 도움(기본 꺼짐)                                  |
+| `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                                             |
+| `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 에이전트가 부른 앱 작업의 검사·실행과 카드, 진행 중인 턴(`agent.*`)                     |
+| `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계                 |
+| `agent/hermes_gateway.py`                                                                                              | 메신저 게이트웨이: 두 번째 워커 프로세스의 시작·재시작·종료, 모델 호출과 앱 작업의 중계                  |
+| `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)                     |
 
 ### electron
 

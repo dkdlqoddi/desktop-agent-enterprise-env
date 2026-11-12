@@ -122,7 +122,7 @@ const METHODS = {
   'documents.get': method('read', '문서 하나: 본문(Markdown)·출처·키워드·관계·목차'),
   'wiki.list': method(
     'read',
-    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(여러 부분으로 저장한 가져오기는 parts가 있는 하나로, total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기',
+    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기',
   ),
   'wiki.get': method('read', '문서 하나 (HTML 문서는 HTML 페이지 포함)'),
   'wiki.source_markdown': method('read', '가져온 문서의 Markdown 원문'),
@@ -381,7 +381,7 @@ const TIMEZONE = integer(
 );
 const DOCUMENT_BODY = {
   title: string('제목 (최대 200자)', { required: true }),
-  content: string('본문 Markdown (최대 80,000자)', { required: true }),
+  content: string('본문 Markdown (최대 8,000,000자)', { required: true }),
 };
 // A list in pages (wiki.list, wiki.search, assistant.conversations): with limit or cursor the answer is one page and
 // next_cursor, which the next request sends back as cursor (null after the last page). Without either the answer is
@@ -547,7 +547,7 @@ const GROUPS = [
         'GET',
         '/search',
         'wiki.search',
-        '문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만 (나누어 받으면 여러 부분으로 저장한 가져오기는 parts가 있는 하나로)',
+        '문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만',
         {
           query: string('검색어 또는 질문 (최대 2,000자). "따옴표"는 그대로 찾을 문구', {
             required: true,

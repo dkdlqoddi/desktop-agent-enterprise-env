@@ -281,7 +281,7 @@ async function harness(
           job.status = 'completed';
           job.imported = 2;
           job.results = [
-            { path: 'a', status: 'imported', doc_ids: [job.doc] },
+            { path: 'a', status: 'imported', doc_id: job.doc },
             { path: 'b', status: 'failed', message: '깨진 파일입니다.' },
           ];
           job.failed = 1;

@@ -1,29 +1,31 @@
 """Where imported documents came from, and bringing them up to date with it.
 
-Every import keeps a row per document in its source table (db.SOURCE_TABLES): the file path or page link it came from,
-what the content was (source_hash), and the text and title it saved. An import of the same path or link again updates
-the documents of that earlier import in place: they keep their ids, which links, tasks and answers refer to, and take
-the new text, page and title, losing the AI analysis of the old text. The same content is saved once, so an unchanged
-source changes nothing; nor does a file whose bytes changed but not its text, which only records its new hash. Documents
-whose text the user changed since are left as they are unless the request says to replace it (`replace`, which the
-document window asks before sending); a title the user gave a document stays either way.
+Every import is one document with a row in its source table (db.SOURCE_TABLES): the file path or page link it came
+from, what the content was (source_hash), and the text and title it saved. An import of the same path or link again
+updates the document of that earlier import in place: it keeps its id, which links, tasks and answers refer to, and
+takes the new text, page and title, losing the AI analysis of the old text. The same content is saved once, so an
+unchanged source changes nothing; nor does a file whose bytes changed but not its text, which only records its new hash.
+A document whose text the user changed since is left as it is unless the request says to replace it (`replace`, which
+the document window asks before sending); a title the user gave a document stays either way. An import an earlier
+version saved as several documents is made one before anything here reads it (held, parts.merge).
 
 A file whose size and modification time are the ones its import recorded is not read again to tell it unchanged
 (stored_hash); a file moved or renamed takes its documents along (relink). A page or ticket whose version the site gives
 (Confluence's version number, JIRA's updated time) is not read again by a routine while that version stays (fresh). A
-source whose documents were all purged from the trash is left out of automatic imports until the user imports it
-again (purge, ignored_sources)."""
+source whose document was purged from the trash is left out of automatic imports until the user imports it again
+(purge, ignored_sources)."""
 
 import hashlib
 import os
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
 from .db import SOURCE_TABLES, identity, index_text
 from .llm import UserError
-from .parts import imported, insert, joined, part_title, saved_message
+from .parts import CUT_MESSAGE, merge
 
 EDITED = (
     "가져온 뒤 본문을 고친 문서라 원본의 내용으로 바꾸지 않았습니다. 바꾸려면 문서 창에서 ‘원본에서 업데이트’를 "
@@ -67,144 +69,150 @@ def key(table):
     return [column.strip() for column in SOURCE_TABLES[table][1].split(",")]
 
 
-def rows(db, table, content):
-    """The documents saved with `content` (values of the key's columns), by part: the title the import gave and the one
-    they have now, and whether their text is still the one imported. The texts are compared where they are, as a long
-    import holds up to 100 documents of them."""
+def held(db, table, content):
+    """The source row of the document saved with `content` (values of the key's columns), or None: the title the import
+    gave and the one the document has now, whether it is in the trash, and whether its text is still the one imported.
+    The texts are compared where they are, as an import holds up to parts.MAX_DOCUMENT_CHARS of them. An import that an
+    earlier version saved as several documents is made one first (parts.merge), so there is one row or none."""
     where = " AND ".join(f"s.{column}=?" for column in content)
-    return db.execute(
-        f"""SELECT s.doc_id, s.part, s.parts, s.title, d.title AS now_title, d.deleted_at,
+    query = f"""SELECT s.doc_id, s.part, s.parts, s.title, d.title AS now_title, d.deleted_at,
         d.content != s.markdown AS changed FROM {table} s JOIN documents d ON d.id=s.doc_id
-        WHERE {where} ORDER BY s.part""",
-        list(content.values()),
-    ).fetchall()
+        WHERE {where} ORDER BY s.part"""
+    found = db.execute(query, list(content.values())).fetchall()
+    if len(found) > 1 or (found and (found[0]["part"], found[0]["parts"]) != (1, 1)):
+        merge(db, table, tuple(content[column] for column in key(table)))
+        found = db.execute(query, list(content.values())).fetchall()
+    return found[0] if found else None
 
 
-def group(db, table, ident):
-    """The documents of the import the document `ident` belongs to, by part: itself, or every part of a long one."""
+def of(db, table, ident):
+    """The source row (held) of the import the document `ident` came from, or None. For a document that was a part of
+    a long import of an earlier version, it is the row of the document the parts became."""
     columns = key(table)
     row = db.execute(f"SELECT {','.join(columns)} FROM {table} WHERE doc_id=?", (ident,)).fetchone()
-    return rows(db, table, dict(zip(columns, row, strict=True))) if row else []
+    return held(db, table, dict(zip(columns, row, strict=True))) if row else None
+
+
+def whole(db, ident):
+    """The id of the document to read for `ident`: itself, or the document it became part of. A part of a long import
+    of an earlier version is merged with the others first (parts.merge); one merged before is found by the note the
+    merge left (merged_documents)."""
+    for table in SOURCE_TABLES:
+        # By the index of the rows saved in parts (db.py), which is empty in a Wiki without any.
+        parted = f"SELECT 1 FROM {table} INDEXED BY idx_{table}_parted WHERE parts>1 AND doc_id=?"
+        if db.execute(parted, (ident,)).fetchone():
+            row = of(db, table, ident)
+            if row is not None:
+                return row["doc_id"]
+    row = db.execute("SELECT doc_id FROM merged_documents WHERE id=?", (ident,)).fetchone()
+    return row[0] if row else ident
 
 
 def earlier(db, table, source, target=None):
-    """The import of `source` (a path or a link) that another import of it updates: that of the document `target` when
-    it came from there, else the latest."""
+    """The source row of the import of `source` (a path or a link) that another import of it updates: that of the
+    document `target` when it came from there, else the latest. None when it was not imported before."""
     column = identity(table)
     if target:
         row = db.execute(f"SELECT {column} FROM {table} WHERE doc_id=?", (target,)).fetchone()
         if row is not None and row[0] == source:
-            return group(db, table, target)
+            return of(db, table, target)
     row = db.execute(
         f"SELECT doc_id FROM {table} WHERE {column}=? ORDER BY imported_at DESC, part LIMIT 1", (source,)
     ).fetchone()
-    return group(db, table, row[0]) if row else []
+    return of(db, table, row[0]) if row else None
 
 
 def edited(found):
-    """Whether the user changed the text of any of the documents since it was imported."""
-    return any(row["changed"] for row in found)
+    """Whether the user changed the text of the document (a source row, or None) since it was imported."""
+    return found is not None and bool(found["changed"])
 
 
-def texts(db, table, found):
-    """The texts the documents `found` (rows by part) were imported with, by part."""
-    ids = [row["doc_id"] for row in found]
-    return (
-        [
-            row[0]
-            for row in db.execute(
-                f"SELECT markdown FROM {table} WHERE doc_id IN ({','.join('?' * len(ids))}) ORDER BY part", ids
-            )
-        ]
-        if ids
-        else []
-    )
+def imported_text(db, table, found):
+    """The text the document `found` (a source row) was imported with."""
+    return db.execute(f"SELECT markdown FROM {table} WHERE doc_id=?", (found["doc_id"],)).fetchone()[0]
 
 
 def base(db, table, found, track):
-    """The texts, by part, that the documents the import planned as `found` were imported with, when `track` asks what
-    the source changed in them (change) and the source changed: an update of the documents, or one skipped because the
-    user changed their text. None otherwise. Read in the import's transaction; the comparison, which takes a while for
-    a long page, waits until that is committed."""
-    if not track or not (found.action == "update" or found.reason == "edited") or not found.rows:
+    """The text that the document the import planned as `found` was imported with, when `track` asks what the source
+    changed in it (change) and the source changed: an update of the document, or one skipped because the user changed
+    its text. None otherwise. Read in the import's transaction; the comparison, which takes a while for a long page,
+    waits until that is committed."""
+    if not track or not (found.action == "update" or found.reason == "edited") or found.row is None:
         return None
-    return texts(db, table, found.rows) or None
+    return imported_text(db, table, found.row)
 
 
-def change(before, split):
-    """What the source's new text (`split`) changed in the texts `before` (base) its documents were imported with
-    (changes.compare), both as one text without what each part repeats; None when nothing changed."""
+def change(before, fitted):
+    """What the source's new text (`fitted`) changed in the text `before` (base) its document was imported with
+    (changes.compare); None when nothing changed."""
     if before is None:
         return None
     from .changes import compare
 
-    return compare(joined(before), joined([text for _, text in split.parts]))
+    return compare(before, fitted.text)
 
 
 class Plan(NamedTuple):
     action: str  # "insert", "update", "skip" or "keep"
-    rows: list  # the documents an update replaces, or those a skipped or kept import's content is saved as
-    # skip: "same" (the content is saved), "edited" (the user changed the text) or "trashed" (the documents are in the
-    # trash, and an automatic routine leaves them there). update: "restore" (the source is as it was and its text
+    row: object  # the source row of the document an update replaces, or a skipped or kept import is saved as; or None
+    # skip: "same" (the content is saved), "edited" (the user changed the text) or "trashed" (the document is in the
+    # trash, and an automatic routine leaves it there). update: "restore" (the source is as it was and its text
     # replaces the user's), "page" (a file an earlier version saved as Markdown) or "" (it changed).
     # keep (a file's bytes changed but not its text): "same", or "format" when its HTML page changed.
     reason: str = ""
 
 
-def unchanged(db, table, previous, split):
-    """Whether the new content `split` of a source is the text its documents `previous` were imported with: "same",
-    or "format" when only the HTML page of a part changed (a file's formatting or pictures). None when the text changed,
-    or a document of it is still the Markdown an earlier version saved and becomes its page by an update."""
-    if not previous or split is None or texts(db, table, previous) != [text for _, text in split.parts]:
+def unchanged(db, table, previous, fitted):
+    """Whether the new content `fitted` of a source is the text its document `previous` was imported with: "same", or
+    "format" when only its HTML page changed (a file's formatting or pictures). None when the text changed, or the
+    document is still the Markdown an earlier version saved and becomes its page by an update."""
+    if previous is None or fitted is None or imported_text(db, table, previous) != fitted.text:
         return None
-    reason = "same"
-    for row, (page, _) in zip(previous, split.parts, strict=True):
-        if page is not None:
-            stored = db.execute("SELECT html=? FROM document_html WHERE doc_id=?", (page, row["doc_id"])).fetchone()
-            if stored is None:
-                return None
-            reason = reason if stored[0] else "format"
-    return reason
+    if fitted.page is None:
+        return "same"
+    stored = db.execute("SELECT html=? FROM document_html WHERE doc_id=?", (fitted.page, previous["doc_id"])).fetchone()
+    if stored is None:
+        return None
+    return "same" if stored[0] else "format"
 
 
-def plan(db, table, source, content, target=None, replace=False, split=None, automatic=False, stat=None):
+def plan(db, table, source, content, target=None, replace=False, fitted=None, automatic=False, stat=None):
     """What an import of `content` (values of the table's key) from `source` does. The same content is skipped, unless
     it is the import being updated and `replace` brings back its text the user changed. Other content updates the
     earlier import of the same source, unless the user changed its text and `replace` is not set, or is new. A source
-    keyed by its bytes whose new content `split` (when given) has the text it was imported with (a file saved again
-    as it was, other line breaks, a DRM header) keeps its documents and their analysis and only records the new hash.
-    Documents of it that are in the trash come back when the user imports it again; an `automatic` import (a routine)
-    leaves them there and is skipped. So is a source whose documents were all purged (ignored), until the user imports
-    it again. A file whose bytes an earlier import of another path holds, where no file is any more, was moved or
-    renamed: that import's documents follow it to `source` (relink, with the file's `stat`) and the import is skipped
-    as "moved", or goes on as an update of them."""
+    keyed by its bytes whose new content `fitted` (when given) has the text it was imported with (a file saved again
+    as it was, other line breaks, a DRM header) keeps its document and analysis and only records the new hash.
+    A document of it that is in the trash comes back when the user imports it again; an `automatic` import (a routine)
+    leaves it there and is skipped. So is a source whose document was purged (ignored), until the user imports it
+    again. A file whose bytes an earlier import of another path holds, where no file is any more, was moved or
+    renamed: that import's document follows it to `source` (relink, with the file's `stat`) and the import is skipped
+    as "moved", or goes on as an update of it."""
     if automatic and ignored(db, table, source):
-        return Plan("skip", [], "ignored")
+        return Plan("skip", None, "ignored")
     if not automatic:
         db.execute("DELETE FROM ignored_sources WHERE source_table=? AND source=?", (table, source))
     previous = earlier(db, table, source, target)
-    same = rows(db, table, content)
-    moved = bool(same) and not previous and relink(db, table, source, same, stat)
+    same = held(db, table, content)
+    moved = same is not None and previous is None and relink(db, table, source, same, stat)
     if moved:
         previous = earlier(db, table, source, target)
-    trashed = [row for row in (same or previous) if row["deleted_at"]]
-    if trashed:
+    there = same if same is not None else previous
+    if there is not None and there["deleted_at"]:
         if automatic:
-            return Plan("skip", trashed, "trashed")
-        ids = [row["doc_id"] for row in trashed]
-        db.execute(f"UPDATE documents SET deleted_at=NULL WHERE id IN ({','.join('?' * len(ids))})", ids)
+            return Plan("skip", there, "trashed")
+        db.execute("UPDATE documents SET deleted_at=NULL WHERE id=?", (there["doc_id"],))
         previous = earlier(db, table, source, target)
-        same = rows(db, table, content)
-    if same:
-        if replace and previous and same[0]["doc_id"] in {row["doc_id"] for row in previous} and edited(previous):
+        same = held(db, table, content)
+    if same is not None:
+        if replace and previous is not None and same["doc_id"] == previous["doc_id"] and edited(previous):
             return Plan("update", previous, "restore")
         return Plan("skip", same, "moved" if moved else "same")
-    kept = unchanged(db, table, previous, split)
+    kept = unchanged(db, table, previous, fitted)
     if kept:
         return Plan("update", previous, "restore") if replace and edited(previous) else Plan("keep", previous, kept)
-    if previous and edited(previous) and not replace:
+    if previous is not None and edited(previous) and not replace:
         return Plan("skip", previous, "edited")
-    return Plan("update", previous) if previous else Plan("insert", [])
+    return Plan("update", previous) if previous is not None else Plan("insert", None)
 
 
 def skipped(found, same):
@@ -213,14 +221,14 @@ def skipped(found, same):
     messages = {"edited": EDITED, "trashed": TRASHED, "ignored": IGNORED, "moved": MOVED}
     return {
         "status": "skipped",
-        "doc_id": found.rows[0]["doc_id"] if found.rows else None,
+        "doc_id": found.row["doc_id"] if found.row is not None else None,
         "message": messages.get(found.reason, same),
         "reason": found.reason,
     }
 
 
 def ignored(db, table, source):
-    """Whether the documents imported from `source` (a path or link) were all purged from the trash (purge)."""
+    """Whether the document imported from `source` (a path or link) was purged from the trash (purge)."""
     return bool(
         db.execute("SELECT 1 FROM ignored_sources WHERE source_table=? AND source=?", (table, source)).fetchone()
     )
@@ -266,20 +274,18 @@ def gone(path):
 
 
 def relink(db, table, source, found, stat=None):
-    """Make the documents `found` (rows by part of a file's import) follow their file to `source` when no file is at
-    the path they came from any more: it was moved or renamed, and its next change then updates them instead of
-    making new documents. The copies that write-backs made of the file follow too. Whether they did."""
+    """Make the document `found` (the source row of a file's import) follow its file to `source` when no file is at
+    the path it came from any more: it was moved or renamed, and its next change then updates the document instead of
+    making a new one. The copies that write-backs made of the file follow too. Whether it did."""
     if identity(table) != "source_path":
         return False
-    ids = [row["doc_id"] for row in found]
-    old = db.execute(f"SELECT source_path FROM {table} WHERE doc_id=?", (ids[0],)).fetchone()[0]
+    ident = found["doc_id"]
+    old = db.execute(f"SELECT source_path FROM {table} WHERE doc_id=?", (ident,)).fetchone()[0]
     if old == source or not gone(old):
         return False
     values = {"source_path": source, **({"source_size": stat[0], "source_mtime": stat[1]} if stat else {})}
     db.execute(
-        f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} "
-        f"WHERE doc_id IN ({','.join('?' * len(ids))})",
-        [*values.values(), *ids],
+        f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?", [*values.values(), ident]
     )
     db.execute("UPDATE writeback_backups SET source_path=? WHERE source_path=?", (source, old))
     return True
@@ -287,14 +293,12 @@ def relink(db, table, source, found, stat=None):
 
 def touch(db, table, found, values, source):
     """Record `values` (columns of the source table: a file's size and time, a page's version and when it was read)
-    with the documents `found` of an import whose content was found to be the same, those of `source` only: the same
-    bytes may have been imported from another path."""
-    ids = [row["doc_id"] for row in found]
-    if ids and values:
+    with the document `found` (a source row, or None) of an import whose content was found to be the same, when it is
+    that of `source`: the same bytes may have been imported from another path."""
+    if found is not None and values:
         db.execute(
-            f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} "
-            f"WHERE doc_id IN ({','.join('?' * len(ids))}) AND {identity(table)}=?",
-            [*values.values(), *ids, source],
+            f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=? AND {identity(table)}=?",
+            [*values.values(), found["doc_id"], source],
         )
 
 
@@ -325,105 +329,94 @@ def recorded(db, table, source, column):
     ticket's link) recorded in `column`, when it read the source in full within RECHECK; '' otherwise: a routine's
     import then reads it anyway, without asking the site for its version first."""
     found = earlier(db, table, source)
-    if not found:
+    if found is None:
         return ""
-    row = db.execute(f"SELECT {column}, read_at FROM {table} WHERE doc_id=?", (found[0]["doc_id"],)).fetchone()
+    row = db.execute(f"SELECT {column}, read_at FROM {table} WHERE doc_id=?", (found["doc_id"],)).fetchone()
     return row[column] if row["read_at"] > (datetime.now(timezone.utc) - RECHECK).isoformat() else ""
 
 
 def fresh(db, table, source, column, version):
-    """The documents (rows by part) of the latest import of `source`, when the site says the source is still at the
-    `version` that import recorded (recorded): a routine's import need not read it again. [] otherwise."""
-    return earlier(db, table, source) if version and recorded(db, table, source, column) == version else []
+    """The source row of the latest import of `source`, when the site says the source is still at the `version` that
+    import recorded (recorded): a routine's import need not read it again. None otherwise."""
+    return earlier(db, table, source) if version and recorded(db, table, source, column) == version else None
 
 
 def unmodified(found):
     """The result of a routine's import that fresh() spared reading `found` again: skipped as the same, or as in the
-    trash when its documents are there (as plan has an automatic import leave them)."""
-    trashed = [row for row in found if row["deleted_at"]]
-    if trashed:
-        return skipped(Plan("skip", trashed, "trashed"), "")
-    return {"status": "skipped", "doc_id": found[0]["doc_id"], "message": UNMODIFIED, "reason": "same"}
+    trash when its document is there (as plan has an automatic import leave it)."""
+    if found["deleted_at"]:
+        return skipped(Plan("skip", found, "trashed"), "")
+    return {"status": "skipped", "doc_id": found["doc_id"], "message": UNMODIFIED, "reason": "same"}
 
 
-def save(db, table, found, split, title, timestamp, values):
-    """Save `split` as `found` plans: as new documents, or in place of the documents of the earlier import, part by
-    part, adding or deleting documents when the number of parts changed. `values` are the source's own columns (path
-    or link, hash, …). Returns the ids of the documents saved, by part, and how many were deleted. A kept import saves
-    no document: its sources take `values` (the new hash) and, when they changed, its parts their HTML pages."""
-    count = len(split.parts)
+def save(db, table, found, fitted, title, timestamp, values):
+    """Save `fitted` as `found` plans: as a new document, or in place of the document of the earlier import. `values`
+    are the source's own columns (path or link, hash, …). Returns the id of the document saved. A kept import saves no
+    document (None): its source takes `values` (the new hash) and, when it changed, its HTML page."""
     if found.action == "keep":
-        for row, (page, _) in zip(found.rows, split.parts, strict=True):
-            db.execute(
-                f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?",
-                [*values.values(), row["doc_id"]],
-            )
-            if page is not None and found.reason == "format":
-                db.execute("UPDATE document_html SET html=? WHERE doc_id=?", (page, row["doc_id"]))
-        return [], 0
-
-    def source(ident, number, text):
-        row = {
-            "doc_id": ident,
-            **values,
-            "markdown": text,
-            "imported_at": timestamp,
-            "part": number,
-            "parts": count,
-            "title": part_title(title, number, count),
-        }
-        db.execute(f"INSERT INTO {table}({','.join(row)}) VALUES({','.join('?' * len(row))})", list(row.values()))
-
-    previous = found.rows if found.action == "update" else []
-    ids = []
-    for row, (number, (page, text)) in zip(previous, enumerate(split.parts, 1), strict=False):
-        ident = row["doc_id"]
+        ident = found.row["doc_id"]
+        db.execute(
+            f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?",
+            [*values.values(), ident],
+        )
+        if fitted.page is not None and found.reason == "format":
+            db.execute("UPDATE document_html SET html=? WHERE doc_id=?", (fitted.page, ident))
+        return None
+    title, shown = title[:200], "markdown" if fitted.page is None else "html"
+    previous = found.row if found.action == "update" else None
+    if previous is None:
+        ident = str(uuid.uuid4())
+        db.execute(
+            "INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (ident, title, fitted.text, shown, timestamp, timestamp),
+        )
+        if fitted.page is not None:
+            db.execute("INSERT INTO document_html(doc_id,html) VALUES(?,?)", (ident, fitted.page))
+    else:
+        ident = previous["doc_id"]
         # A title the user gave the document stays. Before the import kept its title, it was the one this import
         # gives, as long as the source's title is the same.
-        given = row["title"] or part_title(title, row["part"], row["parts"])
-        named = row["now_title"] if row["now_title"] != given else part_title(title, number, count)
+        given = previous["title"] or title
+        named = previous["now_title"] if previous["now_title"] != given else title
         db.execute(
             """UPDATE documents SET title=?,content=?,format=?,summary='',status='pending',error='',
             index_mode='',revision=revision+1,updated_at=? WHERE id=?""",
-            (named, text, "markdown" if page is None else "html", timestamp, ident),
+            (named, fitted.text, shown, timestamp, ident),
         )
         for name in ("keywords", "relations", "doc_nodes"):
             db.execute(f"DELETE FROM {name} WHERE doc_id=?", (ident,))
-        if page is None:
+        if fitted.page is None:
             db.execute("DELETE FROM document_html WHERE doc_id=?", (ident,))
         else:
             db.execute(
                 "INSERT INTO document_html(doc_id,html) VALUES(?,?) "
                 "ON CONFLICT(doc_id) DO UPDATE SET html=excluded.html",
-                (ident, page),
+                (ident, fitted.page),
             )
         db.execute(f"DELETE FROM {table} WHERE doc_id=?", (ident,))
-        source(ident, number, text)
-        ids.append(ident)
-    ids += insert(db, split, title, timestamp, source, first=len(ids) + 1)
-    removed = [row["doc_id"] for row in previous[count:]]
-    for ident in removed:
-        db.execute("DELETE FROM documents WHERE id=?", (ident,))
-    index_text(db, ids)
-    return ids, len(removed)
+    row = {"doc_id": ident, **values, "markdown": fitted.text, "imported_at": timestamp, "title": title}
+    db.execute(f"INSERT INTO {table}({','.join(row)}) VALUES({','.join('?' * len(row))})", list(row.values()))
+    index_text(db, [ident])
+    return ident
 
 
-def outcome(found, split, ids, removed, saved, kind):
-    """What an import saved as `ids` tells: `saved` for one new document; for updated ones how they changed. `kind` is
-    the kind of document (HTML, Markdown). A kept import is skipped, its content being the same."""
+def outcome(found, fitted, ident, saved):
+    """What an import saved as the document `ident` tells: `saved` for a new document; for an updated one how it
+    changed; and that the end of a text longer than a document holds was left out. A kept import is skipped, its
+    content being the same."""
     if found.action == "keep":
-        return {"status": "skipped", "doc_id": found.rows[0]["doc_id"], "message": KEPT[found.reason], "reason": "same"}
+        return {"status": "skipped", "doc_id": found.row["doc_id"], "message": KEPT[found.reason], "reason": "same"}
     if found.action == "insert":
-        return imported(split, ids, saved, kind)
-    message = {
-        "restore": "고친 본문 대신 원본의 내용으로 되돌렸습니다.",
-        "page": "Markdown으로 가져왔던 문서를 HTML 문서로 바꿨습니다.",
-    }.get(found.reason, "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다.")
-    if len(ids) > 1:
-        message += " " + saved_message(split, kind)
-    if removed:
-        message += f" 글이 줄어 남는 부분 문서 {removed}개는 지웠습니다."
-    return {"status": "updated", "doc_id": ids[0], "doc_ids": ids, "message": message}
+        status, message = "imported", saved
+    else:
+        status = "updated"
+        message = {
+            "restore": "고친 본문 대신 원본의 내용으로 되돌렸습니다.",
+            "page": "Markdown으로 가져왔던 문서를 HTML 문서로 바꿨습니다.",
+        }.get(found.reason, "원본이 바뀌어 문서를 새 내용으로 업데이트했습니다.")
+    if fitted.cut:
+        message += " " + CUT_MESSAGE
+    return {"status": status, "doc_id": ident, "message": message}
 
 
 def file_state(path, checksum, limit=50 * 1024 * 1024, stat=None):

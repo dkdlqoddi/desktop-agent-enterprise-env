@@ -27,7 +27,7 @@ const FIELDS =
   'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]), textarea, select';
 const TEXT_LIMIT = 20_000;
 const CONTROL_LIMIT = 200;
-// An input's value as the screen reading shows it; a document being written can be 80,000 characters.
+// An input's value as the screen reading shows it; a document being written can be millions of characters.
 const VALUE_LIMIT = 500;
 
 const squash = (value: string) => value.replace(/\s+/g, ' ').trim();

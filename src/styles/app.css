@@ -1607,11 +1607,6 @@ button.tag:hover {
   background: var(--accent-soft);
   color: var(--accent);
 }
-/* An entry of the list that stands for an import saved in parts. */
-.parts-badge {
-  background: var(--inset-2);
-  color: var(--ink-2);
-}
 .ai-badge {
   background: var(--mark);
   color: var(--ink);
@@ -1872,16 +1867,6 @@ dialog.drawer {
 }
 .document-source .inline-error {
   margin: 4px 0 0;
-}
-.document-parts {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-}
-.document-parts span {
-  margin-right: auto;
-  color: var(--muted);
 }
 /* An imported file's HTML page: white paper with the page's own styles inside (a shadow root). Contained,
    so nothing in the page can be positioned or painted outside it. The paper and the text the page inherits stay

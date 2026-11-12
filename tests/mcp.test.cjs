@@ -18,12 +18,9 @@ const doc = {
     kind: 'jira',
     source_url: 'https://jira/browse/A-1',
     issue_key: 'A-1',
-    part: 1,
-    parts: 1,
   },
   updated_at: '2026-10-01T09:00:00+00:00',
   outline: [],
-  parts: [],
 };
 
 function setup(answers = {}) {

@@ -89,12 +89,15 @@ FTS_TRIGGERS = {
 # Seconds a start spends on the search text and the trigram index before the backend answers; a thread of its own goes
 # on with what is left, a chunk at a time beside the requests.
 INDEX_BUDGET = 2.0
+# Seconds a start spends on making the long imports that earlier versions saved as several documents one document each
+# (parts.merge_all) before the backend answers; a thread of its own goes on with what is left.
+MERGE_BUDGET = 3.0
 LOG = logging.getLogger("private_agent")
 
 # Where each imported document came from (the file path or the link), and the text and title the last import of it
 # saved: (columns, the key that tells a repeated import apart). An import of the same path or link again updates its
-# documents (sources.py). An import too long for one document is saved as several (parts.py); each has a row of its
-# own, numbered `part` of `parts`, so the same file or page content is held once per part.
+# document (sources.py). An import is one document with one row, `part` 1 of `parts` 1: earlier versions saved an
+# import too long for one document as several, each with a row numbered so, which parts.merge makes one again.
 SOURCE_TABLES = {
     "rtf_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash"),
     "office_sources": (
@@ -239,6 +242,13 @@ class Database:
                     doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
                     html TEXT NOT NULL
                 );
+                -- Where the documents went that earlier versions saved as the parts of one long import: the document
+                -- the parts became (parts.merge). A link, a citation or a task that names a part finds it by this
+                -- (sources.whole).
+                CREATE TABLE IF NOT EXISTS merged_documents (
+                    id TEXT PRIMARY KEY, doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_merged_documents_doc ON merged_documents(doc_id);
                 -- The text search compares (search_text) of each document's title, summary and content, as of its
                 -- revision. Kept apart like the pages, so lists never load it; a row of another revision, or without a
                 -- title (written by an earlier version), is not used. id is the rowid of the trigram index
@@ -344,6 +354,10 @@ class Database:
                     db.execute(f"ALTER TABLE {name} ADD COLUMN title TEXT NOT NULL DEFAULT ''")
                 # An import finds the earlier one of the same file or page by it.
                 db.execute(f"CREATE INDEX IF NOT EXISTS idx_{name}_identity ON {name}({identity(name)})")
+                # The rows of the long imports that earlier versions saved in parts: none once each is one document
+                # (parts.merge). Asking for them by this index never reads the table, whose rows hold the imported
+                # text before `parts` (parts.parted, sources.whole).
+                db.execute(f"CREATE INDEX IF NOT EXISTS idx_{name}_parted ON {name}(doc_id) WHERE parts>1")
             # What write-backs put into the file since the import, as a JSON list of texts (writeback.remember); an
             # import again leaves it '' as it saves the row anew.
             if "written" not in {r[1] for r in db.execute("PRAGMA table_info(office_sources)")}:
@@ -414,6 +428,8 @@ class Database:
         # What the block above cannot do, numbered by the schema version the Wiki keeps (migrations.py).
         with self.connect() as db:
             migrations.upgrade(db)
+        if not self._merge(MERGE_BUDGET):
+            threading.Thread(target=self._merge_later, name="merge-parts", daemon=True).start()
         if not self._index(INDEX_BUDGET):
             threading.Thread(target=self._index_later, name="search-index", daemon=True).start()
 
@@ -507,6 +523,28 @@ class Database:
             # the search text instead (Search.texts).
             LOG.exception("search index could not be brought up to date")
         return True
+
+    def _merge(self, budget=None):
+        """Make every long import that an earlier version saved as several documents one document (parts.merge_all),
+        for `budget` seconds at most (None: until done), and say whether none is left. A large Wiki's first start
+        after the upgrade must still answer in time; an import not merged yet is merged when it is read (sources.held).
+        One that cannot be merged is logged and left as it is, rather than keep the Wiki from opening."""
+        from .parts import merge_all
+
+        try:
+            return merge_all(self.connect, budget)
+        except sqlite3.OperationalError:  # The Wiki is locked by another program: later.
+            return False
+        except Exception:
+            LOG.exception("an import saved in parts could not be made one document")
+            return True
+
+    def _merge_later(self):
+        """Go on with what a start left of _merge, half a second at a time beside the requests, until it is done."""
+        while True:
+            time.sleep(0.5)
+            if self._merge(budget=0.5):
+                return
 
     def _index_later(self):
         """Go on with what a start left of _index, half a second at a time beside the requests, until it is done."""

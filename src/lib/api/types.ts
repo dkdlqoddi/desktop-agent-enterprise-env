@@ -223,12 +223,9 @@ export type WikiDocument = {
   outline?: OutlineNode[];
   keywords: string[];
   relations?: Relation[];
-  // Full documents, and the entries of a page of the list or a search (DocumentPage): the documents an import too long
-  // for one was saved as, in order (this one included). A page lists only the live ones and [] for other documents.
-  parts?: { id: string; title: string; part: number }[];
-  // Where an imported document came from, and when it last took its text from there (imported_at). An import too
-  // long for one document is saved as `parts` documents; this one is number `part`. Full documents also say whether
-  // the user changed the text of any of them since (an update from the source would replace it).
+  // Where an imported document came from, and when it last took its text from there (imported_at). An import is one
+  // document, however long. Full documents also say whether the user changed the text since (an update from the
+  // source would replace it).
   source?:
     | ((
         | { kind: 'rtf'; source_path: string; imported_at: string }
@@ -253,7 +250,7 @@ export type WikiDocument = {
             issue_key: string;
             imported_at: string;
           }
-      ) & { part: number; parts: number; edited?: boolean })
+      ) & { edited?: boolean })
     | null;
   created_at: string;
   updated_at: string;
@@ -436,7 +433,7 @@ export type DocumentSource = 'manual' | NonNullable<WikiDocument['source']>['kin
 // A document's AI analysis, as a list filters by it (electron/api-catalog.cjs analysisState).
 export type DocumentAnalysis = 'analyzed' | 'not_analyzed' | 'failed' | 'running';
 // A page of the document list (wiki.list with limit or cursor): null next_cursor after the last page. `total` counts
-// the documents the filters keep in all, each part of an import as one, as stats counts them.
+// the documents the filters keep in all, as stats counts them.
 export type DocumentPage = { documents: WikiDocument[]; next_cursor: string | null; total: number };
 
 export type StorageInfo = {
@@ -487,7 +484,6 @@ export type LocalImportJob = {
     status: ImportOutcome;
     message: string;
     doc_id?: string;
-    doc_ids?: string[];
     reason?: SkipReason;
     analysis_error?: string;
   }[];
@@ -548,7 +544,6 @@ export type ConfluenceJob = {
     status: ImportOutcome;
     message: string;
     doc_id?: string;
-    doc_ids?: string[];
     reason?: SkipReason;
     analysis_error?: string;
     discovery_error?: string;
@@ -575,7 +570,6 @@ export type JiraJob = Omit<ConfluenceJob, 'recursive' | 'discovery_failed' | 're
     status: ImportOutcome;
     message: string;
     doc_id?: string;
-    doc_ids?: string[];
     reason?: SkipReason;
     analysis_error?: string;
   }[];
@@ -622,7 +616,6 @@ export type JobProgressEvent =
 export type TextImport = {
   status: Exclude<ImportOutcome, 'failed'>;
   doc_id: string;
-  doc_ids?: string[];
   reason?: SkipReason;
   title: string;
   path: string;

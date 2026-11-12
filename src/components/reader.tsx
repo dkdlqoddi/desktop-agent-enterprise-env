@@ -4,8 +4,6 @@ import {
   AlertCircle,
   BookOpen,
   Check,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   FileCode2,
   Hash,
@@ -46,7 +44,7 @@ import ErrorBoundary, { RenderError } from './error-boundary';
 import { findAll, MatchNavigator, useMatches } from './highlight';
 import HtmlDocument from './html-document';
 import { activeJob, type ImportKind } from './import-jobs';
-import Markdown from './markdown';
+import Markdown, { LongMarkdown } from './markdown';
 import Modal, { type ModalHandle } from './modal';
 import { rove } from './roving';
 import { useDiscard } from './trashed';
@@ -58,6 +56,8 @@ export type ReaderTarget =
   | { kind: 'document'; id: string; focus?: Focus | null }
   | { kind: 'new'; title?: string; content?: string }
   | { kind: 'run'; id: string; terms?: string[] };
+// The most characters a document holds, written or imported (backend/agent/markdown_import.py MAX_DOCUMENT_CHARS).
+const MAX_DOCUMENT_CHARS = 8_000_000;
 // The document as the editor opened it.
 type Started = { revision: number; title: string; content: string };
 
@@ -137,9 +137,21 @@ function DocumentReader({
   const [error, setError] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const modal = useRef<ModalHandle>(null);
+  // Whether the whole text is drawn: a long one is drawn piece after piece (LongMarkdown), all of it at once when a
+  // section further down is asked for (`hurry`, with the section that waits for it).
+  const [drawn, setDrawn] = useState(true);
+  const [hurry, setHurry] = useState(false);
+  const wanted = useRef<OutlineNode | null>(null);
+  // Another text is drawn piece after piece again.
+  useEffect(() => {
+    setHurry(false);
+    wanted.current = null;
+  }, [doc?.id, doc?.revision]);
   const matches = useMatches(
     contentRef,
-    doc && mode === 'view' ? `${doc.id}:${doc.revision}:${focus?.terms.join('\n') ?? ''}` : '',
+    doc && mode === 'view'
+      ? `${doc.id}:${doc.revision}:${focus?.terms.join('\n') ?? ''}:${drawn}`
+      : '',
   );
   useEffect(() => {
     if (target.kind !== 'document') return;
@@ -318,16 +330,28 @@ function DocumentReader({
     notify('지금 문서를 기준으로 다시 열었습니다. 쓰던 내용은 그대로 두었습니다.');
   }
   // Headings of the rendered document for its PageIndex table of contents.
-  function showSection(node: OutlineNode) {
+  function headingOf(node: OutlineNode) {
     const headings = findAll(contentRef.current, 'h1, h2, h3, h4, h5, h6');
     const text = (element: Element) => element.textContent?.trim() ?? '';
     const direct = node.heading === null ? undefined : headings[node.heading];
-    const heading =
-      direct && text(direct).startsWith(node.title)
-        ? direct
-        : headings.find((element) => text(element) === node.title);
-    heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    return direct && text(direct).startsWith(node.title)
+      ? direct
+      : headings.find((element) => text(element) === node.title);
   }
+  function showSection(node: OutlineNode) {
+    const heading = headingOf(node);
+    if (heading) return heading.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    // In the part of a long text not drawn yet: the rest is drawn now, and the section shown once it is.
+    if (drawn) return;
+    wanted.current = node;
+    setHurry(true);
+  }
+  useEffect(() => {
+    const node = wanted.current;
+    if (!drawn || !node) return;
+    wanted.current = null;
+    headingOf(node)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [drawn]);
   // Writing: in the editor, or choosing how to save what a refused save held (the conflict view).
   const editing = mode === 'edit' || mode === 'conflict';
   const title =
@@ -500,13 +524,13 @@ function DocumentReader({
               required
               className="document-editor"
               rows={18}
-              maxLength={80000}
+              maxLength={MAX_DOCUMENT_CHARS}
               value={draft.content}
               onChange={(e) => setDraft({ ...draft, content: e.target.value })}
               placeholder={'# 회의 메모\n\nMarkdown으로 작성할 수 있습니다.'}
             />
             <small>
-              {draft.content.length.toLocaleString()} / 80,000자
+              {draft.content.length.toLocaleString()} / {MAX_DOCUMENT_CHARS.toLocaleString()}자
               {doc ? ' · 내용을 바꾸면 이전 AI 분석은 지워집니다.' : ''}
             </small>
           </label>
@@ -586,7 +610,9 @@ function DocumentReader({
               {doc.format === 'html' && doc.html ? (
                 <HtmlDocument html={doc.html} highlight={focus?.terms} />
               ) : (
-                <Markdown highlight={focus?.terms}>{doc.content || ''}</Markdown>
+                <LongMarkdown highlight={focus?.terms} hurry={hurry} onDrawn={setDrawn}>
+                  {doc.content || ''}
+                </LongMarkdown>
               )}
             </ErrorBoundary>
           </div>
@@ -862,7 +888,6 @@ type Outcome = {
   status: ImportOutcome;
   message: string;
   doc_id?: string;
-  doc_ids?: string[];
   reason?: SkipReason;
   analysis_error?: string;
 };
@@ -881,9 +906,6 @@ const FILE_STATE: Record<SourceStatus['state'], string> = {
 
 const sourcePath = (doc: WikiDocument) =>
   doc.source && 'source_path' in doc.source ? doc.source.source_path : '';
-// The document and the other parts of a long one, which an update or a write may concern.
-const partsOf = (doc: WikiDocument) =>
-  doc.parts?.length ? doc.parts.map((part) => part.id) : [doc.id];
 
 // The update of an imported document from its source and the write of its changes back into its file, while they
 // run. The document window keeps them rather than the source box, which is gone while the window shows the editor or
@@ -927,7 +949,7 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
     let live = true;
     api<WritebackJob | null>('writeback.status')
       .then((job) => {
-        if (!live || !job || !partsOf(doc).includes(job.doc_id)) return;
+        if (!live || !job || job.doc_id !== doc.id) return;
         if (activeJob(job.status)) setWriting(job);
         else if (!job.dismissed) void ended(job, doc);
       })
@@ -967,17 +989,16 @@ function useSourceJobs(doc: WikiDocument | null, onUpdated: (id: string) => void
   function finish(result: Outcome, at: WikiDocument) {
     setUpdating(false);
     if (result.status === 'failed') return setError(result.message);
-    const ids = result.doc_ids ?? (result.doc_id ? [result.doc_id] : []);
     // The import says what it kept: the document as it was, or also a page whose formatting or pictures changed.
-    if (result.reason === 'same' && result.doc_id && partsOf(at).includes(result.doc_id))
+    if (result.reason === 'same' && result.doc_id === at.id)
       notify(result.message || '원본이 바뀌지 않아 문서를 그대로 두었습니다.');
     else
       notify(
         [result.message, result.analysis_error].filter(Boolean).join(' '),
         !!result.analysis_error,
       );
-    // A long text that became shorter may have dropped this part: its first part opens instead.
-    updated(ids.length && !ids.includes(at.id) ? ids[0] : at.id);
+    // The import names the document it saved: this one, unless the source is another document's by now.
+    updated(result.doc_id ?? at.id);
   }
   // The job of the update, until it ends.
   const watched = useJobs((jobs) => (job ? jobs.imports[job.kind] : null));
@@ -1050,7 +1071,7 @@ type SourceJobs = ReturnType<typeof useSourceJobs>;
 
 // Where an imported document came from: the file or link, when the document took its text from there, whether the
 // file has changed since, and the update that takes the source's text again. The update is an import of the same
-// path or link, which replaces this document (every part of a long one) in place; the import box lists it too.
+// path or link, which replaces this document in place; the import box lists it too.
 function DocumentSource({ doc, jobs }: { doc: WikiDocument; jobs: SourceJobs }) {
   const source = doc.source!;
   const path = sourcePath(doc);
@@ -1172,44 +1193,7 @@ function DocumentSource({ doc, jobs }: { doc: WikiDocument; jobs: SourceJobs }) 
           onRestored={() => setRestored((count) => count + 1)}
         />
       )}
-      {source.parts > 1 && <PartLinks doc={doc} />}
     </div>
-  );
-}
-
-// A document that is one part of an import too long for one document leads to the parts beside it.
-function PartLinks({ doc }: { doc: WikiDocument }) {
-  const { openDocument } = useActions();
-  const parts = doc.parts ?? [];
-  const index = parts.findIndex((part) => part.id === doc.id);
-  const previous = index > 0 ? parts[index - 1] : undefined;
-  const next = index >= 0 ? parts[index + 1] : undefined;
-  return (
-    <nav className="document-parts" aria-label="나누어 저장한 문서">
-      <span>
-        긴 글을 나누어 저장한 {doc.source!.parts}개 중 {doc.source!.part}번째
-      </span>
-      <button
-        type="button"
-        className="text-button"
-        aria-label="이전 부분"
-        disabled={!previous}
-        onClick={() => previous && openDocument(previous.id)}
-      >
-        <ChevronLeft size={14} />
-        이전
-      </button>
-      <button
-        type="button"
-        className="text-button"
-        aria-label="다음 부분"
-        disabled={!next}
-        onClick={() => next && openDocument(next.id)}
-      >
-        다음
-        <ChevronRight size={14} />
-      </button>
-    </nav>
   );
 }
 

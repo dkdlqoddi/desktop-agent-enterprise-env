@@ -552,7 +552,7 @@ def change_items(results, run, label, reported):
     told = dict(reported)
     reported.clear()
     for result in results:
-        doc = result.get("doc_id") or (result.get("doc_ids") or [None])[0]
+        doc = result.get("doc_id")
         title = (
             run.title_of(doc, result.get("key") or result.get("url", ""))
             if doc
@@ -933,7 +933,7 @@ class JiraFilter(Recipe):
                         "title": f"[{issue['key']}] {issue['summary']}",
                         "status": status,
                         "url": f"{base}/browse/{issue['key']}",
-                        "doc_id": result.get("doc_id") or (result.get("doc_ids") or [None])[0],
+                        "doc_id": result.get("doc_id"),
                         "change": result.get("change"),
                         "message": " · ".join(
                             filter(
@@ -1350,12 +1350,12 @@ class SourceRefresh(Recipe):
         def record(result, title, path_or_url, counted=True):
             status = result["status"]
             if status == "skipped":
-                # A file whose documents the user purged from the trash stays out (sources.IGNORED), unlisted.
+                # A file whose document the user purged from the trash stays out (sources.IGNORED), unlisted.
                 status = {"edited": "edited", "ignored": "ignored"}.get(result.get("reason"), "same")
             if counted:
                 counts[status] += 1
             if status not in ("same", "ignored"):
-                doc = result.get("doc_id") or (result.get("doc_ids") or [None])[0]
+                doc = result.get("doc_id")
                 items.append(
                     {
                         "title": title,
@@ -1437,11 +1437,10 @@ class SourceRefresh(Recipe):
                 # As the routine's own import: it leaves what the user put in the trash or purged where it is.
                 result = import_file(run.service, {"path": str(path), "routine": run.name})
                 if analyze and result["status"] in ("imported", "updated"):
-                    for ident in result["doc_ids"]:
-                        try:
-                            run.service.wiki_analyze({"id": ident})
-                        except UserError:
-                            pass
+                    try:
+                        run.service.wiki_analyze({"id": result["doc_id"]})
+                    except UserError:
+                        pass
             except UserError as error:
                 result = {"status": "failed", "message": str(error)}
             record(result, path.name, str(path))
@@ -1494,8 +1493,8 @@ class SourceRefresh(Recipe):
                     inside = path.rstrip("\\/") + os.sep
                     rows = db.execute(
                         f"""SELECT s.doc_id,s.source_path,d.title FROM {table_name} s
-                        JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL WHERE s.part=1
-                        AND (s.source_path=? OR substr(s.source_path,1,?)=?)""",
+                        JOIN documents d ON d.id=s.doc_id AND d.deleted_at IS NULL
+                        WHERE s.source_path=? OR substr(s.source_path,1,?)=?""",
                         (path, len(inside), inside),
                     )
                     found += [

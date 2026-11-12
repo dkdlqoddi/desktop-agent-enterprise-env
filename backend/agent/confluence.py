@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from . import sources
 from .llm import UserError
 from .markdown_import import html_to_markdown
-from .parts import markdown_parts
+from .parts import fit_markdown
 from .service import now, text
 
 
@@ -25,7 +25,7 @@ def import_page(service, params):
     title, content = html_to_markdown(params.get("html"), source_url)
     # Confluence allows titles of 255 characters; the Wiki keeps 200 of them, as for JIRA tickets.
     title = text(title[:200], "Confluence 제목", 200)
-    split = markdown_parts(content)
+    fitted = fit_markdown(content)
     checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
     timestamp = now()
     with service.db.connect() as db:
@@ -49,17 +49,17 @@ def import_page(service, params):
                 sources.touch(
                     db,
                     "confluence_sources",
-                    found.rows,
+                    found.row,
                     {"read_at": timestamp, **({"version": version[:40]} if version else {})},
                     source_url,
                 )
             result = sources.skipped(found, "동일한 페이지 내용이 이미 저장되어 있습니다.")
         else:
-            ids, removed = sources.save(
+            ident = sources.save(
                 db,
                 "confluence_sources",
                 found,
-                split,
+                fitted,
                 title,
                 timestamp,
                 {
@@ -70,7 +70,7 @@ def import_page(service, params):
                     "read_at": timestamp,
                 },
             )
-            result = sources.outcome(found, split, ids, removed, "Markdown 문서를 Wiki에 저장했습니다.", "Markdown")
+            result = sources.outcome(found, fitted, ident, "Markdown 문서를 Wiki에 저장했습니다.")
     # Compared once the import is committed: a long page takes a while, and other saves must not wait for it.
-    change = sources.change(before, split)
+    change = sources.change(before, fitted)
     return {**result, "change": change} if change else result

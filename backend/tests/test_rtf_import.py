@@ -14,7 +14,7 @@ from agent.db import Database
 from agent.html_document import index_markdown, page
 from agent.llm import UserError
 from agent.markdown_import import html_to_markdown
-from agent.parts import CUT
+from agent.parts import CUT, CUT_MESSAGE
 from agent.rtf_import import RtfImporter
 from agent.service import Service
 from agent.storage import migrate_database, read_only_uri
@@ -154,7 +154,7 @@ def test_a_markdown_import_of_an_earlier_version_becomes_the_html_page(importer,
     assert wait(importer)["skipped"] == 2
 
 
-def test_a_file_longer_than_a_document_is_saved_as_html_documents_in_parts(importer, tmp_path, monkeypatch):
+def test_a_long_file_is_one_html_document(importer, tmp_path, monkeypatch):
     service = importer.service
     rtf = tmp_path / "긴 문서.rtf"
     rtf.write_bytes(b"long document")
@@ -165,41 +165,40 @@ def test_a_file_longer_than_a_document_is_saved_as_html_documents_in_parts(impor
     importer.start({"path": str(rtf), "mode": "file", "analyze": True})
     job = wait(importer)
     result = job["results"][0]
-    assert (job["imported"], result["message"]) == (
-        1,
-        "글이 80,000자를 넘어 HTML 문서 3개로 나누어 Wiki에 저장했습니다.",
-    )
-    assert analyzed == result["doc_ids"] and result["doc_id"] == result["doc_ids"][0]
-    docs = [service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
-    assert [doc["title"] for doc in docs] == ["긴 문서 (1/3)", "긴 문서 (2/3)", "긴 문서 (3/3)"]
-    for number, doc in enumerate(docs, 1):
-        assert doc["format"] == "html" and index_markdown(doc["html"]) == doc["content"]
-        assert len(doc["content"]) <= 80000 and f"<title>긴 문서 ({number}/3)</title>" in doc["html"]
-        assert (doc["source"]["part"], doc["source"]["parts"], doc["source"]["source_path"]) == (number, 3, str(rtf))
-        assert [part["id"] for part in doc["parts"]] == result["doc_ids"]
-    assert "".join(doc["content"] for doc in docs).count("번째 문단") == 150
-    # The same file is a duplicate while any of its parts is left; a part in the trash comes back with the import.
-    service.wiki_delete({"id": docs[0]["id"]})
+    assert (job["imported"], result["message"]) == (1, "HTML 문서로 Wiki에 저장했습니다.")
+    assert analyzed == [result["doc_id"]] and "doc_ids" not in result
+    doc = service.wiki_get({"id": result["doc_id"]})
+    # More than the 80,000 characters at which earlier versions began another document: the page as it was converted.
+    assert doc["title"] == "긴 문서" and doc["format"] == "html" and doc["html"] == long_page
+    assert index_markdown(doc["html"]) == doc["content"] and len(doc["content"]) > 180000
+    assert doc["content"].count("번째 문단") == 150 and doc["source"]["source_path"] == str(rtf)
+    assert "parts" not in doc and "part" not in doc["source"]
+    assert [entry["id"] for entry in service.wiki_list({})] == [doc["id"]]
+    # The same file is a duplicate; from the trash its document comes back with the import.
+    service.wiki_delete({"id": doc["id"]})
     importer.start({"path": str(rtf), "mode": "file"})
     assert wait(importer)["results"][0] == {
         "path": str(rtf),
         "status": "skipped",
-        "doc_id": docs[0]["id"],
+        "doc_id": doc["id"],
         "message": "이미 가져온 동일한 RTF 문서입니다.",
         "reason": "same",
     }
-    assert service.wiki_get({"id": docs[0]["id"]})["title"] == "긴 문서 (1/3)"
+    assert service.wiki_get({"id": doc["id"]})["title"] == "긴 문서"
     assert service.dispatch("wiki.trash", {})["documents"] == []
-    # Beyond the most parts, the rest is left out and the result and the last part say so.
-    monkeypatch.setattr("agent.parts.MAX_PARTS", 2)
+    # A text longer than a document holds keeps its beginning: the result and the end of the document say so.
+    monkeypatch.setattr("agent.parts.MAX_DOCUMENT_CHARS", 30000)
     other = tmp_path / "더 긴 문서.rtf"
     other.write_bytes(b"longer document")
     importer.start({"path": str(other), "mode": "file"})
     result = wait(importer)["results"][0]
-    assert result["message"] == (
-        "글이 80,000자를 넘어 HTML 문서 2개로 나누어 Wiki에 저장했습니다. 문서 2개를 넘는 뒷부분은 저장하지 않았습니다."
-    )
-    assert service.wiki_get({"id": result["doc_ids"][1]})["content"].endswith(CUT)
+    assert result["message"] == "HTML 문서로 Wiki에 저장했습니다. " + CUT_MESSAGE
+    cut = service.wiki_get({"id": result["doc_id"]})
+    assert len(cut["content"]) <= 30000 and cut["content"].endswith(CUT)
+    assert index_markdown(cut["html"]) == cut["content"] and "<title>긴 문서</title>" in cut["html"]
+    # Whole paragraphs from the first on.
+    kept = cut["content"].count("번째 문단")
+    assert 20 <= kept < 150 and f"<p>{kept - 1}번째 문단" in cut["html"] and f"<p>{kept}번째 문단" not in cut["html"]
 
 
 def test_folder_recursion_duplicates_failure_and_continuation(importer, tmp_path):

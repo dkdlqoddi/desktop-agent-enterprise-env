@@ -790,10 +790,7 @@ class Search:
             docs = self.hydrate(ranked[:RESULT_LIMIT], matcher(highlights))
         else:
             entries, result["next_cursor"] = self.page(ranked, *page)
-            docs = self.hydrate([entry for entry, _ in entries], matcher(highlights))
-            parts = {entry["id"]: found for entry, found in entries}
-            for doc in docs:
-                doc["parts"] = parts[doc["id"]]
+            docs = self.hydrate(entries, matcher(highlights))
         result["documents"] = [public(doc) for doc in docs]
         return result
 
@@ -814,34 +811,18 @@ class Search:
 
     def page(self, ranked, size, after):
         """The page of `size` entries after the cursor `after` (score, updated_at, id) of the ranked documents, in the
-        order of their score, then the newest first and then by id, so a page never repeats or skips one. Of an import
-        saved in parts only its first-ranked document is an entry, with the import's documents (parts). Returns
-        ([(entry, parts)], next cursor or None)."""
+        order of their score, then the newest first and then by id, so a page never repeats or skips one. Returns
+        (the entries, next cursor or None)."""
         order = sorted(ranked, key=lambda r: (r["score"], r["updated_at"], r["id"]), reverse=True)
-        rank = {r["id"]: i for i, r in enumerate(order)}
         position = 0
         if after:
             position = next(
                 (i for i, r in enumerate(order) if (r["score"], r["updated_at"], r["id"]) < tuple(after)), len(order)
             )
-        entries = []
-        with self.db.connect() as db:
-            while position < len(order) and len(entries) <= size:
-                window = order[position : position + size + 1]
-                position += len(window)
-                groups = paging.imports(db, [r["id"] for r in window])
-                for entry in window:
-                    found = []
-                    if entry["id"] in groups:
-                        found = paging.members(db, *groups[entry["id"]])
-                        if any(rank.get(member["id"], len(order)) < rank[entry["id"]] for member in found):
-                            continue
-                    entries.append((entry, paging.parts(found)))
-                    if len(entries) > size:
-                        break
+        entries = order[position : position + size + 1]
         if len(entries) <= size:
             return entries, None
-        last = entries[size - 1][0]
+        last = entries[size - 1]
         return entries[:size], paging.encode("search", last["score"], last["updated_at"], last["id"])
 
     @staticmethod

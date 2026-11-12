@@ -7,7 +7,6 @@ import {
   FileText,
   Globe,
   Image as ImageIcon,
-  Layers,
   ListTree,
   LoaderCircle,
   NotepadText,
@@ -127,13 +126,8 @@ function useSettled<T>(value: T, delay: number) {
   return settled;
 }
 
-// The documents a choice in the list stands for: an import saved in parts is one entry of the list, and what is done
-// to it is done to each of its parts.
-const idsOf = (docs: readonly WikiDocument[]) => [
-  ...new Set(
-    docs.flatMap((doc) => (doc.parts?.length ? doc.parts.map((part) => part.id) : [doc.id])),
-  ),
-];
+// The documents a choice in the list stands for.
+const idsOf = (docs: readonly WikiDocument[]) => [...new Set(docs.map((doc) => doc.id))];
 
 // Why the list shows nothing, by what it was asked for.
 function emptyNote(filters: DocumentQuery) {
@@ -638,7 +632,7 @@ function TrashView({ bin, onChanged }: { bin: Trash | null; onChanged: () => Pro
 }
 
 // Select all loaded documents (and then every one the filters keep), and act on the chosen ones: analyze them with
-// the LLM, take back their analysis or delete them. An entry that stands for an import saved in parts takes each part.
+// the LLM, take back their analysis or delete them.
 function BulkActions({
   chosen,
   all,
@@ -774,8 +768,7 @@ function BulkActions({
 
 // A row of the list, drawn again only when its document (kept as the same object while it does not change, see
 // keepEqual in src/lib/query.ts), its check or its place changed. Without `checked` it has no checkbox; without
-// `tabbable` it keeps the browser's own Tab order (the dashboard's few rows). An entry that stands for an import
-// saved in parts says how many parts it has.
+// `tabbable` it keeps the browser's own Tab order (the dashboard's few rows).
 const DocumentRow = memo(function DocumentRow({
   doc,
   onOpen,
@@ -797,7 +790,6 @@ const DocumentRow = memo(function DocumentRow({
   onFocusRow?: (key: string, column: Column) => void;
 }) {
   const Icon = doc.source ? ICONS[doc.source.kind] : FileText;
-  const parts = doc.parts?.length ?? 0;
   const tabIndex = tabbable === undefined ? undefined : tabbable ? 0 : -1;
   return (
     <li
@@ -834,15 +826,6 @@ const DocumentRow = memo(function DocumentRow({
           <strong>{doc.title}</strong>
           <small>{doc.summary || plain(doc.excerpt ?? '')}</small>
         </span>
-        {parts > 1 && (
-          <span
-            className="index-badge parts-badge"
-            title={`긴 글을 나누어 저장한 문서 ${parts}개를 한 줄로 보여 줍니다. 선택하면 ${parts}개 모두에 적용됩니다.`}
-          >
-            <Layers size={11} />
-            {parts}개로 나눔
-          </span>
-        )}
         {doc.index_mode === 'pageindex' && (
           <span className="index-badge" title="긴 문서를 목차 단위로 색인했습니다 (PageIndex)">
             <ListTree size={11} />

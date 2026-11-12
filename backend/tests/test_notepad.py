@@ -11,9 +11,8 @@ import pytest
 
 from agent import notepad
 from agent.llm import UserError
-from agent.markdown_import import MAX_MARKDOWN_CHARS
+from agent.markdown_import import MAX_DOCUMENT_CHARS
 from agent.notepad import MAX_TEXT_CHARS, Window, looks_encrypted, read_with_notepad
-from agent.parts import MAX_PARTS
 
 
 class Process:
@@ -208,8 +207,8 @@ def test_text_that_is_not_the_document_is_refused_and_the_window_still_closes(so
 
 
 def test_a_text_longer_than_the_import_keeps_is_read_up_to_that_length(source, monkeypatch):
-    # More than the parts of a document hold even with "\r\n" line breaks; the import cuts the rest (parts.py).
-    assert MAX_TEXT_CHARS == 2 * MAX_PARTS * MAX_MARKDOWN_CHARS
+    # More than a document holds even with "\r\n" line breaks; the import cuts the rest (parts.py).
+    assert MAX_TEXT_CHARS == 2 * MAX_DOCUMENT_CHARS
     monkeypatch.setattr(notepad, "MAX_TEXT_CHARS", 10)
     process = Process()
     desktop = Desktop(steps=starting("첫 줄\r\n둘째 줄\r\n셋째 줄"), process=process)

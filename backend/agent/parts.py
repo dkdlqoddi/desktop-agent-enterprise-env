@@ -1,85 +1,40 @@
-"""Imports too long for one Wiki document, saved as several.
+"""An import is one Wiki document, however long, and the documents earlier versions cut a long one into are one again.
 
-A Wiki document holds at most MAX_MARKDOWN_CHARS characters of text: the editor edits it whole, and search, PageIndex
-and the LLM read it. A longer page, ticket or file is cut into parts that each hold at most that much, and every
-part becomes a document of its own titled "<title> (2/5)". Cuts fall between blocks, and a heading stays with what
-follows it; a block too long for one part is cut between its lines or rows, a table repeating its header and a code
-block its fence in the next part. Confluence and JIRA pages are cut as Markdown text. The HTML page of a file is cut
-between its elements, so each part is a page of its own whose text is that of its share. At most MAX_PARTS parts are
-saved; the last one then says that the rest was left out."""
+A Wiki document holds at most MAX_DOCUMENT_CHARS characters of text, which the editor edits and search, PageIndex and
+the LLM read. A page, ticket or file with more text keeps its beginning (fit_markdown, fit_page): the cut falls
+between blocks, and a heading or a table's header is not left without what it introduces; a block too long by itself
+is cut between its lines or rows. What is kept ends with a note saying that the rest was left out.
+
+Earlier versions cut a text longer than 80,000 characters into several documents titled "<title> (2/5)", each with a
+source row numbered `part` of `parts`. merge() makes the documents of such an import one: the first of them takes the
+text and the page of all, and the others are deleted with a note of where they went (merged_documents), so that a
+link, a citation or a task that names one of them finds the whole document. Database.merge_parts does so for every
+such import at the backend's start, for as long as its time allows and then beside the requests; sources.py and
+Service.document do it sooner for the import they are asked about."""
 
 import re
-import uuid
-from html import escape, unescape
+import time
+from html import escape
 from typing import NamedTuple
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from .html_document import index_markdown, page_text
 from .llm import UserError
-from .markdown_import import MAX_MARKDOWN_CHARS
+from .markdown_import import MAX_DOCUMENT_CHARS
 
-MAX_PARTS = 100
 CUT = "문서가 길어 여기까지만 가져왔습니다. 나머지는 원본에서 확인해 주세요."
-# Every part leaves room for that note, so the last one can always take it.
+# What is kept of a longer text leaves room for that note.
 NOTE_ROOM = len(CUT) + 8
-PIECE = 4000  # characters of a text too long for one part, per piece the parts are filled with
+PIECE = 4000  # characters of a text too long to keep whole, per piece it is cut into
+# What an import whose end was left out tells the user.
+CUT_MESSAGE = f"글이 {MAX_DOCUMENT_CHARS:,}자를 넘어 앞부분만 저장했습니다. 나머지는 원본에서 확인해 주세요."
 
 
-class Split(NamedTuple):
-    parts: list  # [(page, text)] of an HTML page, [(None, text)] of Markdown
-    text: str  # the whole text, which tells a repeated import of the same content apart
-    cut: bool  # whether parts beyond MAX_PARTS were left out
-
-
-def part_title(title, number, count):
-    """The title of part `number` of `count`, within the 200 characters of a title."""
-    if count == 1:
-        return title[:200]
-    suffix = f" ({number}/{count})"
-    return title[: 200 - len(suffix)].rstrip() + suffix
-
-
-def saved_message(split, kind):
-    """What an import that was cut into parts tells the user; `kind` is the kind of document (HTML, Markdown)."""
-    message = f"글이 {MAX_MARKDOWN_CHARS:,}자를 넘어 {kind} 문서 {len(split.parts)}개로 나누어 Wiki에 저장했습니다."
-    if split.cut:
-        message += f" 문서 {MAX_PARTS}개를 넘는 뒷부분은 저장하지 않았습니다."
-    return message
-
-
-def imported(split, ids, message, kind):
-    """The result of an import saved as the documents `ids`: `message` for one, how it was cut for several."""
-    return {
-        "status": "imported",
-        "doc_id": ids[0],
-        "doc_ids": ids,
-        "message": message if len(ids) == 1 else saved_message(split, kind),
-    }
-
-
-def insert(db, split, title, timestamp, source, first=1):
-    """Add the parts from number `first` on as new documents and return their ids; `source(ident, number, text)` adds
-    each one's source."""
-    ids = []
-    for number, (page, text) in enumerate(split.parts[first - 1 :], first):
-        ident = str(uuid.uuid4())
-        db.execute(
-            "INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-            (
-                ident,
-                part_title(title, number, len(split.parts)),
-                text,
-                "markdown" if page is None else "html",
-                timestamp,
-                timestamp,
-            ),
-        )
-        source(ident, number, text)
-        if page is not None:
-            db.execute("INSERT INTO document_html(doc_id,html) VALUES(?,?)", (ident, page))
-        ids.append(ident)
-    return ids
+class Fitted(NamedTuple):
+    page: str | None  # the HTML page of a file; None for a Markdown text
+    text: str  # the document's text
+    cut: bool  # whether the end of a text longer than a document holds was left out
 
 
 def cut_text(text, size):
@@ -102,7 +57,7 @@ HEADING = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
 
 def blocks(text):
     """The text as [(kind, lines)]: a fenced code block, a table or the lines up to a blank line, each with the blank
-    lines after it. A part may begin with any of them."""
+    lines after it. What is kept of a long text ends with one of them."""
     lines, found, index = text.splitlines(keepends=True), [], 0
     while index < len(lines):
         first, end = lines[index], index + 1
@@ -128,116 +83,70 @@ def blocks(text):
     return found
 
 
-def pieces(kind, lines, room):
-    """A block longer than `room` in pieces that fit it, each ending in a blank line: a code block keeps its fences in
-    every piece and a table its header. A fence or header too long to repeat stays where it is, cut like any line."""
+def first_piece(kind, lines, room):
+    """The beginning of a block longer than `room`, at most that long and ending in a blank line: whole lines or rows,
+    a code block with its closing fence. A line longer than the room is cut after a space where there is one."""
     body = [line if line.endswith("\n") else line + "\n" for line in lines]
-    while body and not body[-1].strip():
-        body.pop()
-    head = tail = ""
-    whole = body
+    tail = ""
     if kind == "code":
-        head, body = body[0], body[1:]
-        mark = FENCE.match(head).group(1)
-        if body and re.fullmatch(rf" {{0,3}}{re.escape(mark[0])}{{{len(mark)},}}\s*", body[-1]):
-            tail = body.pop()
-        else:
-            tail = mark + "\n"
-    elif kind == "table" and len(body) > 2 and RULE.fullmatch(body[1]):
-        head, body = body[0] + body[1], body[2:]
-    if len(head) + len(tail) > room // 2:
-        head, tail, body = "", "", whole  # a header that long is not repeated
-    size = room - len(head) - len(tail) - 1
-    found, chunk, used = [], [], 0
+        mark = FENCE.match(body[0]).group(1)
+        tail = mark + "\n"
+        if len(body[0]) + len(tail) > room // 2:
+            tail = ""  # a fence that long is not closed: the note follows the text as it is
+    size = max(1, room - len(tail) - 1)
+    kept, used = [], 0
     for line in body:
-        for segment in cut_text(line, size) if len(line) > size else [line]:
-            if chunk and used + len(segment) > size:
-                found.append(head + "".join(chunk) + tail + "\n")
-                chunk, used = [], 0
-            chunk.append(segment)
-            used += len(segment)
-    if chunk:
-        found.append(head + "".join(chunk) + tail + "\n")
-    return found
+        segment = cut_text(line, size)[0] if len(line) > size else line
+        if kept and used + len(segment) > size:
+            break
+        kept.append(segment)
+        used += len(segment)
+        if segment is not line:
+            break
+    return "".join(kept) + tail + "\n"
 
 
-def split_markdown(text, limit, most):
-    """Markdown longer than `limit` as parts of at most that many characters, and whether parts beyond `most` were left
-    out (the last part then ends with a note that says so)."""
+def first_markdown(text, limit):
+    """(the beginning of a Markdown text, whether its end was left out): the blocks that fit `limit` characters with
+    the note that says so. A heading does not end what is kept; a block too long by itself gives its first lines."""
     room = limit - NOTE_ROOM
-    units = []
+    kept, size, cut = [], 0, False
     for kind, lines in blocks(text.strip()):
         block = "".join(lines)
-        units += [(kind, block)] if len(block) <= room else [("text", piece) for piece in pieces(kind, lines, room)]
-    parts, current, size = [], [], 0
-    for unit in units:
-        if current and size + len(unit[1]) > room:
-            # A heading goes on to the next part with the text it introduces.
-            carried = (
-                [current.pop()]
-                if len(current) > 1 and current[-1][0] == "heading" and len(current[-1][1]) + len(unit[1]) <= room
-                else []
-            )
-            parts.append(current)
-            current, size = carried, sum(len(block) for _, block in carried)
-        current.append(unit)
-        size += len(unit[1])
-    if current:
-        parts.append(current)
-    texts = ["".join(block for _, block in part).strip() for part in parts]
-    cut = len(texts) > most
-    if cut:
-        texts = texts[:most]
-        texts[-1] += "\n\n> " + CUT
-    return texts, cut
+        if size + len(block) > room:
+            cut = True
+            if not kept:
+                kept.append(("text", first_piece(kind, lines, room)))
+            elif kept[-1][0] == "heading":
+                if len(kept) > 1:
+                    kept.pop()
+                elif room - size >= PIECE:  # the only heading kept so far: the beginning of what it introduces
+                    kept.append(("text", first_piece(kind, lines, room - size)))
+            break
+        kept.append((kind, block))
+        size += len(block)
+    found = "".join(block for _, block in kept).strip()
+    return (found + "\n\n> " + CUT if cut else found), cut
 
 
-def joined(texts):
-    """The texts of a Markdown page's parts as one text again, without what a part repeats of the one before it
-    (pieces): the header of a table and the fences of a code block that go on into it. Two imports of a page compared
-    so (changes.compare) show what changed in it, not where it was cut into parts."""
-    lines, previous = [], None
-    for text in texts:
-        own = text.splitlines()
-        if previous is not None:
-            kind, block = blocks(previous)[-1]
-            block = [line.rstrip("\r\n") for line in block]
-            while block and not block[-1].strip():
-                block.pop()
-            if kind == "table" and len(block) > 2 and RULE.fullmatch(block[1]) and own[:2] == block[:2]:
-                own = own[2:]
-            elif (
-                kind == "code"
-                and len(block) > 1
-                and own[:1] == block[:1]
-                and lines[-1:] == block[-1:]
-                and FENCE.fullmatch(block[-1].rstrip(" \t"))
-            ):
-                lines.pop()
-                own = own[1:]
-        lines += own
-        previous = text
-    return "\n".join(lines)
-
-
-def markdown_parts(text):
-    """The documents a Markdown page is saved as: itself when it fits one."""
-    if len(text) <= MAX_MARKDOWN_CHARS:
-        return Split([(None, text)], text, False)
-    texts, cut = split_markdown(text, MAX_MARKDOWN_CHARS, MAX_PARTS)
-    return Split([(None, part) for part in texts], text, cut)
+def fit_markdown(text):
+    """A Markdown page as the document it is saved as: itself, or its beginning when it is longer than one holds."""
+    if len(text) <= MAX_DOCUMENT_CHARS:
+        return Fitted(None, text, False)
+    found, cut = first_markdown(text, MAX_DOCUMENT_CHARS)
+    return Fitted(None, found, cut)
 
 
 # --- HTML pages ------------------------------------------------------------------------------------------------------
 
-# Pictures stay out of the parser: a token stands for each until its part is assembled.
+# Pictures stay out of the parser: a token stands for each until the page is assembled.
 PICTURE = re.compile(r'(<img\b[^>]*?\ssrc=")(data:[^"]*)"', re.I)
 TOKEN = re.compile(r"data:,private-agent-picture-(\d+)")
 ROOT = re.compile(r'<div class="doc\b[^>]*>')
 END = "</div></body></html>"
 TITLE = re.compile(r"<title>(.*?)</title>", re.S)
+BODY = re.compile(r"<body\b[^>]*>(.*)</body>", re.S | re.I)
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-SECTIONS = {"section", "div", "article"}
 # For the size estimate: characters Markdown escapes, and the Markdown elements add around their text.
 ESCAPED = re.compile(r"[\\*_`\[\]&<>~=+|#]")
 MARKUP = {
@@ -264,7 +173,7 @@ MARKUP = {
 
 def estimate(node):
     """About how many characters of Markdown a node becomes, at least 1: an element without text may still become some
-    (<hr> is ---), and a part must not take any number of them. Each part is measured exactly before it is kept."""
+    (<hr> is ---). What is kept is measured exactly before it is saved."""
     if isinstance(node, Tag):
         text = node.get_text()
         size = len(text) + len(ESCAPED.findall(text))
@@ -284,7 +193,8 @@ def estimate(node):
 
 
 class Unit:
-    """A share of a page that goes to one part: an element, a text or a piece of one, below the elements in `path`."""
+    """A share of a page that is kept or left out as one: an element, a text or a piece of one, below the elements in
+    `path`."""
 
     __slots__ = ("path", "node", "size")
 
@@ -309,7 +219,7 @@ def header_row(row):
 
 
 def leads(node):
-    """Whether a node introduces what follows it, so that a part does not end with it."""
+    """Whether a node introduces what follows it, so that what is kept does not end with it."""
     if not isinstance(node, Tag):
         return False
     return (
@@ -319,30 +229,15 @@ def leads(node):
     )
 
 
-def start_tag(tag, **extra):
-    attributes = {**tag.attrs, **extra}
+def start_tag(tag):
     return (
         f"<{tag.name}"
         + "".join(
             f' {name}="{escape(" ".join(value) if isinstance(value, list) else str(value))}"'
-            for name, value in attributes.items()
+            for name, value in tag.attrs.items()
         )
         + ">"
     )
-
-
-def repeated(tag):
-    """What a part that goes on inside `tag` repeats: a table's columns and header, a section's heading."""
-    if tag.name == "table":
-        head = [child for child in tag.children if isinstance(child, Tag) and child.name in ("colgroup", "thead")]
-        row = tag.find("tr")
-        if not any(child.name == "thead" for child in head) and row is not None and header_row(row):
-            head.append(row)
-        return "".join(str(item) for item in head)
-    first = next((child for child in tag.children if isinstance(child, Tag)), None)
-    if tag.name in SECTIONS and first is not None and first.name in HEADINGS:
-        return start_tag(first) + escape(" ".join(first.get_text().split()) + " (계속)") + f"</{first.name}>"
-    return ""
 
 
 def markup(node):
@@ -353,45 +248,27 @@ def markup(node):
     return escape(node, quote=False)
 
 
-def render(units, opened):
-    """The HTML of a part's units with the elements around them, and those elements. An element a former part opened
-    (in `opened`, by id) goes on: it repeats its header, and a numbered list its numbers."""
-    out, stack, now = [], [], []
+def render(units):
+    """The HTML of the units with the elements around them, each closed where the units leave it."""
+    out, stack = [], []
     for unit in units:
         same = 0
         while same < len(stack) and same < len(unit.path) and stack[same] is unit.path[same]:
             same += 1
         while len(stack) > same:
             out.append(f"</{stack.pop().name}>")
-        for depth in range(same, len(unit.path)):
-            tag = unit.path[depth]
-            extra = {}
-            if id(tag) in opened and tag.name == "ol":
-                item = next(
-                    (
-                        outer
-                        for outer in (*unit.path[depth + 1 :], unit.node)
-                        if isinstance(outer, Tag) and outer.name == "li"
-                    ),
-                    None,
-                )
-                if item is not None:
-                    start = int(tag["start"]) if str(tag.get("start", "")).isdigit() else 1
-                    extra["start"] = str(start + len(item.find_previous_siblings("li")))
-            out.append(start_tag(tag, **extra))
-            if id(tag) in opened:
-                out.append(repeated(tag))
+        for tag in unit.path[same:]:
+            out.append(start_tag(tag))
             stack.append(tag)
-            now.append(tag)
         out.append(markup(unit.node))
     while stack:
         out.append(f"</{stack.pop().name}>")
-    return "".join(out), now
+    return "".join(out)
 
 
-def split_page(html, limit, most):
-    """A page whose text is longer than `limit` as pages that each hold at most that much: [(page, text)], and whether
-    pages beyond `most` were left out (the last page then ends with a note that says so)."""
+def first_page(html, limit):
+    """(the beginning of a page whose text is longer than `limit`, its text, whether its end was left out): the page
+    with as many of its elements as hold at most that much text, and the note that says so after them."""
     pictures = []
 
     def keep(match):
@@ -401,7 +278,7 @@ def split_page(html, limit, most):
     html = PICTURE.sub(keep, html)
     root, end = ROOT.search(html), html.rfind(END)
     if root is None or end < root.end():
-        raise UserError("변환된 HTML 문서를 나누지 못했습니다.")
+        raise UserError("변환된 HTML 문서가 길어 줄이려 했으나 구조를 읽지 못했습니다.")
     head, tail = html[: root.end()], html[end:]
     units = [
         Unit((), node)
@@ -409,69 +286,239 @@ def split_page(html, limit, most):
         if not (type(node) is NavigableString and not node.strip())
     ]
     room = limit - NOTE_ROOM
-    # Characters of text per estimated one: a cautious guess at first, then what the part measured last had. Every
-    # part is measured before it is kept, so a guess that runs short only costs another try.
+    # Characters of text per estimated one: a cautious guess at first, then what the try before had. What is kept is
+    # measured before it is saved, so a guess that runs short only costs another try.
     ratio = 1.1
     budget = int(room * 0.97 / ratio)
-    parts, opened, index, cut = [], set(), 0, False
-    while index < len(units):
-        if len(parts) == most:
-            cut = True
-            break
-        stop, size = index, 0
+    while True:
+        stop, size = 0, 0
         while stop < len(units):
             unit = units[stop]
-            if unit.size > budget:  # too long for any part: its first pieces fill this one
+            if unit.size > budget:  # too long to keep whole: its first pieces are kept
                 smaller = divide(unit)
                 if smaller:
                     units[stop : stop + 1] = smaller
                     continue
-            if stop > index and size + unit.size > budget:
+            if stop and size + unit.size > budget:
                 break
             size += unit.size
             stop += 1
-        if stop < len(units):  # cut short: a heading or table header goes on with what it introduces
-            while stop - index > 1 and leads(units[stop - 1].node):
+        if stop < len(units):  # cut short: a heading or table header goes with what it introduces
+            while stop > 1 and leads(units[stop - 1].node):
                 stop -= 1
-        body, now = render(units[index:stop], opened)
+        body = render(units[:stop])
         text = page_text(head + body + tail)
-        size = sum(unit.size for unit in units[index:stop])
+        size = sum(unit.size for unit in units[:stop])
         if size and text:
             ratio = max(len(text) / size, 0.2)
-        if len(text) > room:
-            if stop - index > 1:
-                # The next try takes fewer units, whatever the estimate says, so the cutting always ends.
-                budget = max(1, min(int(room * 0.95 / ratio), size - 1))
-                continue
-            smaller = divide(units[index])
-            if not smaller:
-                raise UserError(f"한 문서에 담을 수 있는 {limit:,}자보다 긴 항목이 있어 문서를 나누지 못했습니다.")
-            units[index : index + 1] = smaller
+        if len(text) <= room:
+            break
+        if stop > 1:
+            # The next try takes fewer units, whatever the estimate says, so the cutting always ends.
+            budget = max(1, min(int(room * 0.95 / ratio), size - 1))
             continue
-        if text or not parts:
-            parts.append([body, text])
-        else:
-            parts[-1][0] += body  # only markup without text: it stays with the part before
-        opened.update(map(id, now))
-        index, budget = stop, max(1, int(room * 0.97 / ratio))
-    title = TITLE.search(head)
-    pages = []
-    for number, (body, text) in enumerate(parts, 1):
-        named = head
-        if title:
-            name = escape(part_title(unescape(title.group(1)), number, len(parts)))
-            named = head[: title.start(1)] + name + head[title.end(1) :]
-        if cut and number == len(parts):
-            body += f'<p class="caption">{escape(CUT)}</p>'
-            text = page_text(named + body + tail)
-        pages.append((TOKEN.sub(lambda match: pictures[int(match.group(1))], named + body + tail), text))
-    return pages, cut
+        smaller = divide(units[0])
+        if not smaller:
+            raise UserError(f"한 문서에 담을 수 있는 {limit:,}자보다 긴 항목이 있어 문서를 줄이지 못했습니다.")
+        units[0:1] = smaller
+    cut = stop < len(units)
+    if cut:
+        body += f'<p class="caption">{escape(CUT)}</p>'
+        text = page_text(head + body + tail)
+    return TOKEN.sub(lambda match: pictures[int(match.group(1))], head + body + tail), text, cut
 
 
-def page_parts(html):
-    """The documents a converted page is saved as: itself when its text fits one."""
+def fit_page(html):
+    """A converted page as the document it is saved as: itself, or its beginning when its text is longer than a
+    document holds."""
     text = index_markdown(html)
-    if len(text) <= MAX_MARKDOWN_CHARS:
-        return Split([(html, text)], text, False)
-    pages, cut = split_page(html, MAX_MARKDOWN_CHARS, MAX_PARTS)
-    return Split(pages, text, cut)
+    if len(text) <= MAX_DOCUMENT_CHARS:
+        return Fitted(html, text, False)
+    return Fitted(*first_page(html, MAX_DOCUMENT_CHARS))
+
+
+# --- The parts of earlier versions -----------------------------------------------------------------------------------
+
+
+def whole_title(title, part, parts):
+    """The title of an import, from the title an earlier version gave its part `part` of `parts`: "<title> (2/5)"."""
+    suffix = f" ({part}/{parts})"
+    return title[: -len(suffix)] if parts > 1 and title.endswith(suffix) else title
+
+
+def join_markdown(texts):
+    """The texts of a Markdown page's parts as one text again: without what a part repeated of the one before it (the
+    header of a table and the fences of a code block that went on into it), and with a blank line where a part ended
+    with a block."""
+    lines, previous = [], None
+    for text in texts:
+        own = text.splitlines()
+        if previous is not None:
+            found = blocks(previous)
+            kind, block = found[-1] if found else ("text", [])
+            block = [line.rstrip("\r\n") for line in block]
+            while block and not block[-1].strip():
+                block.pop()
+            if kind == "table" and len(block) > 2 and RULE.fullmatch(block[1]) and own[:2] == block[:2]:
+                own = own[2:]
+            elif (
+                kind == "code"
+                and len(block) > 1
+                and own[:1] == block[:1]
+                and lines[-1:] == block[-1:]
+                and FENCE.fullmatch(block[-1].rstrip(" \t"))
+            ):
+                lines.pop()
+                own = own[1:]
+            else:
+                lines.append("")
+        lines += own
+        previous = text
+    return "\n".join(lines)
+
+
+def join_pages(pages, title):
+    """The HTML pages of a file's parts as one page titled `title`: the first page's head around what each part shows.
+    A table or section that went on from one part into the next stays as the parts had it, the next one beginning with
+    the header it repeated; the file's next import makes the page anew."""
+    bodies, head = [], None
+    for page in pages:
+        root, end = ROOT.search(page), page.rfind(END)
+        if root is None or end < root.end():
+            whole = BODY.search(page)
+            bodies.append(whole.group(1) if whole else page)
+            continue
+        bodies.append(page[root.end() : end])
+        head = head or page[: root.end()]
+    if head is None:
+        from .html_document import page as new_page
+
+        return new_page(title, "".join(bodies), "")
+    named = TITLE.search(head)
+    if named:
+        head = head[: named.start(1)] + escape(title) + head[named.end(1) :]
+    return head + "".join(bodies) + END
+
+
+def parted(db, table):
+    """The key (values of its columns) of an import in the source table `table` that an earlier version saved in
+    parts, or None when there is none left."""
+    from .db import SOURCE_TABLES
+
+    columns = SOURCE_TABLES[table][1]
+    # By the index of such rows (db.py), which is empty once all are merged: no start reads the table for it.
+    row = db.execute(f"SELECT {columns} FROM {table} INDEXED BY idx_{table}_parted WHERE parts>1 LIMIT 1").fetchone()
+    return tuple(row) if row else None
+
+
+def merge(db, table, key):
+    """Make the documents of the import with `key` (values of the source table's key) one document, within the
+    caller's transaction, and return its id (None when the import has no document).
+
+    The document of the lowest part takes the texts of all, in the order of the parts, its page the pages of all, and
+    the title without " (1/5)" unless the user gave it another. Parts in the trash stay there as documents of their
+    own when others are live: the user deleted them, and they are not brought back; when all are in the trash, they
+    are one document there. What the user changed in a part stays changed (the text imported is kept beside it as
+    before), and a document with a changed part is the Markdown the user wrote, its page the original. The AI analysis
+    was of each part and is taken back: the document is analyzed again as one. Tasks and the copies of write-backs
+    that named another part name the document, and merged_documents says where each of those went."""
+    from .db import SOURCE_TABLES, index_text
+
+    columns = [column.strip() for column in SOURCE_TABLES[table][1].split(",")]
+    where = " AND ".join(f"s.{column}=?" for column in columns)
+    rows = db.execute(
+        f"""SELECT s.doc_id, s.part, s.parts, s.title AS given, s.markdown, d.title, d.content, d.format,
+        d.deleted_at, d.created_at, d.updated_at FROM {table} s JOIN documents d ON d.id=s.doc_id
+        WHERE {where} ORDER BY s.part, s.doc_id""",
+        list(key),
+    ).fetchall()
+    if not rows:
+        return None
+    live = [row for row in rows if not row["deleted_at"]]
+    used = live or rows
+    first, others = used[0], [row["doc_id"] for row in used[1:]]
+    # The parts left in the trash are documents without a source from here on: the import is the document.
+    kept = {row["doc_id"] for row in used}
+    for row in rows:
+        if row["doc_id"] not in kept:
+            db.execute(f"DELETE FROM {table} WHERE doc_id=?", (row["doc_id"],))
+    ident = first["doc_id"]
+    given = first["given"] or first["title"]
+    title = whole_title(given, first["part"], first["parts"])
+    named = title if first["title"] == given else first["title"]
+    values = {"part": 1, "parts": 1, "title": title}
+    if len(used) > 1:
+        pages = {
+            row["doc_id"]: row["html"]
+            for row in db.execute(
+                f"SELECT doc_id, html FROM document_html WHERE doc_id IN ({','.join('?' * len(used))})",
+                [row["doc_id"] for row in used],
+            )
+        }
+        join = join_markdown if not pages else "\n\n".join
+        content = join([row["content"] for row in used])
+        values["markdown"] = join([row["markdown"] for row in used])
+        if "written" in {column[1] for column in db.execute(f"PRAGMA table_info({table})")}:
+            # What write-backs put into the file was kept by part: the next write reads the file again instead.
+            values["written"] = ""
+        shown = "html" if pages and all(row["format"] == "html" for row in used) else "markdown"
+        db.execute(
+            """UPDATE documents SET title=?,content=?,format=?,summary='',status='pending',error='',index_mode='',
+            revision=revision+1,created_at=?,updated_at=?,deleted_at=? WHERE id=?""",
+            (
+                named,
+                content,
+                shown,
+                min(row["created_at"] for row in used),
+                max(row["updated_at"] for row in used),
+                None if live else max(row["deleted_at"] for row in used),
+                ident,
+            ),
+        )
+        for name in ("keywords", "relations", "doc_nodes"):
+            db.execute(f"DELETE FROM {name} WHERE doc_id=?", (ident,))
+        if pages:
+            page = join_pages([pages[row["doc_id"]] for row in used if row["doc_id"] in pages], title)
+            db.execute(
+                "INSERT INTO document_html(doc_id,html) VALUES(?,?) "
+                "ON CONFLICT(doc_id) DO UPDATE SET html=excluded.html",
+                (ident, page),
+            )
+        marks = ",".join("?" * len(others))
+        db.execute(f"UPDATE tasks SET source_id=? WHERE source_id IN ({marks})", [ident, *others])
+        db.execute(f"UPDATE writeback_backups SET doc_id=? WHERE doc_id IN ({marks})", [ident, *others])
+        db.execute(f"UPDATE merged_documents SET doc_id=? WHERE doc_id IN ({marks})", [ident, *others])
+        db.executemany(
+            "INSERT OR REPLACE INTO merged_documents(id,doc_id) VALUES(?,?)", [(old, ident) for old in others]
+        )
+        # Their source rows, pages, search text and analysis go with them (ON DELETE CASCADE).
+        db.execute(f"DELETE FROM documents WHERE id IN ({marks})", others)
+    elif named != first["title"]:
+        # The one part left only loses the number in its title: a new revision, which its table of contents follows
+        # as after any change of the title alone (Service.wiki_save).
+        db.execute("UPDATE documents SET title=?,revision=revision+1 WHERE id=?", (named, ident))
+        db.execute("UPDATE doc_nodes SET revision=revision+1 WHERE doc_id=?", (ident,))
+    db.execute(
+        f"UPDATE {table} SET {','.join(f'{column}=?' for column in values)} WHERE doc_id=?", [*values.values(), ident]
+    )
+    index_text(db, [ident])
+    return ident
+
+
+def merge_all(connect, budget=None):
+    """Merge every import an earlier version saved in parts, one a transaction, for as long as `budget` seconds last
+    (None: until done). `connect` opens the Wiki (Database.connect). Returns whether none is left."""
+    from .db import SOURCE_TABLES
+
+    deadline = None if budget is None else time.monotonic() + budget
+    for table in SOURCE_TABLES:
+        while True:
+            with connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                key = parted(db, table)
+                if key is None:
+                    break
+                merge(db, table, key)
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+    return True

@@ -69,7 +69,7 @@ def test_import_search_source_persistence_duplicate_edits_and_delete(service):
     restarted = Service(Database(service.db.path), None)
     assert restarted.wiki_source_markdown({"id": doc["id"]})["markdown"] == markdown
     updated = import_issue(service, {**changed, "doc_id": doc["id"], "replace": True})
-    assert (updated["status"], updated["doc_ids"]) == ("updated", [doc["id"]])
+    assert (updated["status"], updated["doc_id"]) == ("updated", doc["id"])
     replaced = service.wiki_get({"id": doc["id"]})
     assert (replaced["title"], replaced["content"], replaced["revision"]) == ("수정", "변경된 페이지", 3)
     assert len(service.wiki_list({})) == 1
@@ -95,13 +95,15 @@ def test_limits_and_in_memory_payload_validation(service, tmp_path):
         service.dispatch("jira.import", params)
 
 
-def test_a_ticket_longer_than_a_document_is_saved_in_parts_and_keeps_its_first_comments(service, monkeypatch):
+def test_a_long_ticket_is_one_document_and_keeps_its_first_comments(service, monkeypatch):
     comments = "".join(f"<h3>김개발 · 2026-09-{i % 28 + 1:02d}</h3><p>{'댓글 ' * 400}</p>" for i in range(120))
     result = import_issue(service, capture(service, comments))
-    docs = [service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
-    assert result["message"] == f"글이 80,000자를 넘어 Markdown 문서 {len(docs)}개로 나누어 Wiki에 저장했습니다."
-    assert len(docs) == 2 and [doc["title"] for doc in docs] == ["JIRA 테스트 (1/2)", "JIRA 테스트 (2/2)"]
-    assert all(doc["source"]["issue_key"] == "TEAM-123" and len(doc["content"]) <= 80000 for doc in docs)
+    assert result["message"] == "Markdown 문서를 Wiki에 저장했습니다."
+    doc = service.wiki_get({"id": result["doc_id"]})
+    # More than the 80,000 characters at which earlier versions began another document.
+    assert doc["title"] == "JIRA 테스트" and len(doc["content"]) > 140000 and doc["content"].count("### 김개발") == 120
+    assert doc["source"]["issue_key"] == "TEAM-123" and "part" not in doc["source"]
+    assert [entry["id"] for entry in service.wiki_list({})] == [doc["id"]]
     assert import_issue(service, capture(service, comments))["status"] == "skipped"
 
     # Comments beyond the limit are left out, and the ticket says how many it shows.

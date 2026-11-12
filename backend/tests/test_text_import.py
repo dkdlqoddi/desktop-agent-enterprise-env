@@ -12,6 +12,7 @@ from agent import text_import
 from agent.db import Database
 from agent.llm import UserError
 from agent.notepad import ENCRYPTED
+from agent.parts import CUT, CUT_MESSAGE
 from agent.service import Service
 from agent.text_import import capabilities, notepad_page
 from test_rtf_import import FakeLLM, wait
@@ -120,20 +121,30 @@ def test_text_import_needs_windows_notepad(tmp_path, monkeypatch):
     assert service.texts.converter is notepad_page
 
 
-def test_a_text_longer_than_a_wiki_document_is_saved_in_parts_cut_between_its_lines(importer, notepad, tmp_path):
+def test_a_long_text_is_one_document_and_one_longer_than_a_document_holds_is_cut_between_its_lines(
+    importer, notepad, tmp_path, monkeypatch
+):
     file = tmp_path / "로그.txt"
     file.write_bytes(b"\x9b\x01 encrypted")
     notepad.texts["로그.txt"] = "".join(f"{index}번째 줄 <기록> & {'내용 ' * 50}\n" for index in range(1000))
     importer.start({"path": str(file), "mode": "file"})
     result = wait(importer)["results"][0]
-    docs = [importer.service.wiki_get({"id": ident}) for ident in result["doc_ids"]]
-    assert result["message"] == "글이 80,000자를 넘어 HTML 문서 3개로 나누어 Wiki에 저장했습니다."
-    assert [(doc["title"], doc["source"]["part"], doc["source"]["kind"]) for doc in docs] == [
-        ("로그 (1/3)", 1, "text"),
-        ("로그 (2/3)", 2, "text"),
-        ("로그 (3/3)", 3, "text"),
-    ]
-    # Every line arrives once, whole, and each part is a text page of its own.
-    pages = [re.search(r'<div class="doc text"><pre>(.*)</pre></div>', doc["html"], re.S).group(1) for doc in docs]
-    assert "".join(unescape(text) for text in pages) == notepad.texts["로그.txt"]
-    assert all(text.endswith("\n") for text in pages)
+    assert result["message"] == "HTML 문서로 Wiki에 저장했습니다."
+    doc = importer.service.wiki_get({"id": result["doc_id"]})
+    # More than the 80,000 characters at which earlier versions began another document, every line once.
+    assert (doc["title"], doc["source"]["kind"]) == ("로그", "text") and len(doc["content"]) > 160000
+    shown = re.search(r'<div class="doc text"><pre>(.*)</pre></div>', doc["html"], re.S).group(1)
+    assert unescape(shown) == notepad.texts["로그.txt"]
+    # Longer than a document holds, the text keeps its beginning: whole lines, and a note of what was left out.
+    monkeypatch.setattr("agent.parts.MAX_DOCUMENT_CHARS", 20000)
+    longer = tmp_path / "긴 로그.txt"
+    longer.write_bytes(b"\x9b\x02 encrypted")
+    notepad.texts["긴 로그.txt"] = notepad.texts["로그.txt"]
+    importer.start({"path": str(longer), "mode": "file"})
+    result = wait(importer)["results"][0]
+    assert result["message"] == "HTML 문서로 Wiki에 저장했습니다. " + CUT_MESSAGE
+    cut = importer.service.wiki_get({"id": result["doc_id"]})
+    assert len(cut["content"]) <= 20000 and cut["content"].endswith(CUT)
+    kept = unescape(re.search(r'<div class="doc text"><pre>(.*)</pre>', cut["html"], re.S).group(1))
+    assert kept.endswith("\n") and notepad.texts["로그.txt"].startswith(kept) and len(kept) > 10000
+    assert f'<p class="caption">{CUT}</p>' in cut["html"]

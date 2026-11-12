@@ -12,7 +12,7 @@ from pathlib import Path
 from . import diagnostics, sources
 from .html_document import validate_html
 from .llm import BusyError, UserError
-from .parts import page_parts
+from .parts import fit_page
 from .word_converter import WordConverter
 
 MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -189,11 +189,11 @@ class FileImporter:
             raise UserError(f"빈 {self.label} 파일입니다.")
         return digest.hexdigest()
 
-    def _plan(self, db, path, checksum, target, replace, split=None, stat=None):
+    def _plan(self, db, path, checksum, target, replace, fitted=None, stat=None):
         """What importing the file at `path` with the bytes `checksum` does (sources.plan): a file the same bytes were
-        imported from is skipped, another one updates the earlier import of the same path unless its converted `split`
-        has the text that import saved. A file moved from where its bytes were imported takes their documents along,
-        with its `stat` (sources.file_stat)."""
+        imported from is skipped, another one updates the earlier import of the same path unless its converted page
+        `fitted` has the text that import saved. A file moved from where its bytes were imported takes its document
+        along, with its `stat` (sources.file_stat)."""
         found = sources.plan(
             db,
             self.source_table,
@@ -201,21 +201,21 @@ class FileImporter:
             {"source_hash": checksum},
             target,
             replace,
-            split,
+            fitted,
             automatic=self._automatic(),
             stat=stat,
         )
         if (
             found.action == "skip"
             and found.reason == "same"
-            and not db.execute("SELECT 1 FROM document_html WHERE doc_id=?", (found.rows[0]["doc_id"],)).fetchone()
+            and not db.execute("SELECT 1 FROM document_html WHERE doc_id=?", (found.row["doc_id"],)).fetchone()
         ):
-            # Saved as Markdown by an earlier version: the same documents become the HTML page, unless the user changed
-            # their text.
+            # Saved as Markdown by an earlier version: the same document becomes the HTML page, unless the user changed
+            # its text.
             return (
-                sources.Plan("skip", found.rows, "edited")
-                if sources.edited(found.rows) and not replace
-                else sources.Plan("update", found.rows, "page")
+                sources.Plan("skip", found.row, "edited")
+                if sources.edited(found.row) and not replace
+                else sources.Plan("update", found.row, "page")
             )
         return found
 
@@ -230,7 +230,7 @@ class FileImporter:
         stat = sources.file_stat(file)
         with self.service.db.connect() as db:
             if self._automatic() and sources.ignored(db, self.source_table, path):
-                return sources.skipped(sources.Plan("skip", [], "ignored"), "")
+                return sources.skipped(sources.Plan("skip", None, "ignored"), "")
             # A file whose size and modification time are the ones its import recorded is not read again to tell it
             # is the same: a routine over a folder of large files would read every one of them at every run.
             checksum = sources.stored_hash(db, self.source_table, path, stat)
@@ -242,9 +242,7 @@ class FileImporter:
             found = self._plan(db, path, checksum, target, replace, stat=stat)
             if found.action == "skip" and found.reason == "same":
                 # The same bytes: their size and time are recorded, so that the next import need not read them.
-                sources.touch(
-                    db, self.source_table, found.rows, {"source_size": stat[0], "source_mtime": stat[1]}, path
-                )
+                sources.touch(db, self.source_table, found.row, {"source_size": stat[0], "source_mtime": stat[1]}, path)
         if found.action == "skip":
             return sources.skipped(found, f"이미 가져온 동일한 {self.label}입니다.")
         if self.cancel_event.is_set():
@@ -255,7 +253,7 @@ class FileImporter:
         html = self.converter(file, self.cancel_event)
         if self.cancel_event.is_set():
             return None
-        split = page_parts(validate_html(html))
+        fitted = fit_page(validate_html(html))
         # Reading the original in place avoids snapshots. Reject a source edited during conversion.
         if self._checksum(file) != checksum:
             if self.cancel_event.is_set():
@@ -264,16 +262,16 @@ class FileImporter:
         timestamp = now()
         with self.service.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            found = self._plan(db, path, checksum, target, replace, split, stat)
+            found = self._plan(db, path, checksum, target, replace, fitted, stat)
             if found.action == "skip":
                 return sources.skipped(found, f"이미 가져온 동일한 {self.label}입니다.")
             if self.cancel_event.is_set():
                 return None
-            ids, removed = sources.save(
+            ident = sources.save(
                 db,
                 self.source_table,
                 found,
-                split,
+                fitted,
                 file.stem,
                 timestamp,
                 {
@@ -284,22 +282,15 @@ class FileImporter:
                     **self.details(file),
                 },
             )
-        result = sources.outcome(found, split, ids, removed, "HTML 문서로 Wiki에 저장했습니다.", "HTML")
-        if analyze:
-            for ident in ids:
-                if self.cancel_event.is_set():
-                    break
-                try:
-                    self.service.wiki_analyze({"id": ident})
-                except UserError as error:
-                    result.setdefault("analysis_error", str(error))
-            if "analysis_error" in result:
+        result = sources.outcome(found, fitted, ident, "HTML 문서로 Wiki에 저장했습니다.")
+        # A kept import saved no document: the one it has keeps its analysis.
+        if analyze and ident is not None and not self.cancel_event.is_set():
+            try:
+                self.service.wiki_analyze({"id": ident})
+            except UserError as error:
+                result["analysis_error"] = str(error)
                 done = "업데이트" if result["status"] == "updated" else "저장"
-                result["message"] = (
-                    f"{done} 완료 · AI 분석 실패 (문서에서 재시도 가능)"
-                    if len(ids) == 1
-                    else f"{result['message']} AI 분석에 실패한 문서가 있습니다 (문서에서 재시도 가능)."
-                )
+                result["message"] = f"{done} 완료 · AI 분석 실패 (문서에서 재시도 가능)"
         return result
 
     def notice(self, file):

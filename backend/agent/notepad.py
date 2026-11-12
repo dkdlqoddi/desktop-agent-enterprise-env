@@ -19,8 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .llm import UserError
-from .markdown_import import MAX_MARKDOWN_CHARS
-from .parts import MAX_PARTS
+from .markdown_import import MAX_DOCUMENT_CHARS
 
 SECONDS = 30  # Notepad starts, opens the file and shows it.
 HANDOVER_SECONDS = 5  # The window a running Notepad opens for the file after the one started here ended.
@@ -31,9 +30,9 @@ POLL_SECONDS = 0.2
 STEADY_LOOKS, EMPTY_LOOKS = 2, 5
 # Notepad's text box, and that of Windows 11 Notepad.
 TEXT_BOXES = ("Edit", "RichEditD2DPT")
-# Read at most this much of a text: even with every line break as "\r\n", more than MAX_PARTS Wiki documents hold, so
-# the import of a longer text saves that many parts and says the rest was left out (parts.py).
-MAX_TEXT_CHARS = 2 * MAX_PARTS * MAX_MARKDOWN_CHARS
+# Read at most this much of a text: even with every line break as "\r\n", more than a Wiki document holds, so the
+# import of a longer text keeps its beginning and says the rest was left out (parts.py).
+MAX_TEXT_CHARS = 2 * MAX_DOCUMENT_CHARS
 
 SW_HIDE = 0
 GWL_STYLE = -16

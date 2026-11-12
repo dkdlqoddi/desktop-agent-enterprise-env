@@ -277,7 +277,7 @@
       "get": {
         "operationId": "get_search",
         "tags": ["search"],
-        "summary": "문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만 (나누어 받으면 여러 부분으로 저장한 가져오기는 parts가 있는 하나로)",
+        "summary": "문서 검색. limit·cursor와 거르기는 prompt가 아닐 때만",
         "description": "메서드 wiki.search · 범위 read · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
         "x-scope": "read",
         "parameters": [
@@ -653,7 +653,7 @@
                   },
                   "content": {
                     "type": "string",
-                    "description": "본문 Markdown (최대 80,000자)"
+                    "description": "본문 Markdown (최대 8,000,000자)"
                   }
                 },
                 "required": ["title", "content"]
@@ -769,7 +769,7 @@
                   },
                   "content": {
                     "type": "string",
-                    "description": "본문 Markdown (최대 80,000자)"
+                    "description": "본문 Markdown (최대 8,000,000자)"
                   },
                   "expected_revision": {
                     "type": "integer",

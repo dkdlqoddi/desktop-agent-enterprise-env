@@ -7,6 +7,7 @@ import pytest
 from agent import pageindex
 from agent.db import Database
 from agent.llm import LLM, UserError
+from agent.markdown_import import MAX_DOCUMENT_CHARS
 from agent.service import Service
 
 
@@ -435,7 +436,7 @@ def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(servic
     with pytest.raises(UserError, match="편집을 시작한 문서"):
         service.dispatch("wiki.compare", {"id": doc["id"], "base": ["not text"], "content": mine})
     with pytest.raises(UserError, match="문서"):
-        service.dispatch("wiki.compare", {"id": doc["id"], "base": base, "content": "x" * 80001})
+        service.dispatch("wiki.compare", {"id": doc["id"], "base": base, "content": "x" * (MAX_DOCUMENT_CHARS + 1)})
     # A document moved to the trash meanwhile is no conflict to compare: the window tells wiki.save's refusal.
     service.wiki_delete({"id": doc["id"]})
     with pytest.raises(UserError, match="찾을 수 없습니다"):

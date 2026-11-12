@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from . import diagnostics, pageindex, paging, sources, storage
 from .db import index_text
 from .llm import UserError, shown
+from .markdown_import import MAX_DOCUMENT_CHARS
 
 _clock = threading.Lock()
 _last_now = datetime.min.replace(tzinfo=timezone.utc)
@@ -109,16 +110,16 @@ WIDGET_SIZES = ("s", "m", "l", "xl")
 WIDGET_HEIGHTS = ("auto", "s", "m", "l")
 MAX_WIDGETS = 40
 
-# Each document's import source as the screens show it; `part` of `parts` numbers an import saved in parts.
-# imported_at is when the document last took its text from there.
+# Each document's import source as the screens show it. imported_at is when the document last took its text from
+# there.
 SOURCES = (
-    ("rtf_sources", "rtf", "source_path,imported_at,part,parts"),
-    ("confluence_sources", "confluence", "source_url,page_id,imported_at,part,parts"),
-    ("jira_sources", "jira", "source_url,issue_key,imported_at,part,parts"),
-    ("office_sources", "office", "source_path,application,imported_at,part,parts"),
-    ("image_sources", "image", "source_path,imported_at,part,parts"),
-    ("text_sources", "text", "source_path,imported_at,part,parts"),
-    ("markdown_sources", "markdown", "source_path,imported_at,part,parts"),
+    ("rtf_sources", "rtf", "source_path,imported_at"),
+    ("confluence_sources", "confluence", "source_url,page_id,imported_at"),
+    ("jira_sources", "jira", "source_url,issue_key,imported_at"),
+    ("office_sources", "office", "source_path,application,imported_at"),
+    ("image_sources", "image", "source_path,imported_at"),
+    ("text_sources", "text", "source_path,imported_at"),
+    ("markdown_sources", "markdown", "source_path,imported_at"),
 )
 
 # The most documents one request on the document list's selection may name.
@@ -751,44 +752,31 @@ class Service:
             )
 
     def wiki_page(self, p, filters, test, args):
-        """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. An import
-        saved in parts is one entry, its document updated last of those the filters keep, with the import's
-        documents in `parts` ([] for a document not saved in parts). `total` counts the documents the filters keep, as
-        stats counts them (each part of an import is one), so a screen shows how many there are while it has a page."""
+        """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. `total`
+        counts the documents the filters keep, as stats counts them, so a screen shows how many there are while it has
+        a page."""
         limit = paging.size(p, "문서 목록은", 500)
         after = paging.decode(p, "list", (str, str))
-        entries = []
         with self.db.connect() as db:
             total = db.execute(f"SELECT count(*) FROM documents d WHERE d.{LIVE} AND {test}", args).fetchone()[0]
-            while len(entries) <= limit:
-                # Before the cursor's entry: written so the index is searched from it rather than read from the top.
-                keyset, keys = (
-                    ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]])
-                    if after
-                    else ("1", [])
-                )
-                # The + keeps the planner from finding the live documents by idx_documents_deleted and sorting them all.
-                rows = [
+            # Before the cursor's entry: written so the index is searched from it rather than read from the top.
+            keyset, keys = (
+                ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]])
+                if after
+                else ("1", [])
+            )
+            # The + keeps the planner from finding the live documents by idx_documents_deleted and sorting them all.
+            entries = self.attach(
+                db,
+                [
                     dict(row)
                     for row in db.execute(
                         f"""SELECT {LISTED} FROM documents d
                     WHERE +d.{LIVE} AND {test} AND {keyset} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?""",
                         [*args, *keys, limit + 1],
                     )
-                ]
-                if not rows:
-                    break
-                docs = self.attach(db, rows)
-                groups = paging.imports(db, [doc["id"] for doc in docs if doc["source"] and doc["source"]["parts"] > 1])
-                for doc in docs:
-                    after = (doc["updated_at"], doc["id"])
-                    found = paging.members(db, *groups[doc["id"]], filters) if doc["id"] in groups else []
-                    if any(row["passes"] and (row["updated_at"], row["id"]) > after for row in found):
-                        continue  # A document of the same import comes first.
-                    doc["parts"] = paging.parts(found)
-                    entries.append(doc)
-                    if len(entries) > limit:
-                        break
+                ],
+            )
         if len(entries) <= limit:
             return {"documents": entries, "next_cursor": None, "total": total}
         last = entries[limit - 1]
@@ -800,9 +788,11 @@ class Service:
 
     def document(self, ident, html=False):
         """A document with its source, keywords, relations and outline. `html` adds the HTML page it shows
-        while its format is html; content stays the Markdown text that search and the LLM read."""
+        while its format is html; content stays the Markdown text that search and the LLM read. The id of a document
+        that was one part of a long import of an earlier version names the document its parts became (sources.whole)."""
         with self.db.connect() as db:
-            row = db.execute(f"SELECT * FROM documents WHERE id=? AND {LIVE}", (text(ident, "ID", 80),)).fetchone()
+            ident = sources.whole(db, text(ident, "ID", 80))
+            row = db.execute(f"SELECT * FROM documents WHERE id=? AND {LIVE}", (ident,)).fetchone()
             if not row:
                 raise UserError("문서를 찾을 수 없습니다.")
             result = self.attach(db, [dict(row)])[0]
@@ -813,19 +803,10 @@ class Service:
                 dict(r) for r in db.execute("SELECT source,target,label FROM relations WHERE doc_id=?", (row["id"],))
             ]
             result["large"] = len(row["content"]) > pageindex.MIN_CHARS
-            result["parts"] = []
             if result["source"]:
-                # Every document the import was saved as: an update from the source replaces them all, so it asks
-                # first when the user changed the text of any of them.
-                found = sources.group(db, self.source_table(result["source"]), row["id"])
+                # An update from the source replaces the text, so it asks first when the user changed it.
+                found = sources.of(db, self.source_table(result["source"]), row["id"])
                 result["source"]["edited"] = sources.edited(found)
-                if result["source"]["parts"] > 1:
-                    # The parts to go on to from this window: those in the trash are not among them, as in the list.
-                    result["parts"] = [
-                        {"id": r["doc_id"], "title": r["now_title"], "part": r["part"]}
-                        for r in found
-                        if not r["deleted_at"]
-                    ]
             result["outline"] = []
             if row["index_mode"] == "pageindex":
                 # A section's position among the document's headings, so the screen can scroll to it.
@@ -847,10 +828,19 @@ class Service:
         """Create a document or save an edit. `expected_revision`, the revision the editor opened, keeps an edit
         from overwriting text that changed meanwhile (another window, an AI tool, an import)."""
         ident = text(p.get("id") or str(uuid.uuid4()), "ID", 80)
-        title, content = text(p.get("title"), "제목", 200), text(p.get("content"), "문서", 80000)
+        title, content = text(p.get("title"), "제목", 200), text(p.get("content"), "문서", MAX_DOCUMENT_CHARS)
         expected = p.get("expected_revision")
         if expected is not None and (isinstance(expected, bool) or not isinstance(expected, int)):
             raise UserError("문서 버전(expected_revision)을 확인해 주세요.")
+        with self.db.connect() as db:
+            # A part of a long import of an earlier version is one document with the other parts now: text meant
+            # for the part neither replaces that document nor becomes a new one under the part's id.
+            merged = sources.whole(db, ident) != ident
+        if merged:
+            raise UserError(
+                "긴 자료를 여러 문서로 나눠 저장하던 때의 한 부분이며, 지금은 한 문서로 합쳐졌습니다. 합쳐진 문서를 "
+                "다시 열어 고쳐 주세요."
+            )
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT title,content,revision,deleted_at FROM documents WHERE id=?", (ident,)).fetchone()
@@ -910,8 +900,8 @@ class Service:
         changed (ours), and what saving the editor's text over the document would change in it (overwrite)."""
         from .changes import diff
 
-        base = text(p.get("base", ""), "편집을 시작한 문서", 80000, required=False)
-        content = text(p.get("content", ""), "문서", 80000, required=False)
+        base = text(p.get("base", ""), "편집을 시작한 문서", MAX_DOCUMENT_CHARS, required=False)
+        content = text(p.get("content", ""), "문서", MAX_DOCUMENT_CHARS, required=False)
         revision = p.get("base_revision")
         if revision is not None and (isinstance(revision, bool) or not isinstance(revision, int)):
             raise UserError("문서 버전(base_revision)을 확인해 주세요.")

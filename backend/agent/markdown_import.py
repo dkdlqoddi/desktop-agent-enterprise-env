@@ -10,8 +10,9 @@ from markdownify import MarkdownConverter
 from .llm import UserError
 
 MAX_SOURCE_BYTES = 10 * 1024 * 1024
-# The text of one Wiki document; a longer import is saved as several (parts.py).
-MAX_MARKDOWN_CHARS = 80000
+# The text of one Wiki document, written or imported: what earlier versions saved of a long import, as 100 documents of
+# 80,000 characters. A longer import keeps its beginning (parts.py).
+MAX_DOCUMENT_CHARS = 8_000_000
 
 
 def code_language(el):
@@ -47,7 +48,7 @@ class WikiMarkdownConverter(MarkdownConverter):
 
 
 def validate_markdown(content):
-    """The converted text; one longer than a Wiki document holds is saved in parts (parts.py)."""
+    """The converted text; one longer than a Wiki document holds keeps its beginning (parts.py)."""
     if not isinstance(content, str) or not content.strip():
         raise UserError("변환된 Markdown 본문이 없습니다. 이미지로만 된 문서는 지원하지 않습니다.")
     return content.strip()

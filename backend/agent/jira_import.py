@@ -514,28 +514,26 @@ class JiraImporter(BrowserImporter):
                 ),
             }
         if analyze and result["status"] in ("imported", "updated"):
-            for ident in result["doc_ids"]:
-                try:
-                    await asyncio.to_thread(self.service.wiki_analyze, {"id": ident})
-                except Exception:
-                    result["analysis_error"] = (
-                        "Markdown 문서는 저장되었지만 AI 분석에 실패했습니다. 문서에서 재시도해 주세요."
-                    )
-            if "analysis_error" in result:
+            try:
+                await asyncio.to_thread(self.service.wiki_analyze, {"id": result["doc_id"]})
+            except Exception:
+                result["analysis_error"] = (
+                    "Markdown 문서는 저장되었지만 AI 분석에 실패했습니다. 문서에서 재시도해 주세요."
+                )
                 with self.lock:
                     job["analysis_failed"] += 1
         return result
 
     async def _unchanged(self, api, base_url, issue, updated=None):
         """For a routine's import: the result of the ticket `issue` (key, or the ticket read) when it need not be read
-        again, or None to read it. One whose documents were all purged is left out (sources.ignored); one JIRA says was
+        again, or None to read it. One whose document was purged is left out (sources.ignored); one JIRA says was
         not updated since the Wiki took it, read in full within sources.RECHECK, is skipped (sources.fresh). Its updated
         time is asked for alone unless known: given (a search found it) or in the ticket read."""
         key = issue if isinstance(issue, str) else issue["key"]
         link = f"{base_url}/browse/{key}"
         with self.service.db.connect() as db:
             if sources.ignored(db, "jira_sources", link):
-                return sources.skipped(sources.Plan("skip", [], "ignored"), "")
+                return sources.skipped(sources.Plan("skip", None, "ignored"), "")
             # Nothing recorded to compare with (a ticket new to the Wiki): it is read without asking first.
             if not sources.recorded(db, "jira_sources", link, "updated"):
                 return None
@@ -551,7 +549,7 @@ class JiraImporter(BrowserImporter):
             return None
         with self.service.db.connect() as db:
             found = sources.fresh(db, "jira_sources", link, "updated", updated)
-        return sources.unmodified(found) if found else None
+        return sources.unmodified(found) if found is not None else None
 
     # -- Query jobs of the automatic routines ------------------------------------------------------------------------
 

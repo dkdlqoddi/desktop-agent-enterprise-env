@@ -369,32 +369,45 @@ test('Imported files are HTML pages: shown as pages, cleaned, searchable, with t
   }
 });
 
-// A Word file too long for one document, saved as parts by the backend's own code.
+// A Word file as an earlier version saved it: longer than one document held then, cut into three documents titled
+// "긴 보고서 (1/3)" and so on, each a page of its own with its source row. And a long Markdown document, as one.
 const PARTS_SEED = `
 import sys
 sys.path.insert(0, "backend")
-from agent.db import Database
-from agent.html_document import page
-from agent.parts import insert, page_parts
-split = page_parts(page("긴 보고서", "".join(f"<h2>장 {i}</h2><p>{'긴 내용 ' * 300}</p>" for i in range(120)), "word"))
+from agent.db import Database, index_text
+from agent.html_document import page, page_text
+stamp = "2026-10-01T00:00:00+00:00"
 with Database(sys.argv[1]).connect() as db:
-    insert(db, split, "긴 보고서", "2026-10-01T00:00:00+00:00", lambda ident, number, text: db.execute(
-        "INSERT INTO office_sources(doc_id,source_path,source_hash,application,markdown,imported_at,part,parts) "
-        "VALUES (?,?,?,?,?,?,?,?)", (ident, "C:\\\\Docs\\\\긴 보고서.docx", "seed", "Word", text,
-                                     "2026-10-01T00:00:00+00:00", number, len(split.parts))))
-print(len(split.parts))
+    ids = ["long-markdown"]
+    for number in (1, 2, 3):
+        chapters = range((number - 1) * 40, number * 40)
+        title = f"긴 보고서 ({number}/3)"
+        html = page(title, "".join(f"<h2>장 {i}</h2><p>{'긴 내용 ' * 300}</p>" for i in chapters), "word")
+        text, ident = page_text(html), f"part-{number}"
+        db.execute("INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES(?,?,?,'html',?,?)",
+                   (ident, title, text, stamp, stamp))
+        db.execute("INSERT INTO document_html(doc_id,html) VALUES(?,?)", (ident, html))
+        db.execute(
+            "INSERT INTO office_sources(doc_id,source_path,source_hash,application,markdown,imported_at,part,parts,"
+            "title) VALUES (?,?,?,?,?,?,?,3,?)",
+            (ident, "C:\\\\Docs\\\\긴 보고서.docx", "seed", "Word", text, stamp, number, title))
+        ids.append(ident)
+    long = "\\n\\n".join(f"## 절 {i}\\n\\n" + "본문 " * 300 for i in range(200))
+    db.execute("INSERT INTO documents(id,title,content,created_at,updated_at) VALUES('long-markdown','긴 Markdown 문서',?,?,?)",
+               (long, "2026-09-01T00:00:00+00:00", "2026-09-01T00:00:00+00:00"))
+    index_text(db, ids)
+print(len(long))
 `;
 
-test('A file too long for one document opens as parts that lead to each other', async () => {
+test('A long file is one document, and the documents an earlier version cut it into are one again', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'document-parts-'));
   let app: ElectronApplication | undefined;
   try {
     app = await launch(directory);
-    const page = await app.firstWindow();
-    const errors: string[] = [];
-    page.on('pageerror', (error) => errors.push(error.message));
     const wiki = path.join(directory, 'wiki');
-    await chooseStorage(page, wiki);
+    await chooseStorage(await app.firstWindow(), wiki);
+    // The Wiki as an earlier version left it, written while the app is closed.
+    await app.close();
     const python = path.resolve(
       'backend',
       '.venv',
@@ -405,43 +418,51 @@ test('A file too long for one document opens as parts that lead to each other', 
       env: { ...process.env, PYTHONPATH: '' },
     });
     expect(seeded.stderr).toBe('');
-    expect(seeded.stdout.trim()).toBe('3');
-    await page.reload();
+    expect(Number(seeded.stdout.trim())).toBeGreaterThan(180000);
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
     await openDashboard(page);
-    // The document list shows the import as one entry that counts its parts; its window leads from part to part.
-    const entry = widget(page, 'documents')
-      .locator('.document-row')
-      .filter({ hasText: /긴 보고서 \([123]\/3\)/ });
+    // The start made the three documents one, named as the file is: its window shows every chapter on one page.
+    const rows = widget(page, 'documents').locator('.document-row');
+    await expect(rows).toHaveCount(2);
+    const entry = rows.filter({ hasText: '긴 보고서' });
     await expect(entry).toHaveCount(1);
-    await expect(entry).toContainText('3개로 나눔');
+    await expect(entry).not.toContainText('/3)');
     await entry.click();
-    const parts = drawer(page).getByRole('navigation', { name: '나누어 저장한 문서' });
+    await expect(
+      drawer(page).getByRole('heading', { name: '긴 보고서', exact: true }),
+    ).toBeVisible();
     const view = drawer(page).locator('[data-html-document]');
-    await expect(parts).toContainText('긴 글을 나누어 저장한 3개 중');
-    // The entry is the part updated last, any of the three here: back to the first one.
-    const opened = Number(/3개 중 (\d)번째/.exec((await parts.textContent()) ?? '')![1]);
-    for (let part = opened; part > 1; part--) {
-      await parts.getByRole('button', { name: '이전 부분' }).click();
-      await expect(parts).toContainText(`3개 중 ${part - 1}번째`);
-    }
-    await expect(parts).toContainText('긴 글을 나누어 저장한 3개 중 1번째');
+    await expect(view.locator('h2')).toHaveCount(120);
     await expect(view.locator('h2').first()).toHaveText('장 0');
-    await expect(parts.getByRole('button', { name: '이전 부분' })).toBeDisabled();
-    await page.screenshot({ path: 'test-results/document-parts.png' });
-
-    // Each part is a page of its own, and the next one goes on where this one ends.
-    const last = await view.locator('h2').last().textContent();
-    await parts.getByRole('button', { name: '다음 부분' }).click();
-    await expect(drawer(page).getByRole('heading', { name: '긴 보고서 (2/3)' })).toBeVisible();
-    await expect(parts).toContainText('3개 중 2번째');
-    const first = Number((await view.locator('h2').first().textContent())!.replace('장 ', ''));
-    expect(first).toBe(Number(last!.replace('장 ', '')) + 1);
-    await parts.getByRole('button', { name: '다음 부분' }).click();
-    await expect(parts).toContainText('3개 중 3번째');
-    await expect(parts.getByRole('button', { name: '다음 부분' })).toBeDisabled();
     await expect(view.locator('h2').last()).toHaveText('장 119');
-    await parts.getByRole('button', { name: '이전 부분' }).click();
-    await expect(drawer(page).getByRole('heading', { name: '긴 보고서 (2/3)' })).toBeVisible();
+    await expect(drawer(page).getByRole('navigation', { name: '나누어 저장한 문서' })).toHaveCount(
+      0,
+    );
+    await page.screenshot({ path: 'test-results/document-whole.png' });
+    await drawer(page).getByRole('button', { name: '닫기', exact: true }).click();
+
+    // A long Markdown document is drawn piece after piece until all of it is there.
+    await rows.filter({ hasText: '긴 Markdown 문서' }).click();
+    const content = drawer(page).locator('.document-content .markdown');
+    await expect(content.locator('h2').first()).toHaveText('절 0');
+    await expect(content.locator('h2')).toHaveCount(200, { timeout: 30_000 });
+    await expect(content.getByText('긴 문서의 나머지를 표시하는 중')).toHaveCount(0);
+    await expect(content).toHaveCount(1);
+    // It is edited and saved as the one text it is, far beyond what a document held before.
+    await drawer(page).getByRole('button', { name: '수정', exact: true }).click();
+    const editor = drawer(page).locator('textarea.document-editor');
+    await expect(editor).toHaveAttribute('maxlength', '8000000');
+    await expect(drawer(page).getByText('/ 8,000,000자')).toBeVisible();
+    const text = await editor.inputValue();
+    expect(text.length).toBeGreaterThan(180000);
+    await editor.fill(`${text}\n\n## 맺음말\n\n끝까지 한 문서입니다.`);
+    await drawer(page).getByRole('button', { name: '문서 저장' }).click();
+    await expect(page.locator('.toast').filter({ hasText: '문서를 저장했습니다.' })).toBeVisible();
+    await expect(content.locator('h2')).toHaveCount(201, { timeout: 30_000 });
+    await expect(content.locator('h2').last()).toHaveText('맺음말');
     expect(errors).toEqual([]);
   } finally {
     await app?.close();
