@@ -24,13 +24,14 @@ AI 코딩 에이전트가 이 저장소에서 지킬 규칙입니다. 위의 Nex
 바꾸면 안 되는 규칙입니다. 바꿔야 할 이유가 있으면 코드보다 먼저 사용자에게 묻습니다.
 
 - 사이트 주소는 HTTPS가 기본이고 HTTP로 내려가지 않습니다. 프로토콜 없이 입력한 주소는 `https://`로 저장하고, HTTP는 사용자가 `http://`를 직접 적은 사이트에만 씁니다(`electron/sites.cjs`, `backend/agent/browser_import.py`, `backend/agent/web_login.py`).
-- 비밀 값(API Key, 사용자 지정 헤더 값, 사이트 비밀번호, 로컬 API 토큰, 채팅 에이전트의 서비스 키·봇 토큰)은 렌더러와 AI 도구로 보내지 않고 `has_value` 같은 표시만 보냅니다. 메인 프로세스가 `safeStorage`로 암호화해 저장하며(`electron/hermes-settings.cjs`), 비밀을 돌려주는 메서드·필드는 `ALLOWED`와 API 카탈로그에 넣지 않습니다. 채팅 에이전트의 키는 메인 프로세스가 백엔드 전용 파이프(`agent.configure`)로만 넘겨 워커 환경에 두며, 모델 호출은 언제나 LLM 연결로만 하므로 모델 제공자 키 이름은 거부합니다(`hermes-settings.cjs`의 `refusedName`).
+- 비밀 값(API Key, 사용자 지정 헤더 값, 사이트 비밀번호, 로컬 API 토큰, 채팅 에이전트의 서비스 키·봇 토큰)은 렌더러와 AI 도구로 보내지 않고 `has_value` 같은 표시만 보냅니다. 메인 프로세스가 `safeStorage`로 암호화해 저장하며(`electron/hermes-settings.cjs`), 비밀을 돌려주는 메서드·필드는 `ALLOWED`와 API 카탈로그에 넣지 않습니다. 채팅 에이전트의 키는 메인 프로세스가 백엔드 전용 파이프(`agent.configure`)로만 넘겨 워커 환경에 두며, 모델 호출은 언제나 LLM 연결로만 하므로 모델 제공자 키 이름은 거부합니다(`hermes-settings.cjs`의 `refusedName`). MCP 서버 설정의 값(env, headers, 인수, 주소)은 워커가 Wiki 폴더의 `hermes/config.yaml`에 쓰지 않고 환경 변수 참조로 넘깁니다(`runtime/hermes/worker.py`의 `mcp_servers`).
 - 문서 삭제는 soft delete입니다(`documents.deleted_at`, 30일 휴지통). 문서를 읽는 쿼리는 `deleted_at IS NULL`(`service.py`의 `LIVE`)로 거르고, 영구 삭제(`wiki.purge`)와 백업 복원은 범위 `destructive`(허용 범위 ‘전체’)로 둡니다.
 - 삭제·비우기를 실행하는 확인 버튼에는 `data-destructive`를 붙입니다. 로컬 API의 `app.click`은 허용 범위 ‘전체’에서만 이 버튼을 누릅니다.
+- 채팅은 사용자만 다룹니다. 채팅의 입력란과 버튼(예시, 작업 카드, 위험한 명령의 확인, 질문의 답)은 `data-user-only` 영역 안에 두고, 로컬 API의 화면 제어(`app.click`·`app.fill`)는 어느 허용 범위에서도 이 영역을 거절합니다(`src/components/app-control.ts`의 `guard`). 채팅과 웹 기록의 메서드(`agent.*`, `web.*`)는 API 카탈로그에 넣지 않습니다. 넣으려면 먼저 사용자에게 묻습니다.
 - 브라우저 자동화는 Chromium 렌더러 샌드박스를 켠 채 실행합니다(`chromium_sandbox=True`). 렌더러 창의 `sandbox`·`contextIsolation`, CSP, preload의 좁은 통로, `trustedSender`와 `ALLOWED` 검사도 유지합니다.
 - 채팅 에이전트(Hermes)는 전체 도구(터미널·파일·코드·브라우저·MCP·컴퓨터 사용)로 **바로 실행**하고, 위험한 명령만 사용자 승인을 받습니다(`approvals.mode: smart`). Hermes 워커의 모델 호출은 모두 앱의 LLM 연결로 되돌려 보내므로(`runtime/hermes/worker.py`의 `build_keepalive_http_client` 패치) 키는 워커에 들어가지 않습니다. 이는 OS 샌드박스가 아니라 승인 기반 통제이니, 워커의 `isolate()`를 되살려 하위 프로세스·소켓을 막지 마세요(그러면 도구가 동작하지 않습니다). 모델 호출의 TLS 검증과 리다이렉트 금지, 승인 왕복(`agent.approve_command`)과 `agent.configure`가 비밀을 렌더러로 보내지 않는 점은 유지합니다.
 - 로그와 진단 정보에 요청의 매개변수, 문서 본문, 자격 증명을 쓰지 않고, 비밀 값 가리기(`electron/diagnostics.cjs`, `backend/agent/diagnostics.py`)를 거칩니다. 예기치 않은 예외는 `diagnostics.report`로 오류 ID와 함께 남기고, 스택은 화면에 보내지 않습니다.
-- 백엔드는 포트를 열지 않습니다. 로컬 API는 기본으로 꺼져 있고 `127.0.0.1`에서만 받습니다. 예외는 채팅 에이전트의 메신저 게이트웨이뿐으로, 사용자가 켰을 때 `127.0.0.1`(루프백)에만 열고 바깥 인터페이스에는 절대 바인딩하지 않습니다(`API_SERVER`·`WEBHOOK`·텔레그램 웹훅은 끔). 새 메서드에는 맞는 범위를 줍니다: 이 PC의 파일을 읽으면 `files`, 설정·계정이면 `admin`, 되돌릴 수 없으면 `destructive`.
+- 백엔드는 포트를 열지 않습니다. 로컬 API는 기본으로 꺼져 있고 `127.0.0.1`에서만 받습니다. 허용한 예외는 채팅 에이전트의 메신저 게이트웨이뿐입니다. 아직 실행하지 않으며([TODO.md](TODO.md)), 넣을 때에도 사용자가 켰을 때 `127.0.0.1`(루프백)에만 열고 바깥 인터페이스에는 절대 바인딩하지 않습니다(`API_SERVER`·`WEBHOOK`·텔레그램 웹훅은 끔). 새 메서드에는 맞는 범위를 줍니다: 이 PC의 파일을 읽으면 `files`, 설정·계정이면 `admin`, 되돌릴 수 없으면 `destructive`.
 - LLM 요청의 TLS 검증을 끄지 않고 리다이렉트를 따라가지 않습니다.
 
 ## RPC 메서드 추가

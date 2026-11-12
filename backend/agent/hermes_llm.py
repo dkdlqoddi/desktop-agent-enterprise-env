@@ -8,6 +8,7 @@ so an edit applies from the next run. As every LLM request of the app, TLS is ve
 
 import copy
 import json
+import re
 import time
 import uuid
 
@@ -16,33 +17,75 @@ import requests
 from . import llm
 
 MAX_RESPONSE = 2_000_000
-MAX_CALLS = 4  # Model calls of one plan.
-RUN_SECONDS = 120  # A plan's time, or the connection's own limit when shorter.
+# One model request of a turn (SelectedLLM.renew sets both anew before each): the times it is sent, counting the one
+# sent again without a temperature, and its time, or the connection's own limit when that is shorter.
+MAX_CALLS = 4
+RUN_SECONDS = 120
 STOPPED = "채팅 요청을 중지했습니다."
+# A picture written into a message, as the OpenAI form carries one: data:image/png;base64,....
+DATA_IMAGE = re.compile(r"data:(image/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)", re.I)
+
+
+def anthropic_blocks(content):
+    """A message's content as Messages API blocks. Hermes writes the OpenAI form: a string, or a list of parts when a
+    picture comes with the words (its vision tool, a screenshot). Text parts become text blocks and image_url parts
+    image blocks; a part of any other kind is left out."""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    blocks = []
+    for part in content if isinstance(content, list) else []:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in ("text", "input_text") and isinstance(part.get("text"), str) and part["text"]:
+            blocks.append({"type": "text", "text": part["text"]})
+        elif kind == "image_url":
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            if not isinstance(url, str):
+                continue
+            if found := DATA_IMAGE.fullmatch(url):
+                source = {"type": "base64", "media_type": found[1].lower(), "data": "".join(found[2].split())}
+                blocks.append({"type": "image", "source": source})
+            elif url.startswith(("http://", "https://")):
+                blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+    return blocks
+
+
+def arguments(call):
+    """A tool call's arguments as the object the Messages API takes; {} for arguments that do not read as one."""
+    try:
+        value = json.loads(call["function"].get("arguments") or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def anthropic_messages(messages):
     """The OpenAI-form messages Hermes writes, as the Messages API takes them: the system prompt apart, tool calls as
-    tool_use blocks and tool results as tool_result blocks of a user turn."""
+    tool_use blocks and tool results as tool_result blocks of a user turn. A message with nothing to send (an assistant
+    turn without words or calls) is left out, as the API refuses an empty one."""
     system, converted = [], []
     for message in messages:
-        role, content = message["role"], message.get("content") or ""
+        role, content = message["role"], message.get("content")
         if role == "system":
-            system.append(content)
+            system.extend(block["text"] for block in anthropic_blocks(content) if block["type"] == "text")
             continue
         if role == "tool":
-            role, blocks = "user", [{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": content}]
+            # A result in words stays the string it is; one with a picture goes as its blocks.
+            result = content if isinstance(content, str) else anthropic_blocks(content)
+            role, blocks = (
+                "user",
+                [{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": result or ""}],
+            )
         else:
-            blocks = [{"type": "text", "text": content}] if content else []
-            for call in message.get("tool_calls", []):
+            blocks = anthropic_blocks(content)
+            for call in message.get("tool_calls") or []:
                 blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": call["id"],
-                        "name": call["function"]["name"],
-                        "input": json.loads(call["function"]["arguments"] or "{}"),
-                    }
+                    {"type": "tool_use", "id": call["id"], "name": call["function"]["name"], "input": arguments(call)}
                 )
+        if not blocks:
+            continue
         if converted and converted[-1]["role"] == role:
             converted[-1]["content"].extend(blocks)
         else:
@@ -233,23 +276,31 @@ class SelectedLLM:
     def complete(self, request):
         if self.cancelled.is_set():
             raise llm.UserError(STOPPED)
-        messages, tools = request.get("messages", []), request.get("tools", [])
-        body = llm.request_body(self.target, messages, self.config["temperature"], stream=True)
-        if self.target["format"] == "anthropic":
-            body["system"], body["messages"] = anthropic_messages(messages)
-            if not body["system"]:
-                body.pop("system")
-            if tools:
-                body["tools"] = [
-                    {
-                        "name": tool["function"]["name"],
-                        "description": tool["function"].get("description", ""),
-                        "input_schema": tool["function"]["parameters"],
-                    }
-                    for tool in tools
-                ]
-        elif tools:
-            body["tools"] = tools
+        messages, tools = request.get("messages") or [], request.get("tools") or []
+        try:
+            if self.target["format"] == "anthropic":
+                # Converted before the request is written: Hermes' messages may hold lists of parts, which the
+                # Messages API takes as blocks of its own form.
+                system, converted = anthropic_messages(messages)
+                body = llm.request_body(self.target, [], self.config["temperature"], stream=True)
+                body["messages"] = converted
+                if system:
+                    body["system"] = system
+                if tools:
+                    body["tools"] = [
+                        {
+                            "name": tool["function"]["name"],
+                            "description": tool["function"].get("description", ""),
+                            "input_schema": tool["function"]["parameters"],
+                        }
+                        for tool in tools
+                    ]
+            else:
+                body = llm.request_body(self.target, messages, self.config["temperature"], stream=True)
+                if tools:
+                    body["tools"] = tools
+        except (ValueError, KeyError, TypeError, IndexError, AttributeError):
+            raise llm.LLMFormatError("Hermes의 모델 요청 형식이 올바르지 않습니다.") from None
         if self.plain:
             body = llm.plain_body(self.target, body)
         try:

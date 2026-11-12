@@ -167,3 +167,18 @@ test('every allowed method is handled by the main process or the backend', async
     'ALLOWED에 있지만 메인 프로세스도 백엔드도 처리하지 않는 메서드입니다.',
   );
 });
+
+test('app.navigate reaches every screen and every section of the admin page', () => {
+  // The local API names the screens and the admin page's sections it can show (electron/api-catalog.cjs). A screen or
+  // a section added to the app and not there cannot be shown to an AI tool, which nothing else would tell.
+  const { ADMIN_SECTIONS, VIEWS } = require('../electron/api-catalog.cjs');
+  const admin = read('src/components/admin.tsx');
+  const sections = [
+    .../const SECTIONS:[^=]*= \[([\s\S]*?)\n\];/.exec(admin)[1].matchAll(/\['([a-z]+)'/g),
+  ].map((match) => match[1]);
+  assert.ok(sections.length >= 8, 'the sections of src/components/admin.tsx were not found');
+  assert.deepEqual([...ADMIN_SECTIONS].sort(), [...sections].sort());
+  const workspace = read('src/components/workspace.tsx');
+  const views = /export type WorkspaceView =([^;]+);/.exec(workspace)[1].match(/'[a-z]+'/g);
+  assert.deepEqual([...VIEWS].sort(), views.map((view) => view.slice(1, -1)).sort());
+});

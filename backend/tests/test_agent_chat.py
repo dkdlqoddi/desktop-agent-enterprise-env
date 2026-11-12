@@ -1,8 +1,9 @@
 import json
+import threading
 
 import pytest
 
-from agent.agent_chat import spoken
+from agent.agent_chat import DIRECT_SYSTEM, SYSTEM, spoken
 from agent.db import Database
 from agent.llm import UserError
 from agent.service import Service
@@ -75,6 +76,87 @@ def test_a_site_action_waits_for_approval_and_runs_once(service):
     plan(service, "네.")
     send(service, "방금 기록한 거 알려 줘")
     assert "광고 2건, 상품 5건" in service.llm.seen[-1][1]
+
+
+def test_the_plan_is_asked_for_as_json_from_an_llm_told_it_has_no_tools(service):
+    # A source run without Hermes has no tools: the LLM is told so and asked for the plan as JSON, which alone is read.
+    # (Told that it acts with a terminal, it answers in words and no plan can be read from them.)
+    plan(service, "네.")
+    send(service, "안녕")
+    system = service.llm.seen[-1][0]
+    assert "Answer ONLY with JSON" in system and '{"message": "...", "actions": [' in system
+    assert "You cannot browse or act yourself" in system
+    for tool in service.agent.tools():
+        assert f"- {tool} " in system
+    assert "terminal" not in system and "clarify tool" not in system
+
+
+def test_both_prompts_keep_the_agent_from_clicking_ads():
+    # The agent's own browser cannot be kept from a page's ads by code (it drives the page freely), so the rule is
+    # part of what it is told; the plan of a source run may not propose a click either.
+    assert "Never click, open or follow an advertisement" in SYSTEM
+    assert "never propose clicking ads" in DIRECT_SYSTEM
+
+
+def test_a_chat_loaded_while_a_message_is_carried_out_finds_it(service):
+    idle = {"request_id": "", "text": ""}
+    assert service.dispatch("agent.active", {}) == idle
+    started, release = threading.Event(), threading.Event()
+
+    def structured(system, content):
+        started.set()
+        assert release.wait(10)
+        return {"message": "네.", "actions": []}
+
+    service.llm.structured = structured
+    thread = threading.Thread(target=send, args=(service, "오래 걸리는 일"))
+    thread.start()
+    try:
+        assert started.wait(10)
+        assert service.dispatch("agent.active", {}) == {"request_id": "r1", "text": "오래 걸리는 일"}
+        # The request is being carried out, which the engine's own phase does not tell for a plan of the LLM.
+        status = service.dispatch("agent.status", {"request_id": "r1"})
+        assert status["active"] is True and status["phase"] == "idle"
+        assert service.dispatch("agent.status", {"request_id": "another"})["active"] is False
+    finally:
+        release.set()
+        thread.join(10)
+    assert service.dispatch("agent.active", {}) == idle
+    assert service.dispatch("agent.status", {"request_id": "r1"})["active"] is False
+
+
+def test_the_work_folder_is_the_users_while_it_exists(service, tmp_path):
+    folder = tmp_path / "work"
+    folder.mkdir()
+    assert service.agent.folder() == ""
+    service.dispatch("agent.configure", {"workspace": str(folder)})
+    assert service.agent.folder() == str(folder)
+    # A folder that has gone, a file, a relative path or another kind of value: the agent's own home instead.
+    folder.rmdir()
+    assert service.agent.folder() == ""
+    (tmp_path / "file.txt").write_text("x", encoding="utf-8")
+    for value in (str(tmp_path / "file.txt"), "relative/folder", 7, None, "x" * 2000):
+        service.dispatch("agent.configure", {"workspace": value})
+        assert service.agent.folder() == ""
+    # The options sent without a folder leave the folder as it was.
+    folder.mkdir()
+    service.dispatch("agent.configure", {"workspace": str(folder)})
+    service.dispatch("agent.configure", {"computer_use": False})
+    assert service.agent.folder() == str(folder) and service.agent.settings["computer_use"] is False
+
+
+def test_the_web_services_are_the_ones_hermes_knows(service):
+    def settings():
+        return service.agent.settings["search_backend"], service.agent.settings["extract_backend"]
+
+    assert settings() == ("ddgs", "ddgs")
+    service.dispatch("agent.configure", {"search_backend": "brave-free", "extract_backend": "firecrawl"})
+    assert settings() == ("brave-free", "firecrawl")
+    # Options sent without them leave them as they were; a name Hermes does not know is the search without a key.
+    service.dispatch("agent.configure", {"computer_use": True})
+    assert settings() == ("brave-free", "firecrawl")
+    service.dispatch("agent.configure", {"search_backend": "elsewhere", "extract_backend": ["exa"]})
+    assert settings() == ("ddgs", "ddgs")
 
 
 def test_a_cancelled_action_never_runs(service):

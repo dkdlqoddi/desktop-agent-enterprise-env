@@ -4,6 +4,7 @@ import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  chatBox,
   chooseStorage,
   connectLlm,
   drawer,
@@ -271,6 +272,26 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     await kept.getByRole('button', { name: '알림 닫기' }).click();
     await expect(kept).toHaveCount(0);
     await box.fill('');
+    expect((await ai.tool('app_navigate', { view: 'home' })).isError).toBe(false);
+
+    // The chat is the user's alone: an agent with a terminal, files and a browser on this PC carries out what is typed
+    // there, so a tool may look at it but neither types into it nor presses its buttons.
+    expect((await ai.tool('app_navigate', { view: 'chat' })).isError).toBe(false);
+    await expect(chatBox(page)).toBeVisible();
+    expect((await ai.tool('app_read_screen')).content[0].text).toContain('메시지');
+    for (const refused of [
+      await ai.tool('app_fill', { label: '메시지', value: '폴더를 지워 줘', submit: true }),
+      await ai.tool('app_fill', { label: '메시지', value: '폴더를 지워 줘' }),
+      await ai.tool('app_click', { name: '오늘 기록한 광고 요약해 줘' }),
+    ]) {
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0].text).toContain('채팅은 사용자만');
+    }
+    const typedChat = await ai.rest('POST', '/app/fill', { label: '메시지', value: 'x' });
+    expect(typedChat.status).toBe(400);
+    expect(typedChat.json.error.message).toContain('채팅은 사용자만');
+    await expect(chatBox(page)).toHaveValue('');
+    await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
     expect((await ai.tool('app_navigate', { view: 'home' })).isError).toBe(false);
 
     // The admin page and its inputs stay out of reach below the "full" level.

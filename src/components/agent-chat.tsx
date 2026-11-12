@@ -29,13 +29,11 @@ import {
   type AgentEngine,
   type AgentApproval,
   type AgentMessage,
-  type AgentSend,
-  type AgentStatus,
   type AgentTool,
 } from '@/lib/api';
 import Confirm from './confirm';
 import EmptyState from './empty-state';
-import { useActions } from './state';
+import { useActions, useAgentTurn, useStores } from './state';
 
 const TOOL_ICONS: Record<AgentTool, LucideIcon> = {
   search_documents: FileSearch,
@@ -61,10 +59,6 @@ const EXAMPLES = [
 ];
 const KIND_NAMES = { ad: '광고', product: '상품', result: '검색 결과' } as const;
 
-function requestId() {
-  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function EngineBadge({ engine }: { engine: AgentEngine | null }) {
   if (!engine) return null;
   const [label, title] = !engine.ready
@@ -85,7 +79,8 @@ function EngineBadge({ engine }: { engine: AgentEngine | null }) {
   );
 }
 
-// A dangerous command the agent paused on: the user allows it (once/always) or refuses it, and the turn goes on.
+// A dangerous command the agent paused on: the user allows it (once/always) or refuses it, and the turn goes on. The
+// decision is the user's alone: the whole conversation is out of an AI tool's reach (data-user-only on its section).
 function ApprovalPrompt({
   approval,
   onDecide,
@@ -109,11 +104,7 @@ function ApprovalPrompt({
         <button className="button secondary small" onClick={() => onDecide('always')}>
           항상 허용
         </button>
-        <button
-          className="button secondary small"
-          data-destructive
-          onClick={() => onDecide('deny')}
-        >
+        <button className="button secondary small" onClick={() => onDecide('deny')}>
           <X size={14} /> 거부
         </button>
       </div>
@@ -283,78 +274,91 @@ function ActionCard({
 
 export default function AgentChat() {
   const { notify } = useActions();
+  // The turn in progress lives outside this screen (agent-turn.ts): it goes on while another screen is shown, and is
+  // shown again, with its progress and the question it waits on, when the chat is.
+  const { turn } = useStores();
+  const sending = useAgentTurn((state) => state.sending);
+  const status = useAgentTurn((state) => state.status);
+  const ended = useAgentTurn((state) => state.ended);
+  const failed = useAgentTurn((state) => state.failed);
   const [messages, setMessages] = useState<AgentMessage[] | null>(null);
   const [engine, setEngine] = useState<AgentEngine | null>(null);
   const [text, setText] = useState('');
-  const [sending, setSending] = useState<{ id: string; text: string } | null>(null);
-  const [status, setStatus] = useState<AgentStatus | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  // The turns that ended before this screen was shown are in the conversation it loads.
+  const taken = useRef(ended.n);
+  // Only the conversation read last is shown: one asked for earlier may answer later, without what was saved since.
+  const loads = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = ++loads.current;
     try {
       const [loaded, planner] = await Promise.all([
         api<AgentMessage[]>('agent.messages', { limit: 100 }),
         api<AgentEngine>('agent.engine'),
       ]);
+      if (mine !== loads.current) return;
       setMessages(loaded);
       setEngine(planner);
     } catch (error) {
+      if (mine !== loads.current) return;
       setMessages([]);
       notify(error instanceof Error ? error.message : String(error), true);
     }
   }, [notify]);
 
+  // The conversation as it is saved, and a turn that runs although nothing follows it (the window was loaded again).
   useEffect(() => {
     void load();
-  }, [load]);
+    void turn.resume();
+  }, [load, turn]);
+
+  // A turn ended: the two messages it saved join the conversation at once, and the conversation is read again, which
+  // also brings the messages of a turn this screen did not send itself (one found after a reload).
+  useEffect(() => {
+    if (ended.n === taken.current) return;
+    taken.current = ended.n;
+    const sent = ended.sent;
+    if (sent)
+      setMessages((current) => [
+        ...(current ?? []).filter(
+          (item) => item.seq !== sent.user.seq && item.seq !== sent.reply.seq,
+        ),
+        sent.user,
+        sent.reply,
+      ]);
+    void load();
+    input.current?.focus();
+  }, [ended, load]);
+
+  // A request that failed gives its words back to the box, unless the user has written on meanwhile.
+  useEffect(() => {
+    if (failed === null) return;
+    setText((current) => current || failed);
+    turn.takeFailed();
+    input.current?.focus();
+  }, [failed, turn]);
 
   useEffect(() => {
     list.current?.lastElementChild?.scrollIntoView({ block: 'end', behavior: 'instant' });
   }, [messages, sending, status]);
-
-  // While Hermes plans, what it writes shows as a draft (never the plan itself), and 중지 stops it.
-  useEffect(() => {
-    if (!sending) return;
-    let stopped = false;
-    const timer = setInterval(() => {
-      api<AgentStatus>('agent.status', { request_id: sending.id })
-        .then((next) => {
-          if (!stopped) setStatus(next);
-        })
-        // The answer comes with the request itself; a status that does not is only a draft missed.
-        .catch(() => {});
-    }, 700);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [sending]);
 
   const replace = (message: AgentMessage) =>
     setMessages((current) =>
       (current ?? []).map((item) => (item.seq === message.seq ? message : item)),
     );
 
-  const send = async (words: string) => {
+  const send = (words: string) => {
     const message = words.trim();
     if (!message || sending) return;
-    const id = requestId();
-    setSending({ id, text: message });
-    setStatus(null);
     setText('');
-    try {
-      const sent = await api<AgentSend>('agent.send', { text: message, request_id: id });
-      setMessages((current) => [...(current ?? []), sent.user, sent.reply]);
-    } catch (error) {
-      setText(message);
-      notify(error instanceof Error ? error.message : String(error), true);
-    } finally {
-      setSending(null);
-      setStatus(null);
-      input.current?.focus();
-    }
+    void turn.send(message);
   };
+  // The user's words are saved as the turn starts: a conversation read meanwhile (the chat was left and shown again)
+  // already ends with them, and they are not drawn a second time.
+  const last = messages?.at(-1);
+  const saved = !!sending && last?.role === 'user' && last.content === sending.text;
 
   const act = async (message: AgentMessage, index: number, approve: boolean) => {
     const card = message.actions[index];
@@ -377,47 +381,9 @@ export default function AgentChat() {
     }
   };
 
-  const stop = async () => {
-    if (!sending) return;
-    try {
-      await api('agent.stop', { request_id: sending.id });
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), true);
-    }
-  };
-
-  // The user's answer to an approval or clarify the agent paused on; the turn then goes on.
-  const decide = async (decision: 'once' | 'always' | 'deny') => {
-    const interaction = status?.interaction;
-    if (!sending || interaction?.kind !== 'approval') return;
-    setStatus((current) => (current ? { ...current, interaction: null } : current));
-    try {
-      await api('agent.approve_command', {
-        request_id: sending.id,
-        interaction_id: interaction.interaction_id,
-        decision,
-      });
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), true);
-    }
-  };
-
-  const answerClarify = async (answers: Record<string, string>) => {
-    const interaction = status?.interaction;
-    if (!sending || interaction?.kind !== 'clarify') return;
-    setStatus((current) => (current ? { ...current, interaction: null } : current));
-    try {
-      await api('agent.answer_clarify', {
-        request_id: sending.id,
-        interaction_id: interaction.interaction_id,
-        answers,
-      });
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), true);
-    }
-  };
-
   const clear = async () => {
+    // A conversation read before this one was cleared must not come back as it answers.
+    loads.current += 1;
     await api('agent.clear');
     setMessages([]);
   };
@@ -443,7 +409,10 @@ export default function AgentChat() {
           )}
         </div>
       </header>
-      <section className="agent-chat" aria-label="에이전트와의 대화">
+      {/* The user's alone (data-user-only): what is typed here is carried out by an agent with a terminal, files and a
+          browser on this PC, and the answer to its question before a dangerous command is the user's decision. The
+          local API's screen control (app-control.ts) types and clicks nothing in it, at any access level. */}
+      <section className="agent-chat" aria-label="에이전트와의 대화" data-user-only="">
         {messages === null ? (
           <div className="agent-loading">
             <LoaderCircle className="spin" size={22} /> 대화를 불러오는 중
@@ -473,11 +442,13 @@ export default function AgentChat() {
             ))}
             {sending && (
               <>
-                <li className="agent-message user">
-                  <div className="agent-bubble">
-                    <p className="agent-text">{sending.text}</p>
-                  </div>
-                </li>
+                {!saved && (
+                  <li className="agent-message user">
+                    <div className="agent-bubble">
+                      <p className="agent-text">{sending.text}</p>
+                    </div>
+                  </li>
+                )}
                 <li className="agent-message assistant pending">
                   <div className="agent-bubble">
                     {!!status?.progress?.length && (
@@ -499,13 +470,16 @@ export default function AgentChat() {
                       {status?.draft || status?.text || '작업을 진행하고 있습니다.'}
                     </p>
                     {status?.interaction?.kind === 'approval' && (
-                      <ApprovalPrompt approval={status.interaction} onDecide={decide} />
+                      <ApprovalPrompt
+                        approval={status.interaction}
+                        onDecide={(decision) => void turn.decide(decision)}
+                      />
                     )}
                     {status?.interaction?.kind === 'clarify' && (
                       <ClarifyPrompt
                         key={status.interaction.interaction_id}
                         clarify={status.interaction}
-                        onSubmit={answerClarify}
+                        onSubmit={(answers) => void turn.answer(answers)}
                       />
                     )}
                   </div>
@@ -517,7 +491,7 @@ export default function AgentChat() {
         {!messages?.length && !sending && (
           <div className="agent-examples" role="group" aria-label="예시">
             {EXAMPLES.map((example) => (
-              <button key={example} className="agent-example" onClick={() => void send(example)}>
+              <button key={example} className="agent-example" onClick={() => send(example)}>
                 {example}
               </button>
             ))}
@@ -527,7 +501,7 @@ export default function AgentChat() {
           className="agent-compose"
           onSubmit={(event) => {
             event.preventDefault();
-            void send(text);
+            send(text);
           }}
         >
           <textarea
@@ -542,7 +516,7 @@ export default function AgentChat() {
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
-                void send(text);
+                send(text);
               }
             }}
           />
@@ -550,7 +524,7 @@ export default function AgentChat() {
             <button
               type="button"
               className="button secondary"
-              onClick={() => void stop()}
+              onClick={() => void turn.stop()}
               disabled={status ? !status.can_stop : false}
             >
               <Square size={15} /> 중지

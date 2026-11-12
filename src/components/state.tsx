@@ -23,6 +23,7 @@ import {
 import { QueryCache, type PagedState, type QueryState, type Tag } from '@/lib/query';
 import { createStore, useStore, type Store } from '@/lib/store';
 import type { AdminSection, SiteDraft } from './admin';
+import { AgentTurn, NO_TURN, type AgentTurnState } from './agent-turn';
 import { AnswerStream, pending, type AnswersState, type LiveAnswer } from './answers';
 import { JobsFeed, NO_JOBS, type ImportJobs, type JobsState } from './import-jobs';
 import type { Focus, ReaderTarget } from './reader';
@@ -90,6 +91,8 @@ export type AppStores = {
   // The answers the screen asked for while the LLM writes them (./answers.ts), shared by the search box and the lists
   // of conversations.
   answers: AnswerStream;
+  // The chat's turn in progress (./agent-turn.ts), which goes on while another screen is shown.
+  turn: AgentTurn;
   actions: Actions;
   // The search box's input, which Ctrl+K and 이 문서에 질문 focus.
   omnibox: { current: HTMLInputElement | null };
@@ -197,6 +200,20 @@ export function createAppStores(): AppStores {
   };
   const notify = (message: string, error = false, notice = false) =>
     toast({ message, error, notice });
+  const turn = new AgentTurn({
+    store: createStore<AgentTurnState>(NO_TURN),
+    request: (method, params) => api(method, params),
+    notify,
+    // Told while another screen is shown, with the way to the chat; one the agent waits on stays until it is read.
+    prompt: (message, waits) =>
+      toast({
+        message,
+        error: false,
+        notice: waits,
+        action: { label: '채팅 열기', run: () => navigate('chat') },
+      }),
+    shown: () => session.get().view === 'chat',
+  });
   const actions: Actions = {
     navigate,
     refresh: () => invalidate(['documents', 'prompts']),
@@ -273,6 +290,7 @@ export function createAppStores(): AppStores {
     queries,
     feed,
     answers,
+    turn,
     actions,
     omnibox,
     search,
@@ -474,6 +492,10 @@ export function useApp(): AppState {
     analysis: useAnalysis(),
   };
 }
+
+// The chat's turn in progress: what `select` picks of it, and the turn itself to send, stop and answer with.
+export const useAgentTurn = <T,>(select: (turn: AgentTurnState) => T) =>
+  useStore(useStores().turn.store, select);
 
 // An answer being written (or just saved) for the search box's request `requestId`, as its parts come; null for none.
 // Only the component that draws the text should read it: it changes with every part.

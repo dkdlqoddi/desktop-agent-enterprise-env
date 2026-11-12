@@ -33,6 +33,8 @@ RUNTIMES = weakref.WeakSet()
 INTERACTION_SECONDS = 300
 # The whole turn's compute budget (not counting time the user spends answering), bounded well under the RPC limit.
 TURN_SECONDS = 900
+# The phases of a turn 중지 ends: while it starts, while the agent works, and while it waits for the user's answer.
+STOPPABLE = ("starting", "thinking", "waiting")
 
 
 def shutdown_all():
@@ -194,7 +196,7 @@ class Hermes:
                 "draft": draft,
                 "progress": list(self.progress),
                 "interaction": interaction,
-                "can_stop": self.phase in ("starting", "thinking"),
+                "can_stop": self.phase in STOPPABLE,
             }
 
     def resolve(self, params, kind):
@@ -213,10 +215,12 @@ class Hermes:
 
     def stop(self, params):
         with self.lock:
-            if params.get("request_id") != self.request_id or self.phase not in ("starting", "thinking"):
+            if params.get("request_id") != self.request_id or self.phase not in STOPPABLE:
                 return {"stopped": False}
             self.cancelled.set()
             self.phase = "stopping"
+            # A turn paused on an approval or a clarify stops too: its question is taken back (answered as refused)
+            # rather than left to run out its time.
             if self.interaction is not None:
                 self.interaction.resolve(None)
             if self.watch is not None:
@@ -358,9 +362,23 @@ class Hermes:
                     if len(line) > MAX_FRAME:
                         break
                     try:
-                        frames.put(json.loads(line), timeout=1)
-                    except (ValueError, queue.Full):
+                        frame = json.loads(line)
+                    except (ValueError, RecursionError):
                         continue
+                    # Only a frame is passed on: a line that reads as other JSON (a number or a word that a tool's
+                    # subprocess printed to the pipe it inherited) is not the worker's.
+                    if not isinstance(frame, dict):
+                        continue
+                    # A full queue waits for the turn's loop, which may be answering a model request or holding a
+                    # question for the user for minutes: a frame dropped here would leave the worker waiting for a
+                    # reply that never comes. The wait ends once the worker has gone or the turn has let go of it.
+                    while True:
+                        try:
+                            frames.put(frame, timeout=1)
+                            break
+                        except queue.Full:
+                            if child.poll() is not None or self.frames is not frames:
+                                return
             except OSError:
                 pass
             finally:
@@ -371,10 +389,13 @@ class Hermes:
 
     # -- running one turn --------------------------------------------------------
 
-    def plan(self, system, context, *, request_id, toolsets, app_tools, settings, on_app_tool, on_interaction):
+    def plan(
+        self, system, context, *, request_id, toolsets, app_tools, settings, on_app_tool, on_interaction, workspace=""
+    ):
         """Run one chat turn on the worker. Model requests are answered with the app's LLM connection; app_tool
         frames call on_app_tool(tool, args) -> card; approval/clarify frames call on_interaction with the payload
-        and the live Interaction. Returns {"message", "cancelled"}; the executed cards are gathered by the caller
+        and the live Interaction. `workspace`: the folder the agent's terminal and file tools start in ('' for its own
+        home in the Wiki folder). Returns {"message", "cancelled"}; the executed cards are gathered by the caller
         through on_app_tool."""
         with self.lock:
             if self.closing:
@@ -414,6 +435,7 @@ class Hermes:
                 "settings": settings,
                 "chromium": chromium,
                 "budget": budget,
+                "workspace": workspace,
             }
         )
         message, finished = "", False
@@ -433,12 +455,13 @@ class Hermes:
                     raise UserError("내장 Hermes가 응답을 마치기 전에 종료되었습니다.")
                 kind = frame.get("type")
                 if kind == "inference":
+                    body = frame.get("body")
+                    if not isinstance(body, dict):
+                        raise UserError("내장 Hermes의 모델 요청 형식이 올바르지 않습니다.")
                     with self.lock:
                         self.preview = ""
                     selected.renew()
-                    self.send(
-                        {"type": "completion", "id": frame.get("id"), "body": self.complete(selected, frame["body"])}
-                    )
+                    self.send({"type": "completion", "id": frame.get("id"), "body": self.complete(selected, body)})
                 elif kind == "app_tool":
                     card = on_app_tool(frame.get("tool"), frame.get("args") or {})
                     self.record_progress(card.get("title", ""), card.get("status", ""))

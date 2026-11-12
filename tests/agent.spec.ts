@@ -10,6 +10,8 @@ const PAGE = `<!doctype html><title>운동화 검색</title>
   <div class="card"><div class="badge">광고</div><a href="https://ad.example.test/x">특가 운동화 모음</a></div>
   <div class="card"><a href="https://shop.example.test/y">일반 운동화</a></div>`;
 const DONE = '페이지를 열고 광고를 기록했습니다.';
+const SLOW = '천천히 답해 줘';
+const SLOWLY = '천천히 답했습니다.';
 
 async function request<T>(page: Page, method: string, params: Record<string, unknown> = {}) {
   const response = await page.evaluate(
@@ -35,9 +37,16 @@ test('agent chat: the agent opens a page and records its ad live, and the record
     { tool: 'open_site', args: { url: address } },
     { tool: 'capture_page', args: {} },
   ];
+  // An answer the test holds back, to leave the chat and load it again while the turn runs.
+  let release!: (text: string) => void;
+  const held = new Promise<string>((resolve) => (release = resolve));
   // The bundled Hermes acts live with its tools: the model has it open the page, then record it, then answer. A
   // source run without the Hermes build asks for the plan as JSON (no tools in the request).
-  const llm = await llmServer(({ payload }) => {
+  const llm = await llmServer(async ({ content, payload }) => {
+    if (content.includes(SLOW)) {
+      const text = await held;
+      return payload.tools?.length ? text : { message: text, actions: [] };
+    }
     if (!payload.tools?.length) return { message: DONE, actions };
     const ran = payload.messages.filter((message) => message.role === 'tool').length;
     if (ran === 0) return toolCalls(['open_site', { url: address }]);
@@ -116,6 +125,37 @@ test('agent chat: the agent opens a page and records its ad live, and the record
     await expect(open).toContainText('완료');
     await expect(record).toContainText('광고 1건');
     await expect(log).toContainText(DONE);
+
+    // A turn goes on while another screen is shown: back on the chat it is still there, once, with 중지.
+    const screens = page.getByRole('navigation', { name: '화면' });
+    const pending = log.locator('.agent-message.pending');
+    await chatBox(page).fill(SLOW);
+    await chatBox(page).press('Enter');
+    await expect(pending).toBeVisible();
+    await screens.getByRole('button', { name: '웹 기록', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '웹 기록', level: 1 })).toBeVisible();
+    await screens.getByRole('button', { name: '채팅', exact: true }).click();
+    await expect(pending).toBeVisible();
+    await expect(log.locator('.agent-message.user').filter({ hasText: SLOW })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '중지' })).toBeVisible();
+    await expect(chatBox(page)).toBeDisabled();
+    // A chat loaded again while the turn runs finds it in the backend and follows it.
+    await page.reload();
+    await expect(chatBox(page)).toBeVisible();
+    await expect(pending).toBeVisible();
+    await expect(log.locator('.agent-message.user').filter({ hasText: SLOW })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '중지' })).toBeVisible();
+    // It ends while the user is elsewhere: a message says so, with the way back to the answer.
+    await screens.getByRole('button', { name: '웹 기록', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '웹 기록', level: 1 })).toBeVisible();
+    release(SLOWLY);
+    const ended = page
+      .getByRole('status')
+      .filter({ hasText: '채팅 에이전트가 작업을 마쳤습니다.' });
+    await ended.getByRole('button', { name: '채팅 열기' }).click();
+    await expect(log).toContainText(SLOWLY);
+    await expect(pending).toHaveCount(0);
+    await expect(chatBox(page)).toBeEnabled();
 
     // Clearing the conversation asks first, with the button an AI tool may press only at the "full" access level.
     await page.getByRole('button', { name: '대화 비우기' }).click();

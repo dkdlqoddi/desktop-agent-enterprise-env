@@ -399,22 +399,15 @@ async function launchBackend(dataDirectory) {
   // One value at a time: a value that is no longer valid keeps its default instead of failing the start. Sent to this
   // backend itself: other requests wait for it.
   await child.request('settings.load', values);
-  // The chat agent's non-secret runtime options (computer use, MCP server names, the gateway). The secret values
-  // themselves rode in the backend's environment (PRIVATE_AGENT_HERMES_ENV); these just tell the agent what is on.
+  // The chat agent's options and service keys (hermesConfigure), which a backend started anew has not heard yet.
   if (hermesSettings) await child.request('agent.configure', hermesConfigure()).catch(() => {});
 }
 
-// What the chat agent is told at each start and change: the runtime options and, over the backend's own private
-// pipe (never the renderer), the service keys and messenger tokens that go into the Hermes worker's environment.
+// What the chat agent is told at each start and change: the folder it works in, computer use, the MCP servers and,
+// over the backend's own private pipe (never the renderer), the service keys that go into the Hermes worker's
+// environment. The messenger gateway's bot tokens stay in the main process: nothing runs a gateway yet.
 function hermesConfigure() {
-  const backend = hermesSettings.backend();
-  return {
-    computer_use: backend.computer_use,
-    gateway: backend.gateway,
-    mcp_servers: backend.mcp_servers,
-    extract_backend: backend.env.FIRECRAWL_API_KEY ? 'firecrawl' : 'ddgs',
-    env: backend.env,
-  };
+  return hermesSettings.agent();
 }
 
 // The custom headers with their values, as the backend takes them: the names settings.json lists, each with the value
@@ -1360,6 +1353,12 @@ async function handle(method, params, { access } = {}) {
   else if (method === 'hermes.update') {
     result = await hermesSettings.update(params);
     await rpc('agent.configure', hermesConfigure()).catch(() => {});
+  } else if (method === 'hermes.choose') {
+    const picked = await dialog.showOpenDialog(window, {
+      title: '채팅 에이전트의 작업 폴더 선택',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    result = picked.canceled ? null : picked.filePaths[0] || null;
   } else if (method === 'import.choose') result = await chooseImport(params.mode);
   else if (method === 'files.import_text') result = await importText(params);
   else if (method === 'clipboard.write') {
@@ -1616,8 +1615,8 @@ else {
         decrypt: (value) => safeStorage.decryptString(value),
         canEncrypt,
       });
-      // The chat's Hermes agent: its service keys and messenger tokens (OS-encrypted, never sent to the screen or
-      // to the worker's model calls), the MCP servers, and whether computer use and the messenger gateway are on.
+      // The chat's Hermes agent: its service keys (OS-encrypted, never sent to the screen or to the worker's model
+      // calls), the MCP servers, the folder it works in and whether computer use is on.
       hermesSettings = new HermesSettings({
         file: path.join(userData, 'hermes.json'),
         encrypt: (value) => safeStorage.encryptString(value),

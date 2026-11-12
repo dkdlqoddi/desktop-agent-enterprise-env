@@ -22,7 +22,7 @@ const ACCESS_LEVELS = [
     id: 'full',
     label: '전체',
     description:
-      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다.',
+      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅 화면만은 어느 범위에서도 AI 도구가 입력하거나 누를 수 없습니다(사용자만).',
   },
 ];
 const DEFAULT_ACCESS = 'read';
@@ -71,7 +71,16 @@ const TABS = {
   automation: ['prompt', 'schedules', 'routines'],
   activity: ['history', 'conversations'],
 };
-const ADMIN_SECTIONS = ['llm', 'sites', 'templates', 'preferences', 'api', 'manual', 'about'];
+const ADMIN_SECTIONS = [
+  'llm',
+  'sites',
+  'chat',
+  'templates',
+  'preferences',
+  'api',
+  'manual',
+  'about',
+];
 const WINDOW_ACTIONS = [
   'show',
   'minimize',

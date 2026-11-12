@@ -1,16 +1,20 @@
-"""The agent chat (채팅): requests in plain words, planned by the bundled Hermes agent and carried out by the app.
+"""The agent chat (채팅): requests in plain words, carried out by the bundled Hermes agent.
 
-One conversation, kept in agent_messages. A message goes to the planner with the recent conversation; the planner
-answers in words and proposes up to four actions (Hermes' prepare_actions tool). Each action is checked here against
-TOOLS, its name and every argument, and kept with the answer as a card. An action that only reads what the app keeps
-runs at once (a document search, a summary of the web records). One that opens a site in the visible browser, records
-a page, adds a task or schedules a routine waits for the user's 확인 후 실행 (agent.approve) or 취소 (agent.reject),
-and runs only then. What ran, what it found or why it failed is written on the card. The planner runs nothing itself,
-and nothing here clicks a site's page: the web records read pages, and ads count as clicked only when the user clicks
-them (web_capture.py).
+One conversation, kept in agent_messages. A message goes to the agent with the recent conversation (send). The agent
+is Hermes (hermes.py), which a packaged app always carries: it acts at once with its own tools (terminal, files, code,
+web search, a browser, memory, skills) and with the app's actions below, which it calls as tools. Each call of an app
+action is checked here, its name and every argument (card), run (run), and kept with the answer as a card that says
+what it did or why it failed. A command Hermes' guard finds dangerous pauses the turn for the user's decision
+(agent.approve_command), and a question the agent asks waits for the user's answer (agent.answer_clarify). While a
+turn runs the chat reads its progress (agent.status) and, loaded meanwhile, finds the turn again (agent.active).
 
-The planner is Hermes (hermes.py), which a packaged app always carries. A source run that has not built it
-(npm run build:hermes) plans with the connected LLM's JSON answer instead (engine "direct"), and the answer says so.
+A source run that has not built Hermes (npm run build:hermes) has no tools: the connected LLM answers with a JSON plan
+instead (engine "direct", run_direct). Its actions that only read what the app keeps run at once (a document search, a
+summary of the web records); one that opens a site, records a page, adds a task or schedules a routine waits for the
+user's 확인 후 실행 (agent.approve) or 취소 (agent.reject), and the answer says which engine it was.
+
+Nothing here clicks a site's page: the web records read pages, and ads count as clicked only when the user clicks them
+(web_capture.py).
 """
 
 import json
@@ -18,6 +22,7 @@ import re
 import sys
 import threading
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from . import diagnostics
 from .hermes import Hermes
@@ -32,6 +37,9 @@ MESSAGE_CHARS = 4000
 MAX_ACTIONS = 4
 DAYS = {"daily": "매일", "weekdays": "평일마다"}
 RECORD_KINDS = ("ad", "product", "result", "clicked")
+# Hermes' names of the web services a key of the user's selects (electron/hermes-settings.cjs); ddgs needs no key and
+# only searches.
+WEB_SERVICES = ("ddgs", "tavily", "exa", "parallel", "firecrawl", "brave-free")
 NOT_CONNECTED = "LLM이 연결되지 않았습니다. 관리 → LLM 연결에서 먼저 연결해 주세요."
 NO_REPLY = "요청을 이해하지 못했습니다. 무엇을 할지 조금 더 구체적으로 적어 주세요."
 
@@ -55,8 +63,41 @@ The app's own tools:
 - add_task {title, due?}: add a task.
 - schedule_capture {site, query, time, days}: record that search on a schedule.
 
-The app only reads shopping pages; it never clicks ads. Ads the user clicks themselves are recorded with their
-landing page. If a request is ambiguous (which site? what to search?), use the clarify tool to ask."""
+Reading a page's text with web_extract needs a web service key, which the user sets under 관리 → 채팅 에이전트
+(Firecrawl, Tavily, Exa or Parallel). When web_extract says it has no service, open the page with the browser tool
+instead, and do not ask the user to change a setting file.
+
+Never click, open or follow an advertisement or a sponsored link yourself, with any tool (the browser, computer use, a
+script or a web request): automated ad clicks are invalid traffic that harms advertisers and breaks the sites' terms.
+If asked to, decline in one sentence and offer to record the ads instead. The app's own tools only read shopping
+pages; ads the user clicks themselves in the visible browser are recorded with their landing page. If a request is
+ambiguous (which site? what to search?), use the clarify tool to ask."""
+
+# The prompt of a source run without the bundled Hermes (engine "direct"). The connected LLM has no tools there, so it
+# answers with a plan as JSON, which run_direct checks and shows as cards. Kept apart from SYSTEM: an LLM told that it
+# acts with tools answers in words, and a plan is read from JSON alone.
+DIRECT_SYSTEM = """You are the agent of Private Agent, a desktop app that keeps the user's documents, tasks and web
+records on their own PC. Reply in Korean, in short concrete sentences.
+
+You cannot browse or act yourself. Propose app actions; the app shows each one to the user, and anything that opens a
+website, records a page, adds a task or schedules a job runs only after the user approves it. Never say an action ran
+or claim results you do not have: say what you prepared. Do not invent records, prices or ads.
+
+Actions (tool and args):
+- search_documents {"query"}: search the user's Wiki documents.
+- list_records {"site"?, "kind"?: "ad"|"product"|"result"|"clicked", "text"?, "since"?: "YYYY-MM-DD"}: summarize the
+  web records already kept (ads, products and results of earlier captures, and the ads the user clicked).
+- web_capture {"site", "query"}: open the site's search for the query in the visible browser and record the ads,
+  products and results the page shows. Sites: coupang (쿠팡), amazon (아마존), naver (네이버), google (구글).
+- open_site {"site"?, "url"?}: open a site's home page or an http(s) address in the visible browser for the user.
+- capture_page {}: record the ads and items of the page the browser shows now.
+- add_task {"title", "due"?: "YYYY-MM-DD"}: add a task.
+- schedule_capture {"site", "query", "time": "HH:MM", "days": "daily"|"weekdays"}: record that search on a schedule.
+
+The app only reads pages: never propose clicking ads or anything else on a page. Ads the user clicks themselves in the
+browser are recorded with their landing page. If the request is unclear (which site? what to search?), ask one short
+question and propose no action. Answer ONLY with JSON:
+{"message": "...", "actions": [{"tool": "...", "args": {...}}]}"""
 
 
 def day(value, name):
@@ -87,9 +128,14 @@ class AgentChat:
         self.hermes = Hermes(service)
         self.lock = threading.Lock()
         self.sending = False
-        # Hermes runtime settings the main process passes (hermes.configure): which messenger accounts, MCP servers
-        # and whether computer use is on. The service keys and tokens live in the worker's environment, not here.
-        self.settings = {"computer_use": True, "mcp_servers": {}, "extract_backend": "ddgs", "gateway": False}
+        # The message being carried out, {"request_id", "text"}: what a chat screen loaded meanwhile shows again.
+        self.active = None
+        # Hermes runtime settings the main process passes (agent.configure): the MCP servers, whether computer use is
+        # on, and the services that search the web and read pages. The service keys and tokens live in the worker's
+        # environment, not here.
+        self.settings = {"computer_use": True, "mcp_servers": {}, "search_backend": "ddgs", "extract_backend": "ddgs"}
+        # The folder the agent's terminal and file tools start in; '' for its own home in the Wiki folder.
+        self.workspace = ""
         self.methods = {
             "agent.messages": self.messages,
             "agent.send": self.send,
@@ -98,6 +144,7 @@ class AgentChat:
             "agent.approve_command": self.approve_command,
             "agent.answer_clarify": self.answer_clarify,
             "agent.status": self.status,
+            "agent.active": self.current,
             "agent.stop": self.stop,
             "agent.clear": self.clear,
             "agent.engine": self.engine,
@@ -124,28 +171,43 @@ class AgentChat:
 
     def configure(self, params):
         """The main process (never the renderer) sets the Hermes runtime options and, over the backend's private
-        pipe, the service keys and messenger tokens that go into the worker's environment. A change recycles the idle
-        worker so the next turn picks it up; the secret values are never returned."""
+        pipe, the service keys that go into the worker's environment. A change recycles the idle worker so the next
+        turn picks it up; the secret values are never returned."""
         settings = dict(self.settings)
         if "computer_use" in params:
             settings["computer_use"] = bool(params["computer_use"])
-        if "gateway" in params:
-            settings["gateway"] = bool(params["gateway"])
         if isinstance(params.get("mcp_servers"), dict):
             settings["mcp_servers"] = params["mcp_servers"]
-        if params.get("extract_backend"):
-            settings["extract_backend"] = text(params["extract_backend"], "추출 백엔드", 40)
+        # The service that searches the web and the one that reads pages, by the keys the user stored; anything but
+        # a service Hermes knows by that name is the search that needs no key.
+        for field in ("search_backend", "extract_backend"):
+            if field in params:
+                settings[field] = params[field] if params[field] in WEB_SERVICES else "ddgs"
         self.settings = settings
+        if "workspace" in params:
+            folder = params["workspace"]
+            self.workspace = folder if isinstance(folder, str) and len(folder) <= 1024 else ""
         if "env" in params:
             env = params["env"] if isinstance(params["env"], dict) else {}
             extra = {name: value for name, value in env.items() if isinstance(name, str) and isinstance(value, str)}
             self.hermes.recycle(extra or None)
         return {"ok": True}
 
+    def folder(self):
+        """The folder a turn's terminal and file tools start in: the one the user chose, while it is a folder that is
+        still there, and otherwise '' (the agent's own home in the Wiki folder)."""
+        try:
+            chosen = Path(self.workspace) if self.workspace else None
+            return str(chosen) if chosen and chosen.is_absolute() and chosen.is_dir() else ""
+        except (OSError, ValueError):
+            return ""
+
     def toolsets(self):
         """The Hermes toolsets the chat turns on: the app's own actions, plus files, terminal, code, web, browser,
-        memory, skills, todo, past-conversation search, subagents, vision, image generation, scheduling and clarify.
-        Computer use only when the user turned it on; MCP server tools by their configured names."""
+        memory, skills, todo, past-conversation search, subagents, vision, image generation and clarify. Computer use
+        only when the user turned it on; MCP server tools by their configured names. Hermes' own scheduling (cronjob)
+        stays off: its jobs are run by a gateway, which this app does not start, so one would be saved and never
+        run. A schedule is the app's own routine instead (schedule_capture)."""
         names = [
             "private_agent",
             "file",
@@ -160,7 +222,6 @@ class AgentChat:
             "delegation",
             "vision",
             "image_gen",
-            "cronjob",
             "clarify",
         ]
         if self.settings.get("computer_use", True):
@@ -169,7 +230,18 @@ class AgentChat:
         return names
 
     def status(self, params):
-        return self.hermes.status(params)
+        """What a turn is doing, for the chat while it waits. `active`: the request is still being carried out, which
+        the engine's own phase does not tell for a plan of the connected LLM (engine "direct")."""
+        status = self.hermes.status(params)
+        with self.lock:
+            status["active"] = bool(self.active and self.active["request_id"] == params.get("request_id"))
+        return status
+
+    def current(self, _params=None):
+        """The message being carried out now, {"request_id", "text"} ('' and '' for none): a chat screen that was
+        left, or loaded again, while a turn ran finds it here and shows its progress and questions again."""
+        with self.lock:
+            return dict(self.active) if self.active else {"request_id": "", "text": ""}
 
     def stop(self, params):
         return self.hermes.stop(params)
@@ -503,6 +575,7 @@ class AgentChat:
             if self.sending:
                 raise BusyError("이전 메시지를 처리하고 있습니다. 끝난 뒤 다시 보내 주세요.")
             self.sending = True
+            self.active = {"request_id": request_id, "text": message}
         try:
             context = self.context(message)
             with self.service.db.connect() as db:
@@ -517,6 +590,7 @@ class AgentChat:
         finally:
             with self.lock:
                 self.sending = False
+                self.active = None
 
     def run_agent(self, context, request_id):
         """The bundled Hermes agent runs the turn with its full tools, acting live. The app's own actions run here as
@@ -538,6 +612,7 @@ class AgentChat:
                 settings=self.settings,
                 on_app_tool=on_app_tool,
                 on_interaction=lambda kind, payload: None,
+                workspace=self.folder(),
             )
         except UserError as error:
             return {"content": str(error), "actions": executed, "engine": "error"}
@@ -550,7 +625,7 @@ class AgentChat:
         """A source run without the bundled Hermes: the connected LLM proposes app actions as cards, read-only ones
         run at once and the rest wait for the user's approval. No tools, no live actions — the badge says so."""
         try:
-            plan = self.service.llm.structured(SYSTEM, context)
+            plan = self.service.llm.structured(DIRECT_SYSTEM, context)
         except UserError as error:
             return {"content": str(error), "actions": [], "engine": "error"}
         reply = spoken(plan.get("message")) if isinstance(plan, dict) else ""

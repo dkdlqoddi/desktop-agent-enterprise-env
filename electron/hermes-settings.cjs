@@ -2,28 +2,55 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { readJsonFile, writeFileSafely } = require('./files.cjs');
 
-// The chat's Hermes settings (hermes.json): its working folder, the messaging gateway, computer use, the MCP servers
-// and the service keys and bot tokens Hermes reads from its environment. Like the LLM API Key, every value is kept with
-// the OS secure storage (encrypted); without it, values last until the app closes. The screen only ever learns
-// whether a value is set. The backend gets them at its start and after each change (hermes.configure), keeps them in
-// memory and hands them to the Hermes worker's environment; the LLM connection is never among them.
+// The chat's Hermes settings (hermes.json): its working folder, computer use, the MCP servers and the service keys
+// Hermes reads from its environment. Like the LLM API Key, every value is kept with the OS secure storage (encrypted);
+// without it, values last until the app closes. The screen only ever learns whether a value is set. The backend gets
+// what the chat's turns use at its start and after each change (agent(), sent as agent.configure), keeps it in memory
+// and hands the keys to the Hermes worker's environment; the LLM connection is never among them.
+//
+// The messenger gateway (Telegram, Discord, Slack) is not run by this version: the file keeps its switch, its bot
+// tokens and the accounts it would answer, as saved by a version that offered them, but nothing starts a gateway and
+// agent() leaves them out, so a bot token never sits in the environment of a worker that has no use for it.
 
 const VERSION = 1;
 // The keys the settings screen lists, by what each is for; any other name the user adds goes the same way (a skill's
 // own key, another search provider).
 const KNOWN_KEYS = [
-  { name: 'EXA_API_KEY', group: 'web', label: 'Exa 웹 검색' },
-  { name: 'FIRECRAWL_API_KEY', group: 'web', label: 'Firecrawl 웹 검색·본문 추출' },
-  { name: 'TAVILY_API_KEY', group: 'web', label: 'Tavily 웹 검색' },
-  { name: 'PARALLEL_API_KEY', group: 'web', label: 'Parallel 웹 검색' },
+  { name: 'EXA_API_KEY', group: 'web', label: 'Exa 웹 검색·페이지 읽기' },
+  { name: 'FIRECRAWL_API_KEY', group: 'web', label: 'Firecrawl 웹 검색·페이지 읽기' },
+  { name: 'TAVILY_API_KEY', group: 'web', label: 'Tavily 웹 검색·페이지 읽기' },
+  { name: 'PARALLEL_API_KEY', group: 'web', label: 'Parallel 웹 검색·페이지 읽기' },
   { name: 'BRAVE_SEARCH_API_KEY', group: 'web', label: 'Brave 웹 검색' },
+  // The image tool's key. No voice key is listed: the chat turns on no text-to-speech tool that would read one.
   { name: 'FAL_KEY', group: 'media', label: 'FAL 이미지 생성' },
-  { name: 'ELEVENLABS_API_KEY', group: 'media', label: 'ElevenLabs 음성' },
   { name: 'TELEGRAM_BOT_TOKEN', group: 'gateway', label: '텔레그램 봇 토큰' },
   { name: 'DISCORD_BOT_TOKEN', group: 'gateway', label: '디스코드 봇 토큰' },
   { name: 'SLACK_BOT_TOKEN', group: 'gateway', label: '슬랙 봇 토큰 (xoxb-)' },
   { name: 'SLACK_APP_TOKEN', group: 'gateway', label: '슬랙 앱 토큰 (xapp-, Socket Mode)' },
 ];
+// Which service searches the web for the agent, and which reads a page for it: the first whose key the user stored
+// (Hermes names its web services so). Hermes takes the service from its settings, not from the keys it finds, so a key
+// stored here does nothing until its service is named. Without a key the search is DuckDuckGo's (ddgs), which needs
+// none, and no service reads pages: ddgs only searches, and the free tiers Hermes could fall back on are services
+// the user never chose.
+const SEARCH_SERVICES = [
+  ['TAVILY_API_KEY', 'tavily'],
+  ['EXA_API_KEY', 'exa'],
+  ['PARALLEL_API_KEY', 'parallel'],
+  ['FIRECRAWL_API_KEY', 'firecrawl'],
+  ['BRAVE_SEARCH_API_KEY', 'brave-free'],
+];
+const EXTRACT_SERVICES = [
+  ['FIRECRAWL_API_KEY', 'firecrawl'],
+  ['TAVILY_API_KEY', 'tavily'],
+  ['EXA_API_KEY', 'exa'],
+  ['PARALLEL_API_KEY', 'parallel'],
+];
+const serviceOf = (services, env) => services.find(([key]) => env[key])?.[1] ?? 'ddgs';
+// The bot tokens of the messenger gateway, which no worker is given while the gateway is not run.
+const GATEWAY_KEYS = new Set(
+  KNOWN_KEYS.filter((key) => key.group === 'gateway').map((key) => key.name),
+);
 // The accounts each messaging platform answers; a platform without any stays off even with its token.
 const PLATFORMS = ['telegram', 'discord', 'slack'];
 const NAME = /^[A-Z][A-Z0-9_]{1,63}$/;
@@ -251,6 +278,25 @@ class HermesSettings {
     };
   }
 
+  /** What the chat's turns are run with, as the backend's agent.configure takes it (backend/agent/agent_chat.py): the
+   *  folder the agent works in, computer use, the MCP servers, the services that search the web and read pages, and
+   *  the keys of the worker's environment. The gateway's bot tokens are not among them: nothing runs a gateway. Only
+   *  the main process ever calls this. */
+  agent() {
+    const backend = this.backend();
+    const env = Object.fromEntries(
+      Object.entries(backend.env).filter(([name]) => !GATEWAY_KEYS.has(name)),
+    );
+    return {
+      workspace: backend.workspace,
+      computer_use: backend.computer_use,
+      mcp_servers: backend.mcp_servers,
+      search_backend: serviceOf(SEARCH_SERVICES, env),
+      extract_backend: serviceOf(EXTRACT_SERVICES, env),
+      env,
+    };
+  }
+
   change(task) {
     const job = this.queue.then(() => {
       if (this.unavailable) throw new Error(this.unavailable);
@@ -339,6 +385,7 @@ module.exports = {
   HermesSettings,
   HermesSettingsError,
   KNOWN_KEYS,
+  GATEWAY_KEYS,
   PLATFORMS,
   refusedName,
   mcpServers,

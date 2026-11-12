@@ -5365,7 +5365,16 @@
                   "section": {
                     "type": "string",
                     "description": "view=admin의 관리 항목",
-                    "enum": ["llm", "sites", "templates", "preferences", "api", "manual", "about"]
+                    "enum": [
+                      "llm",
+                      "sites",
+                      "chat",
+                      "templates",
+                      "preferences",
+                      "api",
+                      "manual",
+                      "about"
+                    ]
                   }
                 },
                 "required": ["view"]

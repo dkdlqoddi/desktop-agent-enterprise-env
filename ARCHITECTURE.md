@@ -14,7 +14,7 @@ Electron 메인 프로세스(electron/main.cjs) ◀── AI 도구: 127.0.0.1 R
 Python 백엔드(backend/main.py → agent/service.py) ──▶ wiki.db, LLM 서버, Chromium(Playwright), Office(COM)
    │  stdin/stdout JSON 줄(agent/hermes.py)
    ▼
-Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 작업 계획만 세우고, 모델 호출은 백엔드에 맡김
+Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 에이전트: 자기 도구로 실행하고, 모델 호출과 앱의 작업은 백엔드에 맡김
 ```
 
 | 프로세스      | 맡는 일                                                                                                                                                               | 경계                                                                                                                                                                         |
@@ -51,15 +51,15 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 사용자가 처음 실행할 때 고른 폴더입니다(기본 제안은 문서 폴더의 `Private Agent`).
 
-| 경로                    | 내용                                                                                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wiki.db`               | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 1입니다(`backend/agent/migrations.py`)                                                         |
-| `backups/`              | `wiki-YYYYMMDD-HHMMSS.db`(하루 한 번 자동, 최근 7개), `wiki-manual-….db`(직접 백업, 최근 7개), `wiki-before-restore-….db`(복원으로 바뀐 Wiki, 지우지 않음) |
-| `backups/restore.json`  | 예약된 복원. 함께 있는 `restore-<id>.db`를 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                       |
-| `원본 백업/`            | 원본 반영 전에 복사한 Office 파일(파일마다 최근 5개)과 저장 단계를 적는 `.writing` 파일                                                                    |
-| `web-captures/YYYY-MM/` | 웹 기록 때 찍은 페이지 스크린샷(`<기록 id>.jpg`)                                                                                                           |
-| `exports/`              | 웹 기록의 CSV 내보내기(`web-records-YYYYMMDD-HHMMSS.csv`, UTF-8 BOM)                                                                                       |
-| `hermes/`               | 내장 Hermes의 홈(`HERMES_HOME`): 세션 기록(`state.db`)과 임시·캐시 폴더. API Key와 헤더 값은 들어가지 않습니다                                             |
+| 경로                    | 내용                                                                                                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wiki.db`               | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 1입니다(`backend/agent/migrations.py`)                                                                            |
+| `backups/`              | `wiki-YYYYMMDD-HHMMSS.db`(하루 한 번 자동, 최근 7개), `wiki-manual-….db`(직접 백업, 최근 7개), `wiki-before-restore-….db`(복원으로 바뀐 Wiki, 지우지 않음)                    |
+| `backups/restore.json`  | 예약된 복원. 함께 있는 `restore-<id>.db`를 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                                          |
+| `원본 백업/`            | 원본 반영 전에 복사한 Office 파일(파일마다 최근 5개)과 저장 단계를 적는 `.writing` 파일                                                                                       |
+| `web-captures/YYYY-MM/` | 웹 기록 때 찍은 페이지 스크린샷(`<기록 id>.jpg`)                                                                                                                              |
+| `exports/`              | 웹 기록의 CSV 내보내기(`web-records-YYYYMMDD-HHMMSS.csv`, UTF-8 BOM)                                                                                                          |
+| `hermes/`               | 내장 Hermes의 홈(`HERMES_HOME`): 메모리·스킬·세션 기록(`state.db`), 턴마다 다시 쓰는 `config.yaml`, 임시·캐시 폴더. API Key와 헤더 값, MCP 서버 설정의 값은 들어가지 않습니다 |
 
 `wiki.db`의 테이블은 다음과 같이 묶입니다(`backend/agent/db.py`).
 
@@ -83,6 +83,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `settings.json`                          | LLM 연결 설정. API Key(`encrypted_api_key`)와 헤더 값(`encrypted_headers`)은 암호화하고 헤더는 이름만 둡니다. 보안 저장소를 쓸 수 없으면 새 API Key는 실행 중 메모리에만 두고 헤더 값은 파일에 그대로 저장합니다 |
 | `sites.json`                             | 사이트 계정, 로그인 방식, 고정한 로그인 주소. 비밀번호는 `encrypted_password`                                                                                                                                    |
 | `api.json`                               | 로컬 API의 켜짐, 포트(기본 47615), 허용 범위(기본 `read`), 암호화한 토큰                                                                                                                                         |
+| `hermes.json`                            | 채팅 에이전트 설정: 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키와 MCP 서버 설정(`encrypted`). 보안 저장소를 쓸 수 없으면 키와 MCP 설정은 실행 중 메모리에만 둡니다                                                |
 | `window.json`                            | 화면 배율                                                                                                                                                                                                        |
 | `logs/app.log`, `logs/backend.log`       | 메인 프로세스와 백엔드의 로그. 각각 1MB를 넘으면 `.1`로 하나 남깁니다                                                                                                                                            |
 | `confluence-profiles/`, `jira-profiles/` | 사이트 주소(origin)마다 하나인 Chromium 프로필. 그 사이트의 마지막 계정을 지우면 함께 지웁니다                                                                                                                   |
@@ -114,8 +115,8 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/browser_import.py`, `confluence_import.py`, `jira_import.py`                                                    | 사이트별 Chromium 프로필, 요청 속도 제한, Confluence 페이지와 JIRA 티켓 수집             |
 | `agent/web_login.py`, `agent/web_assist.py`                                                                            | 로그인 방식에 따른 자동 로그인, 로그인·접속 실패 시 LLM 도움(기본 꺼짐)                  |
 | `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                             |
-| `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 계획을 작업 카드로 검사, 승인한 작업만 실행(`agent.*`)                  |
-| `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지, 워커의 모델 호출을 앱의 LLM 연결로 보내기                    |
+| `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 에이전트가 부른 앱 작업의 검사·실행과 카드, 진행 중인 턴(`agent.*`)     |
+| `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계 |
 | `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)     |
 
 ### electron
@@ -129,6 +130,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `backend-process.cjs`, `restarts.cjs`                   | 백엔드 프로세스 하나의 요청·응답·이벤트·제한 시간, 예기치 않게 끝난 백엔드의 재시작                           |
 | `storage.cjs`                                           | Wiki 폴더 선택(`storage.json`), 이전 버전 Wiki 복사, 폴더 쓰기 확인                                           |
 | `sites.cjs`, `login-methods.json`                       | 사이트 계정(`sites.json`, 암호화한 비밀번호)과 로그인 계획, 로그인 방식 목록                                  |
+| `hermes-settings.cjs`                                   | 채팅 에이전트 설정(`hermes.json`): 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키와 MCP 서버, 백엔드에 넘길 값    |
 | `api-catalog.cjs`                                       | 로컬 API의 모든 메서드, 범위, REST 경로. REST·MCP·매뉴얼·OpenAPI가 모두 이 표에서 만들어집니다                |
 | `api-server.cjs`, `mcp.cjs`, `mcp-stdio.cjs`            | 127.0.0.1 REST·MCP 서버, MCP 도구·리소스·프롬프트, stdio 연결 프로그램                                        |
 | `api-manual.cjs`, `api-settings.cjs`, `api-methods.cjs` | 매뉴얼(JSON·Markdown·HTML·OpenAPI), `api.json`, AI 도구 전용 메서드와 경로 검사                               |
@@ -145,12 +147,13 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `components/app.tsx`, `components/state.tsx`            | 시작 상태와 이벤트 연결, 따로 바뀌는 상태 조각과 선택자 훅(`useView`, `useQuery` 등)           |
 | `components/workspace.tsx`, `dashboard.tsx`, `widgets/` | 사이드바와 화면 전환, 위젯 대시보드                                                            |
 | `components/reader.tsx`, `search-panel.tsx`             | 문서·실행 기록 보기와 편집(충돌 비교 포함), 검색창과 AI 답변                                   |
-| `components/admin.tsx`, `admin/`                        | 관리 화면: LLM 연결, 사이트 계정, 템플릿, AI 도구 연동, API 매뉴얼                             |
+| `components/admin.tsx`, `admin/`                        | 관리 화면: LLM 연결, 채팅 에이전트, 사이트 계정, 템플릿, AI 도구 연동, API 매뉴얼              |
 | `components/html-document.tsx`, `lib/html-document.ts`  | 가져온 HTML을 허용 목록으로 정제해 shadow DOM에 표시                                           |
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |
 | `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시와 나누어 받는 목록, 선택자로 읽는 작은 상태 저장소                 |
 | `components/windowing.ts`                               | 긴 목록에서 보이는 줄만 그리기(측정한 줄 높이)                                                 |
-| `components/agent-chat.tsx`, `web-records.tsx`          | 첫 화면인 채팅(작업 카드와 승인), 웹 기록 표와 CSV 내보내기                                    |
+| `components/agent-chat.tsx`, `agent-turn.ts`            | 첫 화면인 채팅(진행·명령 확인·질문·작업 카드), 화면을 옮겨도 이어지는 진행 중인 턴             |
+| `components/web-records.tsx`                            | 웹 기록 표와 CSV 내보내기                                                                      |
 
 ### scripts
 
@@ -180,16 +183,21 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 
 ## 채팅과 웹 기록
 
-채팅은 첫 화면입니다. 메시지를 보내면(`agent.send`) 백엔드가 최근 대화와 함께 내장 Hermes에 계획을 묻습니다.
+채팅은 첫 화면입니다. 메시지를 보내면(`agent.send`) 백엔드가 최근 대화와 함께 내장 Hermes 에이전트에 넘기고, 에이전트가 턴 하나를 끝낼 때까지 실행합니다.
 
-1. `agent/hermes.py`가 `resources/hermes`(개발 중에는 `dist/hermes`)의 CPython으로 `worker.py`를 띄웁니다. 실행 전에 `manifest.json`의 `worker_sha256`을 확인하고, 환경 변수는 사용자의 Hermes·프록시·Python 설정을 버린 최소한만 넘깁니다(`child_environment`).
-2. 워커는 Hermes에 `prepare_actions` 도구 하나만 줍니다. 이 도구는 작업을 실행하지 않고 목록으로만 남깁니다. Hermes가 모델을 부를 때마다 워커가 백엔드에 요청을 넘기고, `agent/hermes_llm.py`가 앱의 LLM 연결(키, 헤더, CA)로 보냅니다. 키는 워커에 들어가지 않으며, 계획 하나에 모델 호출은 4번, 시간은 120초까지입니다.
-3. `agent/agent_chat.py`가 제안된 작업을 `TOOLS` 목록과 인수별로 검사해 카드로 만듭니다. 앱의 기록만 읽는 작업(문서 찾기, 웹 기록 요약)은 바로 실행하고, 사이트 열기·페이지 기록·할 일 추가·예약은 사용자가 **확인 후 실행**(`agent.approve`)을 누를 때만 실행합니다.
-4. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있어 Android 앱도 같은 스크립트를 씁니다.
+1. `agent/hermes.py`가 `resources/hermes`(개발 중에는 `dist/hermes`)의 CPython으로 `worker.py`를 띄웁니다(`-I`). 실행 전에 `manifest.json`의 `worker_sha256`을 확인하고, 환경 변수는 사용자의 Hermes·프록시·Python 설정을 버린 최소한에 사용자가 넣은 서비스 키만 더해 넘깁니다(`child_environment`). 워커는 Wiki마다 하나이며 다음 턴에 다시 씁니다. 끝까지 가지 못한 턴의 워커는 끝내고 새로 띄웁니다.
+2. 워커와 백엔드는 표준 입출력으로 JSON 줄(프레임)을 주고받습니다. 워커가 보내는 것은 `inference`(모델 요청), `app_tool`(앱의 작업), `approval`(위험한 명령의 확인), `clarify`(사용자에게 묻는 질문), `progress`·`draft`(진행과 작성 중인 답), `result`·`error`이고, 백엔드는 `turn`, `completion`, `app_tool_reply`, `approval_reply`, `clarify_reply`, `cancel`, `shutdown`을 보냅니다.
+3. Hermes는 자기 도구(터미널, 파일, 코드 실행, 웹 검색, 브라우저, 메모리, 스킬, 컴퓨터 사용, MCP 서버)를 워커 안에서 바로 실행합니다. 모델을 부를 때마다(보조 모델과 하위 에이전트 포함) 요청이 `inference`로 백엔드에 오고, `agent/hermes_llm.py`가 앱의 LLM 연결(키, 헤더, CA)로 보냅니다. 키는 워커에 들어가지 않습니다. 모델 요청 하나는 120초(연결의 응답 제한 시간이 더 짧으면 그 시간), 턴 전체는 그 제한 시간의 4배(2분~15분)까지이며, 사용자의 답을 기다린 시간은 세지 않습니다.
+4. 앱의 작업(문서 찾기, 웹 기록 요약, 사이트 열기, 페이지 기록, 할 일 추가, 예약)은 Hermes가 도구로 부르면 `agent/agent_chat.py`가 이름과 인수를 검사해(`card`) 실행하고(`run`), 결과를 카드로 남깁니다.
+5. Hermes의 검사가 위험하다고 본 명령은 `approval` 프레임으로 멈춥니다. 화면이 `agent.status`로 이를 읽어 묻고, 사용자의 결정(`agent.approve_command`)이나 질문의 답(`agent.answer_clarify`)을 돌려보냅니다. 5분 안에 답이 없으면 거부·취소로 처리하고, **중지**(`agent.stop`)는 기다리는 중에도 턴을 끝냅니다.
+6. 진행 중인 턴은 화면 밖에 둡니다(`src/components/agent-turn.ts`). 다른 화면으로 옮겨도 요청과 진행 확인이 이어지고, 에이전트가 답을 기다리거나 끝나면 알림으로 알립니다. 화면을 다시 불러오면 `agent.active`로 진행 중인 턴을 찾아 이어서 보여 줍니다.
+7. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있어 Android 앱도 같은 스크립트를 씁니다.
 
-Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다(Hermes 없이 설정한 LLM의 도구 호출로 계획). 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
+에이전트의 설정(**관리 → 채팅 에이전트**)은 메인 프로세스가 `hermes.json`에 두고(`electron/hermes-settings.cjs`), 시작할 때와 바뀔 때 `agent.configure`로 백엔드에 넘깁니다: 작업 폴더(터미널과 파일 도구가 시작하는 곳), 컴퓨터 사용, MCP 서버, 서비스 키. MCP 서버 설정의 값(env, headers, 인수, 주소)은 워커가 `config.yaml`에 쓰지 않고 환경 변수 참조로 바꿔 넘깁니다(`worker.py`의 `mcp_servers`). 메신저 게이트웨이는 아직 실행하지 않습니다([TODO.md](TODO.md)).
 
-`npm run build:hermes`를 하지 않은 소스 실행에서는 연결한 LLM이 JSON으로 계획하고(`engine: direct`), 화면의 배지가 이를 알립니다. 배포 앱은 항상 내장 Hermes를 씁니다.
+Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다. 내장 Hermes 실행 환경을 넣은 빌드에서는 같은 `worker.py`를 휴대폰에서 실행하고(터미널·파일·코드·브라우저 자동화·컴퓨터 사용은 끔), 넣지 않은 빌드에서는 설정한 LLM의 도구 호출로 계획해 카드를 확인받습니다. 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
+
+`npm run build:hermes`를 하지 않은 소스 실행에는 도구가 없습니다. 연결한 LLM이 JSON으로 계획하고(`engine: direct`), 읽기만 하는 작업은 바로, 나머지는 사용자가 카드의 **확인 후 실행**(`agent.approve`)을 눌러야 실행하며, 화면의 배지가 이를 알립니다. 배포 앱은 항상 내장 Hermes를 씁니다.
 
 ## 보안 경계
 
@@ -201,7 +209,8 @@ Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 asset
 - 사이트 주소는 HTTPS가 기본이며 HTTP로 내려가지 않습니다. 브라우저 자동화는 Chromium 샌드박스를 켠 채 실행합니다.
 - 문서 삭제는 휴지통으로 가고, 영구 삭제·백업 복원·파일 가져오기·설정 변경은 허용 범위 ‘전체’에서만 AI 도구가 할 수 있습니다.
 - 로그와 진단 복사본은 키·토큰·비밀번호를 가립니다.
-- 채팅의 계획기(Hermes)는 작업을 제안만 합니다. 사이트를 열거나 기록하는 작업은 사용자가 승인한 카드만 실행하고, 앱은 페이지의 광고나 링크를 누르지 않습니다.
+- 채팅의 에이전트(Hermes)는 자기 도구로 바로 실행하고, 위험한 명령만 사용자의 확인을 받습니다. 운영체제 샌드박스가 아니라 승인 기반 통제입니다. 모델 호출은 모두 앱의 LLM 연결로 보내고, 앱의 웹 기록은 페이지의 광고나 링크를 누르지 않습니다.
+- 채팅 화면은 사용자만 다룹니다(`data-user-only`). 로컬 API의 화면 제어는 허용 범위와 관계없이 채팅에 입력하거나 그 버튼(명령 확인 포함)을 누르지 못합니다.
 
 ## 빌드와 패키징
 
@@ -211,7 +220,7 @@ Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 asset
 2. `next build`: 화면을 `out/`으로 정적 내보내기합니다(`NEXT_TELEMETRY_DISABLED=1`).
 3. `scripts/build-python.mjs`: PyInstaller `--onedir`로 백엔드를 `dist/backend/private-agent-backend/`에 만듭니다. UTF-8 모드로 실행되게 하고, setuptools와 debugpy는 넣지 않습니다. Windows에서는 만든 백엔드가 모든 표준 확장 모듈을 불러오는지 확인합니다(`--check-build`).
 4. `scripts/build-browser.mjs`: 백엔드의 Playwright가 쓰는 Chromium을 `dist/browsers`에 설치합니다. 패키징한 앱은 `PLAYWRIGHT_BROWSERS_PATH`를 이 폴더로 정합니다.
-5. `scripts/build-hermes.mjs`: `runtime/hermes/manifest.json`에 고정한 Hermes 소스(태그와 커밋 확인), CPython 3.14.0(Windows는 python.org embeddable package, Linux는 python-build-standalone, 둘 다 SHA-256 확인), `runtime/hermes/requirements.txt`의 해시 고정 wheel을 `dist/hermes`에 모읍니다.
+5. `scripts/build-hermes.mjs`: `runtime/hermes/manifest.json`에 고정한 Hermes 소스(태그와 커밋 확인), CPython 3.14.0(Windows는 python.org embeddable package, Linux는 python-build-standalone, 둘 다 SHA-256 확인), `runtime/hermes/requirements-desktop.txt`의 해시 고정 wheel(Android와 함께 쓰는 핵심 `requirements.txt`에 데스크톱 기능을 더한 것)과 Hermes의 번들 플러그인·스킬을 `dist/hermes`에 모읍니다.
 6. electron-builder(`package.json`의 `build`): `electron/`, `out/`, `package.json`을 `app.asar`에 넣고, `dist/browsers`, `dist/backend`, `dist/hermes`를 `resources/`에, `LICENSE`와 `THIRD_PARTY_NOTICES.md`를 앱 폴더에 넣으며 Electron fuses를 적용합니다. nsis 대상과 `scripts/launcher.nsi`로 `release/Private-Agent-<버전>-x64.exe` 하나를 만듭니다. 백신 검사 때문에 `EPERM`·`EBUSY`로 멈추면 세 번까지 다시 시도합니다.
 
 이 exe는 설치 프로그램이 아니라 실행기입니다. 빌드마다 처음 실행할 때 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀고, 그 뒤에는 바로 실행합니다. 레지스트리, 바로 가기, 제거 프로그램을 만들지 않으며, 실행 중인 앱이 없을 때 더 오래된 빌드의 폴더를 지웁니다.

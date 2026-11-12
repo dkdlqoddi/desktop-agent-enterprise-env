@@ -113,6 +113,89 @@ test('gateway accounts, MCP servers and computer use reach the backend as Hermes
   assert.throws(() => mcpServers('{"x": {"url": "ftp://example.test"}}'), /command나 연결할 url/);
 });
 
+test('the chat is run with the folder, the tools and the service keys, never a bot token', async (t) => {
+  const { directory, make } = await setup(t);
+  const settings = make();
+  await settings.load();
+  // Nothing set: the agent's own folder, computer use, no MCP server, pages read without a service.
+  assert.deepEqual(settings.agent(), {
+    workspace: '',
+    computer_use: true,
+    mcp_servers: {},
+    search_backend: 'ddgs',
+    extract_backend: 'ddgs',
+    env: {},
+  });
+  // A version that offered the messenger gateway saved its switch, accounts and bot tokens. Nothing runs a gateway,
+  // so they stay in the main process: a worker with no use for a bot token is not given one.
+  await settings.update({
+    workspace: directory,
+    computer_use: false,
+    gateway: true,
+    users: { telegram: '123' },
+    mcp: JSON.stringify({ files: { command: 'npx' } }),
+    keys: {
+      FIRECRAWL_API_KEY: 'fc-secret',
+      MY_SKILL_TOKEN: 'skill-secret',
+      TELEGRAM_BOT_TOKEN: 'tg-secret',
+      DISCORD_BOT_TOKEN: 'dc-secret',
+      SLACK_BOT_TOKEN: 'xoxb-secret',
+      SLACK_APP_TOKEN: 'xapp-secret',
+    },
+  });
+  const sent = settings.agent();
+  assert.deepEqual(sent, {
+    workspace: directory,
+    computer_use: false,
+    mcp_servers: { files: { command: 'npx' } },
+    search_backend: 'firecrawl',
+    extract_backend: 'firecrawl',
+    env: { FIRECRAWL_API_KEY: 'fc-secret', MY_SKILL_TOKEN: 'skill-secret' },
+  });
+  assert.ok(!/gateway|users|tg-secret|dc-secret|xoxb|xapp/.test(JSON.stringify(sent)));
+  // They are still kept, so that the screen can show them as saved and delete them.
+  assert.equal(settings.backend().env.TELEGRAM_BOT_TOKEN, 'tg-secret');
+  const shown = settings.get().keys.find((key) => key.name === 'TELEGRAM_BOT_TOKEN');
+  assert.deepEqual(shown, {
+    name: 'TELEGRAM_BOT_TOKEN',
+    label: '텔레그램 봇 토큰',
+    group: 'gateway',
+    has_value: true,
+  });
+});
+
+test('a web service key names the service that searches and the one that reads pages', async (t) => {
+  // Hermes takes its web services from its settings, not from the keys it finds: a key stored here does nothing until
+  // its service is named. Without a key the search is the one that needs none, and no service reads pages.
+  const cases = [
+    [{}, 'ddgs', 'ddgs'],
+    [{ EXA_API_KEY: 'k' }, 'exa', 'exa'],
+    [{ TAVILY_API_KEY: 'k' }, 'tavily', 'tavily'],
+    [{ PARALLEL_API_KEY: 'k' }, 'parallel', 'parallel'],
+    [{ FIRECRAWL_API_KEY: 'k' }, 'firecrawl', 'firecrawl'],
+    // Brave only searches: pages stay unread by a service.
+    [{ BRAVE_SEARCH_API_KEY: 'k' }, 'brave-free', 'ddgs'],
+    // Several keys: one service each, in a fixed order.
+    [{ BRAVE_SEARCH_API_KEY: 'k', EXA_API_KEY: 'k' }, 'exa', 'exa'],
+    [{ EXA_API_KEY: 'k', FIRECRAWL_API_KEY: 'k' }, 'exa', 'firecrawl'],
+    [{ TAVILY_API_KEY: 'k', EXA_API_KEY: 'k', FIRECRAWL_API_KEY: 'k' }, 'tavily', 'firecrawl'],
+    // A key of another kind names no web service.
+    [{ FAL_KEY: 'k', MY_SKILL_TOKEN: 'k' }, 'ddgs', 'ddgs'],
+  ];
+  for (const [keys, search, extract] of cases) {
+    const { make } = await setup(t);
+    const settings = make();
+    await settings.load();
+    if (Object.keys(keys).length) await settings.update({ keys });
+    const sent = settings.agent();
+    assert.deepEqual(
+      [sent.search_backend, sent.extract_backend],
+      [search, extract],
+      JSON.stringify(keys),
+    );
+  }
+});
+
 test('without secure storage values last for this run only', async (t) => {
   const { file, make } = await setup(t, false);
   const settings = make();

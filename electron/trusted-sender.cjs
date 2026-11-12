@@ -151,11 +151,13 @@ const ALLOWED = new Set([
   'agent.approve_command',
   'agent.answer_clarify',
   'agent.status',
+  'agent.active',
   'agent.stop',
   'agent.clear',
   'agent.engine',
   'hermes.get',
   'hermes.update',
+  'hermes.choose',
   // The web records (web_capture.py) and their visible browser; the exports folder opens in the main process.
   'web.sites',
   'web.status',

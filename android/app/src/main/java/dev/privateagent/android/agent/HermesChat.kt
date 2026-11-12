@@ -243,7 +243,10 @@ class HermesChat(
             "private_agent", "memory", "skills", "web", "todo", "session_search", "delegation", "vision", "clarify",
         )
 
-        /** worker.py's runtime settings: no computer use, no MCP servers, keyless web extraction. */
+        /**
+         * worker.py's runtime settings: no computer use, no MCP servers, and the web search that needs no key
+         * (ddgs). No service reads pages: ddgs only searches, and a phone has no service key to name one.
+         */
         val SETTINGS: JSONObject
             get() = JSONObject().put("computer_use", false).put("mcp_servers", JSONObject()).put("extract_backend", "ddgs")
 

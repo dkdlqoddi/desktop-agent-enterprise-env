@@ -1,37 +1,33 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, Cpu, LoaderCircle, Plus, Send, Trash2 } from 'lucide-react';
+import { Bot, Cpu, FolderOpen, LoaderCircle, Plus, Send, Trash2 } from 'lucide-react';
 import { api, type HermesKey, type HermesSettings } from '@/lib/api';
 import { useActions } from '../state';
 import SecretInput from '../secret-input';
 
+// The key groups the screen takes values for. The messenger gateway's bot tokens (group 'gateway') are not among them:
+// this version runs no gateway, so a token typed here would do nothing.
 const GROUPS: [HermesKey['group'], string][] = [
   ['web', '웹 검색'],
-  ['media', '이미지·음성'],
-  ['gateway', '메신저 봇'],
+  ['media', '이미지 생성'],
   ['other', '그 밖의 키'],
 ];
-const PLATFORMS: [string, string][] = [
-  ['telegram', '텔레그램'],
-  ['discord', '디스코드'],
-  ['slack', '슬랙'],
-];
 
-// The chat agent's own settings: the service keys and messenger tokens it reads from its environment (only whether
-// each is set ever reaches this screen), the MCP servers, the messenger accounts it answers, and the computer-use
-// and gateway toggles. Model calls always go through 관리 → LLM 연결, so model-provider keys are refused here.
+// The chat agent's own settings: the folder its terminal and file tools start in, the service keys it reads from its
+// environment (only whether each is set ever reaches this screen), the MCP servers and the computer-use toggle. Model
+// calls always go through 관리 → LLM 연결, so model-provider keys are refused here.
 export default function HermesSection() {
   const { notify } = useActions();
   const [state, setState] = useState<HermesSettings | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [mcp, setMcp] = useState('');
-  const [accounts, setAccounts] = useState<Record<string, string>>({});
+  const [workspace, setWorkspace] = useState('');
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const next = await api<HermesSettings>('hermes.get');
     setState(next);
-    setAccounts(next.users);
+    setWorkspace(next.workspace);
     return next;
   }, []);
   useEffect(() => {
@@ -43,7 +39,7 @@ export default function HermesSection() {
     try {
       const next = await api<HermesSettings>('hermes.update', params);
       setState(next);
-      setAccounts(next.users);
+      setWorkspace(next.workspace);
       if (next.error) notify(next.error, true);
       else if (done) notify(done);
     } catch (error) {
@@ -61,6 +57,15 @@ export default function HermesSection() {
     setDrafts({});
   }
 
+  async function chooseWorkspace() {
+    try {
+      const folder = await api<string | null>('hermes.choose');
+      if (folder) setWorkspace(folder);
+    } catch (error) {
+      notify((error as Error).message, true);
+    }
+  }
+
   if (!state)
     return (
       <p className="muted">
@@ -69,9 +74,8 @@ export default function HermesSection() {
     );
 
   const keysOf = (group: HermesKey['group']) => state.keys.filter((key) => key.group === group);
-  const custom = state.keys.filter(
-    (key) => !GROUPS.some(([g]) => g === key.group && key.group !== 'other'),
-  );
+  // Bot tokens a version that offered the gateway saved: shown so that they can be deleted, nothing more.
+  const botTokens = keysOf('gateway').filter((key) => key.has_value);
 
   return (
     <div className="admin-form hermes-settings">
@@ -87,7 +91,7 @@ export default function HermesSection() {
       )}
 
       {GROUPS.map(([group, label]) => {
-        const keys = group === 'other' ? custom : keysOf(group);
+        const keys = keysOf(group);
         if (group === 'other' && !keys.length) return null;
         return (
           <fieldset key={group} className="admin-fieldset">
@@ -117,6 +121,14 @@ export default function HermesSection() {
                 )}
               </label>
             ))}
+            {group === 'web' && (
+              <p className="admin-hint">
+                키가 없으면 DuckDuckGo로 검색하고, 페이지 본문을 읽어 주는 서비스는 쓰지
+                않습니다(그때 에이전트는 브라우저로 페이지를 엽니다). 키를 여러 개 넣으면 검색은
+                Tavily → Exa → Parallel → Firecrawl → Brave, 페이지 읽기는 Firecrawl → Tavily → Exa
+                → Parallel 순으로 먼저 있는 하나를 씁니다.
+              </p>
+            )}
           </fieldset>
         );
       })}
@@ -166,6 +178,48 @@ export default function HermesSection() {
 
       <fieldset className="admin-fieldset">
         <legend>
+          <FolderOpen size={14} /> 작업 폴더
+        </legend>
+        <p className="admin-hint">
+          에이전트의 터미널과 파일 도구가 시작하는 폴더입니다. 비워 두면 Wiki 폴더 안의 에이전트
+          전용 폴더(hermes)에서 시작합니다. 시작 위치일 뿐이며, 에이전트는 이 폴더 밖의 파일도 다룰
+          수 있습니다.
+        </p>
+        <div className="hermes-add-key">
+          <input
+            aria-label="작업 폴더"
+            placeholder="폴더의 전체 경로 (비워 두면 에이전트 전용 폴더)"
+            value={workspace}
+            onChange={(event) => setWorkspace(event.target.value)}
+          />
+          <button
+            type="button"
+            className="button secondary small"
+            disabled={busy}
+            onClick={() => void chooseWorkspace()}
+          >
+            <FolderOpen size={14} /> 폴더 선택
+          </button>
+          <button
+            type="button"
+            className="button secondary small"
+            disabled={busy || workspace.trim() === state.workspace}
+            onClick={() =>
+              void update(
+                { workspace: workspace.trim() },
+                workspace.trim()
+                  ? '작업 폴더를 저장했습니다. 다음 요청부터 적용됩니다.'
+                  : '작업 폴더를 비웠습니다. 에이전트 전용 폴더에서 시작합니다.',
+              )
+            }
+          >
+            저장
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset className="admin-fieldset">
+        <legend>
           <Cpu size={14} /> 도구
         </legend>
         <label className="admin-toggle">
@@ -205,34 +259,25 @@ export default function HermesSection() {
           <Bot size={14} /> 메신저 게이트웨이
         </legend>
         <p className="admin-hint">
-          켜면 텔레그램·디스코드·슬랙에서 이 PC의 에이전트에 일을 시킬 수 있습니다. 봇 토큰은 위의
-          “메신저 봇”에 넣고, 아래에 허용할 계정만 답하게 하세요. 연결은 이 PC에서 바깥으로만
-          열립니다.
+          텔레그램·디스코드·슬랙에서 이 PC의 에이전트에 일을 시키는 메신저 게이트웨이는 이 버전에서
+          아직 지원하지 않습니다. 봇 토큰을 넣어도 쓰이지 않으므로 입력란을 두지 않았습니다.
         </p>
-        <label className="admin-toggle">
-          <input
-            type="checkbox"
-            checked={state.gateway}
-            disabled={busy}
-            onChange={(event) => void update({ gateway: event.target.checked })}
-          />
-          메신저 게이트웨이 켜기
-        </label>
-        {state.gateway &&
-          PLATFORMS.map(([platform, label]) => (
-            <label key={platform} className="admin-field">
-              <span>{label} 허용 계정</span>
-              <input
-                aria-label={`${label} 허용 계정`}
-                placeholder="계정 ID를 쉼표로 구분"
-                value={accounts[platform] ?? ''}
-                onChange={(event) =>
-                  setAccounts((current) => ({ ...current, [platform]: event.target.value }))
-                }
-                onBlur={() => void update({ users: { [platform]: accounts[platform] ?? '' } })}
-              />
-            </label>
-          ))}
+        {botTokens.map((key) => (
+          <div key={key.name} className="admin-field">
+            <span>{key.label || key.name} (저장되어 있지만 쓰이지 않음)</span>
+            <button
+              type="button"
+              className="text-button"
+              data-destructive
+              disabled={busy}
+              onClick={() =>
+                void update({ keys: { [key.name]: '' } }, `${key.name}을(를) 지웠습니다.`)
+              }
+            >
+              <Trash2 size={13} /> 지우기
+            </button>
+          </div>
+        ))}
       </fieldset>
     </div>
   );

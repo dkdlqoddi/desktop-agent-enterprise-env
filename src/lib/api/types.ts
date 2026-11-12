@@ -1018,10 +1018,16 @@ export type AgentStatus = {
   // Set while the turn is paused for the user to answer; null otherwise.
   interaction: AgentApproval | AgentClarify | null;
   can_stop: boolean;
+  // Whether the request is still being carried out: false once its answer is saved (or it failed).
+  active: boolean;
 };
+// The message being carried out now (agent.active), which a chat loaded meanwhile shows again; '' and '' for none.
+export type AgentActive = { request_id: string; text: string };
 
-// The chat agent's own settings (hermes.*): the service keys and messenger tokens (only whether each is set), the
-// MCP servers, the allowed messenger accounts, and whether the gateway and computer use are on.
+// The chat agent's own settings (hermes.*): the folder it works in, the service keys (only whether each is set), the
+// MCP servers and whether computer use is on. `gateway`, `users` and the keys of the group 'gateway' are what a
+// version that offered the messenger gateway saved: nothing runs a gateway, and the screen only lets such a token be
+// deleted.
 export type HermesKey = {
   name: string;
   label: string;

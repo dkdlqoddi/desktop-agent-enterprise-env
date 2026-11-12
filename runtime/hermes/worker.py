@@ -94,9 +94,58 @@ class Channel:
 CHANNEL = Channel()
 
 
+def mcp_servers(servers):
+    """The MCP servers as config.yaml takes them, without the values that may be secrets: a server's env and headers,
+    its arguments and its URL (a token is often part of one). config.yaml is a file in the Wiki folder, which may be
+    copied, synced or backed up, while the app keeps these settings encrypted. So each such value goes into this
+    process's environment under a name of its own and config.yaml holds a ${NAME} reference, which Hermes resolves
+    when it reads the servers. A value that is itself a reference (${GITHUB_TOKEN}, a key the user stored) stays as
+    written: it names a secret and holds none.
+
+    Hermes refuses a server whose command, arguments or environment are shaped like an attack
+    (hermes_cli.mcp_security), judging the entry as config.yaml has it. It could not see that behind the references,
+    so each entry is checked here first, as it was written, and one it refuses is left out; were that check missing
+    from the bundle, the arguments and the environment stay as written for Hermes' own check."""
+    count = 0
+    # The values of the turn before (this process is kept for the next turn) go first.
+    for name in [name for name in os.environ if name.startswith("PRIVATE_AGENT_MCP_")]:
+        del os.environ[name]
+    try:
+        from hermes_cli.mcp_security import validate_mcp_server_entry as refused
+    except Exception:
+        refused = None
+
+    def reference(value):
+        nonlocal count
+        if not isinstance(value, str) or not value or "${" in value:
+            return value
+        count += 1
+        name = f"PRIVATE_AGENT_MCP_{count}"
+        os.environ[name] = value
+        return "${" + name + "}"
+
+    kept = {}
+    for name, server in (servers if isinstance(servers, dict) else {}).items():
+        if not isinstance(server, dict) or (refused is not None and refused(name, server)):
+            continue
+        entry = dict(server)
+        if isinstance(entry.get("headers"), dict):
+            entry["headers"] = {key: reference(value) for key, value in entry["headers"].items()}
+        if "url" in entry:
+            entry["url"] = reference(entry["url"])
+        if refused is not None:
+            if isinstance(entry.get("env"), dict):
+                entry["env"] = {key: reference(value) for key, value in entry["env"].items()}
+            if isinstance(entry.get("args"), list):
+                entry["args"] = [reference(value) for value in entry["args"]]
+        kept[name] = entry
+    return kept
+
+
 def prepare_home(request):
     """The agent's home and app-owned config for this turn. JSON is valid YAML; it carries no secret (the API key
-    never reaches here) and is regenerated for each selected connection, while memories, skills and sessions stay."""
+    never reaches here, and the MCP servers' own values stay in the environment: mcp_servers) and is regenerated for
+    each selected connection, while memories, skills and sessions stay."""
     for name in ("memories", "skills", "sessions", "logs", "cron", "tmp", "cache", "config", "data"):
         (HOME / name).mkdir(exist_ok=True, mode=0o700)
     for name, content in {
@@ -129,10 +178,16 @@ def prepare_home(request):
         "security": {"allow_lazy_installs": False},
         "tools": {"tool_search": {"enabled": "off"}},
         "auxiliary": auxiliary,
-        "web": {"search_backend": "ddgs", "extract_backend": settings.get("extract_backend", "ddgs")},
+        # The services the app names by the keys the user stored (ddgs, which needs none, without one). Hermes' free
+        # tiers of services the user never chose stay off: a page nothing can read is told as that.
+        "web": {
+            "search_backend": settings.get("search_backend") or "ddgs",
+            "extract_backend": settings.get("extract_backend") or "ddgs",
+            "keyless_fallback": False,
+        },
         "browser": {"executable_path": chromium} if chromium else {},
         "computer_use": {"enabled": bool(settings.get("computer_use", True))},
-        "mcp_servers": settings.get("mcp_servers", {}),
+        "mcp_servers": mcp_servers(settings.get("mcp_servers")),
         "plugins": {"enabled": []},
         "checkpoints": {"enabled": False},
     }
