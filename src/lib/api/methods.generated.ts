@@ -150,6 +150,7 @@ export type ScreenMethod =
   | 'agent.approve_command'
   | 'agent.clear'
   | 'agent.engine'
+  | 'agent.gateway'
   | 'agent.messages'
   | 'agent.reject'
   | 'agent.send'

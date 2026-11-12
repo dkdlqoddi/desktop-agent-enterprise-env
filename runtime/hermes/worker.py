@@ -5,18 +5,24 @@ credential enters this process: every model request the agent makes — the main
 (smart approvals, vision, compression, titles) and any subagent — is routed back to the parent as an "inference"
 frame, which performs it with the app's own LLM connection. The agent's tools run here (terminal, files, code,
 browser, MCP, memory, skills, computer use, web search); the app's own actions (document search, web records,
-tasks, schedules) run in the parent, reached as "app_tool" frames. Dangerous commands ask the user through an
-"approval" frame; clarify questions through a "clarify" frame; progress and draft text stream up as "progress"
-and "draft" frames. One worker per Wiki, reused for the next turn; its home is the Wiki's hermes folder.
+tasks, schedules) run in the parent, reached as "app_tool" frames.
 
-Frames to the parent: inference, approval, app_tool, clarify, progress, draft, result, error.
-Frames from the parent: turn, completion, approval_reply, app_tool_reply, clarify_reply, cancel, shutdown.
+A process serves one of two things, by the first frame it gets. A "turn" runs one message of the chat: dangerous
+commands ask the user through an "approval" frame, clarify questions through a "clarify" frame, and progress and
+draft text stream up as "progress" and "draft" frames; the process is kept for the next turn. A "gateway" runs
+Hermes' messenger gateway until it is shut down (run_gateway): the accounts the user listed write to their bot in
+Telegram, Discord or Slack, and the agent answers there, asking them there before a dangerous command. Either way its
+home is the Wiki's hermes folder.
+
+Frames to the parent: inference, approval, app_tool, clarify, progress, draft, result, error, gateway.
+Frames from the parent: turn, gateway, completion, approval_reply, app_tool_reply, clarify_reply, cancel, shutdown.
 """
 import contextlib
 import json
 import logging
 import os
 import queue
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -33,6 +39,24 @@ sys.stdout.reconfigure(encoding="utf-8")
 INPUT, OUTPUT = sys.stdin, sys.stdout
 MAX_FRAME = 2_000_000
 OUT_LOCK = threading.Lock()
+# The messengers the gateway may connect. Whatever else Hermes could serve (a webhook, an API server, another chat
+# service whose key happens to be among the user's) is never started.
+GATEWAY_PLATFORMS = ("telegram", "discord", "slack")
+# What an account the user listed may type as a command in a messenger: the commands that steer its own
+# conversation. Hermes' other commands change what the agent may do (yolo, approvals, model), reach outside the PC
+# (update, debug, login) or set the gateway up (restart, platform, sethome); the app's settings screen does those.
+GATEWAY_COMMANDS = ("start", "new", "retry", "undo", "title", "compress", "stop", "approve", "deny", "status",
+                    "queue", "steer", "btw", "agents", "context", "commands", "usage", "version", "resume",
+                    "sessions", "discard")
+# Environment names that let more people in than the accounts the user listed (everyone, other bots, whole group
+# chats, roles), or that start a listener (an API server, webhooks). None is part of the gateway's environment,
+# whatever was stored under such a name (electron/hermes-settings.cjs refuses to store one: GATEWAY_STEERING).
+GATEWAY_OPENINGS = re.compile(
+    r"_ALLOW_ALL_USERS$|_ALLOW_BOTS$|_ALLOWED_(USERS|CHATS|CHANNELS|ROLES|GROUPS)$|_HOME_CHANNEL"
+    r"|^GATEWAY_|^API_SERVER_|^WEBHOOK_|^TELEGRAM_WEBHOOK_")
+# An ID no messenger gives an account: with it as the only "admin", every listed account is an ordinary user of
+# Hermes' command tiers and runs GATEWAY_COMMANDS alone.
+NO_ADMIN = "private-agent-no-admin"
 
 
 def emit(frame):
@@ -142,10 +166,40 @@ def mcp_servers(servers):
     return kept
 
 
+def write_config(path, config):
+    """One of Hermes' config files, replaced whole: the chat's worker and the gateway's read the same home, and
+    Hermes reads a file it finds half written as no settings at all. JSON is valid YAML."""
+    content = json.dumps(config, ensure_ascii=False, indent=2)
+    with contextlib.suppress(OSError):
+        if path.read_text(encoding="utf-8") == content:
+            return
+    draft = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    draft.write_text(content, encoding="utf-8")
+    os.replace(draft, path)
+
+
+def own_settings_only(managed=None):
+    """Keep Hermes to the settings this process was started with. Two things would otherwise change them from
+    outside the app. A .env file in its home is read over the environment it was started with, at the start and
+    again for every message of a gateway: the keys, the accounts a messenger answers, even whether approvals are
+    asked. The app hands every such value over through the environment, so a file of that name in the Wiki's hermes
+    folder is not the app's (a restored or shared folder may bring one): it is removed and its loader does nothing.
+    And a Hermes installed on this PC by its administrator may pin settings in /etc/hermes; `managed` names the one
+    folder Hermes may read such settings from instead, or no folder at all."""
+    for name in (".env", ".op.env"):
+        with contextlib.suppress(OSError):
+            (HOME / name).unlink()
+    os.environ["HERMES_MANAGED_DIR"] = str(managed) if managed else os.devnull
+    from hermes_cli import config as hermes_config, env_loader
+
+    env_loader.load_hermes_dotenv = lambda *args, **kwargs: []
+    hermes_config.reload_env = lambda *args, **kwargs: 0
+
+
 def prepare_home(request):
-    """The agent's home and app-owned config for this turn. JSON is valid YAML; it carries no secret (the API key
-    never reaches here, and the MCP servers' own values stay in the environment: mcp_servers) and is regenerated for
-    each selected connection, while memories, skills and sessions stay."""
+    """The agent's home and app-owned config for this turn. It carries no secret (the API key never reaches here,
+    and the MCP servers' own values stay in the environment: mcp_servers) and is regenerated for each selected
+    connection, while memories, skills and sessions stay."""
     for name in ("memories", "skills", "sessions", "logs", "cron", "tmp", "cache", "config", "data"):
         (HOME / name).mkdir(exist_ok=True, mode=0o700)
     for name, content in {
@@ -191,7 +245,7 @@ def prepare_home(request):
         "plugins": {"enabled": []},
         "checkpoints": {"enabled": False},
     }
-    (HOME / "config.yaml").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_config(HOME / "config.yaml", config)
     return config
 
 
@@ -232,6 +286,10 @@ def parent_completion(req):
     reply = CHANNEL.request("inference", {"body": body})
     if not isinstance(reply, dict) or reply.get("type") != "completion":
         raise RuntimeError("invalid inference reply")
+    if "error" in reply:
+        # The app could not get an answer (the LLM is not connected, refused the request or timed out). A gateway
+        # goes on serving: Hermes tells the one who asked, in the messenger, that the model failed.
+        return httpx.Response(502, json={"error": {"message": str(reply["error"])[:500], "type": "private_agent"}})
     complete = reply["body"]
     if not body.get("stream"):
         return httpx.Response(200, json=complete)
@@ -331,13 +389,15 @@ def build_agent(request, config):
     return agent, database
 
 
-def run_turn(request):
+def bundled_paths():
     sys.path.insert(0, str(ROOT / "dependencies"))
     sys.path.insert(0, str(ROOT / "source"))
     os.environ["PYTHONPATH"] = str(ROOT / "dependencies")
 
-    config = prepare_home(request)
-    patch_model_calls()
+
+def prepare_tools(request):
+    """What a turn and a gateway both need before an agent is built: the bundled skills, and the MCP servers'
+    tools (which may take a while to answer)."""
     with contextlib.suppress(Exception):
         from tools.skills_sync import sync_skills
 
@@ -347,6 +407,14 @@ def run_turn(request):
             from tools.mcp_tool_discovery import discover_mcp_tools
 
             discover_mcp_tools(list(request["settings"]["mcp_servers"]))
+
+
+def run_turn(request):
+    bundled_paths()
+    own_settings_only()
+    config = prepare_home(request)
+    patch_model_calls()
+    prepare_tools(request)
 
     agent, database = build_agent(request, config)
     CURRENT_AGENT["agent"] = agent
@@ -365,9 +433,187 @@ def run_turn(request):
             database.close()
 
 
+# -- the messenger gateway -----------------------------------------------------------------------------------------
+
+
+def gateway_accounts(request):
+    """{messenger: the account IDs it answers}, of the messengers the gateway may connect that have a bot token in
+    the environment and at least one account: a bot nobody is listed for answers nobody, so it is not connected."""
+    token = {"telegram": ("TELEGRAM_BOT_TOKEN",), "discord": ("DISCORD_BOT_TOKEN",),
+             "slack": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")}
+    listed = request.get("users") if isinstance(request.get("users"), dict) else {}
+    accounts = {}
+    for name in GATEWAY_PLATFORMS:
+        ids = [part for part in re.split(r"[\s,]+", str(listed.get(name) or "")) if part and part != "*"]
+        if ids and all(os.environ.get(key) for key in token[name]):
+            accounts[name] = ids
+    return accounts
+
+
+def gateway_policy(request, config, accounts):
+    """The settings the gateway is held to, over the home's config.yaml (Hermes' managed layer, which its own
+    commands and settings cannot change): the same model route, tools and approvals as the chat, and for each
+    messenger who may write (nobody unlisted is answered, not even with a pairing code) and what they may type."""
+    # In a chat room of several people the bot answers a listed account only when it is addressed.
+    extra = {"allow_admin_from": [NO_ADMIN], "user_allowed_commands": list(GATEWAY_COMMANDS),
+             "group_allow_admin_from": [NO_ADMIN], "group_user_allowed_commands": list(GATEWAY_COMMANDS),
+             "unauthorized_dm_behavior": "ignore", "require_mention": True}
+    toolsets = [str(name) for name in request["toolsets"]]
+    platforms = {name: {"enabled": True, "extra": dict(extra)} for name in accounts}
+    # Another address of the Bot API than Telegram's own, which only a test's stand-in server is given.
+    if request.get("telegram_api") and "telegram" in platforms:
+        platforms["telegram"]["extra"]["base_url"] = str(request["telegram_api"])
+    return {
+        **config,
+        "agent": {**config["agent"], "max_turns": config["agent"]["max_iterations"], "system_prompt": request["system"]},
+        "terminal": {"cwd": str(request.get("workspace") or HOME)},
+        "unauthorized_dm_behavior": "ignore",
+        "allow_all_users": False,
+        "gateway": {"allow_all_users": False, "multiplex_profiles": False, "loop_watchdog": False},
+        # Hermes' own task board and schedules are not the app's: its routines are (schedule_capture).
+        "kanban": {"dispatch_in_gateway": False},
+        "platform_toolsets": {name: toolsets for name in accounts},
+        "platforms": platforms,
+    }
+
+
+def only_listed_accounts(runner_class, accounts):
+    """Hermes lets a sender in by its allowlists, and also by a pairing code approved earlier, a chat or a role
+    that was allowed, or a switch that allows everyone, each of which a file or a variable can turn on. Here the
+    accounts the user listed in the app are the whole list: a sender Hermes would let in is still refused unless it
+    is one of them."""
+    from gateway.authz_mixin import _principal_matches_allowlist
+
+    judged = runner_class._principal_authorized
+
+    def listed(self, source, **kwargs):
+        if not judged(self, source, **kwargs):
+            return False
+        platform = getattr(getattr(source, "platform", None), "value", "")
+        user = getattr(source, "user_id", None)
+        ids = set(accounts.get(platform) or ())
+        if not user or not ids:
+            return False
+        with contextlib.suppress(Exception):
+            ids |= set(self._adapter_resolved_allowlist_ids(source))
+        return bool(_principal_matches_allowlist(source, str(user), ids))
+
+    runner_class._principal_authorized = listed
+
+
+def offer_only(commands):
+    """The messengers' command menus and /help without the commands no listed account may run. (Typed all the same,
+    one of those is refused by Hermes' command tiers: gateway_policy.)"""
+    from hermes_cli.commands import COMMAND_REGISTRY
+
+    for command in COMMAND_REGISTRY:
+        if command.name not in commands:
+            object.__setattr__(command, "cli_only", True)
+            object.__setattr__(command, "gateway_config_gate", None)
+
+
+def gateway_states(names):
+    """Each messenger's connection as the settings screen tells it: Hermes' word for the state and its error code.
+    Its error text stays here: an adapter may quote the bot token it was refused with."""
+    record = {}
+    with contextlib.suppress(Exception):
+        from gateway.status import read_runtime_status
+
+        record = (read_runtime_status() or {}).get("platforms") or {}
+    states = {}
+    for name in names:
+        entry = record.get(name) if isinstance(record.get(name), dict) else {}
+        states[name] = {key: re.sub(r"[^a-z0-9_]", "", str(entry.get(field) or "").lower())[:60]
+                        for key, field in (("state", "state"), ("error", "error_code"))}
+    return states
+
+
+def run_gateway(request, requests):
+    """Hermes' messenger gateway, until the parent shuts it down. Only its adapters run, inside this process:
+    Telegram by long polling, Discord and Slack over a socket they open themselves, so nothing listens on a port.
+    Hermes' own service around a gateway (its control socket, local API, dashboard, scheduler and task board, and
+    the liveness socket other programs would probe) is not started."""
+    import asyncio
+
+    bundled_paths()
+    for name in [name for name in os.environ if GATEWAY_OPENINGS.search(name)]:
+        del os.environ[name]
+    accounts = gateway_accounts(request)
+    for name, ids in accounts.items():
+        os.environ[f"{name.upper()}_ALLOWED_USERS"] = ",".join(ids)
+    # A dangerous command asks in the messenger it came from and waits for the answer there.
+    os.environ["HERMES_EXEC_ASK"] = "1"
+    # Without it the Telegram adapter looks api.telegram.org up at two public DNS services of its own choosing.
+    os.environ["HERMES_TELEGRAM_DISABLE_FALLBACK_IPS"] = "1"
+    # The gateway's own words (a command to approve, a command refused) in the app's language.
+    os.environ["HERMES_LANGUAGE"] = "ko"
+    # The folder the agent's terminal and file tools start in, as in the chat.
+    os.environ["TERMINAL_CWD"] = str(request.get("workspace") or HOME)
+    policy = HOME / "gateway"
+    policy.mkdir(exist_ok=True, mode=0o700)
+    own_settings_only(policy)
+    config = prepare_home(request)
+    write_config(policy / "config.yaml", gateway_policy(request, config, accounts))
+    patch_model_calls()
+    prepare_tools(request)
+
+    from gateway.config import Platform
+    from gateway.run import GatewayRunner, load_gateway_config_for_runner
+    from tools.registry import registry
+
+    register_app_tools(registry, request["app_tools"])
+    loaded = load_gateway_config_for_runner()
+    wanted = {Platform(name) for name in accounts}
+    for platform in [platform for platform in loaded.platforms if platform not in wanted]:
+        del loaded.platforms[platform]
+    only_listed_accounts(GatewayRunner, accounts)
+    offer_only({*GATEWAY_COMMANDS, "help", "whoami"})
+    # The heartbeat serves programs that watch a Hermes service from outside, through a socket it would open.
+    GatewayRunner._start_loop_heartbeat_task = lambda self: None
+
+    async def no_setup_notes(self, *args, **kwargs):
+        """Hermes answers a first message with its own setup: a profile to build, and a home channel to set with a
+        command that is not among GATEWAY_COMMANDS. The app's settings screen is the setup."""
+
+    GatewayRunner._hmwa_first_contact_notes = no_setup_notes
+
+    async def serve():
+        unknown = {name: {"state": "", "error": ""} for name in accounts}
+        emit({"type": "gateway", "state": "starting", "platforms": unknown})
+        if not accounts or set(loaded.platforms) != wanted:
+            emit({"type": "gateway", "state": "failed", "platforms": unknown})
+            return
+        runner = GatewayRunner(loaded)
+        ended = asyncio.ensure_future(runner.wait_for_shutdown())
+        try:
+            if not await runner.start() or not runner._running:
+                emit({"type": "gateway", "state": "failed", "platforms": gateway_states(accounts)})
+                return
+            told = None
+            while not ended.done():
+                with contextlib.suppress(queue.Empty):
+                    if requests.get_nowait().get("type") == "shutdown":
+                        break
+                for name in (".env", ".op.env"):
+                    with contextlib.suppress(OSError):
+                        (HOME / name).unlink()
+                states = gateway_states(accounts)
+                if states != told:
+                    told = states
+                    emit({"type": "gateway", "state": "running", "platforms": states})
+                await asyncio.sleep(0.5)
+        finally:
+            ended.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(runner.stop(), 30)
+            emit({"type": "gateway", "state": "stopped", "platforms": gateway_states(accounts)})
+
+    asyncio.run(serve())
+
+
 def reader_loop(requests):
-    """The one stdin reader. Replies route to their waiting tool thread by id; a cancel stops the turn, a turn or a
-    shutdown goes to the main thread."""
+    """The one stdin reader. Replies route to their waiting tool thread by id; a cancel stops the turn; a turn, a
+    gateway or a shutdown goes to the main thread."""
     while True:
         line = INPUT.readline(MAX_FRAME + 1)
         if not line or len(line) > MAX_FRAME:
@@ -387,7 +633,7 @@ def reader_loop(requests):
             if agent is not None:
                 with contextlib.suppress(Exception):
                     agent.interrupt(hard_cancel=True)
-        elif kind in ("turn", "shutdown"):
+        elif kind in ("turn", "gateway", "shutdown"):
             requests.put(frame)
 
 
@@ -406,6 +652,15 @@ def main():
             request = requests.get()
             if request.get("type") == "shutdown":
                 return
+            if request.get("type") == "gateway":
+                # A gateway is this process's whole life: it ends with it, whatever is still running in its threads.
+                try:
+                    run_gateway(request, requests)
+                except Exception as error:
+                    emit({"type": "error", "kind": type(error).__name__})
+                    emit({"type": "gateway", "state": "failed", "platforms": {}})
+                OUTPUT.flush()
+                os._exit(0)
             CHANNEL.reset()
             try:
                 run_turn(request)

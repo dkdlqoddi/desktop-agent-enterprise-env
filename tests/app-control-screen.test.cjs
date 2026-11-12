@@ -49,7 +49,8 @@ function load(file) {
 }
 const { clickControl, fillControl, readScreen } = load('src/components/app-control.ts');
 
-// A screen with the chat (the user's alone), a page of the app, the admin page and a deletion's confirmation.
+// A screen with the chat (the user's alone), a page of the app, the admin page with the chat agent's settings (the
+// user's alone as well) and a deletion's confirmation.
 function screen() {
   window.document.body.innerHTML = `
     <nav class="sidebar"><button>홈</button><button>채팅</button></nav>
@@ -72,7 +73,16 @@ function screen() {
         <button>CSV 내보내기</button>
         <button data-destructive="">지우기</button>
       </section>
-      <div class="admin"><input aria-label="모델 이름" /></div>
+      <div class="admin">
+        <input aria-label="모델 이름" />
+        <div class="admin-form hermes-settings" data-user-only="">
+          <textarea aria-label="MCP 서버 (JSON)"></textarea>
+          <button>MCP 저장</button>
+          <input type="checkbox" aria-label="메신저 게이트웨이 켜기" />
+          <input aria-label="텔레그램 허용 계정" />
+          <button>게이트웨이 설정 저장</button>
+        </div>
+      </div>
     </main>`;
   const pressed = [];
   const submitted = [];
@@ -122,6 +132,30 @@ for (const [level, allow_admin] of [
       role: 'button',
     });
   });
+
+test('the chat agent\'s settings are the user\'s alone, at the "full" level too', async () => {
+  // An MCP server there is a command the agent starts without asking, and an account of the messenger gateway may
+  // write to the agent and answer its approvals from outside the PC: a tool with every other right sets neither.
+  const { pressed } = screen();
+  for (const allow_admin of [false, true]) {
+    for (const params of [
+      { label: 'MCP 서버 (JSON)', value: '{"x": {"command": "sh"}}' },
+      { label: '텔레그램 허용 계정', value: '99' },
+    ])
+      await assert.rejects(fillControl({ ...params, allow_admin }), /채팅은 사용자만/);
+    for (const name of ['MCP 저장', '게이트웨이 설정 저장', '메신저 게이트웨이 켜기'])
+      await assert.rejects(clickControl({ name, exact: true, allow_admin }), /채팅은 사용자만/);
+  }
+  assert.deepEqual(pressed, []);
+  assert.equal(window.document.querySelector('[aria-label="텔레그램 허용 계정"]').value, '');
+  assert.equal(
+    window.document.querySelector('[aria-label="메신저 게이트웨이 켜기"]').checked,
+    false,
+  );
+  // The rest of the admin page is still within the reach of "full".
+  await fillControl({ label: '모델 이름', value: 'y', allow_admin: true });
+  assert.equal(window.document.querySelector('[aria-label="모델 이름"]').value, 'y');
+});
 
 test('the rest of the screen follows the access level', async () => {
   const { pressed, submitted } = screen();

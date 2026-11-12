@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import diagnostics
 from .hermes import Hermes
+from .hermes_gateway import Gateway
 from .llm import BusyError, UserError
 from .service import now, text
 from .web_capture import KIND_NAMES, web_url
@@ -72,6 +73,11 @@ script or a web request): automated ad clicks are invalid traffic that harms adv
 If asked to, decline in one sentence and offer to record the ads instead. The app's own tools only read shopping
 pages; ads the user clicks themselves in the visible browser are recorded with their landing page. If a request is
 ambiguous (which site? what to search?), use the clarify tool to ask."""
+
+# Added for a conversation in a messenger (hermes_gateway.py): the one who writes there is the user, away from the PC.
+MESSENGER = """This conversation is in a messenger (Telegram, Discord or Slack). The user writes from there and may be
+away from the PC: what the app's tools open, they open on the PC, so say in words what you did and what you found. A
+dangerous command is asked for approval in this messenger."""
 
 # The prompt of a source run without the bundled Hermes (engine "direct"). The connected LLM has no tools there, so it
 # answers with a plan as JSON, which run_direct checks and shows as cards. Kept apart from SYSTEM: an LLM told that it
@@ -136,6 +142,9 @@ class AgentChat:
         self.settings = {"computer_use": True, "mcp_servers": {}, "search_backend": "ddgs", "extract_backend": "ddgs"}
         # The folder the agent's terminal and file tools start in; '' for its own home in the Wiki folder.
         self.workspace = ""
+        # The keys of the chat worker's environment, as last set; the gateway's process gets them with its bot tokens.
+        self.env = {}
+        self.gateway = Gateway(self)
         self.methods = {
             "agent.messages": self.messages,
             "agent.send": self.send,
@@ -149,6 +158,7 @@ class AgentChat:
             "agent.clear": self.clear,
             "agent.engine": self.engine,
             "agent.configure": self.configure,
+            "agent.gateway": self.gateway.status,
         }
 
     # -- the agent ---------------------------------------------------------------
@@ -190,8 +200,16 @@ class AgentChat:
         if "env" in params:
             env = params["env"] if isinstance(params["env"], dict) else {}
             extra = {name: value for name, value in env.items() if isinstance(name, str) and isinstance(value, str)}
+            self.env = extra
             self.hermes.recycle(extra or None)
+        # The messenger gateway, last: it is started with the settings above.
+        if "gateway" in params:
+            self.gateway.configure(params["gateway"], self.env)
         return {"ok": True}
+
+    @staticmethod
+    def gateway_system():
+        return SYSTEM + "\n\n" + MESSENGER
 
     def folder(self):
         """The folder a turn's terminal and file tools start in: the one the user chose, while it is a folder that is
@@ -261,6 +279,7 @@ class AgentChat:
         return self.hermes.resolve({**params, "outcome": "submitted"}, "clarify")
 
     def shutdown(self):
+        self.gateway.shutdown()
         self.hermes.shutdown()
 
     # -- the actions ---------------------------------------------------------------

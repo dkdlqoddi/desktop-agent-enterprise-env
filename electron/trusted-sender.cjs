@@ -143,7 +143,8 @@ const ALLOWED = new Set([
   'api.manual',
   'api.open_docs',
   // The agent chat (agent_chat.py): its conversation, the agent's live state, and the user's answers to the
-  // approval and clarify it pauses on. The chat agent's own settings (keys, MCP servers, computer use).
+  // approval and clarify it pauses on. The chat agent's own settings (keys, MCP servers, computer use, the messenger
+  // gateway) and whether that gateway runs.
   'agent.messages',
   'agent.send',
   'agent.approve',
@@ -155,6 +156,7 @@ const ALLOWED = new Set([
   'agent.stop',
   'agent.clear',
   'agent.engine',
+  'agent.gateway',
   'hermes.get',
   'hermes.update',
   'hermes.choose',

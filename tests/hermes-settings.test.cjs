@@ -62,8 +62,32 @@ test('names that steer the runtime or pick a model provider are refused', () => 
     assert.notEqual(refusedName(name), '', name);
   assert.match(refusedName('OPENAI_API_KEY'), /LLM 연결/);
   assert.match(refusedName('exa_key'), /대문자/);
-  for (const name of ['EXA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'GITHUB_TOKEN'])
+  for (const name of ['EXA_API_KEY', 'TELEGRAM_BOT_TOKEN', 'GITHUB_TOKEN', 'SLACK_WEBHOOK_URL'])
     assert.equal(refusedName(name), '');
+});
+
+test('names that would change who a bot answers or make the gateway listen are refused', () => {
+  // The accounts listed per messenger are the only way in to the agent: no key may let everyone in, whole chats or
+  // roles, or other bots, nor start Hermes' API server or a webhook listener.
+  for (const name of [
+    'GATEWAY_ALLOW_ALL_USERS',
+    'GATEWAY_ALLOWED_USERS',
+    'TELEGRAM_ALLOW_ALL_USERS',
+    'TELEGRAM_ALLOWED_USERS',
+    'TELEGRAM_GROUP_ALLOWED_USERS',
+    'TELEGRAM_GROUP_ALLOWED_CHATS',
+    'DISCORD_ALLOWED_ROLES',
+    'DISCORD_ALLOWED_CHANNELS',
+    'DISCORD_ALLOW_BOTS',
+    'SLACK_ALLOWED_USERS',
+    'SLACK_HOME_CHANNEL',
+    'TELEGRAM_HOME_CHANNEL',
+    'TELEGRAM_WEBHOOK_URL',
+    'API_SERVER_KEY',
+    'API_SERVER_ENABLED',
+    'WEBHOOK_ENABLED',
+  ])
+    assert.match(refusedName(name), /허용 계정/, name);
 });
 
 test('refused changes leave the saved settings as they were', async (t) => {
@@ -113,11 +137,11 @@ test('gateway accounts, MCP servers and computer use reach the backend as Hermes
   assert.throws(() => mcpServers('{"x": {"url": "ftp://example.test"}}'), /command나 연결할 url/);
 });
 
-test('the chat is run with the folder, the tools and the service keys, never a bot token', async (t) => {
+test("the chat is run with the folder, the tools and the service keys; the bot tokens are the gateway's", async (t) => {
   const { directory, make } = await setup(t);
   const settings = make();
   await settings.load();
-  // Nothing set: the agent's own folder, computer use, no MCP server, pages read without a service.
+  // Nothing set: the agent's own folder, computer use, no MCP server, pages read without a service, no gateway.
   assert.deepEqual(settings.agent(), {
     workspace: '',
     computer_use: true,
@@ -125,14 +149,14 @@ test('the chat is run with the folder, the tools and the service keys, never a b
     search_backend: 'ddgs',
     extract_backend: 'ddgs',
     env: {},
+    gateway: { enabled: false, users: {}, env: {} },
   });
-  // A version that offered the messenger gateway saved its switch, accounts and bot tokens. Nothing runs a gateway,
-  // so they stay in the main process: a worker with no use for a bot token is not given one.
+  // The messenger gateway's bot tokens are its process's alone, apart from the keys of the chat's worker, and they
+  // are sent only while the gateway is on.
   await settings.update({
     workspace: directory,
     computer_use: false,
-    gateway: true,
-    users: { telegram: '123' },
+    users: { telegram: '123', slack: 'U1, U2' },
     mcp: JSON.stringify({ files: { command: 'npx' } }),
     keys: {
       FIRECRAWL_API_KEY: 'fc-secret',
@@ -143,18 +167,32 @@ test('the chat is run with the folder, the tools and the service keys, never a b
       SLACK_APP_TOKEN: 'xapp-secret',
     },
   });
-  const sent = settings.agent();
-  assert.deepEqual(sent, {
+  const chat = {
     workspace: directory,
     computer_use: false,
     mcp_servers: { files: { command: 'npx' } },
     search_backend: 'firecrawl',
     extract_backend: 'firecrawl',
     env: { FIRECRAWL_API_KEY: 'fc-secret', MY_SKILL_TOKEN: 'skill-secret' },
+  };
+  const off = settings.agent();
+  assert.deepEqual(off, { ...chat, gateway: { enabled: false, users: {}, env: {} } });
+  assert.ok(!/tg-secret|dc-secret|xoxb-secret|xapp-secret/.test(JSON.stringify(off)));
+  await settings.update({ gateway: true });
+  assert.deepEqual(settings.agent(), {
+    ...chat,
+    gateway: {
+      enabled: true,
+      users: { telegram: '123', discord: '', slack: 'U1,U2' },
+      env: {
+        TELEGRAM_BOT_TOKEN: 'tg-secret',
+        DISCORD_BOT_TOKEN: 'dc-secret',
+        SLACK_BOT_TOKEN: 'xoxb-secret',
+        SLACK_APP_TOKEN: 'xapp-secret',
+      },
+    },
   });
-  assert.ok(!/gateway|users|tg-secret|dc-secret|xoxb|xapp/.test(JSON.stringify(sent)));
-  // They are still kept, so that the screen can show them as saved and delete them.
-  assert.equal(settings.backend().env.TELEGRAM_BOT_TOKEN, 'tg-secret');
+  // The screen learns only that a token is set.
   const shown = settings.get().keys.find((key) => key.name === 'TELEGRAM_BOT_TOKEN');
   assert.deepEqual(shown, {
     name: 'TELEGRAM_BOT_TOKEN',
@@ -162,6 +200,7 @@ test('the chat is run with the folder, the tools and the service keys, never a b
     group: 'gateway',
     has_value: true,
   });
+  assert.ok(!/tg-secret|dc-secret|xoxb-secret|xapp-secret/.test(JSON.stringify(settings.get())));
 });
 
 test('a web service key names the service that searches and the one that reads pages', async (t) => {

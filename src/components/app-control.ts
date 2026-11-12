@@ -258,12 +258,14 @@ function pick<T extends Element>(
 }
 
 const USER_ONLY =
-  '채팅은 사용자만 다룰 수 있습니다. 채팅에 적은 글은 이 PC에서 터미널·파일·브라우저를 쓰는 에이전트가 실행하고, 명령 실행 확인은 사용자의 결정이므로 AI 도구는 허용 범위와 관계없이 채팅에 입력하거나 그 버튼을 누를 수 없습니다.';
+  '채팅은 사용자만 다룰 수 있습니다. 채팅에 적은 글은 이 PC에서 터미널·파일·브라우저를 쓰는 에이전트가 실행하고, 명령 실행 확인과 에이전트의 설정(쓰는 도구, 메신저에서 일을 시킬 계정)은 사용자의 결정이므로 AI 도구는 허용 범위와 관계없이 채팅과 관리 → 채팅 에이전트에 입력하거나 그 버튼을 누를 수 없습니다.';
 
 // The chat belongs to the user alone (data-user-only): what is typed there is carried out by an agent with a terminal,
 // files and a browser on this PC, and the prompt that asks before a dangerous command is the user's own decision. No
 // access level reaches it, "full" neither, nor does a demo recording: the words of a document a tool has read could
-// otherwise have the tool run a command here and approve it itself.
+// otherwise have the tool run a command here and approve it itself. The agent's own settings (admin → 채팅 에이전트)
+// are the user's in the same way: an MCP server there is a command the agent starts without asking, and the accounts
+// of the messenger gateway may write to the agent and answer its approvals from outside the PC.
 // The admin page and passwords decide what the API itself may do, and the import box and a document's update from its
 // file read this PC's files (marked data-requires-full); only the "full" access level reaches them. So does the
 // button that carries out a deletion or an emptying (data-destructive): the words of a document may ask for it.

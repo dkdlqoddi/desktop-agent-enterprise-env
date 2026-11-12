@@ -2,15 +2,15 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { readJsonFile, writeFileSafely } = require('./files.cjs');
 
-// The chat's Hermes settings (hermes.json): its working folder, computer use, the MCP servers and the service keys
-// Hermes reads from its environment. Like the LLM API Key, every value is kept with the OS secure storage (encrypted);
-// without it, values last until the app closes. The screen only ever learns whether a value is set. The backend gets
-// what the chat's turns use at its start and after each change (agent(), sent as agent.configure), keeps it in memory
-// and hands the keys to the Hermes worker's environment; the LLM connection is never among them.
+// The chat's Hermes settings (hermes.json): its working folder, computer use, the MCP servers, the service keys
+// Hermes reads from its environment, and the messenger gateway (its switch, the bot tokens of Telegram, Discord and
+// Slack, and the accounts each bot answers). Like the LLM API Key, every value is kept with the OS secure storage
+// (encrypted); without it, values last until the app closes. The screen only ever learns whether a value is set. The
+// backend gets all of it at its start and after each change (agent(), sent as agent.configure), keeps it in memory
+// and hands the keys to the Hermes workers' environment; the LLM connection is never among them.
 //
-// The messenger gateway (Telegram, Discord, Slack) is not run by this version: the file keeps its switch, its bot
-// tokens and the accounts it would answer, as saved by a version that offered them, but nothing starts a gateway and
-// agent() leaves them out, so a bot token never sits in the environment of a worker that has no use for it.
+// The bot tokens go to the gateway's process alone (backend/agent/hermes_gateway.py), and only while the gateway is
+// on: the chat's own worker has no use for them.
 
 const VERSION = 1;
 // The keys the settings screen lists, by what each is for; any other name the user adds goes the same way (a skill's
@@ -47,12 +47,18 @@ const EXTRACT_SERVICES = [
   ['PARALLEL_API_KEY', 'parallel'],
 ];
 const serviceOf = (services, env) => services.find(([key]) => env[key])?.[1] ?? 'ddgs';
-// The bot tokens of the messenger gateway, which no worker is given while the gateway is not run.
+// The bot tokens of the messenger gateway, which only the gateway's process is given.
 const GATEWAY_KEYS = new Set(
   KNOWN_KEYS.filter((key) => key.group === 'gateway').map((key) => key.name),
 );
 // The accounts each messaging platform answers; a platform without any stays off even with its token.
 const PLATFORMS = ['telegram', 'discord', 'slack'];
+// Names that would change who a bot answers (everyone, other bots, whole chats or roles) or make the gateway listen
+// on a port (an API server, webhooks). The accounts listed per messenger are the only way in, so no key may carry
+// such a name; the gateway's worker drops them from its environment as well (runtime/hermes/worker.py,
+// GATEWAY_OPENINGS).
+const GATEWAY_STEERING =
+  /_ALLOW_ALL_USERS$|_ALLOW_BOTS$|_ALLOWED_(USERS|CHATS|CHANNELS|ROLES|GROUPS)$|_HOME_CHANNEL|^GATEWAY_|^API_SERVER_|^WEBHOOK_|^TELEGRAM_WEBHOOK_/;
 const NAME = /^[A-Z][A-Z0-9_]{1,63}$/;
 // Names that steer the worker's runtime, or would choose a model provider instead of the app's LLM connection.
 const RESERVED = new Set([
@@ -74,10 +80,6 @@ const RESERVED = new Set([
   'SSL_CERT_DIR',
   'REQUESTS_CA_BUNDLE',
   'CURL_CA_BUNDLE',
-  'GATEWAY_ALLOWED_USERS',
-  'TELEGRAM_ALLOWED_USERS',
-  'DISCORD_ALLOWED_USERS',
-  'SLACK_ALLOWED_USERS',
 ]);
 // Names that steer the Python runtime, the Node/Electron host, or the dynamic loader are refused by prefix (so the
 // dangerous full names are never spelled out in the source either).
@@ -103,6 +105,8 @@ function refusedName(name) {
     return '이름은 영문 대문자, 숫자, 밑줄(_)로 2~64자여야 합니다. 예) EXA_API_KEY';
   if (RESERVED.has(name) || RESERVED_PREFIX.test(name))
     return `${name}은(는) 앱이 정하는 실행 환경 값이라 넣을 수 없습니다.`;
+  if (GATEWAY_STEERING.test(name))
+    return `${name}은(는) 메신저 봇이 누구에게 답할지, 어떻게 연결할지를 바꾸는 값이라 넣을 수 없습니다. 답할 계정은 메신저 게이트웨이의 허용 계정에 적어 주세요.`;
   if (PROVIDER_PREFIX.test(name))
     return `${name}은(는) 모델 제공자의 키입니다. 모델 호출은 관리 → LLM 연결로만 하므로 넣을 수 없습니다.`;
   return '';
@@ -278,15 +282,16 @@ class HermesSettings {
     };
   }
 
-  /** What the chat's turns are run with, as the backend's agent.configure takes it (backend/agent/agent_chat.py): the
-   *  folder the agent works in, computer use, the MCP servers, the services that search the web and read pages, and
-   *  the keys of the worker's environment. The gateway's bot tokens are not among them: nothing runs a gateway. Only
-   *  the main process ever calls this. */
+  /** What the agent is run with, as the backend's agent.configure takes it (backend/agent/agent_chat.py): the folder
+   *  it works in, computer use, the MCP servers, the services that search the web and read pages, the keys of the
+   *  chat worker's environment (env), and the messenger gateway: whether it is on, the accounts each bot answers and,
+   *  only while it is on, the bot tokens, apart from env so that the chat's worker is never given them. Only the main
+   *  process ever calls this. */
   agent() {
     const backend = this.backend();
-    const env = Object.fromEntries(
-      Object.entries(backend.env).filter(([name]) => !GATEWAY_KEYS.has(name)),
-    );
+    const [env, tokens] = [{}, {}];
+    for (const [name, value] of Object.entries(backend.env))
+      (GATEWAY_KEYS.has(name) ? tokens : env)[name] = value;
     return {
       workspace: backend.workspace,
       computer_use: backend.computer_use,
@@ -294,6 +299,11 @@ class HermesSettings {
       search_backend: serviceOf(SEARCH_SERVICES, env),
       extract_backend: serviceOf(EXTRACT_SERVICES, env),
       env,
+      gateway: {
+        enabled: backend.gateway,
+        users: backend.gateway ? backend.users : {},
+        env: backend.gateway ? tokens : {},
+      },
     };
   }
 

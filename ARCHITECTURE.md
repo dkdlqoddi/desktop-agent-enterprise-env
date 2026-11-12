@@ -117,6 +117,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                             |
 | `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 에이전트가 부른 앱 작업의 검사·실행과 카드, 진행 중인 턴(`agent.*`)     |
 | `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계 |
+| `agent/hermes_gateway.py`                                                                                              | 메신저 게이트웨이: 두 번째 워커 프로세스의 시작·재시작·종료, 모델 호출과 앱 작업의 중계  |
 | `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)     |
 
 ### electron
@@ -130,7 +131,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `backend-process.cjs`, `restarts.cjs`                   | 백엔드 프로세스 하나의 요청·응답·이벤트·제한 시간, 예기치 않게 끝난 백엔드의 재시작                           |
 | `storage.cjs`                                           | Wiki 폴더 선택(`storage.json`), 이전 버전 Wiki 복사, 폴더 쓰기 확인                                           |
 | `sites.cjs`, `login-methods.json`                       | 사이트 계정(`sites.json`, 암호화한 비밀번호)과 로그인 계획, 로그인 방식 목록                                  |
-| `hermes-settings.cjs`                                   | 채팅 에이전트 설정(`hermes.json`): 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키와 MCP 서버, 백엔드에 넘길 값    |
+| `hermes-settings.cjs`                                   | 채팅 에이전트 설정(`hermes.json`): 작업 폴더, 컴퓨터 사용, 암호화한 서비스 키·봇 토큰·MCP 서버, 메신저 계정   |
 | `api-catalog.cjs`                                       | 로컬 API의 모든 메서드, 범위, REST 경로. REST·MCP·매뉴얼·OpenAPI가 모두 이 표에서 만들어집니다                |
 | `api-server.cjs`, `mcp.cjs`, `mcp-stdio.cjs`            | 127.0.0.1 REST·MCP 서버, MCP 도구·리소스·프롬프트, stdio 연결 프로그램                                        |
 | `api-manual.cjs`, `api-settings.cjs`, `api-methods.cjs` | 매뉴얼(JSON·Markdown·HTML·OpenAPI), `api.json`, AI 도구 전용 메서드와 경로 검사                               |
@@ -193,7 +194,16 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 6. 진행 중인 턴은 화면 밖에 둡니다(`src/components/agent-turn.ts`). 다른 화면으로 옮겨도 요청과 진행 확인이 이어지고, 에이전트가 답을 기다리거나 끝나면 알림으로 알립니다. 화면을 다시 불러오면 `agent.active`로 진행 중인 턴을 찾아 이어서 보여 줍니다.
 7. 사이트 작업은 `agent/web_capture.py`가 맡습니다. Chromium 창을 사용자에게 보이게 열고(샌드박스 켬), 검색 결과를 읽어 광고·상품·검색 결과와 스크린샷을 남깁니다. 페이지의 링크나 광고를 누르지 않고, 로봇 확인(CAPTCHA)이 나오면 멈추고 사용자에게 넘깁니다. 사용자가 직접 누른 광고(`isTrusted` 클릭)만 도착 페이지까지 기록합니다. 사이트별 규칙은 `shared/web-capture/`에 있어 Android 앱도 같은 스크립트를 씁니다.
 
-에이전트의 설정(**관리 → 채팅 에이전트**)은 메인 프로세스가 `hermes.json`에 두고(`electron/hermes-settings.cjs`), 시작할 때와 바뀔 때 `agent.configure`로 백엔드에 넘깁니다: 작업 폴더(터미널과 파일 도구가 시작하는 곳), 컴퓨터 사용, MCP 서버, 서비스 키. MCP 서버 설정의 값(env, headers, 인수, 주소)은 워커가 `config.yaml`에 쓰지 않고 환경 변수 참조로 바꿔 넘깁니다(`worker.py`의 `mcp_servers`). 메신저 게이트웨이는 아직 실행하지 않습니다([TODO.md](TODO.md)).
+에이전트의 설정(**관리 → 채팅 에이전트**)은 메인 프로세스가 `hermes.json`에 두고(`electron/hermes-settings.cjs`), 시작할 때와 바뀔 때 `agent.configure`로 백엔드에 넘깁니다: 작업 폴더(터미널과 파일 도구가 시작하는 곳), 컴퓨터 사용, MCP 서버, 서비스 키, 메신저 게이트웨이(켜기, 봇마다 답할 계정, 봇 토큰). MCP 서버 설정의 값(env, headers, 인수, 주소)은 워커가 `config.yaml`에 쓰지 않고 환경 변수 참조로 바꿔 넘깁니다(`worker.py`의 `mcp_servers`). 워커는 시작할 때 받은 설정만 씁니다: Wiki의 `hermes` 폴더에 놓인 `.env`와 이 PC의 `/etc/hermes` 설정은 읽지 않습니다(`own_settings_only`).
+
+메신저 게이트웨이(`agent/hermes_gateway.py`)는 Hermes의 게이트웨이를 같은 `worker.py`의 두 번째 프로세스로 실행합니다(`run_gateway`). 사용자가 켜고, 봇 토큰과 답할 계정을 모두 넣은 메신저가 하나라도 있을 때만 띄웁니다.
+
+1. 백엔드가 `gateway` 프레임으로 채팅과 같은 지시문·도구·설정을 넘기고, 봇 토큰은 그 프로세스의 환경 변수로만 넘깁니다. 채팅의 워커에는 봇 토큰을 주지 않습니다.
+2. 워커는 Hermes의 메신저 어댑터만 실행합니다. 텔레그램은 롱 폴링, 디스코드와 슬랙은 밖으로 여는 소켓이라 포트를 열지 않습니다. Hermes가 게이트웨이와 함께 띄우는 것(제어 소켓, 로컬 API, 대시보드, 예약 실행, 작업 보드, 하트비트 소켓)은 시작하지 않고, 세 메신저가 아닌 플랫폼은 환경 변수에 키가 있어도 연결하지 않습니다.
+3. 메신저에서 온 글이 턴이 되면 모델 요청은 `inference`로, 앱의 작업은 `app_tool`로 백엔드에 오고, 채팅과 같은 방식으로 처리합니다. 모델 요청은 그때의 LLM 연결로 보내며, 실패하면 그 사유를 워커에 돌려주어 메신저에 알립니다.
+4. 답할 사람은 사용자가 적은 계정뿐입니다(`only_listed_accounts`). Hermes가 따로 허용하는 길(페어링 승인, 모두 허용 스위치, 채팅방·역할 허용)은 그 뒤에서 다시 걸러 냅니다. 메신저에서 쓸 수 있는 명령은 자기 대화를 다루는 것뿐이고(`GATEWAY_COMMANDS`), 승인을 끄거나(`/yolo`, `/approvals`) 모델·게이트웨이를 바꾸는 명령은 Hermes의 명령 등급으로 거절합니다. 이 제한은 Hermes의 관리 설정 층(`hermes/gateway/config.yaml`)에 둡니다.
+5. 위험한 명령은 온 메신저에서 묻고, 적은 계정의 답(`/approve`·`/deny`나 버튼)을 5분까지 기다립니다.
+6. 상태는 `gateway` 프레임으로 올라오고 화면이 `agent.gateway`로 읽습니다. Hermes의 오류 문장은 넘기지 않고 상태와 오류 코드만 넘깁니다(문장에 봇 토큰이 들어갈 수 있음). 설정이 바뀌면 다시 띄우고, 스스로 끝나면 간격을 늘려 가며 다섯 번까지 다시 띄웁니다. 앱을 닫으면 함께 끝납니다.
 
 Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다. 내장 Hermes 실행 환경을 넣은 빌드에서는 같은 `worker.py`를 휴대폰에서 실행하고(터미널·파일·코드·브라우저 자동화·컴퓨터 사용은 끔), 넣지 않은 빌드에서는 설정한 LLM의 도구 호출로 계획해 카드를 확인받습니다. 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
 
@@ -210,7 +220,8 @@ Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 asset
 - 문서 삭제는 휴지통으로 가고, 영구 삭제·백업 복원·파일 가져오기·설정 변경은 허용 범위 ‘전체’에서만 AI 도구가 할 수 있습니다.
 - 로그와 진단 복사본은 키·토큰·비밀번호를 가립니다.
 - 채팅의 에이전트(Hermes)는 자기 도구로 바로 실행하고, 위험한 명령만 사용자의 확인을 받습니다. 운영체제 샌드박스가 아니라 승인 기반 통제입니다. 모델 호출은 모두 앱의 LLM 연결로 보내고, 앱의 웹 기록은 페이지의 광고나 링크를 누르지 않습니다.
-- 채팅 화면은 사용자만 다룹니다(`data-user-only`). 로컬 API의 화면 제어는 허용 범위와 관계없이 채팅에 입력하거나 그 버튼(명령 확인 포함)을 누르지 못합니다.
+- 채팅 화면과 에이전트의 설정(**관리 → 채팅 에이전트**)은 사용자만 다룹니다(`data-user-only`). 로컬 API의 화면 제어는 허용 범위와 관계없이 그곳에 입력하거나 그 버튼(명령 확인, 메신저 계정 포함)을 누르지 못합니다.
+- 메신저 게이트웨이는 포트를 열지 않고, 사용자가 적은 계정에만 답합니다.
 
 ## 빌드와 패키징
 

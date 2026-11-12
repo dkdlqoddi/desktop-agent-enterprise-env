@@ -10,8 +10,13 @@ test_web_login.py and test_web_assist.py, which sign in on real Chromium, are ma
 elsewhere the tests named test_real_browser_… are, and they are marked here."""
 
 import functools
+import json
 import os
 import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,3 +53,41 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason="Requires Windows Office; opt in with PRIVATE_AGENT_OFFICE_TEST=1"))
         if item.get_closest_marker("browser") and not require_browser and chromium_missing():
             item.add_marker(pytest.mark.skip(reason=chromium_missing()))
+
+
+@pytest.fixture
+def model_server():
+    """An LLM server on this PC that a test scripts: `reply(request)` gives (status, body, streaming[, headers]) for
+    each request it gets, all of which it keeps (requests, headers). `url` is its chat-completions address."""
+    state = SimpleNamespace(requests=[], headers=[], reply=None, delay=0.0)
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            state.requests.append(request)
+            state.headers.append(dict(self.headers))
+            time.sleep(state.delay)
+            status, value, streaming, *extra = state.reply(request)
+            body = value.encode() if isinstance(value, str) else json.dumps(value).encode()
+            self.send_response(status)
+            for name, header in (extra[0] if extra else {}).items():
+                self.send_header(name, header)
+            self.send_header("Content-Type", "text/event-stream" if streaming else "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    state.url = f"http://127.0.0.1:{server.server_port}/v1/chat/completions"
+    yield state
+    server.shutdown()
+    server.server_close()
+    thread.join()

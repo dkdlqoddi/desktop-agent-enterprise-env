@@ -3,7 +3,6 @@ import subprocess
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,42 +18,6 @@ ROOT = Path(__file__).resolve().parents[2]
 HAS_RUNTIME = (ROOT / "dist/hermes/manifest.json").is_file()
 bundled = pytest.mark.skipif(not HAS_RUNTIME, reason="npm run build:hermes builds the bundled Hermes these tests run")
 SECRETS = ("test-secret", "header-secret")
-
-
-@pytest.fixture
-def model_server():
-    state = SimpleNamespace(requests=[], headers=[], reply=None, delay=0.0)
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def do_POST(self):
-            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            state.requests.append(request)
-            state.headers.append(dict(self.headers))
-            time.sleep(state.delay)
-            status, value, streaming, *extra = state.reply(request)
-            body = value.encode() if isinstance(value, str) else json.dumps(value).encode()
-            self.send_response(status)
-            for name, header in (extra[0] if extra else {}).items():
-                self.send_header(name, header)
-            self.send_header("Content-Type", "text/event-stream" if streaming else "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            try:
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    state.url = f"http://127.0.0.1:{server.server_port}/v1/chat/completions"
-    yield state
-    server.shutdown()
-    server.server_close()
-    thread.join()
 
 
 def connection(server, api_format="openai"):
@@ -344,10 +307,9 @@ def test_bundled_hermes_runs_an_app_tool_live_and_keeps_the_secrets(tmp_path, mo
     assert not any(secret in written for secret in SECRETS)
 
 
-def configured(home, settings, read, keys=None):
-    """What the bundled Hermes makes of the config the worker writes for a turn with `settings`: the value of the
-    Python expression `read`, evaluated in the bundled Python as the worker runs (same paths, same environment, with
-    `keys` as the service keys). Nothing is started and nothing reaches the network."""
+def in_worker(home, statements, read, keys=None):
+    """The value of the Python expression `read` after `statements`, evaluated in the bundled Python as the worker
+    runs (same paths, same environment, with `keys` as the service keys). Nothing reaches the network."""
     runtime = ROOT / "dist/hermes"
     code = (
         "import json, os, sys\n"
@@ -355,7 +317,7 @@ def configured(home, settings, read, keys=None):
         f"sys.path.insert(0, {str(runtime / 'dependencies')!r})\n"
         f"sys.path.insert(0, {str(runtime / 'source')!r})\n"
         "import worker\n"
-        f"worker.prepare_home({{'model': 'test-model', 'settings': {settings!r}}})\n"
+        f"{statements}\n"
         f"worker.OUTPUT.write(json.dumps({read}) + '\\n')\n"
     )
     executable = runtime / ("python/python.exe" if sys.platform == "win32" else "python/bin/python3.14")
@@ -370,6 +332,34 @@ def configured(home, settings, read, keys=None):
     )
     assert done.returncode == 0, done.stderr[-2000:]
     return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def configured(home, settings, read, keys=None):
+    """What the bundled Hermes makes of the config the worker writes for a turn with `settings`: the value of the
+    Python expression `read`. Nothing is started."""
+    return in_worker(home, f"worker.prepare_home({{'model': 'test-model', 'settings': {settings!r}}})", read, keys)
+
+
+@bundled
+def test_settings_from_outside_the_app_do_not_reach_the_agent(tmp_path):
+    # Hermes reads a .env file in its home over the environment it was started with, and an administrator's settings
+    # from /etc/hermes. The agent's home is a folder in the Wiki folder, which may be restored or shared: a file of
+    # that name there could bring keys of its own, or turn the approval of dangerous commands off.
+    home = tmp_path / "hermes"
+    home.mkdir()
+    planted = "HERMES_YOLO_MODE=1\nPLANTED_KEY=planted\nEXA_API_KEY=planted\n"
+    read = (
+        "[os.environ.get('PLANTED_KEY'), os.environ.get('HERMES_YOLO_MODE'), os.environ.get('EXA_API_KEY'), "
+        "approval._YOLO_MODE_FROZEN, managed_scope.get_managed_dir() is None, (worker.HOME / '.env').exists()]"
+    )
+    load = "import run_agent\nfrom tools import approval\nfrom hermes_cli import managed_scope"
+    (home / ".env").write_text(planted, encoding="utf-8")
+    kept = in_worker(home, "worker.own_settings_only()\n" + load, read, {"EXA_API_KEY": "the-users"})
+    assert kept == [None, None, "the-users", False, True, False]
+    # Without that step Hermes takes all of it, which is what the step is for (were this to change with a new Hermes,
+    # the step could go).
+    (home / ".env").write_text(planted, encoding="utf-8")
+    assert in_worker(home, load, read, {"EXA_API_KEY": "the-users"})[:4] == ["planted", "1", "planted", True]
 
 
 @bundled

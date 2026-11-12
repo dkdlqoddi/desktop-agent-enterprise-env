@@ -317,9 +317,9 @@ class Hermes:
                 " 개발 환경에서는 npm run build:hermes가 필요합니다."
             ) from None
 
-    def ensure_child(self, executable, worker):
-        """The worker process, started if there is none and the old one has exited; its reader thread fills the
-        frame queue. Reused between turns so memories and sessions stay warm."""
+    def prepared_home(self):
+        """The agent's home, made if it is missing: a real folder of the Wiki's, as are the folders its temporary files,
+        caches and settings go to (a link would lead them out of the Wiki folder)."""
         self.home.mkdir(exist_ok=True, mode=0o700)
         if self.home.is_symlink() or self.home.resolve() != self.home:
             raise UserError("Hermes 저장 폴더는 Wiki 안의 실제 폴더여야 합니다.")
@@ -328,6 +328,12 @@ class Hermes:
             folder.mkdir(exist_ok=True, mode=0o700)
             if folder.is_symlink():
                 raise UserError("Hermes 저장 폴더 안의 외부 경로 링크는 사용할 수 없습니다.")
+        return self.home
+
+    def ensure_child(self, executable, worker):
+        """The worker process, started if there is none and the old one has exited; its reader thread fills the
+        frame queue. Reused between turns so memories and sessions stay warm."""
+        self.prepared_home()
         with self.lock:
             child = self.child
             if child is not None and child.poll() is None:

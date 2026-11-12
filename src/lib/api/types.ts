@@ -1025,9 +1025,8 @@ export type AgentStatus = {
 export type AgentActive = { request_id: string; text: string };
 
 // The chat agent's own settings (hermes.*): the folder it works in, the service keys (only whether each is set), the
-// MCP servers and whether computer use is on. `gateway`, `users` and the keys of the group 'gateway' are what a
-// version that offered the messenger gateway saved: nothing runs a gateway, and the screen only lets such a token be
-// deleted.
+// MCP servers, whether computer use is on, and the messenger gateway: whether it is on (`gateway`), the accounts each
+// bot answers (`users`, IDs separated by commas, by messenger) and its bot tokens (the keys of the group 'gateway').
 export type HermesKey = {
   name: string;
   label: string;
@@ -1045,6 +1044,20 @@ export type HermesSettings = {
   secure_storage: boolean;
   stored: boolean;
   error: string;
+};
+
+// Whether the messenger gateway runs (agent.gateway), in the backend's own words. `message`: why it is not running,
+// '' otherwise. It is 'off' only once its process has gone ('stopping' until then: a bot may still answer). A messenger is listed while the gateway is started for it (its token and an account are set).
+export type HermesGateway = {
+  enabled: boolean;
+  state: 'off' | 'starting' | 'running' | 'stopping' | 'failed';
+  message: string;
+  platforms: {
+    name: string;
+    label: string;
+    state: 'connected' | 'connecting' | 'failed';
+    message: string;
+  }[];
 };
 
 // The web records (web.*): what a site's page showed at one time (a capture) and its items.
