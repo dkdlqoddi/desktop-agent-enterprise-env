@@ -130,13 +130,18 @@ LIVE = "deleted_at IS NULL"
 # The retention policy of what the Wiki logs, applied at each start of the backend and once a day while the app runs
 # (Service.retain): the history of prompt runs keeps its newest RUNS_KEPT runs of the last RUNS_DAYS days; each
 # conversation keeps its newest MESSAGES_KEPT messages (the screen shows the last 100) and the newest CONVERSATIONS_KEPT
-# conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS. The logs are trimmed
-# only while a backup of the Wiki exists. The automatic routines keep their last 30 runs each by themselves
-# (routines.MAX_RUNS).
+# conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS. The logs lose only
+# what a backup of the Wiki holds: what was written before the newest one was made. The automatic routines keep their
+# last 30 runs each by themselves (routines.MAX_RUNS).
 RUNS_KEPT = 2000
 RUNS_DAYS = 90
 MESSAGES_KEPT = 200
 CONVERSATIONS_KEPT = 1000
+# The trash is emptied a few documents a transaction, so that other writes go on meanwhile and what was done stays
+# done; at the backend's start for START_PURGE_SECONDS at most (deleting a document costs about what indexing it did,
+# and the Wiki must open), the rest with the upkeep's next look.
+PURGE_AT_ONCE = 200
+START_PURGE_SECONDS = 5
 # The Wiki's daily upkeep (Service.upkeep), looked at whenever Electron asks the routines what is due (every 30 seconds
 # while the app runs): at most every UPKEEP_EVERY seconds, the first time UPKEEP_DELAY seconds after the start so that
 # the screens load first. It makes the daily backup once the newest is a day old and applies the retention policy daily.
@@ -213,8 +218,10 @@ class Service:
         # An interrupted extraction must remain retryable on the next startup.
         with db.connect() as conn:
             conn.execute("UPDATE documents SET status='pending', error='' WHERE status='indexing'")
+        # Whether the last look at the trash left documents to purge (it ran out of its time).
+        self.trash_left = False
         try:
-            trimmed = "runs" in self.retain()
+            trimmed = "runs" in self.retain(START_PURGE_SECONDS)
         except Exception as error:  # Housekeeping never keeps the Wiki from opening; the upkeep tries again.
             trimmed = False
             diagnostics.report(error, "", "보존 정책")
@@ -805,7 +812,12 @@ class Service:
                 found = sources.group(db, self.source_table(result["source"]), row["id"])
                 result["source"]["edited"] = sources.edited(found)
                 if result["source"]["parts"] > 1:
-                    result["parts"] = [{"id": r["doc_id"], "title": r["now_title"], "part": r["part"]} for r in found]
+                    # The parts to go on to from this window: those in the trash are not among them, as in the list.
+                    result["parts"] = [
+                        {"id": r["doc_id"], "title": r["now_title"], "part": r["part"]}
+                        for r in found
+                        if not r["deleted_at"]
+                    ]
             result["outline"] = []
             if row["index_mode"] == "pageindex":
                 # A section's position among the document's headings, so the screen can scroll to it.
@@ -856,7 +868,16 @@ class Service:
             elif row["content"].strip() == content:
                 # The same text: what the AI analysis found still holds, and an imported page keeps showing.
                 if row["title"] != title:
-                    db.execute("UPDATE documents SET title=?,updated_at=? WHERE id=?", (title, now(), ident))
+                    # A new title is a new revision all the same: a window still editing the old one is then told
+                    # (expected_revision) instead of putting the old title back without a word. The table of contents
+                    # the analysis made is of the text, which did not change, so it goes on with the revision; an
+                    # analysis under way writes for the old one and is asked for again.
+                    db.execute(
+                        """UPDATE documents SET title=?,revision=revision+1,updated_at=?,
+                        status=CASE WHEN status='indexing' THEN 'pending' ELSE status END WHERE id=?""",
+                        (title, now(), ident),
+                    )
+                    db.execute("UPDATE doc_nodes SET revision=revision+1 WHERE doc_id=?", (ident,))
             else:
                 # New contents invalidate every previously extracted fact in the same transaction. An imported
                 # HTML page shows until its text is edited; then the document is the Markdown the user wrote,
@@ -977,51 +998,63 @@ class Service:
             purged = sources.purge(db, found)
         return {"purged": purged}
 
-    def retain(self):
+    def retain(self, seconds=None):
         """Apply the retention policy (RUNS_KEPT and the others): what it removed, counted by table. The logs (runs,
-        conversations, messages) are trimmed only while a backup of the Wiki exists, which still holds what goes for
-        good: the first start of this version leaves them to the upkeep, which trims them after its first backup. The
-        trash is emptied either way, as it always was."""
+        conversations, messages) lose only what the newest backup of the Wiki still holds, which is what was written
+        before it was made: the first start of this version leaves them to the upkeep, which trims them after its first
+        backup, and what was written since stays until the next backup has it. The trash is emptied either way, as it
+        always was: PURGE_AT_ONCE documents a transaction, and for `seconds` at most when given (`trash_left` then
+        says that documents wait for the next look)."""
 
         def cutoff(days):
             return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         try:
-            logs = any(item["kind"] != "before_restore" for item in storage.backups(self.db.path))
+            backed = max(
+                (item["created_at"] for item in storage.backups(self.db.path) if item["kind"] != "before_restore"),
+                default="",
+            )
         except OSError:  # The backups folder cannot be read: no backup to count on.
-            logs = False
+            backed = ""
         removed = {}
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if logs:
+            if backed:
                 removed["runs"] = db.execute(
-                    """DELETE FROM runs WHERE created_at<? OR id NOT IN
-                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)""",
-                    (cutoff(RUNS_DAYS), RUNS_KEPT),
+                    """DELETE FROM runs WHERE created_at<? AND (created_at<? OR id NOT IN
+                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?))""",
+                    (backed, cutoff(RUNS_DAYS), RUNS_KEPT),
                 ).rowcount
-                # A conversation goes with its messages (ON DELETE CASCADE).
+                # A conversation goes with its messages (ON DELETE CASCADE); one written to since the backup stays.
                 removed["conversations"] = db.execute(
-                    """DELETE FROM conversations WHERE id NOT IN
+                    """DELETE FROM conversations WHERE updated_at<? AND id NOT IN
                     (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?)""",
-                    (CONVERSATIONS_KEPT,),
+                    (backed, CONVERSATIONS_KEPT),
                 ).rowcount
                 removed["messages"] = db.execute(
-                    """DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq,
+                    """DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq, created_at,
                     row_number() OVER (PARTITION BY conversation_id ORDER BY seq DESC) AS position FROM messages)
-                    WHERE position>?)""",
-                    (MESSAGES_KEPT,),
+                    WHERE position>? AND created_at<?)""",
+                    (MESSAGES_KEPT, backed),
                 ).rowcount
-            # The rest of the trash stays for the user to restore. Routines leave out the sources of what goes, as after
-            # the user's own purge (sources.purge).
-            removed["documents"] = sources.purge(
-                db,
-                [
-                    row[0]
-                    for row in db.execute(
-                        "SELECT id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?", (cutoff(TRASH_DAYS),)
-                    )
-                ],
-            )
+            expired = [
+                row[0]
+                for row in db.execute(
+                    "SELECT id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<?", (cutoff(TRASH_DAYS),)
+                )
+            ]
+        # The rest of the trash stays for the user to restore. Routines leave out the sources of what goes, as after
+        # the user's own purge (sources.purge).
+        removed["documents"], deadline = 0, None if seconds is None else time.monotonic() + seconds
+        self.trash_left = False
+        for start in range(0, len(expired), PURGE_AT_ONCE):
+            with self.db.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                removed["documents"] += sources.purge(db, expired[start : start + PURGE_AT_ONCE])
+            # Out of time with documents left: each look takes at least its first step.
+            if deadline is not None and time.monotonic() > deadline and start + PURGE_AT_ONCE < len(expired):
+                self.trash_left = True
+                break
         if any(removed.values()):
             diagnostics.LOG.info(
                 "retention policy removed %s",
@@ -1049,7 +1082,7 @@ class Service:
             diagnostics.LOG.warning("daily backup not made: %s", error)
         except Exception as error:
             diagnostics.report(error, "", "자동 백업")
-        if time.time() - self.retained_at >= RETAIN_EVERY:
+        if time.time() - self.retained_at >= RETAIN_EVERY or self.trash_left:
             try:
                 if "runs" in self.retain():  # Without a backup yet the logs wait, and the next look tries again.
                     self.retained_at = time.time()

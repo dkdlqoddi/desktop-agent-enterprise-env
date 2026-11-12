@@ -94,6 +94,13 @@ const lines = (value: unknown) =>
     .map((line) => String(line).trim())
     .filter(Boolean);
 
+// A form that was being filled in when the page holding it went away: its own links (계정 등록, LLM 연결) lead to
+// another page, and what was typed shows again when 자동 작업 is shown next. Saving or cancelling drops it.
+let left: { recipe: RoutineRecipe; draft: RoutineDraft; form: RoutineDraft } | null = null;
+export const leftRoutineForm = () => left && { recipe: left.recipe, draft: left.draft };
+const sameForm = (recipe: RoutineRecipe, draft: RoutineDraft) =>
+  !!left && left.recipe.kind === recipe.kind && left.draft.id === draft.id;
+
 // A routine of a recipe, as it is set up or changed: the recipe's own fields, how often it runs and whether it tells
 // the user. Shown in place of the list that opened it.
 export default function RoutineForm({
@@ -109,7 +116,8 @@ export default function RoutineForm({
 }) {
   const configured = useConfigured();
   const { openAdmin } = useActions();
-  const [form, setForm] = useState(() => ({
+  // The form as it opens, to tell whether anything was typed in it.
+  const [opened] = useState(() => ({
     ...draft,
     // Lists are edited as text, one entry a line.
     config: Object.fromEntries(
@@ -119,6 +127,14 @@ export default function RoutineForm({
       }),
     ),
   }));
+  const [form, setForm] = useState(() => (sameForm(recipe, draft) ? left!.form : opened));
+  useEffect(() => {
+    left = JSON.stringify(form) === JSON.stringify(opened) ? null : { recipe, draft, form };
+  }, [recipe, draft, form, opened]);
+  const close = () => {
+    left = null;
+    onClose();
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (patch: Partial<RoutineDraft>) => setForm((current) => ({ ...current, ...patch }));
@@ -151,6 +167,7 @@ export default function RoutineForm({
         month_day: form.month_day,
         notify: form.notify,
       });
+      left = null;
       onSaved(saved);
     } catch (e) {
       setError((e as Error).message);
@@ -292,7 +309,7 @@ export default function RoutineForm({
           </p>
         )}
         <div className="form-actions">
-          <button type="button" className="button secondary small" onClick={onClose}>
+          <button type="button" className="button secondary small" onClick={close}>
             취소
           </button>
           <span className="spacer" />

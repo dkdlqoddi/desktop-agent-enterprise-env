@@ -496,7 +496,15 @@ class Writeback:
         while target.exists() or target.name in taken:
             number += 1
             target = folder / f"{stamp}-{number} {path.name}"
-        shutil.copy2(path, target)
+        # Copied under another name first: a copy that fails midway, as on a full disk, must not stay in the folder
+        # looking like a backup one could put back.
+        temporary = folder / f".{target.name}.{uuid.uuid4().hex[:8]}.copying"
+        try:
+            shutil.copy2(path, temporary)
+            os.replace(temporary, target)
+        finally:
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
         try:
             record = {
                 "id": str(uuid.uuid4()),

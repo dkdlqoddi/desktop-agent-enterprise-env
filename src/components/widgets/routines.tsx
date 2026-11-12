@@ -43,6 +43,7 @@ import RoutineForm, {
   describeRoutine,
   draftFrom,
   draftOf,
+  leftRoutineForm,
   RecipeNeeds,
   type RoutineDraft,
 } from '../routine-form';
@@ -120,9 +121,10 @@ export default function RoutinesWidget() {
   const routines = data ?? null;
   // Why the list could not be read, shown while there is none to show.
   const failed = routines === null && listError ? listError.message : '';
+  // A form left open when another page was shown (through its own link to 계정 등록, say) opens again.
   const [mode, setMode] = useState<
     'list' | 'catalog' | { recipe: RoutineRecipe; draft: RoutineDraft }
-  >('list');
+  >(() => leftRoutineForm() ?? 'list');
   const [open, setOpen] = useState<string | null>(null);
   // The routine a notification asked for, shown once its row is on the list.
   const [reveal, setReveal] = useState<string | null>(null);
@@ -166,7 +168,8 @@ export default function RoutinesWidget() {
       notify((error as Error).message, true);
     } finally {
       setBusy('');
-      await load().catch(() => {});
+      // The list, and the results other widgets show: a deleted routine takes its results with it.
+      await invalidate(['routines']).catch(() => {});
     }
   }
   const recipeOf = (kind: string) => catalog?.find((recipe) => recipe.kind === kind);

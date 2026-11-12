@@ -13,7 +13,8 @@ METAFILES = ("image/x-emf", "image/x-wmf")
 def capabilities():
     return {
         "available": True,
-        "reason": "PNG·JPEG·GIF·BMP·WebP·AVIF·SVG·ICO는 그대로, TIFF·EMF·WMF는 PNG로 바꿔 HTML 문서로 저장합니다.",
+        "reason": "PNG·JPEG·GIF·BMP·WebP·AVIF·SVG·ICO는 그대로, TIFF·EMF·WMF는 PNG(큰 사진은 JPEG)로 바꿔 HTML 문서로 "
+        "저장합니다.",
     }
 
 
@@ -28,6 +29,11 @@ def image_page(file, cancel=None):
     """The HTML page of an image file: the picture itself, and a caption with its name, format and size."""
     data = file.read_bytes()
     kind = images.sniff(data)
+    if kind in (None, "image/svg+xml") and images.refused_svg(data):
+        raise UserError(
+            "문서 형식 선언(DTD)이나 ENTITY가 든 SVG는 가져오지 않습니다. "
+            "그림 편집 프로그램에서 SVG로 다시 내보내 주세요."
+        )
     if not kind:
         raise UserError(
             "이미지 형식을 알아보지 못했습니다. PNG·JPEG·GIF·BMP·WebP·SVG·TIFF·EMF·WMF 파일인지 확인해 주세요."
@@ -47,7 +53,8 @@ def image_page(file, cancel=None):
         details.append(f"{own[0]}×{own[1]}px")
     details.append(readable(len(data)))
     if pictures[0][0] != kind:
-        details.append("PNG로 변환" + (f" · {len(pictures)}쪽" if len(pictures) > 1 else ""))
+        made = "·".join(dict.fromkeys(images.kind(content_type) for content_type, _, _ in pictures))
+        details.append(f"{made}로 변환" + (f" · {len(pictures)}쪽" if len(pictures) > 1 else ""))
     # Pages a conversion left out, such as those of a TIFF after its first 50, are said at the top.
     notes = " ".join(getattr(pictures, "notes", ()))
     notice = f'<p class="caption">그림 일부를 넣지 못했습니다: {escape(notes)}</p>' if notes else ""

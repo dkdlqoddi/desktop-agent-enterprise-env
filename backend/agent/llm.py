@@ -432,6 +432,9 @@ def reply_text(api_format, data):
     else:
         choice = data["choices"][0]
         text, finish = choice["message"]["content"], choice.get("finish_reason")
+        # A model that declines (message.refusal) and a gateway's content filter answer without content.
+        if not text and (finish == "content_filter" or choice["message"].get("refusal")):
+            raise UserError(REFUSED)
     if (text is None or text == "") and finish in TRUNCATION[api_format]:
         return "", finish
     if not isinstance(text, str) or not text.strip():
@@ -561,7 +564,7 @@ def read_stream(response, api_format, on_text, cancel):
         raise
     if cancel is not None and cancel.is_set() and finish is None:
         raise Cancelled(text)
-    if finish == "refusal":
+    if finish == "refusal" or (finish == "content_filter" and not text.strip()):
         raise UserError(REFUSED)
     return text, finish
 
@@ -996,6 +999,11 @@ class LLM:
                     f"LLM 응답 형식이 올바르지 않습니다. API 형식 설정과 응답의 {ANSWER[target['format']]}를 "
                     "확인해 주세요."
                 ) from None
+        if not outcome.streamed and cancel is not None and cancel.is_set():
+            # A stop while a whole answer was being read (a server that does not stream, a request made without
+            # streaming) could not end that read. The answer that arrived all the same is what had come, as with a
+            # stream stopped on its way: the caller keeps it as a stopped answer, not as a finished one.
+            raise Cancelled(answer(outcome.text))
         if stream is not None and not outcome.streamed:
             stream(outcome.text)
         truncated = isinstance(outcome.finish, str) and outcome.finish in TRUNCATION[target["format"]]

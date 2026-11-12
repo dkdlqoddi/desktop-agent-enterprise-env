@@ -26,8 +26,11 @@ def next_run(schedule, after=None):
     hour, minute = (int(part) for part in schedule["run_time"].split(":"))
     frequency = schedule["frequency"]
     if frequency == "hourly":
-        candidate = after.replace(minute=minute, second=0, microsecond=0)
-        if candidate <= after:
+        # Counted with the clock's own offset at `after`, so that an hour is an hour: on the naive wall clock the hour
+        # daylight saving time repeats would be passed over, and the one it skips aimed at.
+        moment = after.astimezone()
+        candidate = moment.replace(minute=minute, second=0, microsecond=0)
+        if candidate <= moment:
             candidate += timedelta(hours=1)
         return candidate.astimezone(timezone.utc).isoformat()
     for offset in range(367):

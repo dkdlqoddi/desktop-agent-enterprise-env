@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.SystemClock
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
@@ -248,12 +249,13 @@ class BrowserController(
             }
         }
 
-    /** Records the page on the screen (the browser's own button). */
-    suspend fun captureCurrentPage(): CaptureOutcome = withContext(Dispatchers.Main.immediate) {
-        // WebView methods only on the main thread.
-        val url = webViewState.value?.url.orEmpty()
-        capture(sites.forUrl(url), "", CaptureSource.MANUAL, null)
-    }
+    /** Records the page on the screen: for the browser's own button, or for the chat ([source]). */
+    suspend fun captureCurrentPage(source: CaptureSource = CaptureSource.MANUAL): CaptureOutcome =
+        withContext(Dispatchers.Main.immediate) {
+            // WebView methods only on the main thread.
+            val url = webViewState.value?.url.orEmpty()
+            capture(sites.forUrl(url), "", source, null)
+        }
 
     /** Opens [url] for the user to browse; null when it opened. */
     suspend fun open(url: String): BrowserFailure? = withContext(Dispatchers.Main.immediate) {
@@ -373,6 +375,8 @@ class BrowserController(
 
     /** Called on the JavaBridge thread by click-watch.js; everything else happens on the main thread. */
     private fun onBridgeClick(json: String) {
+        // Off with the setting: a click is recorded neither on a page the user browses nor on a recorded one.
+        if (!settings.recordClicks.value) return
         val report = ClickReportParser.parse(json) ?: return
         scope.launch {
             // Set before the page the click opens can finish: that page is posted to the main thread after this.
@@ -541,6 +545,10 @@ class BrowserController(
         override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
             callback?.invoke(origin, false, false)
         }
+
+        // What pages write to their console stays out of the system log, which the WebView would write it to: it is
+        // page content (search words, account details a site prints), and bug reports collect that log.
+        override fun onConsoleMessage(message: ConsoleMessage): Boolean = true
     }
 
     companion object {

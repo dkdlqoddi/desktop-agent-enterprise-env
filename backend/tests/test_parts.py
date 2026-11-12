@@ -203,3 +203,8 @@ def test_sources_of_an_earlier_version_become_part_1_of_1(tmp_path):
     # Opening the upgraded database again changes nothing.
     again = Service(Database(path), None)
     assert [part["id"] for part in again.wiki_get({"id": other["id"]})["parts"]] == [rtf["id"], other["id"]]
+    # A part in the trash is not one to go on to from the document's window, and comes back with its restore.
+    again.dispatch("wiki.delete", {"id": rtf["id"]})
+    assert [part["id"] for part in again.wiki_get({"id": other["id"]})["parts"]] == [other["id"]]
+    again.dispatch("wiki.restore", {"ids": [rtf["id"]]})
+    assert [part["id"] for part in again.wiki_get({"id": other["id"]})["parts"]] == [rtf["id"], other["id"]]

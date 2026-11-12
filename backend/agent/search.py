@@ -744,7 +744,9 @@ class Search:
 
     def run(self, p):
         query = text(p.get("query"), "검색어", 2000)
-        mode = p.get("mode", "word")
+        # Without a mode the search is the one every document of the API names as its default: any of the words, in
+        # the text, the keywords and their aliases.
+        mode = p.get("mode", "auto")
         filters = paging.Filters.of(p)
         page = (
             (paging.size(p, "검색 결과는", PAGE_LIMIT), paging.decode(p, "search", ((int, float), str, str)))

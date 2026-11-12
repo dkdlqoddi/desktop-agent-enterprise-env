@@ -520,6 +520,79 @@ def test_main_part_only_once_without_hidden_deleted_or_moved_away_text():
         assert absent not in body
 
 
+def test_paragraphs_and_rows_deleted_with_tracked_changes_leave_no_line_number_or_row():
+    def deleted(text, kept="", ident=1):
+        return (
+            f'<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="{ident}"/></w:numPr>'
+            '<w:rPr><w:del w:id="1" w:author="a"/></w:rPr></w:pPr>'
+            f'<w:del w:id="2" w:author="a"><w:r><w:delText>{text}</w:delText></w:r></w:del>'
+            + (f'<w:r><w:t xml:space="preserve">{kept}</w:t></w:r>' if kept else "")
+            + "</w:p>"
+        )
+
+    row = "<w:tr>{}<w:tc><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc></w:tr>"
+    body = body_of(
+        word_xml_to_html(
+            package(
+                item(1, 0, "하나")
+                + deleted("둘")
+                + item(1, 0, "셋")
+                # What a paragraph still shows when its mark is deleted opens the paragraph after it.
+                + deleted("넷", kept="남은 ")
+                + item(1, 0, "글")
+                # Nothing follows to join before a table: the deleted paragraph is no line.
+                + deleted("표 앞")
+                + "<w:tbl><w:tblGrid><w:gridCol w:w='1000'/></w:tblGrid>"
+                + row.format("", "남은 행")
+                + row.format('<w:trPr><w:del w:id="3" w:author="a"/></w:trPr>', "지운 행")
+                + "</w:tbl>"
+                + item(1, 0, "끝"),
+                numbering=NUMBERING,
+            ),
+            "지운 목록",
+        )
+    )
+    assert re.findall(r'<p[^>]*><span style="[^"]*">([^<]*)</span>([^<]*)</p>', body) == [
+        ("1. ", "하나"),
+        ("2. ", "셋"),
+        ("3. ", "남은 글"),
+        ("4. ", "끝"),
+    ]
+    assert body.count("<tr") == 1 and "남은 행" in body
+    for absent in ("둘", "넷", "표 앞", "지운 행", "<br>"):
+        assert absent not in body
+
+
+def test_a_cell_merged_down_out_of_the_header_rows_takes_the_rows_it_covers_into_the_header():
+    def cell(text, merge=""):
+        props = f"<w:tcPr><w:vMerge{merge}/></w:tcPr>" if merge else ""
+        return f"<w:tc>{props}<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+
+    html = word_xml_to_html(
+        package(
+            "<w:tbl><w:tblGrid><w:gridCol w:w='1000'/><w:gridCol w:w='1000'/></w:tblGrid>"
+            "<w:tr><w:trPr><w:tblHeader/></w:trPr>" + cell("구분", ' w:val="restart"') + cell("항목") + "</w:tr>"
+            "<w:tr>" + cell("", " ") + cell("세부") + "</w:tr>"
+            "<w:tr>" + cell("인건비") + cell("급여") + "</w:tr></w:tbl>"
+        ),
+        "머리글 병합",
+    )
+    rows = re.sub(r' style="[^"]*"', "", body_of(html))
+    # A row group ends a rowspan, so the row the merged cell covers is a header row too.
+    assert (
+        '<thead><tr><td rowspan="2"><p>구분</p></td><td><p>항목</p></td></tr><tr><td><p>세부</p></td></tr></thead>'
+        "<tr><td><p>인건비</p></td><td><p>급여</p></td></tr>"
+    ) in rows
+    # In the text search and the LLM read, the covered row keeps its column.
+    assert "| 구분 | 항목 |\n|  | 세부 |\n| 인건비 | 급여 |" in index_markdown(html)
+
+
+def test_half_of_a_surrogate_pair_is_replaced_before_the_xml_is_read():
+    # Text cut in the middle of an emoji, as Windows (UTF-16) can hold it: an XML parser refuses the whole text for it.
+    html = word_xml_to_html(package("<w:p><w:r><w:t>앞\ud83d뒤</w:t></w:r></w:p>"), "잘린 글자")
+    assert "<p>앞\ufffd뒤</p>" in body_of(html)
+
+
 def test_headers_and_footers_the_package_carries():
     html = word_xml_to_html(
         package(

@@ -48,10 +48,10 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
     add_runs(
         service,
         [ago(days=service_module.RUNS_DAYS + 1, minutes=index) for index in range(3)]
-        + [ago(hours=index) for index in range(8)],
+        + [ago(hours=index, minutes=1) for index in range(8)],
     )
     for index, ident in enumerate(("오늘", "어제", "지난주")):
-        add_conversation(service, ident, ago(days=index * 3), messages=6)
+        add_conversation(service, ident, ago(days=index * 3, minutes=1), messages=6)
     old, recent = (
         service.wiki_save({"title": title, "content": "글"})["id"] for title in ("오래된 휴지통", "최근 휴지통")
     )
@@ -78,6 +78,36 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
     assert [doc["id"] for doc in service.wiki_trash({})["documents"]] == [recent]
     # Nothing more to remove: the same again changes nothing.
     assert service.retain() == {"runs": 0, "conversations": 0, "messages": 0, "documents": 0}
+    # What was written since that backup is in no backup yet: it stays, however much of it there is, until the next
+    # backup has it. What it pushes out of the newest goes, as the backup holds that.
+    add_conversation(service, "방금", ago(seconds=-2), messages=9)
+    with service.db.connect() as db:
+        db.executemany(
+            "INSERT INTO runs (id,prompt_id,title,input,output,created_at) VALUES (?,NULL,'실행','입력','출력',?)",
+            [(f"new-{index}", ago(seconds=-2 - index)) for index in range(9)],
+        )
+    assert service.retain() == {"runs": 5, "conversations": 1, "messages": 0, "documents": 0}
+    with service.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM messages WHERE conversation_id='방금'").fetchone()[0] == 9
+        assert [row[0] for row in db.execute("SELECT id FROM runs ORDER BY id")] == [f"new-{i}" for i in range(9)]
+        assert {row[0] for row in db.execute("SELECT id FROM conversations")} == {"방금", "오늘"}
+
+
+def test_a_large_expired_trash_is_emptied_in_steps_and_never_holds_the_start(service, monkeypatch):
+    monkeypatch.setattr(service_module, "PURGE_AT_ONCE", 2)
+    ids = [service.wiki_save({"title": f"휴지통 {index}", "content": "글"})["id"] for index in range(7)]
+    for ident in ids:
+        service.wiki_delete({"id": ident})
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET deleted_at=?", (ago(days=service_module.TRASH_DAYS + 1),))
+    # A start that runs out of time has purged its first step, which stays done, and leaves the rest: the upkeep's
+    # next look takes it although the day's retention is done.
+    monkeypatch.setattr(service_module, "START_PURGE_SECONDS", -1)
+    started = Service(Database(service.db.path), None)
+    assert started.trash_left and len(started.wiki_trash({})["documents"]) == 5
+    started.retained_at = time.time()
+    started.daily()
+    assert not started.trash_left and started.wiki_trash({})["documents"] == []
 
 
 def test_at_each_start_the_trash_is_emptied_and_the_logs_trimmed_once_a_backup_holds_them(service):

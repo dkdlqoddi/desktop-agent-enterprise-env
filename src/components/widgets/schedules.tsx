@@ -112,9 +112,20 @@ export default function SchedulesWidget() {
                     onChange={(e) => {
                       const enabled = e.target.checked;
                       setFlipped({ ...flipped, [schedule.id]: enabled });
-                      void act(`toggle:${schedule.id}`, () =>
-                        api('schedules.toggle', { id: schedule.id, enabled }),
-                      );
+                      void act(`toggle:${schedule.id}`, async () => {
+                        try {
+                          await api('schedules.toggle', { id: schedule.id, enabled });
+                        } catch (error) {
+                          // A refused change (a one-time schedule whose time has passed, the 51st turned on) reloads
+                          // the list as it was, which resets nothing: the switch goes back by itself.
+                          setFlipped((current) => {
+                            const next = { ...current };
+                            delete next[schedule.id];
+                            return next;
+                          });
+                          throw error;
+                        }
+                      });
                     }}
                   />
                   <span aria-hidden="true" />

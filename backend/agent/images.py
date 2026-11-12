@@ -1,8 +1,9 @@
 """Pictures for the HTML pages of imported files.
 
 PNG, JPEG, GIF, BMP, WebP, AVIF, SVG and ICO stay as they are, since the app shows them. TIFF and the
-Windows metafiles EMF and WMF become PNG through Pillow; metafiles are drawn by Windows itself (GDI), so
-they convert only on Windows. Every picture goes into the page as a data: URI."""
+Windows metafiles EMF and WMF become PNG through Pillow (a large page that is smaller as JPEG, such as a scanned
+photograph, becomes JPEG); metafiles are drawn by Windows itself (GDI), so they convert only on Windows. Every
+picture goes into the page as a data: URI."""
 
 import base64
 import io
@@ -50,6 +51,9 @@ EXTENSIONS = (
     ".emf",
     ".wmf",
 )
+# Pictures of one page: with base64 and the text they stay under the 80MB of an HTML page.
+MAX_PICTURE_BYTES = 40 * 1024 * 1024
+COMPACT_BYTES = 400 * 1024  # a larger PNG is kept as JPEG when that is smaller
 MAX_SIDE = 4096  # longest side, in pixels, of a converted picture
 MAX_PAGES = 50  # pages of a multi-page TIFF
 # Pixels of one page decoded for conversion: decoding holds the whole page in memory before it is made smaller. A 600
@@ -94,6 +98,13 @@ def sniff(data):
     if SVG.match(bytes(data[:4096]).decode("utf-8", "ignore").lstrip("\ufeff \t\r\n")):
         return "image/svg+xml"
     return None
+
+
+def refused_svg(data):
+    """Whether the bytes are an SVG refused for a document type definition of its own or an entity, which sniff() does
+    not name a picture. Some drawing programs save every SVG with one."""
+    text = svg_text(bytes(data[:65536]))
+    return bool(SVG_DTD.search(text)) and bool(re.search(r"<svg[\s>]", text, re.I))
 
 
 def kind(content_type):
@@ -154,11 +165,34 @@ def svg_size(text):
     return (round(width), round(height)) if width > 0 and height > 0 else None
 
 
-def to_png(data, limit=MAX_PAGES):
-    """PNG pages of a TIFF or a metafile, each with the size it is meant to be shown at. The first `limit` pages of a
-    TIFF are read and a page of more than MAX_PIXELS is left out; the `notes` of the pages say so."""
+def compact(data, kind):
+    """(bytes, content type): a large PNG as JPEG on white when that is smaller."""
+    if kind != "image/png" or len(data) <= COMPACT_BYTES:
+        return data, kind
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as picture:
+            picture.load()
+            rgba = picture.convert("RGBA")
+            flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            flat.alpha_composite(rgba)
+            buffer = io.BytesIO()
+            flat.convert("RGB").save(buffer, "JPEG", quality=85, optimize=True)
+    except Exception:
+        return data, kind
+    smaller = buffer.getvalue()
+    return (smaller, "image/jpeg") if len(smaller) < len(data) else (data, kind)
+
+
+def to_png(data, limit=MAX_PAGES, budget=None):
+    """The pages of a TIFF or a metafile as PNG, each with the size it is meant to be shown at; a large page that is
+    smaller as JPEG, as a scanned photograph is, becomes JPEG. The first `limit` pages of a TIFF are read, a page of
+    more than MAX_PIXELS is left out, and the pages stop where they pass `budget` bytes; the `notes` of the pages say
+    so."""
     from PIL import Image, ImageSequence
 
+    budget = MAX_PICTURE_BYTES if budget is None else budget
     with Image.open(io.BytesIO(data)) as picture:
         scale = 1.0
         if picture.format == "WMF":
@@ -170,7 +204,7 @@ def to_png(data, limit=MAX_PAGES):
             frames = [picture]
         else:
             frames = ImageSequence.Iterator(picture)
-        found, large, looked = Pages(), [], 0
+        found, large, looked, used, full = Pages(), [], 0, 0, None
         for frame in frames:
             if looked == limit:
                 break
@@ -182,12 +216,19 @@ def to_png(data, limit=MAX_PAGES):
             image.thumbnail((MAX_SIDE, MAX_SIDE))
             buffer = io.BytesIO()
             image.save(buffer, "PNG")
-            found.append(("image/png", buffer.getvalue(), (image.size[0] / scale, image.size[1] / scale)))
+            page, kind = compact(buffer.getvalue(), "image/png")
+            if found and used + len(page) > budget:
+                full = looked  # the first page is a picture whatever its size
+                break
+            used += len(page)
+            found.append((kind, page, (image.size[0] / scale, image.size[1] / scale)))
         pages = getattr(picture, "n_frames", 1) if picture.format != "WMF" else 1
     if not found:
         raise ValueError(f"every page has more than {MAX_PIXELS} pixels")
     notes = []
-    if pages > limit:
+    if full:
+        notes.append(f"{pages:,}쪽 중 {full}쪽부터는 그림이 {budget // (1024 * 1024)}MB를 넘어 넣지 않았습니다.")
+    elif pages > limit:
         notes.append(f"{pages:,}쪽 중 앞 {limit}쪽만 넣었습니다.")
     if large:
         notes.append(f"{', '.join(map(str, large))}쪽은 {MAX_PIXELS:,}픽셀을 넘어 넣지 않았습니다.")

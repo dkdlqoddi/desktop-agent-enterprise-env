@@ -103,8 +103,9 @@ function useMainProcess(stores: AppStores) {
   useEffect(
     () =>
       window.privateAgent?.onAssistantOpen?.(() => {
-        // A reminder notification was clicked: show the dashboard with its reminders.
-        session.set((current) => ({ ...current, view: 'home' }));
+        // A reminder notification was clicked: show the reminders, as the bell does. The dashboard is the user's own
+        // layout and may hold neither the tasks nor the reminders.
+        actions.navigate('tasks', 'reminders');
         void actions.invalidate(['tasks']).catch(() => {});
       }),
     [session, actions],

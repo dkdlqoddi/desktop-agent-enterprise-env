@@ -358,6 +358,16 @@ def on_delta(text):
         emit({"type": "draft", "text": str(text)[:2000]})
 
 
+def joined_delegation():
+    """Inside it, a subagent the agent starts (delegate_task) is waited for in its tool call, and its result is what
+    the call returns. Hermes otherwise lets a subagent run on after the turn and hands its result to a gateway as a
+    new message: a chat turn has nothing to take that message, so the answer never came, and the subagent's model
+    requests and app actions arrived in whatever turn came next."""
+    from tools.delegate_tool_config import gateway_delegation_inline_scope
+
+    return gateway_delegation_inline_scope(True)
+
+
 def build_agent(request, config):
     from run_agent import AIAgent
     from hermes_state import SessionDB
@@ -372,20 +382,22 @@ def build_agent(request, config):
     set_approval_callback(approval_callback)
 
     database = SessionDB(HOME / "state.db")
-    agent = AIAgent(
-        model=request["model"], provider="custom", api_mode="chat_completions",
-        api_key="private-agent", base_url="http://127.0.0.1/v1",
-        enabled_toolsets=request["toolsets"], max_iterations=config["agent"]["max_iterations"],
-        max_tokens=request.get("max_tokens", 8192), quiet_mode=True, save_trajectories=False,
-        verbose_logging=False, skip_context_files=True, load_soul_identity=True, skip_memory=False,
-        # Memory is read and written by the agent during the turn; the post-turn review fork is off so a turn never
-        # makes model calls after its result frame (which the parent has stopped reading).
-        skip_background_review=True, fallback_model={}, session_db=database,
-        session_id=request["session_id"], cwd=str(request.get("workspace") or HOME), platform="private_agent",
-        ephemeral_system_prompt=request["system"], clarify_callback=clarify_callback,
-        tool_progress_callback=on_progress, stream_delta_callback=on_delta,
-        request_overrides={"stream": False}, run_budget_seconds=request.get("budget", 300),
-    )
+    # The tools the agent is built with say how a delegation ends (joined_delegation).
+    with joined_delegation():
+        agent = AIAgent(
+            model=request["model"], provider="custom", api_mode="chat_completions",
+            api_key="private-agent", base_url="http://127.0.0.1/v1",
+            enabled_toolsets=request["toolsets"], max_iterations=config["agent"]["max_iterations"],
+            max_tokens=request.get("max_tokens", 8192), quiet_mode=True, save_trajectories=False,
+            verbose_logging=False, skip_context_files=True, load_soul_identity=True, skip_memory=False,
+            # Memory is read and written by the agent during the turn; the post-turn review fork is off so a turn never
+            # makes model calls after its result frame (which the parent has stopped reading).
+            skip_background_review=True, fallback_model={}, session_db=database,
+            session_id=request["session_id"], cwd=str(request.get("workspace") or HOME), platform="private_agent",
+            ephemeral_system_prompt=request["system"], clarify_callback=clarify_callback,
+            tool_progress_callback=on_progress, stream_delta_callback=on_delta,
+            request_overrides={"stream": False}, run_budget_seconds=request.get("budget", 300),
+        )
     return agent, database
 
 
@@ -419,7 +431,8 @@ def run_turn(request):
     agent, database = build_agent(request, config)
     CURRENT_AGENT["agent"] = agent
     try:
-        result = agent.run_conversation(request["context"])
+        with joined_delegation():
+            result = agent.run_conversation(request["context"])
         if CHANNEL.cancelled.is_set():
             raise Cancelled()
         final = result.get("final_response", "")
@@ -465,7 +478,8 @@ def gateway_policy(request, config, accounts):
         platforms["telegram"]["extra"]["base_url"] = str(request["telegram_api"])
     return {
         **config,
-        "agent": {**config["agent"], "max_turns": config["agent"]["max_iterations"], "system_prompt": request["system"]},
+        "agent": {**config["agent"], "max_turns": config["agent"]["max_iterations"],
+                  "system_prompt": request["system"]},
         "terminal": {"cwd": str(request.get("workspace") or HOME)},
         "unauthorized_dm_behavior": "ignore",
         "allow_all_users": False,

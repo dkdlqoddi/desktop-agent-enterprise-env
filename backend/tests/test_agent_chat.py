@@ -276,6 +276,12 @@ def test_one_message_at_a_time_and_history_is_kept_and_cleared(service):
         ("<think>plan the capture</think>쿠팡 검색을 준비했습니다.", "쿠팡 검색을 준비했습니다."),
         ('{"actions": [{"tool": "web_capture"}]}', ""),
         ("<think>never closed", ""),
+        ('[{"tool": "web_capture"}]', ""),
+        ('<tool_call>{"name": "web_capture"}</tool_call>', ""),
+        # An answer that only opens with a bracket is words, not a plan.
+        ("[요약] 광고 5건을 기록했습니다.", "[요약] 광고 5건을 기록했습니다."),
+        ("[검색 결과](https://shop.example.com) 3건", "[검색 결과](https://shop.example.com) 3건"),
+        ("<오늘의 광고> 5건", "<오늘의 광고> 5건"),
         ("  준비했습니다.  ", "준비했습니다."),
         (None, ""),
     ],

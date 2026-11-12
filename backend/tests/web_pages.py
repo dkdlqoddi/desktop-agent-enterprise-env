@@ -42,6 +42,11 @@ PAGES = {
         <span>CAPTCHA tests tell people and programs apart.</span></div></div>""",
     "/challenge": """<!doctype html><title>Google</title><div class="g-recaptcha" style="width:300px;height:80px"></div>
       <div id="rso"><div class="g"><a href="https://news.example.test/1"><h3>Laptop review</h3></a></div></div>""",
+    # The badge of a check that asks nothing, which such a site shows on every page.
+    "/badge": """<!doctype html><title>다른 사이트</title>
+      <div class="card"><div class="badge">광고</div><a href="https://ad.example.test/b">특가 가방 모음</a></div>
+      <div class="grecaptcha-badge" style="position:fixed;bottom:14px;right:0;width:256px;height:60px">
+        <iframe src="/robot?recaptcha=anchor&amp;size=invisible" style="width:256px;height:60px"></iframe></div>""",
     # A label and a price inside the ad's own link; an ad whose link is an SVG one.
     "/inline": """<!doctype html><title>다른 사이트</title>
       <div class="card"><a href="https://ad.example.test/hat"><span class="badge">광고</span> 특가 모자

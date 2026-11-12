@@ -1480,6 +1480,21 @@ def test_backups_are_kept_by_file_the_newest_five_of_each(written, tmp_path, mon
     assert not stuck.exists() and len(service.dispatch("writeback.backups", {"doc_id": ident})["backups"]) == 5
 
 
+def test_a_backup_copy_that_fails_midway_leaves_nothing_that_looks_like_a_backup(written, tmp_path, monkeypatch):
+    service, source, ident = written
+    folder = tmp_path / "wiki" / BACKUPS
+
+    def full(original, target):
+        Path(target).write_bytes(b"half")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("agent.writeback.shutil.copy2", full)
+    with pytest.raises(OSError):
+        service.writeback.backup(source, ident)
+    assert list(folder.iterdir()) == []
+    assert service.dispatch("writeback.backups", {"doc_id": ident})["backups"] == []
+
+
 def test_a_backup_of_the_documents_file_is_put_back_in_its_place(written, tmp_path):
     service, source, ident = written
     original = source.read_bytes()

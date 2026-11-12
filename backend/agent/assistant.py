@@ -150,6 +150,19 @@ def local_clock(p):
     return datetime.now(timezone(timedelta(minutes=-offset)))
 
 
+def next_repeat(previous, days, current):
+    """The first repeat of a reminder after `current`, every `days` days from `previous` (both UTC): at the same time
+    of day on this PC's clock. A day there is not always 24 hours (daylight saving time), so the days are added to
+    the wall-clock time and not to the instant, which would leave a daily 09:00 at 08:00 after the change."""
+    wall = previous.astimezone().replace(tzinfo=None)
+    step = max(1, (current - previous) // timedelta(days=days))
+    while True:
+        repeat = (wall + timedelta(days=days * step)).astimezone(timezone.utc)
+        if repeat > current:
+            return repeat
+        step += 1
+
+
 class Assistant:
     def __init__(self, service):
         self.service, self.db, self.llm = service, service.db, service.llm
@@ -408,9 +421,8 @@ class Assistant:
             notified_at = current.isoformat()
             if task["repeat"] != "none":
                 # The next repeat after now, counted from remind_at, whether or not this one was snoozed.
-                previous = datetime.fromisoformat(next_at)
-                interval = timedelta(days=1 if task["repeat"] == "daily" else 7)
-                next_at = (previous + interval * ((current - previous) // interval + 1)).isoformat()
+                days = 1 if task["repeat"] == "daily" else 7
+                next_at = next_repeat(datetime.fromisoformat(next_at), days, current).isoformat()
                 notified_at = None
             db.execute(
                 "UPDATE tasks SET remind_at=?,notified_at=?,snoozed_until=NULL,updated_at=? WHERE id=?",

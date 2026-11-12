@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import threading
 import time
@@ -7,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from agent import routines
+from agent.assistant import next_repeat
 from agent.db import Database
 from agent.llm import CANCEL, Cancelled, UserError
 from agent.schedules import MAX_ACTIVE, next_run
@@ -106,6 +108,58 @@ def test_next_run_follows_local_wall_time(frequency, extra, after, expected):
     # Naive times are the computer's wall clock in any time zone; Windows has no time.tzset to pin one.
     values = {"frequency": frequency, "run_time": "09:00", "weekday": 0, "month_day": 1, **extra}
     assert next_run(values, after) == expected.astimezone(timezone.utc).isoformat()
+
+
+@pytest.fixture
+def new_york():
+    """This process's clock in a zone with daylight saving time, for the two days a year it changes (POSIX only)."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("the clock's zone is set with tzset")
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = "America/New_York"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if before is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = before
+        time.tzset()
+
+
+def test_an_hourly_schedule_keeps_running_every_hour_when_the_clock_changes(new_york):
+    hourly = {"frequency": "hourly", "run_time": "00:30"}
+    # The night the clock goes back an hour, 01:30 comes twice: both are run.
+    assert next_run(hourly, datetime(2026, 11, 1, 1, 40)) == "2026-11-01T06:30:00+00:00"
+    assert next_run(hourly, datetime(2026, 11, 1, 1, 40, fold=1)) == "2026-11-01T07:30:00+00:00"
+    # The night it goes forward, 02:30 does not come: the next run is an hour after the last, at 03:30.
+    assert next_run(hourly, datetime(2026, 3, 8, 1, 40)) == "2026-03-08T07:30:00+00:00"
+    # A daily time keeps its place on the clock across the change.
+    daily = {"frequency": "daily", "run_time": "09:00"}
+    assert next_run(daily, datetime(2026, 10, 31, 9, 30)) == "2026-11-01T14:00:00+00:00"
+
+
+def test_a_repeating_reminder_keeps_its_time_of_day_when_the_clock_changes(new_york):
+    nine = datetime(2026, 10, 31, 13, 0, tzinfo=timezone.utc)  # 09:00 in New York, a day before the clock goes back.
+    # Acknowledged the next morning, before and after its time: 09:00 on the clock is 14:00 UTC from then on.
+    assert (
+        next_repeat(nine, 1, datetime(2026, 11, 1, 13, 30, tzinfo=timezone.utc)).isoformat()
+        == "2026-11-01T14:00:00+00:00"
+    )
+    assert (
+        next_repeat(nine, 1, datetime(2026, 11, 1, 14, 5, tzinfo=timezone.utc)).isoformat()
+        == "2026-11-02T14:00:00+00:00"
+    )
+    assert (
+        next_repeat(nine, 7, datetime(2026, 10, 31, 13, 5, tzinfo=timezone.utc)).isoformat()
+        == "2026-11-07T14:00:00+00:00"
+    )
+    # Days missed while the app was closed are passed over at once.
+    assert (
+        next_repeat(nine, 1, datetime(2026, 11, 20, 0, 0, tzinfo=timezone.utc)).isoformat()
+        == "2026-11-20T14:00:00+00:00"
+    )
 
 
 def test_save_validates_inputs_and_schedules_the_next_run(service):

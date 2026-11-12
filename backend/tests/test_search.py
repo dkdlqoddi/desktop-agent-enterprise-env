@@ -265,6 +265,10 @@ def test_search_box_matches_any_word_and_keywords_without_the_llm(service):
     keyword = service.wiki_search({"query": "도입", "mode": "auto"})
     assert keyword["plan"]["keywords"] == ["도입"] and keyword["highlights"] == ["도입"]
     assert {d["id"] for d in keyword["documents"]} == {both["id"], tagged["id"]}
+    # A search asked without a mode (an AI tool through the API) is this one, as the API's documents say; the search
+    # for every word is asked for by name.
+    assert {d["id"] for d in service.wiki_search({"query": "도입"})["documents"]} == {both["id"], tagged["id"]}
+    assert {d["id"] for d in service.wiki_search({"query": "도입", "mode": "word"})["documents"]} == {both["id"]}
     quoted = service.wiki_search({"query": '"캐시 도입"', "mode": "auto"})
     assert [d["id"] for d in quoted["documents"]] == [both["id"]]
     # A query of filler words alone still searches for what was typed.

@@ -6,9 +6,10 @@ from types import SimpleNamespace as NS
 from PIL import Image
 
 from agent.html_document import index_markdown, page
+from agent.images import COMPACT_BYTES, compact
 from agent.office_converter import convert_with_office
 from agent.office_html import excel_html, powerpoint_html, visio_html
-from agent.office_pictures import COMPACT_BYTES, ENCRYPTED, FAILED, FULL, LATE, Exports, compact
+from agent.office_pictures import ENCRYPTED, FAILED, FULL, LATE, Exports
 from test_office_import import (
     chart_fixture,
     collection,

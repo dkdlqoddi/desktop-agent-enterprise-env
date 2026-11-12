@@ -276,6 +276,15 @@ def chat(tmp_path, llm):
 
 
 @bundled
+def test_the_bundle_holds_the_worker_of_this_tree():
+    # A bundle built before the worker changed runs the old one, and the tests below would fail for what the tree no
+    # longer does.
+    assert (ROOT / "dist/hermes/worker.py").read_bytes() == (ROOT / "runtime/hermes/worker.py").read_bytes(), (
+        "dist/hermes holds an older worker.py: run npm run build:hermes"
+    )
+
+
+@bundled
 @pytest.mark.parametrize(("api_format", "reply"), [("openai", openai_tool_reply), ("anthropic", anthropic_tool_reply)])
 def test_bundled_hermes_runs_an_app_tool_live_and_keeps_the_secrets(tmp_path, model_server, api_format, reply):
     model_server.reply = reply
@@ -434,6 +443,43 @@ def test_the_web_services_named_for_a_turn_are_the_ones_hermes_uses(tmp_path, se
     assert configured(home, settings, WEB, keys) == expected
     # No free tier of a service the user never chose is fallen back on.
     assert '"keyless_fallback": false' in (home / "config.yaml").read_text(encoding="utf-8")
+
+
+@bundled
+def test_a_subagent_is_waited_for_and_its_result_comes_back_in_the_same_turn(tmp_path, model_server):
+    # The agent hands part of the work to a subagent (delegate_task). Hermes would let it run on after the turn and
+    # deliver its result as a new message, which only a gateway takes: in the chat the answer never came, and the
+    # subagent's model requests arrived in the turn after. Here the tool call waits and returns the result.
+    def reply(request):
+        names = [tool["function"]["name"] for tool in request.get("tools") or []]
+        last = request["messages"][-1]
+        if "delegate_task" not in names:  # The subagent: it may not delegate again.
+            time.sleep(1.5)
+            return 200, completion({"content": "하위 작업 결과는 42입니다."}, request["model"]), False
+        if last["role"] == "tool":
+            return 200, completion({"content": "하위 에이전트의 답: " + last["content"][:400]}, request["model"]), False
+        goal = {"goal": "Compute the answer and report it."}
+        call = {"id": "c1", "type": "function", "function": {"name": "delegate_task", "arguments": json.dumps(goal)}}
+        return 200, completion({"content": None, "tool_calls": [call]}, request["model"]), False
+
+    model_server.reply = reply
+    service = Service(Database(tmp_path / "wiki.db"), connection(model_server))
+    try:
+        sent = service.dispatch("agent.send", {"text": "하위 에이전트에게 계산을 맡겨 줘", "request_id": "r1"})
+        asked = len(model_server.requests)
+        # Nothing of the subagent is left running to ask the model after the turn.
+        time.sleep(3)
+    finally:
+        service.agent.shutdown()
+    assert sent["reply"]["engine"] == "hermes"
+    assert "하위 작업 결과는 42입니다." in sent["reply"]["content"], sent["reply"]["content"]
+    # The agent, its subagent, then the agent with the subagent's result.
+    assert [("delegate_task" in [t["function"]["name"] for t in r["tools"]]) for r in model_server.requests] == [
+        True,
+        False,
+        True,
+    ]
+    assert len(model_server.requests) == asked == 3
 
 
 @bundled

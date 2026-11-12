@@ -14,7 +14,7 @@ from agent.db import Database
 from agent.html_document import index_markdown, page
 from agent.llm import UserError
 from agent.office_converter import PROGIDS, VISIO_OPEN, OfficeConverter, capabilities, convert_with_office
-from agent.office_html import PLAIN_CELLS, excel_html, format_value, powerpoint_html, visio_html
+from agent.office_html import PLAIN_CELLS, excel_html, format_value, powerpoint_html, spreadsheet_xml, visio_html
 from agent.office_import import POWERPOINT_NOTICE, OfficeImporter
 from agent.office_session import OfficeSession, Patient, property_with, step
 from agent.service import Service
@@ -1123,6 +1123,29 @@ def test_excel_keeps_formatting_merged_cells_number_formats_comments_links_chart
     assert "| 2 | 1,234.50 수식: `=SUM(A3:A4)` | 2026년 9월 28일 | 25.6% |" in text
     # A merged cell keeps its columns in Markdown with an empty cell.
     assert "| 1 | 매출 현황 | | [링크](https://wiki.test/a) |" in text and "| 1분기 | 10 |" in text
+
+
+def test_rows_under_a_cell_merged_down_keep_their_columns_in_markdown():
+    text = markdown(
+        "<table><tr><th>구분</th><th>항목</th><th>금액</th></tr>"
+        '<tr><td rowspan="2">인건비</td><td>급여</td><td>100</td></tr><tr><td>상여</td><td>20</td></tr>'
+        # A cell merged across and down, with a table of its own inside, and one merged down at the row's end.
+        '<tr><td>경비</td><td colspan="2" rowspan="2">합계<table><tr><td rowspan="2">가</td><td>나</td></tr>'
+        "<tr><td>다</td></tr></table></td></tr><tr><td>기타</td></tr>"
+        '<tr><td>소계</td><td>120</td><td rowspan="2">비고</td></tr><tr><td>총계</td><td>120</td></tr></table>'
+    )
+    assert "| 인건비 | 급여 | 100 |\n|  | 상여 | 20 |" in text
+    assert "\n| 기타 |  | |\n| 소계 | 120 | 비고 |\n| 총계 | 120 |  |" in text
+    assert "\\| 가 \\| 나 \\| \\|  \\| 다 \\|" in text
+
+
+def test_half_of_a_surrogate_pair_in_the_xml_excel_hands_over_is_replaced():
+    # A formula such as LEFT cuts a text in the middle of an emoji: the sheet keeps its formatting all the same.
+    xml = (
+        '<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"><x>앞\ud83d</x></Workbook>'
+    )
+    root = spreadsheet_xml(NS(_oleobj_=SpreadsheetDispatch(xml, [])))
+    assert root is not None and root[0].text == "앞\ufffd"
 
 
 def test_excel_without_xml_spreadsheet_still_reads_values():

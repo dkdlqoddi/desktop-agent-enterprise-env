@@ -271,7 +271,7 @@
     <string name="notifications_allow">알림 허용</string>
     <string name="settings_browser">브라우저</string>
     <string name="settings_record_clicks">직접 누른 광고 기록</string>
-    <string name="settings_record_clicks_help">열어 본 페이지의 광고를 표시해 두고, 직접 누른 광고와 그 도착 페이지를 기록합니다.</string>
+    <string name="settings_record_clicks_help">열어 본 페이지의 광고를 표시해 두고, 직접 누른 광고와 그 도착 페이지를 기록합니다. 끄면 기록한 페이지에서 누른 광고도 기록하지 않습니다.</string>
     <string name="settings_clear_browser">브라우저 데이터 지우기</string>
     <string name="settings_clear_browser_title">브라우저 데이터를 지울까요?</string>
     <string name="settings_clear_browser_body">쿠키, 저장된 사이트 데이터, 캐시, 방문 기록을 지웁니다. 사이트에 다시 로그인해야 합니다.</string>
@@ -286,7 +286,7 @@
     <string name="confirm_clear">지우기</string>
     <string name="confirm_cancel">취소</string>
     <string name="settings_about">정보</string>
-    <string name="settings_about_body">대화와 기록은 이 기기에만 저장됩니다. 설정한 LLM에는 채팅 내용과 짧은 기록 요약(개수와 상위 항목 제목)만 보냅니다. 앱은 광고를 대신 누르지 않고, 로봇 확인을 우회하지 않습니다.</string>
+    <string name="settings_about_body">대화와 기록은 이 기기에만 저장됩니다. 설정한 LLM에는 채팅 내용과 에이전트가 쓴 도구의 결과(기록한 광고·상품의 제목·가격·검색어, 웹 검색 결과, 에이전트의 메모리와 기술)를 보냅니다. 내장 Hermes의 웹 검색어는 DuckDuckGo로 갑니다. 앱은 광고를 대신 누르지 않고, 로봇 확인을 우회하지 않습니다.</string>
     <string name="settings_version">버전 %1$s</string>
 
     <!-- Notifications -->

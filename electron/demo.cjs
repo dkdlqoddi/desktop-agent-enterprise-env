@@ -10,6 +10,7 @@ const {
   durationText,
 } = require('./captions.cjs');
 const mp4 = require('./mp4.cjs');
+const { replaceFile } = require('./files.cjs');
 const { FILES, MAX_CAPTION_BYTES, createRunFolder } = require('./demo-plan.cjs');
 
 // A demo recording (record-demo.cmd): the app works through a list of files, folders and links on this PC as a
@@ -655,6 +656,8 @@ class DemoRun {
     const part = path.join(folder, '원본 녹화.part');
     const startedAt = new Date();
     let failure = null;
+    // Whether the recording could be neither made plain nor given its name: it then stays as it was written.
+    let stranded = false;
     try {
       await this.prepare();
       // Closing the app's window ends the demo: the import it waits for is stopped, not followed to its end.
@@ -705,11 +708,15 @@ class DemoRun {
         recording = await this.keep({ file: part, mime }, folder);
       } catch (error) {
         failure ??= error;
-        // What was recorded stays, as written: players still play it.
-        await fs.rename(part, path.join(folder, named(FILES.raw, mime))).catch(() => {});
+        // What was recorded stays, as written: players still play it. A rename another program holds off for a
+        // moment (antivirus reading the file just closed) is tried again; a recording that still could not be moved
+        // stays where it is, under the name it was written with.
+        await replaceFile(part, path.join(folder, named(FILES.raw, mime))).catch(() => {
+          stranded = true;
+        });
       }
     }
-    await fs.rm(part, { force: true });
+    if (!stranded) await fs.rm(part, { force: true });
     /** @type {{ folder: string, video: string | null, failure: any, stopped: boolean, renderError?: Error }} */
     const outcome = { folder, video: null, failure, stopped: this.stopped && !failure };
     if (!recording) {

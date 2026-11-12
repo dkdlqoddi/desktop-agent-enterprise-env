@@ -10,6 +10,7 @@ const SCOPES: Record<string, string> = {
   control: '앱 제어',
   files: '파일 가져오기',
   admin: '설정',
+  destructive: '영구 삭제·백업 복원',
   varies: '메서드마다',
 };
 

@@ -824,6 +824,40 @@ def test_a_cancelled_request_stops_and_keeps_what_had_come(monkeypatch):
     assert calls == []
 
 
+def test_a_stop_while_a_whole_answer_is_read_keeps_it_as_a_stopped_answer(monkeypatch):
+    # A server that does not stream, or a request made without streaming (an AI tool's question): the read cannot be
+    # ended, but the answer that arrives after the stop is a stopped one, not one that completed.
+    cancel = Cancel()
+
+    def post(session, url, **kwargs):
+        cancel.set()  # The user stops while the whole answer is on its way.
+        return Response(body=OPENAI_REPLY)
+
+    monkeypatch.setattr("agent.llm.requests.Session.post", post)
+    with pytest.raises(Cancelled) as stopped:
+        general().complete(HELLO, cancel=cancel)
+    assert stopped.value.partial == "연결 성공"
+    # Not stopped, the same answer is an answer.
+    assert general().complete(HELLO, cancel=Cancel()) == "연결 성공"
+
+
+def test_an_openai_style_refusal_or_content_filter_is_told_as_a_refusal(monkeypatch):
+    # An answer without content because the model declined or a gateway filtered it is no wrong API format.
+    for choice in (
+        {"finish_reason": "content_filter", "message": {"content": None}},
+        {"finish_reason": "stop", "message": {"content": None, "refusal": "I can't help with that."}},
+    ):
+        answer(monkeypatch, Response(body={"choices": [choice]}))
+        with pytest.raises(UserError, match="답하지 않았습니다"):
+            general().complete(HELLO)
+    answer(monkeypatch, events(openai_delta(finish="content_filter")))
+    with pytest.raises(UserError, match="답하지 않았습니다"):
+        general().complete(HELLO, stream=lambda text: None)
+    # A filter that cut an answer already under way leaves what was written.
+    answer(monkeypatch, events(openai_delta("앞부분"), openai_delta(finish="content_filter")))
+    assert general().complete(HELLO, stream=lambda text: None) == "앞부분"
+
+
 def test_a_stream_stopped_while_its_read_waits_ends_at_once_even_if_nothing_wakes_the_read(monkeypatch):
     """As on a system where a socket shut down from another thread leaves a read waiting: the answer still ends at
     once, as the stream is read apart."""

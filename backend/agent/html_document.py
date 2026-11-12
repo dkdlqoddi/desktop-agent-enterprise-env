@@ -63,17 +63,24 @@ def page(title, body, kind, style=""):
     )
 
 
+def whole_characters(text):
+    """`text` with half of a surrogate pair written as the replacement character. Text from Windows (Office, Notepad)
+    is UTF-16 and may hold one, e.g. where a formula cut a text in the middle of an emoji; UTF-8 cannot store it, and
+    an XML parser refuses the whole text for it."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    return text
+
+
 def validate_html(html):
     if not isinstance(html, str) or not html.strip():
         raise UserError("변환된 HTML 본문이 없습니다.")
     if len(html) > MAX_HTML_BYTES:
         raise UserError("변환된 HTML이 80MB를 초과해 가져오지 않았습니다.")
-    try:
-        size = len(html.encode("utf-8"))
-    except UnicodeEncodeError:
-        # Text from Windows (Office, Notepad) is UTF-16 and may hold half of a surrogate pair, which UTF-8 cannot store.
-        html = html.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
-        size = len(html.encode("utf-8"))
+    html = whole_characters(html)
+    size = len(html.encode("utf-8"))
     if size > MAX_HTML_BYTES:
         raise UserError("변환된 HTML이 80MB를 초과해 가져오지 않았습니다.")
     return html
@@ -122,12 +129,53 @@ def page_text(html):
         cell.append(soup.new_tag("br"))
         cell.append("수식: ")
         cell.append(code)
+    fill_merged_rows(soup)
     clean_soup(soup)
     return (
         IndexConverter(heading_style="ATX", bullets="-", escape_misc=True, autolinks=False, table_infer_header=False)
         .convert_soup(soup)
         .strip()
     )
+
+
+def span_of(cell, name):
+    text = str(cell.get(name) or "")
+    return max(1, min(1000, int(text))) if text.isdigit() else 1
+
+
+def fill_merged_rows(soup):
+    """Gives each row under a cell merged down (`rowspan`) an empty cell in that cell's columns. Markdown has no merged
+    cells: without it, the values of those rows would stand one column to the left of their headings."""
+    for table in soup.find_all("table"):
+        covering = {}  # the first column of a cell merged down → (the rows it still covers, the columns it spans)
+        for row in table.find_all("tr"):
+            if row.find_parent("table") is not table:
+                continue  # a row of a table inside a cell
+            cells = row.find_all(["td", "th"], recursive=False)
+            column, index, still = 0, 0, {}
+            while index < len(cells) or column in covering:
+                if column in covering:
+                    left, width = covering.pop(column)
+                    filler = soup.new_tag("td")
+                    if width > 1:
+                        filler["colspan"] = str(width)
+                    if index < len(cells):
+                        cells[index].insert_before(filler)
+                    else:
+                        row.append(filler)
+                    if left > 1:
+                        still[column] = (left - 1, width)
+                else:
+                    cell = cells[index]
+                    index += 1
+                    width, height = span_of(cell, "colspan"), span_of(cell, "rowspan")
+                    if height > 1:
+                        still[column] = (height - 1, width)
+                        del cell["rowspan"]
+                column += width
+            # A cell merged down beyond the row's last cell pushes nothing aside.
+            still.update({start: (left - 1, width) for start, (left, width) in covering.items() if left > 1})
+            covering = still
 
 
 def chart_table(title, kinds, labels, series):

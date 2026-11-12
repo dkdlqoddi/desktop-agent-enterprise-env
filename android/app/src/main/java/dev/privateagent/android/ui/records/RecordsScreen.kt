@@ -105,12 +105,11 @@ fun RecordsScreen(graph: AppGraph) {
                 IconButton(onClick = {
                     scope.launch {
                         try {
-                            val all = graph.records.items(filter, limit = 5000)
-                            if (all.isEmpty()) {
-                                navigator.say(exportEmpty)
-                            } else {
-                                CsvExporter.share(context, CsvExporter.export(context, all, graph.texts))
+                            // Every item the filter finds, not only those the list shows.
+                            val file = CsvExporter.exportAll(context, graph.texts) { each ->
+                                graph.records.eachItem(filter, each)
                             }
+                            if (file == null) navigator.say(exportEmpty) else CsvExporter.share(context, file)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {

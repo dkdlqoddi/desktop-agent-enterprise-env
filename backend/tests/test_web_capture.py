@@ -1,9 +1,11 @@
 import csv
 import io
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from agent import web_capture
 from agent.db import Database
 from agent.llm import UserError
 from agent.service import Service
@@ -97,6 +99,34 @@ def test_records_filter_export_and_summary(tmp_path):
         web.records({"kind": "nothing"})
     with pytest.raises(UserError):
         web.records({"since": "어제"})
+
+
+def test_the_days_of_a_period_are_the_users_own_and_its_last_day_counts(tmp_path, monkeypatch):
+    service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
+    web = service.web
+    # Half past midnight today and yesterday, on this PC's clock: east of UTC those are the day before in UTC, which
+    # is how the records keep their time.
+    early = datetime.now().replace(hour=0, minute=30, second=0, microsecond=0)
+    for days, title in ((0, "오늘 새벽"), (1, "어제 새벽")):
+        at = (early - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+        monkeypatch.setattr(web_capture, "now", lambda at=at: at)
+        web._keep("coupang", title, "chat", "t", {"items": [{"ref": 0, "kind": "ad", "title": title}]}, b"")
+    today, yesterday = f"{early:%Y-%m-%d}", f"{early - timedelta(days=1):%Y-%m-%d}"
+
+    def titles(**period):
+        return sorted(item["title"] for item in web.records(period)["items"])
+
+    assert titles(since=today, until=today) == ["오늘 새벽"]
+    assert titles(since=yesterday, until=yesterday) == ["어제 새벽"]
+    assert titles(since=yesterday, until=today) == ["어제 새벽", "오늘 새벽"]
+    assert titles(until=yesterday) == ["어제 새벽"] and titles(since=today) == ["오늘 새벽"]
+    # The CSV follows the same period, and so does the chat's summary of the records.
+    assert len(open(web.export({"since": today, "until": today})["path"], encoding="utf-8").readlines()) == 2
+    assert web.summary({"since": today})["total"] == 1
+    # A full time is an instant, as written.
+    assert titles(since=(early - timedelta(minutes=1)).astimezone().isoformat()) == ["오늘 새벽"]
+    with pytest.raises(UserError):
+        web.records({"until": "2026-13-45"})
 
 
 def test_deleting_a_capture_removes_its_items_and_screenshot_only(tmp_path):
@@ -208,6 +238,9 @@ def test_real_browser_robot_words_among_results_are_not_a_robot_check(service, s
     web.open(url=f"{site_server}/challenge")
     with pytest.raises(UserError, match="로봇 확인"):
         web.capture_page()
+    # The badge of a check that asks nothing is no check: the page is read.
+    web.open(url=f"{site_server}/badge")
+    assert web.capture_page()["counts"]["ad"] == 1
 
 
 def test_real_browser_generic_ad_titles_leave_out_the_label_and_price(service, site_server):
@@ -246,6 +279,12 @@ def test_a_click_report_from_a_frame_inside_the_page_is_not_the_users(tmp_path):
     assert web.records({"kind": "clicked"})["total"] == 0
     web._clicked({"frame": type("Frame", (), {"parent_frame": None})(), "page": None}, report)
     assert web.records({"kind": "clicked"})["total"] == 1
+    # The click fills the link of an item whose link could not be read with the page.
+    assert web.records({"kind": "clicked"})["items"][0]["link_url"] == "https://ad.example.test/1"
+    # It never replaces a link that was recorded (a script of the page can send a report as well).
+    forged = '{"token": "t1", "ref": 0, "kind": "ad", "href": "https://other.example.test/"}'
+    web._clicked({"frame": type("Frame", (), {"parent_frame": None})(), "page": None}, forged)
+    assert web.records({"kind": "clicked"})["items"][0]["link_url"] == "https://ad.example.test/1"
 
 
 def test_real_browser_one_task_at_a_time(service):

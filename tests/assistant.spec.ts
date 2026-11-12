@@ -74,9 +74,24 @@ test('personal assistant widgets: offline tasks, reviewed extraction, document q
     await tasks.getByLabel('새 할 일').fill('');
     await tasks.locator('.task-open').filter({ hasText: '오프라인 마감 확인' }).click();
     await tasks.getByLabel('마감 시간', { exact: true }).fill('2020-01-01T10:00');
+    // The task changes elsewhere while its form is open (a reminder shown, a tick in another widget). The save that
+    // meets the change is refused once; the form keeps what was typed, takes the rest from the task as it is now, and
+    // saves.
+    const listed = await page.evaluate(() => window.privateAgent!.request('tasks.list'));
+    const elsewhere = await page.evaluate(
+      (id) => window.privateAgent!.request('tasks.save', { id, assignee: '다른 화면' }),
+      (listed.result as { id: string }[])[0].id,
+    );
+    expect(elsewhere.ok).toBe(true);
     await tasks.getByLabel('알림 시간', { exact: true }).fill('2020-01-01T09:00');
     await tasks.getByRole('button', { name: '할 일 저장' }).click();
+    await expect(page.locator('.toast.error')).toContainText('할 일이 변경되었습니다');
+    await page.locator('.toast.error').getByRole('button', { name: '알림 닫기' }).click();
+    await expect(tasks.getByLabel('담당자', { exact: true })).toHaveValue('다른 화면');
+    await expect(tasks.getByLabel('마감 시간', { exact: true })).toHaveValue('2020-01-01T10:00');
+    await tasks.getByRole('button', { name: '할 일 저장' }).click();
     await expect(tasks.locator('.task-form')).toHaveCount(0);
+    await expect(tasks.locator('.task-row')).toContainText('다른 화면');
     expect(llm.requests).toHaveLength(0);
     const reminders = widget(page, 'reminders');
     await expect(reminders.locator('.reminder-row')).toContainText('오프라인 마감 확인');
@@ -120,6 +135,9 @@ test('personal assistant widgets: offline tasks, reviewed extraction, document q
     await searchBox(page).press('Enter');
     await expect(results(page).locator('.answer')).toContainText('홍길동이 보고서를 작성합니다.');
     await expect(results(page)).toContainText('질문한 문서');
+    await expect(results(page).locator('.search-panel-head')).toContainText(
+      '‘프로젝트 회의록’ 문서에 질문',
+    );
     // Picked documents are answered without a search: only the answer request was made.
     expect(llm.requests.filter((r) => r.system.includes('analyze a user'))).toHaveLength(0);
     await results(page).locator('.citations summary').click();

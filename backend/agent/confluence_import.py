@@ -26,6 +26,8 @@ from .service import routine_name
 from .web_login import origin_of, redirected, sign_in, signed_in, validate_plan, with_scheme
 
 MAX_PAGES = 5000
+# Lists of subpages in a row that hold nothing and still lead on: a server that never ends its list gives these.
+EMPTY_LISTS = 5
 MAX_HTML_BYTES = 10 * 1024 * 1024
 MAX_LIST_CHARS = 10 * 1024 * 1024
 # The visible login window waits for the user, e.g. to approve a sign-in prompt.
@@ -372,7 +374,7 @@ async def children(request, info, on_child):
     the list the server gives: Server/Data Center offsets and Link headers, and Cloud's v2 cursors. The version number
     comes along where the list gives it ('' where not)."""
     endpoint = f"{info['base']}/rest/api/content/{info['id']}/child/page?limit=100&start=0&expand=version"
-    visited, count = [], 0
+    visited, count, empty = [], 0, 0
     while endpoint:
         if endpoint in visited:
             raise UserError("하위 페이지 목록의 다음 링크가 반복됩니다.")
@@ -422,6 +424,9 @@ async def children(request, info, on_child):
             )
         links = body.get("_links") if isinstance(body.get("_links"), dict) else {}
         following = links.get("next") or (header[1] if header else None)
+        empty = 0 if results else empty + 1
+        if following and empty > EMPTY_LISTS:
+            raise UserError("하위 페이지 목록이 빈 채로 다음 링크만 계속 이어집니다. 잠시 후 다시 시도해 주세요.")
         endpoint = api_link(following, endpoint, info["base"]) if following else ""
         # Some Data Center versions only give start, limit and size.
         start, limit = body.get("start"), body.get("limit")

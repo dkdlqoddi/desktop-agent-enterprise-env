@@ -189,6 +189,34 @@ def test_cloud_subpages_fall_back_to_v2_follow_link_cursors_and_refuse_login_red
     with pytest.raises(UserError, match="반복"):
         asyncio.run(children(loop, {"base": "https://wiki.test/confluence", "id": "1"}, lambda item: None))
 
+    # A list that holds nothing and still leads on, each time to a new address, ends after a few such answers; one
+    # that only skips a few (pages the account may not read) goes on.
+    asked = []
+
+    def emptied(holes):
+        async def answer(url):
+            start = int(re.search(r"start=(\d+)", url)[1])
+            asked.append(start)
+            ids = [] if start < holes * 100 else [start + 2]
+            link = {} if ids else {"next": f"/rest/api/content/1/child/page?limit=100&start={start + 100}"}
+            return {
+                "status": 200,
+                "link": "",
+                "text": json.dumps({"results": [{"id": n} for n in ids], "_links": link}),
+            }
+
+        return answer
+
+    found = []
+    asyncio.run(
+        children(emptied(3), {"base": "https://wiki.test/confluence", "id": "1"}, lambda item: found.append(item["id"]))
+    )
+    assert found == ["302"] and asked == [0, 100, 200, 300]
+    asked.clear()
+    with pytest.raises(UserError, match="빈 채로"):
+        asyncio.run(children(emptied(10**6), {"base": "https://wiki.test/confluence", "id": "1"}, lambda item: None))
+    assert asked == [0, 100, 200, 300, 400, 500]
+
     async def bad(url):
         return {"status": 200, "link": "", "text": json.dumps({"results": [{"id": "../2"}]})}
 

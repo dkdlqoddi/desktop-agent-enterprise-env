@@ -106,16 +106,32 @@ class RecordStore(private val db: AppDatabase) {
     /** Items, newest capture first (newest click first for clicked ads). */
     suspend fun items(filter: ItemFilter, limit: Int = 500): List<ItemRow> = withContext(Dispatchers.IO) {
         val (where, args) = where(filter)
-        val order = if (filter.kind == RecordKindFilter.CLICKED) {
-            "i.clicked_at DESC"
-        } else {
-            "c.captured_at DESC, c.id DESC, i.position ASC"
-        }
         db.readableDatabase.rawQuery(
-            "SELECT i.*, c.site AS c_site, c.query AS c_query, c.captured_at AS c_captured_at, c.url AS c_url " +
-                "FROM items i JOIN captures c ON c.id = i.capture_id WHERE $where ORDER BY $order LIMIT ${limit.coerceIn(1, 5000)}",
+            "$ITEMS WHERE $where ORDER BY ${order(filter)} LIMIT ${limit.coerceIn(1, 5000)}",
             args,
         ).use { cursor -> cursor.items() }
+    }
+
+    /**
+     * Every item the filter finds, in the order of [items], handed to [each] one at a time: an export is of all of
+     * them, which may be more than memory should hold at once. Returns how many there were.
+     */
+    suspend fun eachItem(filter: ItemFilter, each: (ItemRow) -> Unit): Int = withContext(Dispatchers.IO) {
+        val (where, args) = where(filter)
+        db.readableDatabase.rawQuery("$ITEMS WHERE $where ORDER BY ${order(filter)}", args).use { cursor ->
+            var count = 0
+            while (cursor.moveToNext()) {
+                each(cursor.item())
+                count++
+            }
+            count
+        }
+    }
+
+    private fun order(filter: ItemFilter) = if (filter.kind == RecordKindFilter.CLICKED) {
+        "i.clicked_at DESC"
+    } else {
+        "c.captured_at DESC, c.id DESC, i.position ASC"
     }
 
     /** How many items of each kind the filter finds, without a limit. */
@@ -140,11 +156,8 @@ class RecordStore(private val db: AppDatabase) {
     }
 
     suspend fun item(id: Long): ItemRow? = withContext(Dispatchers.IO) {
-        db.readableDatabase.rawQuery(
-            "SELECT i.*, c.site AS c_site, c.query AS c_query, c.captured_at AS c_captured_at, c.url AS c_url " +
-                "FROM items i JOIN captures c ON c.id = i.capture_id WHERE i.id = ?",
-            arrayOf(id.toString()),
-        ).use { cursor -> cursor.items().firstOrNull() }
+        db.readableDatabase.rawQuery("$ITEMS WHERE i.id = ?", arrayOf(id.toString()))
+            .use { cursor -> cursor.items().firstOrNull() }
     }
 
     suspend fun captures(limit: Int = 300): List<CaptureRow> = withContext(Dispatchers.IO) {
@@ -203,31 +216,32 @@ class RecordStore(private val db: AppDatabase) {
 
     private fun Cursor.items(): List<ItemRow> {
         val list = ArrayList<ItemRow>(count)
-        while (moveToNext()) {
-            list += ItemRow(
-                id = long("id"),
-                captureId = long("capture_id"),
-                ref = int("ref"),
-                kind = ItemKind.of(string("kind")) ?: ItemKind.RESULT,
-                position = int("position"),
-                title = string("title").orEmpty(),
-                price = string("price").orEmpty(),
-                displayUrl = string("display_url").orEmpty(),
-                linkUrl = string("link_url").orEmpty(),
-                imageUrl = string("image_url").orEmpty(),
-                text = string("text").orEmpty(),
-                clickedAt = longOrNull("clicked_at"),
-                clickedUrl = string("clicked_url"),
-                landingUrl = string("landing_url"),
-                landingTitle = string("landing_title"),
-                site = string("c_site").orEmpty(),
-                query = string("c_query").orEmpty(),
-                capturedAt = long("c_captured_at"),
-                pageUrl = string("c_url").orEmpty(),
-            )
-        }
+        while (moveToNext()) list += item()
         return list
     }
+
+    /** The item of the row the cursor is at. */
+    private fun Cursor.item() = ItemRow(
+        id = long("id"),
+        captureId = long("capture_id"),
+        ref = int("ref"),
+        kind = ItemKind.of(string("kind")) ?: ItemKind.RESULT,
+        position = int("position"),
+        title = string("title").orEmpty(),
+        price = string("price").orEmpty(),
+        displayUrl = string("display_url").orEmpty(),
+        linkUrl = string("link_url").orEmpty(),
+        imageUrl = string("image_url").orEmpty(),
+        text = string("text").orEmpty(),
+        clickedAt = longOrNull("clicked_at"),
+        clickedUrl = string("clicked_url"),
+        landingUrl = string("landing_url"),
+        landingTitle = string("landing_title"),
+        site = string("c_site").orEmpty(),
+        query = string("c_query").orEmpty(),
+        capturedAt = long("c_captured_at"),
+        pageUrl = string("c_url").orEmpty(),
+    )
 
     private fun Cursor.captures(): List<CaptureRow> {
         val list = ArrayList<CaptureRow>(count)
@@ -246,5 +260,11 @@ class RecordStore(private val db: AppDatabase) {
             )
         }
         return list
+    }
+
+    private companion object {
+        /** The items with the capture each belongs to, as [Cursor.item] reads them. */
+        const val ITEMS = "SELECT i.*, c.site AS c_site, c.query AS c_query, c.captured_at AS c_captured_at, " +
+            "c.url AS c_url FROM items i JOIN captures c ON c.id = i.capture_id"
     }
 }

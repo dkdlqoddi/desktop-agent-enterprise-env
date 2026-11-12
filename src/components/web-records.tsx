@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
   FolderOpen,
@@ -57,7 +57,10 @@ export default function WebRecords() {
 
   const name = (key: string) => sites.find((site) => site.key === key)?.name || key || '기타';
 
+  // Each load has a number: the answer of an earlier filter that comes after a later one's is dropped.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const id = ++latest.current;
     const params = {
       ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)),
       ...(capture ? { capture_id: capture } : {}),
@@ -69,10 +72,12 @@ export default function WebRecords() {
         api<Records>('web.records', params),
         api<WebCaptures>('web.captures', { limit: 12, site: filters.site }),
       ]);
+      if (id !== latest.current) return;
       setRecords(found);
       setCaptures(recent);
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), true);
+      if (id === latest.current)
+        notify(error instanceof Error ? error.message : String(error), true);
     }
   }, [filters, capture, offset, notify]);
 

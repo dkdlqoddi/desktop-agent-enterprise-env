@@ -123,7 +123,10 @@ class StoresTest {
     fun theCsvExportIsAUtf8FileWithAByteOrderMark() = runBlocking {
         records.saveCapture(NewCapture("coupang", "노트북", CaptureSource.MANUAL, "99999999-2222-3333-4444-555555555555"), result)
         val sites = Sites.parse(WebScripts.read(context.assets, "sites.json"))
-        val uri = CsvExporter.export(context, records.items(ItemFilter()), Texts(context) { sites })
+        val texts = Texts(context) { sites }
+        // Nothing to export for a filter that finds nothing; else every item the filter finds.
+        assertEquals(null, CsvExporter.exportAll(context, texts) { each -> records.eachItem(ItemFilter(site = "none"), each) })
+        val uri = CsvExporter.exportAll(context, texts) { each -> records.eachItem(ItemFilter(), each) }!!
         val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
         assertEquals(listOf(0xEF, 0xBB, 0xBF), bytes.take(3).map { it.toInt() and 0xFF })
         val lines = String(bytes, Charsets.UTF_8).removePrefix("\uFEFF").split("\r\n")

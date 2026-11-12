@@ -55,7 +55,7 @@ class AppActions(
             }
             AgentAction.CapturePage -> {
                 navigator.show(Tab.BROWSER)
-                captured(captureSafely { browser.captureCurrentPage() })
+                captured(captureSafely { browser.captureCurrentPage(source) })
             }
             is AgentAction.OpenSite -> {
                 navigator.show(Tab.BROWSER)

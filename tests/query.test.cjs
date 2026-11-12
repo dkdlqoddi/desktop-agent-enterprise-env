@@ -293,6 +293,32 @@ test('a list reloads what it shows 500 at most a request, and loads every page t
   assert.equal(list.state.next, 'c1000');
 });
 
+test('loading every page waits for a reload on its way and asks again for a page a reload took the place of', async () => {
+  const { cache, pending } = backend();
+  const list = cache.list('wiki.list', {}, 100);
+  list.subscribe(() => {});
+  pending[0].resolve(page(0, 100, 'c100'));
+  await flush();
+  // A reload is on its way, as after every document a batch analysis ends: the pages follow it.
+  const reloading = list.reload();
+  const all = list.loadAll(1000);
+  pending[1].resolve(page(0, 100, 'c100'));
+  await reloading;
+  await flush();
+  assert.deepEqual(pending[2].params, { limit: 500, cursor: 'c100' });
+  // Another reload starts while that page is on its way and drops it: the page is asked for again.
+  const again = list.reload();
+  pending[2].resolve(page(100, 150, null));
+  await flush();
+  assert.equal(list.state.items.length, 100);
+  pending[3].resolve(page(0, 100, 'c100'));
+  await again;
+  await flush();
+  assert.deepEqual(pending[4].params, { limit: 500, cursor: 'c100' });
+  pending[4].resolve(page(100, 150, null));
+  assert.equal((await all).length, 250);
+});
+
 test('a failed page keeps what the list shows and says why; lists no component shows are dropped in time', async () => {
   const { cache, pending } = backend();
   const list = cache.list('wiki.list', {}, 100);

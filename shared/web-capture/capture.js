@@ -183,6 +183,11 @@
     const style = getComputedStyle(element);
     return style.visibility !== 'hidden' && style.display !== 'none';
   };
+  // The badge of a check that asks nothing: reCAPTCHA v3 and the invisible v2 put one on every page of a site that
+  // uses them, and a page with it is read like any other.
+  const badge = (element) =>
+    Boolean(element.closest('.grecaptcha-badge')) ||
+    /[?&]size=invisible\b/.test(element.getAttribute('src') || '');
   const labelled = (root) => {
     if (AD_LABEL.test(clean(root.getAttribute && root.getAttribute('aria-label')))) return true;
     for (const node of root.querySelectorAll(
@@ -292,7 +297,9 @@
   const challenged =
     location.pathname.startsWith('/sorry/') ||
     location.pathname.startsWith('/errors/validateCaptcha') ||
-    CHALLENGE.some((selector) => all(document, selector).some(shown));
+    CHALLENGE.some((selector) =>
+      all(document, selector).some((element) => shown(element) && !badge(element)),
+    );
   const blocked =
     challenged ||
     (Boolean(rule) && items.length === 0 && BLOCKED.some((pattern) => pattern.test(body)));

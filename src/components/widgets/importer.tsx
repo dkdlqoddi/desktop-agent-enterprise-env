@@ -511,13 +511,25 @@ function JobView({
           : '이 페이지만'
         : '';
   const login = web && 'auto_login' in web ? web : null;
+  // An import that failed, was stopped or left items out does not end with a check mark.
+  const troubled =
+    job.status === 'error' ||
+    job.status === 'cancelled' ||
+    job.failed > 0 ||
+    ('discovery_failed' in job && job.discovery_failed > 0);
   // A folder's job lists the results of up to 5,000 files, failures first; its counts are of every file.
   const unlisted = 'batches' in job ? job.processed - job.results.length : 0;
   return (
     <li className={`job ${job.status}`}>
       {/* Only the state is live, so a screen reader hears it change, not every item counted. */}
       <div className="job-head">
-        {running ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+        {running ? (
+          <LoaderCircle className="spin" size={15} />
+        ) : troubled ? (
+          <CircleAlert size={15} />
+        ) : (
+          <Check size={15} />
+        )}
         <strong>
           {TITLES[kind]}
           {job.routine ? ` · 자동 작업 ‘${job.routine}’` : ''}

@@ -25,7 +25,7 @@ from html import escape
 from xml.etree import ElementTree as ET
 
 from . import images
-from .html_document import attribute, bgr_color, chart_table, css, font_family, hex_color, points
+from .html_document import attribute, bgr_color, chart_table, css, font_family, hex_color, points, whole_characters
 from .llm import UserError
 from .office_session import property_with
 from .word_html import list_number, symbol
@@ -630,8 +630,8 @@ def spreadsheet_xml(used):
     if not isinstance(xml, str) or "<!DOCTYPE" in xml or "<!ENTITY" in xml or "Workbook" not in xml[:4000]:
         return None
     try:
-        return ET.fromstring(xml)
-    except ET.ParseError:
+        return ET.fromstring(whole_characters(xml))
+    except (ET.ParseError, ValueError):  # XML Excel wrote that cannot be read: the sheet's values are read instead.
         return None
 
 

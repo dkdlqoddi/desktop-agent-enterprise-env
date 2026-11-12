@@ -29,9 +29,20 @@ from xml.etree import ElementTree as ET
 
 from . import drawing, images
 from .drawing import Canvas, Matrix, Painter, Palette
-from .html_document import MAX_HTML_BYTES, attribute, chart_table, css, font_family, hex_color, page, points
+from .html_document import (
+    MAX_HTML_BYTES,
+    attribute,
+    chart_table,
+    css,
+    font_family,
+    hex_color,
+    page,
+    points,
+    whole_characters,
+)
+from .images import MAX_PICTURE_BYTES
 from .llm import UserError
-from .office_pictures import FULL, MAX_PICTURE_BYTES
+from .office_pictures import FULL
 from .vml import (
     SHAPES as VML_SHAPES,
     Vml,
@@ -328,6 +339,12 @@ def count(text, default):
 
 
 VISIBLE = re.compile(r'<(img|math|hr)\b|class="pagebreak"')
+
+
+def mark_deleted(paragraph):
+    """Whether tracked changes deleted a paragraph's mark, or moved it away."""
+    mark = paragraph.find(f"{W}pPr/{W}rPr")
+    return mark is not None and (mark.find(W + "del") is not None or mark.find(W + "moveFrom") is not None)
 
 
 def visible(html):
@@ -1078,8 +1095,17 @@ class Reader:
     # Blocks -----------------------------------------------------------------------------------
 
     def blocks(self, parent):
-        html, nodes = [], list(items(parent, BLOCKS))
+        # A paragraph whose mark is deleted (tracked changes) is one paragraph with the one after it, as Word shows it.
+        nodes, shown, joined = list(items(parent, BLOCKS)), [], []
         for index, node in enumerate(nodes):
+            following = nodes[index + 1] if index + 1 < len(nodes) else None
+            if node.tag == W + "p" and mark_deleted(node) and following is not None and following.tag == W + "p":
+                joined.append(node)
+            else:
+                shown.append((node, joined))
+                joined = []
+        html = []
+        for index, (node, joined) in enumerate(shown):
             if node.tag == W + "tbl":
                 html.append(self.table(node))
             elif node.tag == W + "altChunk":
@@ -1088,15 +1114,16 @@ class Reader:
                 neighbours = [
                     self.paragraph_style(other) if other is not None and other.tag == W + "p" else None
                     for other in (
-                        nodes[index - 1] if index else None,
-                        nodes[index + 1] if index + 1 < len(nodes) else None,
+                        shown[index - 1][0] if index else None,
+                        shown[index + 1][0] if index + 1 < len(shown) else None,
                     )
                 ]
-                html.append(self.paragraph(node, *neighbours))
+                html.append(self.paragraph(node, *neighbours, joined))
         return "".join(html)
 
-    def paragraph(self, node, before=None, after=None):
-        """A paragraph; `before` and `after` are the styles of the paragraphs beside it."""
+    def paragraph(self, node, before=None, after=None, joined=()):
+        """A paragraph; `before` and `after` are the styles of the paragraphs beside it, and `joined` the paragraphs
+        before it whose mark is deleted: what they still show opens this one."""
         style = self.paragraph_style(node)
         props = self.paragraph_props(node, style)
         if props.get("contextualSpacing"):
@@ -1106,9 +1133,12 @@ class Reader:
                 if neighbour == style:
                     spacing.update({side: "0", f"{side}Autospacing": "0", f"{side}Lines": "0"})
             props["spacing"] = spacing
-        context = Context(style, self.run_base(style), props, self.composes(node))
-        label = self.label(props, context) if "list" in props else ""
-        content = self.inline(node, context)
+        context = Context(style, self.run_base(style), props, any(self.composes(item) for item in (*joined, node)))
+        # A paragraph deleted with its mark and with nothing after it to join: its number is taken only if it shows
+        # anything, so the items after a deleted list item keep the numbers Word shows.
+        deleted = mark_deleted(node)
+        label = self.label(props, context) if "list" in props and not deleted else ""
+        content = "".join(self.inline(item, context) for item in (*joined, node))
         # A field's code ends within its paragraph (only results, such as a table of contents, go on);
         # one left open would hide the rest of the document.
         while self.fields and not self.fields[-1]["result"]:
@@ -1117,6 +1147,10 @@ class Reader:
         if context.pieces or context.inline:
             painted, content = self.compose(context, content)
             tail = painted + tail
+        if deleted:
+            if not visible(content):
+                return tail
+            label = self.label(props, context) if "list" in props else ""
         if not visible(content) and not label:
             if tail:
                 return tail  # the paragraph only anchors objects
@@ -1187,6 +1221,8 @@ class Reader:
         grid = [twips(column.get(W + "w")) or 0 for column in node.findall(f"{W}tblGrid/{W}gridCol")]
         rows = []
         for row in items(node, {W + "tr"}):
+            if row.find(f"{W}trPr/{W}del") is not None:
+                continue  # a row deleted with tracked changes
             column = count(value(row, "trPr/gridBefore"), 0)
             cells = []
             for item in items(row, {W + "tc"}):
@@ -1227,6 +1263,12 @@ class Reader:
             if repeat is None or not on(repeat):
                 break
             header_rows += 1
+        # A cell merged down out of the header rows takes the rows it covers into <thead>: a row group ends a rowspan,
+        # and the cells of the row below would move a column to the left.
+        head, index = header_rows, 0
+        while index < head:
+            head = max(head, *(index + cell["rows"] for cell in rows[index][1]))
+            index += 1
         look_css = self.table_css(table, props, grid)
         html = [f'<table style="{attribute(look_css)}">' if look_css else "<table>"]
         if grid:
@@ -1234,7 +1276,7 @@ class Reader:
                 "<colgroup>" + "".join(f'<col style="width:{points(width)}">' for width in grid) + "</colgroup>"
             )
         for index, (row, cells) in enumerate(rows):
-            if index == 0 and header_rows:
+            if index == 0 and head:
                 html.append("<thead>")
             height = row.find(f"{W}trPr/{W}trHeight")
             size = twips(height.get(W + "val")) if height is not None and height.get(W + "hRule") != "auto" else None
@@ -1252,7 +1294,7 @@ class Reader:
                     continue
                 html.append(self.cell(cell, index, len(rows), columns, table, look, header_rows))
             html.append(empty_cells(after) + "</tr>")
-            if index + 1 == header_rows:
+            if index + 1 == head:
                 html.append("</thead>")
         html.append("</table>")
         return "".join(html)
@@ -2394,7 +2436,7 @@ def word_xml_to_html(xml, title):
     """The HTML page of Word's Flat OPC XML (or a bare w:document)."""
     if "<!DOCTYPE" in xml or "<!ENTITY" in xml:
         raise UserError("DTD나 ENTITY가 있는 Word XML은 읽지 않습니다.")
-    root = ET.fromstring(xml)
+    root = ET.fromstring(whole_characters(xml))
     if root.tag == W + "document":
         package, document = Package(ET.Element(PKG + "package")), root
     else:

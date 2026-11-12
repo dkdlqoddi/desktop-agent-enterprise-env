@@ -235,12 +235,19 @@ export class PagedList<T = unknown> {
   }
 
   // Every page still to come, MAX_PAGE entries a request, until the list holds `max`: for acting on all the entries
-  // it holds, which it answers. Stops when a page brought nothing (another request took its place).
+  // it holds, which it answers. A request on its way is waited for first, since more() would hand that one back, a
+  // reload as often as a page, and a page a reload took the place of is asked for again after it: the list reloads
+  // after every document a batch analysis ends. Stops when a page of its own brought nothing.
   async loadAll(max: number): Promise<readonly T[]> {
     while (this.state.next !== null && this.state.items.length < max) {
+      if (this.busy) {
+        await this.busy.catch(() => {});
+        continue;
+      }
       const before = this.state.items.length;
+      const generation = this.generation;
       await this.more(Math.min(MAX_PAGE, max - before));
-      if (this.state.items.length <= before) break;
+      if (this.state.items.length <= before && generation === this.generation) break;
     }
     return this.state.items;
   }

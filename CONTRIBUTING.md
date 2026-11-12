@@ -23,6 +23,7 @@ npm run dev
 - `npm run dev:ready`(Windows는 `run-dev.cmd`)는 `npm ci`(바뀐 것이 없으면 건너뜀)와 세 가지 준비 스크립트를 실행한 뒤 `npm run dev`를 시작합니다.
 - 개발용 LLM 초기값은 `.env.example`을 `.env`로 복사해 넣습니다. 소스로 실행한 백엔드만 `.env`를 읽습니다.
 - `build:hermes`는 Hermes 소스를 `build/hermes-source`에 받고(git), CPython 3.14.0과 의존성 wheel을 내려받아 해시를 확인합니다. 인터넷 없이 빌드하려면 같은 커밋의 소스를 `build/hermes-source`에, 내려받은 압축 파일을 `build/`에 두거나, Linux에서는 독립 실행형 CPython 3.14.0을 `--python`(또는 `PRIVATE_AGENT_HERMES_BUILD_PYTHON`)으로 줍니다.
+- `runtime/hermes/worker.py`를 고친 뒤에는 `npm run build:hermes`를 다시 실행합니다. `npm run ci`는 Python 테스트를 Hermes 빌드보다 먼저 실행하므로, 예전 워커가 든 `dist/hermes`가 남아 있으면 내장 Hermes 테스트가 실패합니다(`test_the_bundle_holds_the_worker_of_this_tree`가 그렇다고 알려 줍니다).
 
 ## 실행
 

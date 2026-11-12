@@ -115,10 +115,15 @@ def day(value, name):
     return value
 
 
+# What a raw plan starts with: JSON ({" [{ [" {} …) or the markup of a tool call (<tool_call>, <|…). An answer that only
+# opens with a bracket ("[요약] …", "[이름](https://…)", "<오늘의 광고>") is words.
+RAW_PLAN = re.compile(r'[\[{]\s*(?:["{\[\]}]|$)|<[A-Za-z_|/!?]')
+
+
 def spoken(value):
     """The planner's words as the chat shows them: without a reasoning block, and nothing that reads as a raw plan."""
     words = re.sub(r"<think>.*?(?:</think>|$)", "", str(value or ""), flags=re.S).strip()
-    return "" if words.startswith(("{", "[", "<")) else words[:MESSAGE_CHARS]
+    return "" if RAW_PLAN.match(words) else words[:MESSAGE_CHARS]
 
 
 def clock(value):

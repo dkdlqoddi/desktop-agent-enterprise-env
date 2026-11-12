@@ -184,6 +184,12 @@ class HermesMessagesTest {
 
         assertEquals("답입니다", HermesChat.spoken("<think>plan</think>답입니다"))
         assertEquals("", HermesChat.spoken("{\"actions\": []}"))
+        assertEquals("", HermesChat.spoken("[{\"tool\": \"web_capture\"}]"))
+        assertEquals("", HermesChat.spoken("<tool_call>{\"name\": \"web_capture\"}</tool_call>"))
+        // An answer that only opens with a bracket is words, not a plan.
+        for (words in listOf("[요약] 광고 5건을 기록했습니다.", "[검색 결과](https://shop.example.com) 3건", "<오늘의 광고> 5건", "{이름} 님")) {
+            assertEquals(words, HermesChat.spoken(words))
+        }
         assertEquals("", HermesChat.visibleDraft("```json"))
         assertEquals("쓰는 중", HermesChat.visibleDraft("쓰는 중"))
     }

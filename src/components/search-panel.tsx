@@ -462,9 +462,11 @@ export default function SearchPanel() {
           <p>
             {state.searching
               ? '찾는 중…'
-              : state.local || state.ai
-                ? `문서 ${found}개${state.local && state.local.total > state.local.documents.length ? ` · 전체 ${state.local.total}개 중 관련도 상위` : ''}`
-                : '저장된 대화'}
+              : state.scope
+                ? `‘${state.scope.title}’ 문서에 질문`
+                : state.local || state.ai
+                  ? `문서 ${found}개${state.local && state.local.total > state.local.documents.length ? ` · 전체 ${state.local.total}개 중 관련도 상위` : ''}`
+                  : '저장된 대화'}
           </p>
         </div>
         <button className="icon-button" aria-label="검색 결과 닫기" onClick={search.reset}>

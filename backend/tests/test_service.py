@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from agent import pageindex
 from agent.db import Database
 from agent.llm import LLM, UserError
 from agent.service import Service
@@ -317,16 +318,31 @@ def test_saving_the_same_text_keeps_the_ai_analysis(service):
         }
     )
     assert {key: same[key] for key in kept} == {key: analyzed[key] for key in kept}
+    # A table of contents the analysis made of the text (a long document's) is kept with it.
+    section = {"id": "n1", "parent": None, "depth": 1, "title": "개요", "kind": "section", "summary": "요약"}
+    with service.db.connect() as db:
+        pageindex.save(db, doc["id"], analyzed["revision"], [{**section, "start": 0, "end": 5}])
+        db.execute("UPDATE documents SET index_mode='pageindex' WHERE id=?", (doc["id"],))
+    analyzed = service.wiki_get({"id": doc["id"]})
+    assert [node["title"] for node in analyzed["outline"]] == ["개요"]
     renamed = service.wiki_save(
         {"id": doc["id"], "title": "새 제목", "content": doc["content"], "expected_revision": analyzed["revision"]}
     )
+    kept = tuple(key for key in kept if key != "revision") + ("outline",)
     assert renamed["title"] == "새 제목" and {key: renamed[key] for key in kept} == {key: analyzed[key] for key in kept}
+    # The new title is a new revision: a window that still edits the old one is told, and does not put the old title
+    # back.
+    assert renamed["revision"] == analyzed["revision"] + 1
+    stale = {"id": doc["id"], "title": doc["title"], "content": "옛 창에서 쓴 내용"}
+    with pytest.raises(UserError, match="다른 곳에서 문서가 바뀌었습니다"):
+        service.wiki_save({**stale, "expected_revision": analyzed["revision"]})
+    assert service.wiki_get({"id": doc["id"]})["title"] == "새 제목"
     # New text clears it, in the same save.
     edited = service.wiki_save(
-        {"id": doc["id"], "title": "새 제목", "content": "다른 내용", "expected_revision": analyzed["revision"]}
+        {"id": doc["id"], "title": "새 제목", "content": "다른 내용", "expected_revision": renamed["revision"]}
     )
     assert (edited["summary"], edited["keywords"], edited["status"], edited["index_mode"]) == ("", [], "pending", "")
-    assert edited["revision"] == analyzed["revision"] + 1
+    assert edited["revision"] == renamed["revision"] + 1 and edited["outline"] == []
 
 
 def test_an_edit_never_overwrites_text_that_changed_while_it_was_open(service):

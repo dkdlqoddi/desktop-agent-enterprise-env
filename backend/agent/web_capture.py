@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -119,6 +119,22 @@ def link(value):
     """A link the page script read; only http(s) addresses are kept."""
     value = clip(value, 2000)
     return value if urlsplit(value).scheme in ("http", "https") else ""
+
+
+DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def moment(value, last=False):
+    """The start (since) or the end (until, `last`) of a period of the records as the time theirs are compared with,
+    a UTC one. A day (YYYY-MM-DD) is the user's own day, on this PC's clock, and the last day of a period counts to
+    its end: 시작일 and 종료일 of the same day are that day. A full time is taken as it is written."""
+    try:
+        if DAY.fullmatch(value):
+            day = datetime.strptime(value, "%Y-%m-%d") + timedelta(days=1 if last else 0)
+            return day.astimezone(timezone.utc).isoformat()
+        return datetime.fromisoformat(value).astimezone(timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        raise UserError("기간을 YYYY-MM-DD 형식으로 입력해 주세요.") from None
 
 
 class WebCapture:
@@ -331,10 +347,12 @@ class WebCapture:
             row = conn.execute("SELECT id FROM web_items WHERE capture_id=? AND ref=?", (capture, ref)).fetchone()
             if row is None:
                 return
+            # The link the page showed when it was read stays: the click's own address only fills one that could not
+            # be read then. (A script of the page can send a report too; it must not rewrite what was recorded.)
             conn.execute(
                 "UPDATE web_items SET clicked_at=?, landing_url='', landing_title='', "
-                "link_url=CASE WHEN ?<>'' THEN ? ELSE link_url END WHERE id=?",
-                (now(), href, href, row[0]),
+                "link_url=CASE WHEN link_url='' THEN ? ELSE link_url END WHERE id=?",
+                (now(), href, row[0]),
             )
         self.pending = {"item": row[0], "at": time.monotonic(), "page": source.get("page")}
 
@@ -561,12 +579,8 @@ class WebCapture:
         for key, operator in (("since", ">="), ("until", "<")):
             value = params.get(key) or ""
             if value:
-                try:
-                    datetime.fromisoformat(value)
-                except (TypeError, ValueError):
-                    raise UserError("기간을 YYYY-MM-DD 형식으로 입력해 주세요.") from None
                 where.append(f"c.captured_at {operator} ?")
-                args.append(value)
+                args.append(moment(value, last=key == "until"))
         return " AND ".join(where), args
 
     @staticmethod

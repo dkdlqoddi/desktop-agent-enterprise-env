@@ -157,7 +157,8 @@ def test_what_the_user_wrote_stays_unless_the_update_replaces_it(importer, tmp_p
     assert service.wiki_get({"id": ident})["content"] == "다시 바뀐 안건"
     # Replacing a document that is as it was imported changes nothing.
     assert run(importer, rtf, doc_id=ident, replace=True)["status"] == "skipped"
-    assert service.wiki_get({"id": ident})["revision"] == 6
+    # One revision for the import, one for the new title and one for each of the five changes of the text.
+    assert service.wiki_get({"id": ident})["revision"] == 7
     for options in ({"replace": "yes"}, {"doc_id": 7}, {"doc_id": ""}):
         with pytest.raises(UserError, match="doc_id|replace"):
             importer.start({"path": str(rtf), "mode": "file", **options})

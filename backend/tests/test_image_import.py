@@ -1,5 +1,6 @@
 import base64
 import io
+import random
 import re
 import struct
 import sys
@@ -12,6 +13,7 @@ from agent.db import Database
 from agent.html_document import index_markdown
 from agent.image_import import ImageImporter, image_page
 from agent.images import for_web, sniff
+from agent.llm import UserError
 from agent.service import Service
 from test_rtf_import import FakeLLM, wait
 
@@ -120,6 +122,26 @@ def test_tiff_pages_past_the_limits_are_left_out_and_the_page_says_so(tmp_path, 
         for_web(single.getvalue())
 
 
+def test_tiff_pages_of_photographs_become_jpeg_and_stop_at_the_byte_budget(tmp_path, monkeypatch):
+    def photograph(seed):
+        return Image.frombytes("RGB", (800, 800), random.Random(seed).randbytes(800 * 800 * 3))
+
+    pages = [photograph(seed) for seed in range(4)]
+    buffer = io.BytesIO()
+    pages[0].save(buffer, "TIFF", save_all=True, append_images=pages[1:])
+    file = tmp_path / "사진 스캔.tif"
+    file.write_bytes(buffer.getvalue())
+    # A page of about 460KB as JPEG (several times that as PNG): two fit in 1MB, and the page says where it stopped.
+    monkeypatch.setattr("agent.images.MAX_PICTURE_BYTES", 1024 * 1024)
+    html = image_page(file)
+    assert html.count('<img src="data:image/jpeg;base64,') == 2 and html.count("<img ") == 2
+    assert "그림 일부를 넣지 못했습니다: 4쪽 중 3쪽부터는 그림이 1MB를 넘어 넣지 않았습니다.</p>" in html
+    assert "JPEG로 변환 · 2쪽" in html
+    # The first page is a picture whatever its size.
+    monkeypatch.setattr("agent.images.MAX_PICTURE_BYTES", 10)
+    assert len(for_web(buffer.getvalue())) == 1
+
+
 def test_svg_with_a_document_type_definition_of_its_own_is_refused():
     bomb = (
         b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;">]>'
@@ -134,6 +156,30 @@ def test_svg_with_a_document_type_definition_of_its_own_is_refused():
     # A DOCTYPE without one of its own is a picture as before.
     public = b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">'
     assert for_web(public + SVG[22:], "image/svg+xml")[0][0] == "image/svg+xml"
+
+
+def test_an_svg_refused_for_its_document_type_definition_says_so(tmp_path):
+    # As a drawing program saves every SVG: namespaces as entities of a document type definition of the file's own.
+    drawn = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+        b'"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [\n'
+        b'\t<!ENTITY ns_extend "http://ns.example.com/Extensibility/1.0/">\n]>\n'
+        b'<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 20">'
+        b'<rect width="30" height="20"/></svg>'
+    )
+    for name, data in (
+        ("logo.svg", drawn),
+        ("entity.svg", b'<svg xmlns="http://www.w3.org/2000/svg"><!ENTITY x "y"></svg>'),
+    ):
+        file = tmp_path / name
+        file.write_bytes(data)
+        with pytest.raises(UserError, match="DTD"):
+            image_page(file)
+    # Text that only names a document type definition is no picture, as before.
+    other = tmp_path / "note.svg"
+    other.write_bytes(b"<!DOCTYPE html [<!ENTITY a 'b'>]><html></html>")
+    with pytest.raises(UserError, match="이미지 형식을 알아보지 못했습니다"):
+        image_page(other)
 
 
 def test_folder_import_saves_each_picture_as_an_html_document_and_skips_others(importer, tmp_path):

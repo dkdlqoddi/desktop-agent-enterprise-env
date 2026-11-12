@@ -216,7 +216,9 @@ export function createAppStores(): AppStores {
   });
   const actions: Actions = {
     navigate,
-    refresh: () => invalidate(['documents', 'prompts']),
+    // Called after a change that succeeded. A list that fails to load again says so where it is shown: it does not
+    // turn the change into a failure, and what follows the reload (the way back, the window closing) still happens.
+    refresh: () => invalidate(['documents', 'prompts']).catch(() => {}),
     bumpRuns: () => void invalidate(['runs']).catch(() => {}),
     invalidate,
     notify,

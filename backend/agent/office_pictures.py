@@ -8,7 +8,6 @@ than storing what cannot be shown; an export that fails stops the rest too, as t
 for the same reason. A large PNG is kept as JPEG when that is smaller, and one page stops taking pictures
 at a size and a time limit, so its text still arrives."""
 
-import io
 import re
 import tempfile
 import time
@@ -19,10 +18,8 @@ from urllib.parse import unquote
 
 from . import images
 from .folders import remove_tree
+from .images import MAX_PICTURE_BYTES, compact
 
-# Pictures of one page: with base64 and the text they stay under the 80MB of an HTML page.
-MAX_PICTURE_BYTES = 40 * 1024 * 1024
-COMPACT_BYTES = 400 * 1024  # a larger PNG is kept as JPEG when that is smaller
 # Seconds of exporting per file, half the Office worker's limit: the text is read whatever happens.
 MAX_SECONDS = 150
 SHOWN = {"image/png", "image/jpeg", "image/gif", "image/bmp"}
@@ -47,26 +44,6 @@ def scratch(folder=None):
         yield created
     finally:
         remove_tree(created)
-
-
-def compact(data, kind):
-    """(bytes, content type): a large PNG as JPEG on white when that is smaller."""
-    if kind != "image/png" or len(data) <= COMPACT_BYTES:
-        return data, kind
-    try:
-        from PIL import Image
-
-        with Image.open(io.BytesIO(data)) as picture:
-            picture.load()
-            rgba = picture.convert("RGBA")
-            flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-            flat.alpha_composite(rgba)
-            buffer = io.BytesIO()
-            flat.convert("RGB").save(buffer, "JPEG", quality=85, optimize=True)
-    except Exception:
-        return data, kind
-    smaller = buffer.getvalue()
-    return (smaller, "image/jpeg") if len(smaller) < len(data) else (data, kind)
 
 
 def xml_name(text):

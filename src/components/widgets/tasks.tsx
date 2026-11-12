@@ -67,12 +67,22 @@ function EditedTaskFields(props: { task: Task; onChange: (task: Task) => void })
   return <TaskFields {...props} documents={useDocuments()} />;
 }
 
+// What the open form changed in its task. The form shows these over the task as the list now has it, so a change made
+// elsewhere meanwhile (a reminder shown, a tick in another widget) neither undoes what was typed nor makes the save be
+// refused for an old `updated_at`.
+function changed(task: Task, next: Task) {
+  const changes: Record<string, unknown> = {};
+  for (const key of Object.keys(next) as (keyof Task)[])
+    if (next[key] !== task[key]) changes[key] = next[key];
+  return changes as Partial<Task>;
+}
+
 export default function TasksWidget() {
   const configured = useConfigured();
   const { openAdmin, notify } = useActions();
   const { tasks, refresh } = useAssistantData();
   const [filter, setFilter] = useState<keyof typeof FILTERS>('open');
-  const [editing, setEditing] = useState<Task | null>(null);
+  const [editing, setEditing] = useState<{ id: string; changes: Partial<Task> } | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [busy, setBusy] = useState(false);
   async function act(action: () => Promise<unknown>) {
@@ -155,6 +165,7 @@ export default function TasksWidget() {
                 task.status === 'open' &&
                 !!task.due_at &&
                 new Date(task.due_at).getTime() < Date.now();
+              const draft = editing?.id === task.id ? { ...task, ...editing.changes } : null;
               return (
                 <li key={task.id} className={`task-row${task.status === 'done' ? ' done' : ''}`}>
                   <div className="task-line">
@@ -176,8 +187,8 @@ export default function TasksWidget() {
                     </button>
                     <button
                       className="task-open"
-                      aria-expanded={editing?.id === task.id}
-                      onClick={() => setEditing(editing?.id === task.id ? null : task)}
+                      aria-expanded={!!draft}
+                      onClick={() => setEditing(draft ? null : { id: task.id, changes: {} })}
                     >
                       <strong>{task.title}</strong>
                       <small>
@@ -203,22 +214,34 @@ export default function TasksWidget() {
                       </small>
                     </button>
                   </div>
-                  {editing?.id === task.id && (
+                  {draft && (
                     <form
                       className="task-form"
                       onSubmit={(event) => {
                         event.preventDefault();
                         void act(async () => {
-                          await api('tasks.save', {
-                            ...editing,
-                            expected_updated_at: editing.updated_at,
-                          });
+                          try {
+                            await api('tasks.save', {
+                              ...draft,
+                              expected_updated_at: task.updated_at,
+                            });
+                          } catch (error) {
+                            // Changed elsewhere in the moment before: the list is read again, and the form, which
+                            // keeps what was typed, saves on the next press.
+                            void refresh().catch(() => {});
+                            throw error;
+                          }
                           setEditing(null);
                         });
                       }}
                     >
                       <fieldset disabled={busy}>
-                        <EditedTaskFields task={editing} onChange={setEditing} />
+                        <EditedTaskFields
+                          task={draft}
+                          onChange={(next) =>
+                            setEditing({ id: task.id, changes: changed(task, next) })
+                          }
+                        />
                         <div className="form-actions">
                           <Confirm
                             label="삭제"
@@ -236,10 +259,8 @@ export default function TasksWidget() {
                               type="button"
                               className="button secondary small"
                               onClick={() =>
-                                void act(async () => {
-                                  await api('tasks.snooze', { id: task.id, minutes: 60 });
-                                  setEditing(null);
-                                })
+                                // The form stays open with what was typed in it.
+                                void act(() => api('tasks.snooze', { id: task.id, minutes: 60 }))
                               }
                             >
                               <BellRing size={14} />

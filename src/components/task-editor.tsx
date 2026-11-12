@@ -31,10 +31,13 @@ function sourceNames(documents: WikiDocument[]) {
 // up to 20 extracted candidates, with thousands of documents) made the forms slow; this offers 50 at a time.
 function SourceField({
   value,
+  title,
   documents,
   onChange,
 }: {
   value: string | null;
+  // The saved title of the task's source, shown until the documents have loaded: null when that document is deleted.
+  title?: string | null;
   documents: WikiDocument[];
   onChange: (id: string | null) => void;
 }) {
@@ -42,7 +45,9 @@ function SourceField({
   // What is typed, while the field is being edited; a name that matches no document is dropped on leaving it.
   const [typed, setTyped] = useState<string | null>(null);
   const { names, ids } = sourceNames(documents);
-  const current = value ? (names.get(value) ?? '삭제된 문서 · 출처를 해제해 주세요') : '';
+  const current = value
+    ? (names.get(value) ?? (title || '삭제된 문서 · 출처를 해제해 주세요'))
+    : '';
   const needle = (typed ?? '').trim().toLowerCase();
   const offered = (
     needle ? documents.filter((d) => names.get(d.id)!.toLowerCase().includes(needle)) : documents
@@ -156,6 +161,7 @@ export function TaskFields({
           출처 문서
           <SourceField
             value={task.source_id}
+            title={task.source_title}
             documents={documents}
             onChange={(source_id) => change({ source_id })}
           />

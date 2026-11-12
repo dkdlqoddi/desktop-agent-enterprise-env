@@ -307,10 +307,14 @@ class HermesChat(
                 "Conversation so far:\n" + lines.joinToString("\n") + "\n\nNew message from the user:\n" + message
         }
 
+        // What a raw plan starts with: JSON ({" [{ [" {} …) or the markup of a tool call (<tool_call>, <|…). An answer
+        // that only opens with a bracket ("[요약] …", "[이름](https://…)", "<오늘의 광고>") is words.
+        private val RAW_PLAN = Regex("""^(?:[\[{]\s*(?:["{\[\]}]|$)|<[A-Za-z_|/!?])""")
+
         /** Hermes' words as the chat shows them: no reasoning block, and nothing that reads as a raw plan. */
         fun spoken(value: String): String {
             val words = LlmProtocol.stripThinking(value)
-            return if (words.startsWith("{") || words.startsWith("[") || words.startsWith("<")) "" else words.take(4_000)
+            return if (RAW_PLAN.containsMatchIn(words)) "" else words.take(4_000)
         }
 
         /** A draft as the chat shows it: none while it reads as a control answer (JSON or a code block). */
