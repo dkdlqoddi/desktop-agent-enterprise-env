@@ -137,8 +137,10 @@ test('routes REST calls by the catalog: query types, path values, defaults and l
   assert.equal(listed.status, 200);
   assert.deepEqual(calls.at(-1), {
     method: 'documents.query',
-    params: { limit: 5, analysis: 'analyzed' },
+    params: { limit: 5, analysis: 'analyzed', order: 'updated' },
   });
+  await request({ path: '/api/v1/documents?order=id&cursor=abc' });
+  assert.deepEqual(calls.at(-1).params, { order: 'id', cursor: 'abc', limit: 50 });
   await request({ path: '/api/v1/documents/a%20b%2Fc' });
   assert.deepEqual(calls.at(-1), {
     method: 'documents.get',

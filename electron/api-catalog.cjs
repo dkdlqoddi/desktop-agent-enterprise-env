@@ -93,6 +93,9 @@ const WINDOW_ACTIONS = [
 ];
 const IMPORT_KINDS = ['office', 'rtf', 'image', 'text', 'confluence', 'jira'];
 const SOURCE_KINDS = ['manual', 'rtf', 'office', 'image', 'text', 'markdown', 'confluence', 'jira'];
+// The orders of the document list (backend/agent/paging.py ORDERS): the last changed first, as the screens show it, or
+// by id, which saving a document does not change, for a tool that reads every document to the end.
+const DOCUMENT_ORDERS = ['updated', 'id'];
 
 /**
  * A method of the catalog: the scope it needs, what it does, and `slow` when it may wait minutes for the LLM or a
@@ -117,12 +120,12 @@ const METHODS = {
   ),
   'documents.query': method(
     'read',
-    '문서 목록: 글·키워드(한/영 별칭 포함)·출처·AI 분석 여부·수정 시각으로 거르고 limit·cursor로 나누어 받기 (total은 조건에 맞는 문서 수)',
+    '문서 목록: 글·키워드(한/영 별칭 포함)·출처·AI 분석 여부·수정 시각으로 거르고 limit·cursor로 나누어 받기 (total은 조건에 맞는 문서 수). order=id는 문서 ID 순이라 읽는 동안 문서가 저장되어도 끝까지 빠짐없이 받음',
   ),
   'documents.get': method('read', '문서 하나: 본문(Markdown)·출처·키워드·관계·목차'),
   'wiki.list': method(
     'read',
-    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기',
+    '전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기. order: updated(최근 수정 순, 기본)·id(문서 ID 순, 저장해도 바뀌지 않음)',
   ),
   'wiki.get': method('read', '문서 하나 (HTML 문서는 HTML 페이지 포함)'),
   'wiki.source_markdown': method('read', '가져온 문서의 Markdown 원문'),
@@ -586,13 +589,17 @@ const GROUPS = [
         'GET',
         '/documents',
         'documents.query',
-        '문서 목록: 최근에 고친 것부터, 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)',
+        '문서 목록: 최근에 고친 것부터(order=id면 문서 ID 순), 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)',
         {
           query: string(
             '제목·요약·키워드(와 그 한/영 별칭)·출처(파일 경로·페이지 주소·티켓 키)에 들어 있는 글 (최대 200자)',
           ),
           keyword: string('추출 키워드나 그 별칭 (정확히 일치, 예: 데이터베이스 → database)'),
           ...DOCUMENT_FILTERS,
+          order: string(
+            '순서. updated: 최근에 고친 것부터 · id: 문서 ID 순. 읽는 동안 고친 문서는 updated에서는 앞쪽으로 옮겨 가 다음 쪽들에 없고, id에서는 자리가 그대로라 끝까지 읽으면 시작할 때 있던 문서를 빠짐없이 받습니다. cursor는 같은 order로 이어 받습니다',
+            { enum: DOCUMENT_ORDERS, default: 'updated' },
+          ),
           limit: integer('한 번에 받을 개수 1~500', { default: 50, minimum: 1, maximum: 500 }),
           cursor: string('앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)'),
           offset: integer('건너뛸 개수 (예전 방식, 최대 10,000). cursor를 쓰세요', {
@@ -1271,6 +1278,7 @@ module.exports = {
   WINDOW_ACTIONS,
   IMPORT_KINDS,
   SOURCE_KINDS,
+  DOCUMENT_ORDERS,
   ApiError,
   allows,
   forbidden,

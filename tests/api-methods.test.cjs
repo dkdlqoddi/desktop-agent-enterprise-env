@@ -271,6 +271,7 @@ test('lists documents through the backend: its filters and pages, nothing filter
     analysis: 'not_analyzed',
     updated_from: '2026-10-01T00:00:00+09:00',
     updated_to: '2026-10-08T00:00:00+09:00',
+    order: 'id',
     limit: 5,
     cursor: 'c2',
   });
@@ -282,6 +283,7 @@ test('lists documents through the backend: its filters and pages, nothing filter
     analysis: 'not_analyzed',
     updated_from: '2026-10-01T00:00:00+09:00',
     updated_to: '2026-10-08T00:00:00+09:00',
+    order: 'id',
     cursor: 'c2',
   });
   await query({ query: '  ', keyword: '', source: '', analysis: null, offset: 0 });
@@ -291,6 +293,7 @@ test('lists documents through the backend: its filters and pages, nothing filter
   await assert.rejects(query({ limit: 501 }), /limit/);
   await assert.rejects(query({ source: 'dropbox' }), /source/);
   await assert.rejects(query({ analysis: 'done' }), /analysis/);
+  await assert.rejects(query({ order: 'title' }), /order/);
   await assert.rejects(query({ query: 'x'.repeat(201) }), /검색어/);
 });
 

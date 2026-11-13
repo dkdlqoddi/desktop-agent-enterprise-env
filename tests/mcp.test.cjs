@@ -317,8 +317,10 @@ test('offers the manual and every document as resources, page by page', async ()
   assert.equal(first.resources[0].uri, 'private-agent://manual');
   assert.equal(first.resources.length, 101);
   assert.equal(first.nextCursor, 'next');
+  // In the order of the ids, which a document saved while the client lists them does not change.
+  assert.deepEqual(calls.at(-1).params, { limit: 100, order: 'id' });
   const second = (await send('resources/list', { cursor: 'next' }, 'read')).result;
-  assert.deepEqual(calls.at(-1).params, { limit: 100, cursor: 'next' });
+  assert.deepEqual(calls.at(-1).params, { limit: 100, order: 'id', cursor: 'next' });
   assert.equal(second.resources.length, 50);
   assert.equal(second.nextCursor, undefined);
   // A cursor the list does not know is an error of the request, not an empty page.
@@ -365,6 +367,9 @@ test('lists documents a page at a time with the backend filters, by the cursor o
   assert.match(second, /^3 document\(s\), continued\. Showing 1\./);
   assert.match(second, /id: d3/);
   assert.doesNotMatch(second, /More:/);
+  // The order that saving does not change, for a tool that reads every document, goes to the list as asked.
+  await tool('list_documents', { order: 'id', limit: 5 });
+  assert.deepEqual(calls.at(-1).params, { order: 'id', limit: 5 });
 });
 
 test('finds a keyword of the knowledge graph by its alias, and names its aliases', async () => {

@@ -486,7 +486,7 @@
       "get": {
         "operationId": "get_documents",
         "tags": ["documents"],
-        "summary": "문서 목록: 최근에 고친 것부터, 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)",
+        "summary": "문서 목록: 최근에 고친 것부터(order=id면 문서 ID 순), 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)",
         "description": "메서드 documents.query · 범위 read",
         "x-scope": "read",
         "parameters": [
@@ -550,6 +550,18 @@
             "schema": {
               "type": "string",
               "description": "이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "순서. updated: 최근에 고친 것부터 · id: 문서 ID 순. 읽는 동안 고친 문서는 updated에서는 앞쪽으로 옮겨 가 다음 쪽들에 없고, id에서는 자리가 그대로라 끝까지 읽으면 시작할 때 있던 문서를 빠짐없이 받습니다. cursor는 같은 order로 이어 받습니다",
+            "schema": {
+              "type": "string",
+              "description": "순서. updated: 최근에 고친 것부터 · id: 문서 ID 순. 읽는 동안 고친 문서는 updated에서는 앞쪽으로 옮겨 가 다음 쪽들에 없고, id에서는 자리가 그대로라 끝까지 읽으면 시작할 때 있던 문서를 빠짐없이 받습니다. cursor는 같은 order로 이어 받습니다",
+              "enum": ["updated", "id"],
+              "default": "updated"
             }
           },
           {

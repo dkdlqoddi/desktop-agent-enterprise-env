@@ -124,17 +124,18 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 
 #### `documents.query`
 
-문서 목록: 글·키워드(한/영 별칭 포함)·출처·AI 분석 여부·수정 시각으로 거르고 limit·cursor로 나누어 받기 (total은 조건에 맞는 문서 수)
+문서 목록: 글·키워드(한/영 별칭 포함)·출처·AI 분석 여부·수정 시각으로 거르고 limit·cursor로 나누어 받기 (total은 조건에 맞는 문서 수). order=id는 문서 ID 순이라 읽는 동안 문서가 저장되어도 끝까지 빠짐없이 받음
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `list_documents`, `query_api`
-- `GET /api/v1/documents` — 문서 목록: 최근에 고친 것부터, 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)
+- `GET /api/v1/documents` — 문서 목록: 최근에 고친 것부터(order=id면 문서 ID 순), 거르고 나누어 받기. total은 조건에 맞는 문서 수, next_cursor는 다음 쪽을 받을 cursor(마지막 쪽은 null)
   - `query` (query, string) 제목·요약·키워드(와 그 한/영 별칭)·출처(파일 경로·페이지 주소·티켓 키)에 들어 있는 글 (최대 200자)
   - `keyword` (query, string) 추출 키워드나 그 별칭 (정확히 일치, 예: 데이터베이스 → database)
   - `source` (query, string) 출처 (manual = 직접 쓴 문서) [manual · rtf · office · image · text · markdown · confluence · jira]
   - `analysis` (query, string) AI 분석 여부 [analyzed · not_analyzed · failed · running]
   - `updated_from` (query, string) 이 시각부터(포함) 수정된 것만: 시간대가 있는 ISO 8601
   - `updated_to` (query, string) 이 시각 전에(제외) 수정된 것만: 시간대가 있는 ISO 8601
+  - `order` (query, string) 순서. updated: 최근에 고친 것부터 · id: 문서 ID 순. 읽는 동안 고친 문서는 updated에서는 앞쪽으로 옮겨 가 다음 쪽들에 없고, id에서는 자리가 그대로라 끝까지 읽으면 시작할 때 있던 문서를 빠짐없이 받습니다. cursor는 같은 order로 이어 받습니다 [updated · id, 기본 "updated"]
   - `limit` (query, integer) 한 번에 받을 개수 1~500 [기본 50]
   - `cursor` (query, string) 앞 응답의 next_cursor. 그 뒤부터 이어 받습니다 (거르는 조건은 그대로)
   - `offset` (query, integer) 건너뛸 개수 (예전 방식, 최대 10,000). cursor를 쓰세요
@@ -151,7 +152,7 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 
 #### `wiki.list`
 
-전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기
+전체 문서 목록 (본문 앞 200자). limit·cursor로 나누어 받고(total은 조건에 맞는 문서 수) source·analysis·updated_from·updated_to·query(제목·요약·키워드·출처의 글)·keyword(키워드나 그 별칭)로 거르기. order: updated(최근 수정 순, 기본)·id(문서 ID 순, 저장해도 바뀌지 않음)
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `query_api`
@@ -1548,7 +1549,7 @@ Read one wiki document: its Markdown text with source, keywords, AI summary and,
 
 문서 목록 · 범위 `read` · 메서드 `documents.query`
 
-List wiki documents, most recently updated first, optionally filtered by text in the title, summary, keywords (or their Korean/English aliases) or where they came from (a file path, a page address, a ticket key), by source, by AI analysis state, by an extracted keyword or its alias, or by when they were updated. Use it to browse; use search_documents to find content. Long lists come in pages: pass the cursor of the previous answer with the same filters.
+List wiki documents, most recently updated first, optionally filtered by text in the title, summary, keywords (or their Korean/English aliases) or where they came from (a file path, a page address, a ticket key), by source, by AI analysis state, by an extracted keyword or its alias, or by when they were updated. Use it to browse; use search_documents to find content. Long lists come in pages: pass the cursor of the previous answer with the same filters and order. To go through every document, list with order "id": documents saved while you read keep their place, where in the default order they move to the front and are missed.
 
 - `query` (string) Text contained in the title, summary, keywords (or their aliases) or the source path or address.
 - `source` (string) Where documents came from (manual = written in the app). [manual · rtf · office · image · text · markdown · confluence · jira]
@@ -1556,6 +1557,7 @@ List wiki documents, most recently updated first, optionally filtered by text in
 - `keyword` (string) An extracted keyword or one of its aliases (exact).
 - `updated_from` (string) Only documents updated at or after this time (ISO 8601 with a time zone).
 - `updated_to` (string) Only documents updated before this time (ISO 8601 with a time zone).
+- `order` (string) updated: most recently updated first (default). id: by document id, an order saving a document does not change, so reading to the last page gives every document that was there when you began. [updated · id]
 - `limit` (integer) Documents to return (1-200, default 30).
 - `cursor` (string) The cursor of the previous answer, to continue after it.
 - `offset` (integer) Documents to skip (default 0, at most 10000). Prefer the cursor.
@@ -1906,7 +1908,7 @@ The manual of Private Agent's local API: every method with its parameters, the R
 ### 리소스
 
 - `private-agent://manual`: 이 매뉴얼 (Markdown)
-- `private-agent://documents/{id}`: Wiki 문서 하나 (Markdown). 목록은 최근 수정 순
+- `private-agent://documents/{id}`: Wiki 문서 하나 (Markdown). 목록은 문서 ID 순이라, 나누어 받는 동안 문서가 저장되어도 끝까지 빠짐없이 받습니다
 
 ### 프롬프트
 

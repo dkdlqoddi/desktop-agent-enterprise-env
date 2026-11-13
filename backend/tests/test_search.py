@@ -814,6 +814,49 @@ def test_every_page_of_the_document_list_counts_the_documents_its_filters_keep(s
     assert service.wiki_list({"limit": 1})["total"] == 5
 
 
+def test_the_document_list_by_id_gives_every_document_though_some_are_saved_while_it_is_read(service):
+    """Read a page at a time in the order of the last change, a document saved meanwhile moves to the top, before the
+    pages read already, and is in none that follow. In the order of the ids (`order` "id"), which no save changes, the
+    list gives by its end every document that was there when the reading began; one made meanwhile comes or not, as
+    its id falls before or after the cursor."""
+    for i in range(9):
+        service.wiki_save({"id": f"doc-{i}", "title": f"문서 {i}", "content": f"내용 {i}"})
+    first = service.wiki_list({"order": "id", "limit": 3})
+    assert [d["id"] for d in first["documents"]] == ["doc-0", "doc-1", "doc-2"] and first["total"] == 9
+    service.wiki_save({"id": "doc-5", "title": "문서 5", "content": "고친 내용"})
+    service.wiki_save({"id": "doc-1", "title": "문서 1", "content": "고친 내용"})
+    service.wiki_save({"id": "doc-0a", "title": "새 문서", "content": "앞에 생긴 문서"})
+    service.wiki_save({"id": "doc-7a", "title": "새 문서", "content": "뒤에 생긴 문서"})
+    service.wiki_delete({"id": "doc-6"})
+    rest = pages(service.wiki_list, {"order": "id", "cursor": first["next_cursor"]}, 3)
+    assert [d["id"] for page in rest for d in page["documents"]] == [
+        "doc-3",
+        "doc-4",
+        "doc-5",
+        "doc-7",
+        "doc-7a",
+        "doc-8",
+    ]
+    # In the order of the last change, the document saved after the first page is missed.
+    newest = service.wiki_list({"limit": 3})
+    service.wiki_save({"id": "doc-2", "title": "문서 2", "content": "다시 고친 내용"})
+    later = [
+        d["id"] for page in pages(service.wiki_list, {"cursor": newest["next_cursor"]}, 3) for d in page["documents"]
+    ]
+    assert "doc-2" not in later and len(later) == 6
+    # The filters keep what they keep in either order, and without a page the whole list comes in it.
+    assert [d["id"] for d in service.wiki_list({"order": "id", "query": "새 문서"})] == ["doc-0a", "doc-7a"]
+    assert [d["id"] for d in service.wiki_list({"order": "id"})][:3] == ["doc-0", "doc-0a", "doc-1"]
+    assert service.wiki_list({"order": "updated", "limit": 1})["documents"][0]["id"] == "doc-2"
+    # A cursor of one order is no cursor of the other.
+    for request in ({"cursor": first["next_cursor"]}, {"order": "id", "cursor": newest["next_cursor"]}):
+        with pytest.raises(UserError, match="cursor"):
+            service.wiki_list(request)
+    for bad in ("name", "ID", 1, ["id"]):
+        with pytest.raises(UserError, match="order"):
+            service.wiki_list({"order": bad, "limit": 5})
+
+
 def test_the_document_list_finds_a_text_where_the_screen_shows_it_and_a_keyword_by_its_aliases(service, tmp_path):
     """`query` keeps the documents holding the text in their title, summary, keywords and the keywords' aliases, or in
     where they came from; case, full-width letters and decomposed Hangul do not count. `keyword` keeps the documents

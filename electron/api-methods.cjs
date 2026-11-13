@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {
   ApiError,
+  DOCUMENT_ORDERS,
   IMPORT_KINDS,
   SOURCE_KINDS,
   allows,
@@ -140,6 +141,7 @@ function documentQuery(params) {
     keyword: optionalText(params.keyword, '키워드', 80),
     updated_from: params.updated_from,
     updated_to: params.updated_to,
+    order: choice(params.order, '순서(order)', DOCUMENT_ORDERS, ''),
     cursor: params.cursor,
   };
   return Object.fromEntries(

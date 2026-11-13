@@ -320,7 +320,8 @@ function manual({ baseUrl, version, access = null, bridge = BRIDGE_PLACEHOLDER }
         { uri: 'private-agent://manual', description: '이 매뉴얼 (Markdown)' },
         {
           uri: 'private-agent://documents/{id}',
-          description: 'Wiki 문서 하나 (Markdown). 목록은 최근 수정 순',
+          description:
+            'Wiki 문서 하나 (Markdown). 목록은 문서 ID 순이라, 나누어 받는 동안 문서가 저장되어도 끝까지 빠짐없이 받습니다',
         },
       ],
       prompts: PROMPTS.map(({ name, title, description, arguments: args }) => ({

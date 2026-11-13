@@ -6,6 +6,7 @@ const {
   ACCESS_LEVELS,
   ADMIN_SECTIONS,
   ApiError,
+  DOCUMENT_ORDERS,
   GROUPS,
   IMPORT_KINDS,
   METHODS,
@@ -422,7 +423,7 @@ const TOOLS = [
     'list_documents',
     '문서 목록',
     'read',
-    'List wiki documents, most recently updated first, optionally filtered by text in the title, summary, keywords (or their Korean/English aliases) or where they came from (a file path, a page address, a ticket key), by source, by AI analysis state, by an extracted keyword or its alias, or by when they were updated. Use it to browse; use search_documents to find content. Long lists come in pages: pass the cursor of the previous answer with the same filters.',
+    'List wiki documents, most recently updated first, optionally filtered by text in the title, summary, keywords (or their Korean/English aliases) or where they came from (a file path, a page address, a ticket key), by source, by AI analysis state, by an extracted keyword or its alias, or by when they were updated. Use it to browse; use search_documents to find content. Long lists come in pages: pass the cursor of the previous answer with the same filters and order. To go through every document, list with order "id": documents saved while you read keep their place, where in the default order they move to the front and are missed.',
     {
       query: string(
         'Text contained in the title, summary, keywords (or their aliases) or the source path or address.',
@@ -438,6 +439,10 @@ const TOOLS = [
         'Only documents updated at or after this time (ISO 8601 with a time zone).',
       ),
       updated_to: string('Only documents updated before this time (ISO 8601 with a time zone).'),
+      order: string(
+        'updated: most recently updated first (default). id: by document id, an order saving a document does not change, so reading to the last page gives every document that was there when you began.',
+        { enum: DOCUMENT_ORDERS },
+      ),
       limit: integer('Documents to return (1-200, default 30).', { minimum: 1, maximum: 200 }),
       cursor: string('The cursor of the previous answer, to continue after it.'),
       offset: integer('Documents to skip (default 0, at most 10000). Prefer the cursor.', {
@@ -1576,11 +1581,17 @@ class McpServer {
       description: 'Every method, REST route, MCP tool and access level of the local API.',
       mimeType: 'text/markdown',
     };
-    // The pages of the document list, by its own cursor: the first holds the manual too.
+    // The pages of the document list, by its own cursor, in the order of the ids, which saving a document does not
+    // change: a client that lists every resource gets each document though some are saved meanwhile. The first page
+    // holds the manual too.
     const cursor = typeof params.cursor === 'string' && params.cursor ? params.cursor : undefined;
     let page;
     try {
-      page = await this.call('documents.query', { limit: 100, ...(cursor && { cursor }) }, access);
+      page = await this.call(
+        'documents.query',
+        { limit: 100, order: 'id', ...(cursor && { cursor }) },
+        access,
+      );
     } catch {
       // A cursor this server did not give is an error of the request, said in this server's own words.
       if (cursor)

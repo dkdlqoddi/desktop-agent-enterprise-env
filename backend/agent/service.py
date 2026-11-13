@@ -745,13 +745,14 @@ class Service:
         return docs
 
     def wiki_list(self, p):
-        """The live documents, the last updated first; `source`, `analysis`, `updated_from`/`updated_to`, `query` and
-        `keyword` keep those they name (paging.Filters). With `limit` or `cursor` one page of them (paging):
-        {documents, next_cursor, total}."""
+        """The live documents, the last updated first, or by id with `order` "id" (paging.ORDERS); `source`,
+        `analysis`, `updated_from`/`updated_to`, `query` and `keyword` keep those they name (paging.Filters). With
+        `limit` or `cursor` one page of them (paging): {documents, next_cursor, total}."""
         filters = paging.Filters.of(p, listing=True)
         test, args = filters.sql("d") if filters else ("1", [])
+        by_id = paging.order(p) == "id"
         if paging.wanted(p):
-            return self.wiki_page(p, filters, test, args)
+            return self.wiki_page(p, test, args, by_id)
         with self.db.connect() as db:
             # List entries carry a short excerpt, never the full text of every document.
             return self.attach(
@@ -760,26 +761,32 @@ class Service:
                     dict(row)
                     for row in db.execute(
                         f"""SELECT {LISTED} FROM documents d
-                WHERE d.{LIVE} AND {test} ORDER BY d.updated_at DESC""",
+                WHERE d.{LIVE} AND {test} ORDER BY {"d.id" if by_id else "d.updated_at DESC"}""",
                         args,
                     )
                 ],
             )
 
-    def wiki_page(self, p, filters, test, args):
-        """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated. `total`
-        counts the documents the filters keep, as stats counts them, so a screen shows how many there are while it has
-        a page."""
+    def wiki_page(self, p, test, args, by_id=False):
+        """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated, or with
+        `by_id` after the cursor's id, along the documents' primary key. `total` counts the documents the filters keep,
+        as stats counts them, so a screen shows how many there are while it has a page."""
         limit = paging.size(p, "문서 목록은", 500)
-        after = paging.decode(p, "list", (str, str))
+        # The cursors of the two orders are of two kinds, so one is never taken for the other's.
+        after = paging.decode(p, "list-id", (str,)) if by_id else paging.decode(p, "list", (str, str))
         with self.db.connect() as db:
             total = db.execute(f"SELECT count(*) FROM documents d WHERE d.{LIVE} AND {test}", args).fetchone()[0]
-            # Before the cursor's entry: written so the index is searched from it rather than read from the top.
-            keyset, keys = (
-                ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]])
-                if after
-                else ("1", [])
-            )
+            # After the cursor's entry: written so the index is searched from it rather than read from the top.
+            if by_id:
+                keyset, keys = ("d.id>?", after) if after else ("1", [])
+                ordered = "d.id"
+            else:
+                keyset, keys = (
+                    ("(d.updated_at<=? AND (d.updated_at<? OR d.id<?))", [after[0], after[0], after[1]])
+                    if after
+                    else ("1", [])
+                )
+                ordered = "d.updated_at DESC, d.id DESC"
             # The + keeps the planner from finding the live documents by idx_documents_deleted and sorting them all.
             entries = self.attach(
                 db,
@@ -787,7 +794,7 @@ class Service:
                     dict(row)
                     for row in db.execute(
                         f"""SELECT {LISTED} FROM documents d
-                    WHERE +d.{LIVE} AND {test} AND {keyset} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?""",
+                    WHERE +d.{LIVE} AND {test} AND {keyset} ORDER BY {ordered} LIMIT ?""",
                         [*args, *keys, limit + 1],
                     )
                 ],
@@ -795,7 +802,9 @@ class Service:
         if len(entries) <= limit:
             return {"documents": entries, "next_cursor": None, "total": total}
         last = entries[limit - 1]
-        cursor = paging.encode("list", last["updated_at"], last["id"])
+        cursor = (
+            paging.encode("list-id", last["id"]) if by_id else paging.encode("list", last["updated_at"], last["id"])
+        )
         return {"documents": entries[:limit], "next_cursor": cursor, "total": total}
 
     def wiki_get(self, p):

@@ -3,10 +3,13 @@
 wiki.list, wiki.search and assistant.conversations with `limit` (or a `cursor`) answer one page and next_cursor, an
 opaque string the next request sends back as `cursor` to go on after the page's last entry; it is null after the last
 page. The cursor holds the keys the list is ordered by (keyset paging), so a page never repeats an entry. The document
-list is ordered by the time of the last change: a document saved while the pages are read moves to the top, before the
-pages already read, and is in none of those that follow (a caller that must see every document reads the list again).
-Without `limit` and `cursor` each answers as it always did. A page of the document list or of a search also says how
-many documents its filters keep in all (`total`), which a screen shows rather than counting the pages it has."""
+list is ordered by the time of the last change, as the screens show it: a document saved while the pages are read moves
+to the top, before the pages already read, and is in none of those that follow. With `order` "id" it is ordered by the
+documents' ids instead, which no save changes, so a caller that must see every document (an AI tool reading the Wiki
+through) gets, by the end of the list, each one that was there when it began and is there still; one created meanwhile
+comes in a page still to be read or in none, as its id falls. Without `limit` and `cursor` each answers as it always
+did. A page of the document list or of a search also says how many documents its filters keep in all (`total`), which
+a screen shows rather than counting the pages it has."""
 
 import base64
 import binascii
@@ -30,11 +33,24 @@ CURSOR = "목록을 이어 받을 위치(cursor)가 올바르지 않습니다. �
 WHERE_FROM = ("source_path", "source_url", "issue_key")
 # The longest text the document list is asked to find (`query`).
 QUERY_CHARS = 200
+# The orders of the document list (`order`): by the time of the last change, the newest first, as the screens show it;
+# or by id, which saving a document does not change.
+ORDERS = ("updated", "id")
 
 
 def wanted(p):
     """Whether a request asks for a page: it names a `limit` or a `cursor`."""
     return p.get("limit") is not None or p.get("cursor") is not None
+
+
+def order(p):
+    """The order a request asks the document list in (ORDERS), "updated" when it names none."""
+    value = p.get("order")
+    if value is None:
+        return "updated"
+    if value not in ORDERS:
+        raise UserError(f"목록의 순서(order)는 {', '.join(ORDERS)} 중 하나로 입력해 주세요.")
+    return value
 
 
 def size(p, what, maximum, default=50):
