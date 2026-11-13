@@ -441,6 +441,11 @@ export type DocumentAnalysis = 'analyzed' | 'not_analyzed' | 'failed' | 'running
 // A page of the document list (wiki.list with limit or cursor): null next_cursor after the last page. `total` counts
 // the documents the filters keep in all, as stats counts them.
 export type DocumentPage = { documents: WikiDocument[]; next_cursor: string | null; total: number };
+// What the document list's actions on a choice need of a document.
+export type ChosenDocument = Pick<WikiDocument, 'id' | 'status' | 'index_mode'>;
+// Every document a list's filters keep (wiki.ids with the DocumentQuery filters), the last updated first and at most
+// 10,000, or with `ids` those of these documents the filters keep now; `total` counts every document they keep.
+export type DocumentIds = { documents: ChosenDocument[]; total: number };
 
 export type StorageInfo = {
   initialized: boolean;

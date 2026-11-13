@@ -23,8 +23,10 @@ import {
   date,
   localDay,
   plain,
+  type ChosenDocument,
   type Deleted,
   type DocumentAnalysis,
+  type DocumentIds,
   type DocumentPage,
   type DocumentQuery,
   type DocumentSource,
@@ -40,6 +42,7 @@ import {
   useActions,
   useConfigured,
   useDocumentPages,
+  useInvalidated,
   useJobs,
   useQuery,
   useStats,
@@ -127,7 +130,7 @@ function useSettled<T>(value: T, delay: number) {
 }
 
 // The documents a choice in the list stands for.
-const idsOf = (docs: readonly WikiDocument[]) => [...new Set(docs.map((doc) => doc.id))];
+const idsOf = (docs: readonly { id: string }[]) => [...new Set(docs.map((doc) => doc.id))];
 
 // Why the list shows nothing, by what it was asked for.
 function emptyNote(filters: DocumentQuery) {
@@ -195,7 +198,7 @@ function NoDocuments() {
 
 function LibraryDocuments() {
   const stats = useStats();
-  const { openDocument, newDocument, refresh } = useActions();
+  const { openDocument, newDocument, refresh, notify } = useActions();
   // The filters, each the backend's (wiki.list): what is typed, once the typing paused, finds documents by their title,
   // summary, keywords or where they came from (a folder, a file name, a JIRA key or a page address).
   const [typed, setTyped] = useState('');
@@ -230,17 +233,44 @@ function LibraryDocuments() {
     choosePeriod('all', '', '');
   };
   const list = useDocumentPages(filters);
-  const { items, total, next, loading, error, more, loadAll, reload } = list;
+  const { items, total, next, loading, error, more, reload } = list;
   // The trash, shown in place of the list; loaded again with every reload of the documents (its tag).
   const [trash, setTrash] = useState(false);
   const bin = useQuery<Trash>('wiki.trash').data ?? null;
   const binned = bin?.documents.length ?? 0;
 
-  // Documents chosen for the bulk actions, on any page loaded; the actions take those the filters show.
+  // Documents chosen for the bulk actions: rows of the pages loaded, and with 조건에 맞는 문서 모두 선택 every document
+  // the filters keep, which the list does not load (`every`, by wiki.ids). The actions take the chosen documents the
+  // filters show: the rows loaded, and of those chosen beyond them the ones the filters keep now (`beyond`), which the
+  // backend says again whenever the filters or the documents change. So a reload draws only the pages loaded, and a
+  // choice takes in no document the filters do not keep and leaves out none they do.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [every, setEvery] = useState<readonly string[] | null>(null);
+  const [beyond, setBeyond] = useState<ReadonlyMap<string, ChosenDocument>>(() => new Map());
+  // The filters and the change of the documents that `beyond` was found for: it is asked for again when either moves,
+  // and until it comes the actions wait, as they would act on what the filters kept before.
+  const changed = useInvalidated(['documents']);
+  const [checked, setChecked] = useState<{
+    filters: DocumentQuery;
+    changed: number;
+    every: readonly string[];
+  } | null>(null);
   const anchor = useRef<string | null>(null);
-  const chosen = useMemo(() => items.filter((doc) => selected.has(doc.id)), [items, selected]);
-  const select = (docs: readonly WikiDocument[], on: boolean) =>
+  const chosen = useMemo(() => {
+    const found: ChosenDocument[] = items.filter((doc) => selected.has(doc.id));
+    if (!beyond.size) return found;
+    const loaded = new Set(items.map((doc) => doc.id));
+    for (const doc of beyond.values())
+      if (selected.has(doc.id) && !loaded.has(doc.id)) found.push(doc);
+    return found;
+  }, [items, selected, beyond]);
+  const clearChoice = () => {
+    setSelected(new Set());
+    setEvery(null);
+    setBeyond(new Map());
+    setChecked(null);
+  };
+  const select = (docs: readonly { id: string }[], on: boolean) =>
     setSelected((current) => {
       const next = new Set(current);
       for (const doc of docs) {
@@ -265,18 +295,54 @@ function LibraryDocuments() {
     (doc: WikiDocument, on: boolean, range: boolean) => latest.current(doc, on, range),
     [],
   );
-  // Every document the filters keep, the pages still to come loaded first, for 모두 선택 across all of them.
+  // Every document the filters keep, for 모두 선택 across the pages not loaded: what the actions need of each, without
+  // loading their rows into the list, which a reload would then ask for again, every one of them.
   const [selectingAll, setSelectingAll] = useState(false);
   async function selectEvery() {
     setSelectingAll(true);
     try {
-      select(await loadAll(MAX_SELECTED), true);
-    } catch {
-      // The list says why it could not load.
+      const found = await api<DocumentIds>('wiki.ids', filters);
+      const all = [...new Set([...(every ?? []), ...found.documents.map((doc) => doc.id)])];
+      select(found.documents, true);
+      setEvery(all);
+      // The documents of a choice made before, under other filters perhaps, are checked against these filters again.
+      setBeyond(
+        (current) =>
+          new Map([
+            ...(every ? current : []),
+            ...found.documents.map((doc) => [doc.id, doc] as const),
+          ]),
+      );
+      setChecked(every ? null : { filters, changed, every: all });
+    } catch (failure) {
+      notify((failure as Error).message, true);
     } finally {
       setSelectingAll(false);
     }
   }
+  // Whether the documents beyond the rows loaded are known as the filters keep them now: none is chosen, or they were
+  // found for these filters since the documents last changed.
+  const reaching = useMemo(() => !!every?.some((id) => selected.has(id)), [every, selected]);
+  const settled =
+    !every ||
+    !reaching ||
+    (checked?.filters === filters && checked.changed === changed && checked.every === every);
+  useEffect(() => {
+    if (settled || !every) return;
+    let current = true;
+    api<DocumentIds>('wiki.ids', { ...filters, ids: every })
+      .then((found) => {
+        if (!current) return;
+        setBeyond(new Map(found.documents.map((doc) => [doc.id, doc])));
+        setChecked({ filters, changed, every });
+      })
+      .catch((failure: Error) => {
+        if (current) notify(failure.message, true);
+      });
+    return () => {
+      current = false;
+    };
+  }, [settled, every, filters, changed, notify]);
 
   // Only the rows near what the list box shows are drawn (useWindowing).
   const keys = useMemo(() => items.map((doc) => doc.id), [items]);
@@ -366,7 +432,7 @@ function LibraryDocuments() {
     if (near && currentList && !loading && !error && next !== null) void more().catch(() => {});
   }, [near, currentList, loading, error, next, more]);
 
-  const shownAll = items.length > 0 && chosen.length === items.length;
+  const shownAll = items.length > 0 && items.every((doc) => selected.has(doc.id));
   const nothing = list.loaded && list.current && !items.length;
   const tools = stats.documents > 0 || binned > 0 || filtered || items.length > 0;
   return (
@@ -483,10 +549,16 @@ function LibraryDocuments() {
         <BulkActions
           chosen={chosen}
           all={shownAll}
-          onSelectAll={(on) => select(items, on)}
-          onClear={() => setSelected(new Set())}
+          // Taken back, 모두 선택 takes back every document it shows chosen, those beyond the rows loaded too.
+          onSelectAll={(on) => select(on ? items : chosen, on)}
+          onClear={clearChoice}
+          // The actions wait for the list of these filters and for the documents chosen beyond it.
+          settling={!list.current || !settled}
           every={
-            shownAll && next !== null && total !== null
+            shownAll &&
+            next !== null &&
+            total !== null &&
+            chosen.length < Math.min(total, MAX_SELECTED)
               ? { total, busy: selectingAll, select: () => void selectEvery() }
               : null
           }
@@ -638,18 +710,23 @@ function BulkActions({
   all,
   onSelectAll,
   onClear,
+  settling,
   every,
 }: {
-  chosen: WikiDocument[];
+  chosen: readonly ChosenDocument[];
   all: boolean;
   onSelectAll: (on: boolean) => void;
   onClear: () => void;
-  // The documents the filters keep beyond the loaded pages, which 모두 선택 can take too.
+  // The choice is being checked against the filters now, and the actions wait for it.
+  settling: boolean;
+  // The documents the filters keep beyond the loaded pages, which 모두 선택 can take too: up to MAX_SELECTED of them,
+  // the last changed first.
   every: { total: number; busy: boolean; select: () => void } | null;
 }) {
   const configured = useConfigured();
   const { openAdmin, notify, undoable, refresh, watchJobs } = useActions();
-  const [busy, setBusy] = useState(false);
+  const [action, setBusy] = useState(false);
+  const busy = action || settling;
   const ids = idsOf(chosen);
   const running = useJobs((jobs) => !!jobs.analysis && activeJob(jobs.analysis.status));
   async function run(action: () => Promise<string | void>) {
@@ -682,11 +759,13 @@ function BulkActions({
           type="button"
           className="text-button"
           disabled={every.busy}
-          title="아직 불러오지 않은 쪽까지 불러와 조건에 맞는 문서를 모두 선택합니다"
+          title="아직 불러오지 않은 쪽의 문서까지 조건에 맞는 문서를 모두 선택합니다"
           onClick={every.select}
         >
           {every.busy && <LoaderCircle className="spin" size={13} />}
-          조건에 맞는 문서 {every.total.toLocaleString()}개 모두 선택
+          {every.total > MAX_SELECTED
+            ? `조건에 맞는 문서 ${every.total.toLocaleString()}개 중 최근 ${MAX_SELECTED.toLocaleString()}개 선택`
+            : `조건에 맞는 문서 ${every.total.toLocaleString()}개 모두 선택`}
         </button>
       )}
       {chosen.length > 0 && (
@@ -694,6 +773,9 @@ function BulkActions({
           <strong className="selection-count" aria-live="polite">
             {chosen.length}개 선택
           </strong>
+          {settling && (
+            <LoaderCircle className="spin" size={13} aria-label="선택한 문서를 확인하는 중" />
+          )}
           <button
             type="button"
             className="button secondary small"

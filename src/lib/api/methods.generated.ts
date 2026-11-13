@@ -196,6 +196,7 @@ export type ScreenMethod =
   | 'web.open_exports'
   | 'web.records'
   | 'web.sites'
-  | 'web.status';
+  | 'web.status'
+  | 'wiki.ids';
 
 export type Method = CatalogMethod | ScreenMethod;

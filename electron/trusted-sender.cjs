@@ -36,6 +36,8 @@ const ALLOWED = new Set([
   'routines.cancel',
   'routines.runs',
   'wiki.list',
+  // Read only: what the document list's actions need of every document its filters keep, for a choice of them all.
+  'wiki.ids',
   'wiki.get',
   'wiki.save',
   // Read only: an edit wiki.save refused, compared with the document as it is now.

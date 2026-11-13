@@ -300,6 +300,7 @@ class Service:
             "runs.stats": self.runs_stats,
             "runs.active": self.runs_active,
             "wiki.list": self.wiki_list,
+            "wiki.ids": self.wiki_ids,
             "wiki.get": self.wiki_get,
             "wiki.save": self.wiki_save,
             "wiki.compare": self.wiki_compare,
@@ -752,7 +753,7 @@ class Service:
         test, args = filters.sql("d") if filters else ("1", [])
         by_id = paging.order(p) == "id"
         if paging.wanted(p):
-            return self.wiki_page(p, test, args, by_id)
+            return self.wiki_page(p, test, args, by_id, kept=bool(filters and filters.text))
         with self.db.connect() as db:
             # List entries carry a short excerpt, never the full text of every document.
             return self.attach(
@@ -767,14 +768,19 @@ class Service:
                 ],
             )
 
-    def wiki_page(self, p, test, args, by_id=False):
+    def wiki_page(self, p, test, args, by_id=False, kept=False):
         """A page of the document list after the cursor's (updated_at, id), read along idx_documents_updated, or with
         `by_id` after the cursor's id, along the documents' primary key. `total` counts the documents the filters keep,
-        as stats counts them, so a screen shows how many there are while it has a page."""
+        as stats counts them, so a screen shows how many there are while it has a page. With `kept` (a text to find,
+        which asks every document) the documents the filters keep are found once, for both."""
         limit = paging.size(p, "문서 목록은", 500)
         # The cursors of the two orders are of two kinds, so one is never taken for the other's.
         after = paging.decode(p, "list-id", (str,)) if by_id else paging.decode(p, "list", (str, str))
         with self.db.connect() as db:
+            if kept:
+                # A table of this connection alone, gone with it.
+                db.execute(f"CREATE TEMP TABLE kept AS SELECT d.id FROM documents d WHERE {test}", args)
+                test, args = "d.id IN (SELECT id FROM temp.kept)", []
             total = db.execute(f"SELECT count(*) FROM documents d WHERE d.{LIVE} AND {test}", args).fetchone()[0]
             # After the cursor's entry: written so the index is searched from it rather than read from the top.
             if by_id:
@@ -806,6 +812,30 @@ class Service:
             paging.encode("list-id", last["id"]) if by_id else paging.encode("list", last["updated_at"], last["id"])
         )
         return {"documents": entries[:limit], "next_cursor": cursor, "total": total}
+
+    def wiki_ids(self, p):
+        """The live documents the filters of the document list keep (paging.Filters), the last updated first, as the
+        list's actions on a choice need them: {documents: [{id, status, index_mode}], total}, at most MAX_SELECTED of
+        them, and `total` all of them. With `ids` only those of these documents, whatever their number. The list takes
+        every document the filters keep by it without loading each one's row, and checks a choice so made against it
+        when the filters or the documents change, so the choice holds exactly the documents the filters keep."""
+        filters = paging.Filters.of(p, listing=True)
+        test, args = filters.sql("d") if filters else ("1", [])
+        wanted = None if p.get("ids") is None else set(document_ids(p.get("ids")))
+        with self.db.connect() as db:
+            # The filters are asked once, of every document; the ones asked about are picked out here.
+            found = [
+                dict(row)
+                for row in db.execute(
+                    f"""SELECT d.id,d.status,d.index_mode FROM documents d WHERE +d.{LIVE} AND {test}
+                    ORDER BY d.updated_at DESC, d.id DESC""",
+                    args,
+                )
+            ]
+        total = len(found)
+        if wanted is not None:
+            found = [doc for doc in found if doc["id"] in wanted]
+        return {"documents": found[:MAX_SELECTED], "total": total}
 
     def wiki_get(self, p):
         return self.document(p.get("id"), html=True)

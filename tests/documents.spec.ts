@@ -366,7 +366,29 @@ test('documents: the library comes in pages filtered by the backend, drawn a win
     await expect(toolbar).toContainText('100개 선택');
     await toolbar.getByRole('button', { name: '조건에 맞는 문서 121개 모두 선택' }).click();
     await expect(toolbar).toContainText('121개 선택');
-    await toolbar.getByRole('button', { name: '선택 해제' }).click();
+    // It loads none of the pages the list did not show, so a reload asks for no more than the list shows.
+    await expect(list.locator('.list-more')).toContainText('100 / 121');
+    // The choice is what the filters keep, loaded or not: a text narrows it, and it widens back.
+    await page.getByLabel('보관함 문서 필터').fill('메모 00');
+    await expect(count).toHaveText('9개');
+    await expect(toolbar).toContainText('9개 선택');
+    await page.getByLabel('보관함 문서 필터').fill('');
+    await expect(count).toHaveText('121개');
+    await expect(toolbar).toContainText('121개 선택');
+    // An action takes every chosen document, those of the pages not loaded too, and is taken back.
+    await toolbar.getByRole('button', { name: '삭제', exact: true }).click();
+    await toolbar
+      .getByRole('group', {
+        name: '선택한 문서 121개를 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다.',
+      })
+      .getByRole('button', { name: '삭제', exact: true })
+      .click();
+    const every = page.locator('.toast').filter({ hasText: '문서 121개를 휴지통으로 옮겼습니다.' });
+    await expect(every).toBeVisible();
+    await expect(count).toHaveText('0개');
+    await every.getByRole('button', { name: '되돌리기' }).click();
+    await expect(count).toHaveText('121개');
+    await expect(toolbar).not.toContainText('선택 해제');
 
     // The filters are the backend's: where documents came from, their analysis, when they changed and a text.
     await documents.getByRole('combobox', { name: '출처' }).selectOption({ label: 'Markdown' });

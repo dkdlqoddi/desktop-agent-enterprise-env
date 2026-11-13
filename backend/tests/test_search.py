@@ -905,6 +905,57 @@ def test_the_document_list_finds_a_text_where_the_screen_shows_it_and_a_keyword_
         service.wiki_list({"keyword": "가" * 81})
 
 
+def test_the_document_list_finds_a_text_in_the_search_text_or_in_the_document_where_that_is_out_of_date(service):
+    """The list finds a title or summary in the search text, which keeps them as search compares text, and in the
+    document itself where the search text is missing or out of date; never in the summaries of the sections, which the
+    search text keeps after the summary."""
+    titled = save(service, "분기 보고서", "본문")["id"]
+    summarized = save(service, "메모", "본문")["id"]
+    sectioned = save(service, "설계서", "본문")["id"]
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET summary='예산 집행 요약' WHERE id=?", (summarized,))
+        db.execute(
+            "INSERT INTO doc_nodes VALUES (?, 1, '1', NULL, 0, 1, '개요', 'section', '예산 계획 절', 0, 2)",
+            (sectioned,),
+        )
+        index_text(db, [summarized, sectioned])
+
+    def listed(text):
+        whole = {d["id"] for d in service.wiki_list({"query": text})}
+        page = service.wiki_list({"query": text, "limit": 50})
+        assert {d["id"] for d in page["documents"]} == whole and page["total"] == len(whole)
+        return whole
+
+    assert listed("보고서") == {titled} and listed("예산") == {summarized} and listed("계획 절") == set()
+    # Changed by another program: the title is marked out of date, and the document's own is what the list finds.
+    with contextlib.closing(sqlite3.connect(service.db.path)) as db, db:
+        db.execute("UPDATE documents SET title='연간 회고' WHERE id=?", (titled,))
+        db.execute("DELETE FROM document_search WHERE doc_id=?", (summarized,))
+    assert listed("회고") == {titled} and listed("보고서") == set() and listed("집행") == {summarized}
+
+
+def test_the_ids_of_the_documents_the_filters_keep_check_a_choice(service):
+    """wiki.ids gives what the list's actions need of every document its filters keep, without each one's row, and
+    with `ids` which of a choice the filters keep now."""
+    docs = [save(service, f"문서 {i}", f"내용 {i}")["id"] for i in range(6)]
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET status='ready',index_mode='wiki' WHERE id=?", (docs[0],))
+    every = service.wiki_ids({})
+    assert [d["id"] for d in every["documents"]] == list(reversed(docs)) and every["total"] == 6
+    assert every["documents"][-1] == {"id": docs[0], "status": "ready", "index_mode": "wiki"}
+    assert [d["id"] for d in service.wiki_ids({"analysis": "analyzed"})["documents"]] == [docs[0]]
+    assert {d["id"] for d in service.wiki_ids({"query": "문서 3"})["documents"]} == {docs[3]}
+    service.wiki_delete({"id": docs[1]})
+    chosen = service.wiki_ids({"ids": [docs[0], docs[1], docs[2], "없는 문서"]})
+    assert [d["id"] for d in chosen["documents"]] == [docs[2], docs[0]] and chosen["total"] == 5
+    assert service.wiki_ids({"analysis": "not_analyzed", "ids": [docs[0], docs[2]]})["documents"] == [
+        {"id": docs[2], "status": "pending", "index_mode": ""}
+    ]
+    for bad in ([], "abc", ["x"] * 10_001):
+        with pytest.raises(UserError, match="문서를"):
+            service.wiki_ids({"ids": bad})
+
+
 def test_a_page_request_is_checked(service):
     save(service, "문서", "내용")
     for limit in (0, 501, "5", True, 2.5):

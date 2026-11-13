@@ -158,11 +158,12 @@ class Filters:
         if self.keyword:
             from .search import fold
 
-            # An alias whose keyword a program not keeping the foreign keys took away names nothing (search.ALIASES).
+            # The documents with the keyword, or with the keyword an alias names, found once by the keyword's index and
+            # the aliases': an alias whose keyword a program not keeping the foreign keys took away names nothing
+            # (search.ALIASES).
             clauses.append(
-                f"""EXISTS (SELECT 1 FROM keywords WHERE doc_id={d}.id AND keyword=?) OR EXISTS (SELECT 1 FROM
-                keyword_aliases a JOIN keywords k ON k.doc_id=a.doc_id AND k.keyword=a.keyword
-                WHERE a.doc_id={d}.id AND a.normalized=?)"""
+                f"""{d}.id IN (SELECT doc_id FROM keywords WHERE keyword=? UNION ALL SELECT a.doc_id FROM
+                keyword_aliases a JOIN keywords k ON k.doc_id=a.doc_id AND k.keyword=a.keyword WHERE a.normalized=?)"""
             )
             args += [self.keyword, fold(self.keyword)]
         return " AND ".join(f"({clause})" for clause in clauses) or "1", args
@@ -171,24 +172,37 @@ class Filters:
         """The condition of `query`: the text within the title or summary as search compares text (search_text: case,
         full width and decomposed Hangul do not count, a run of white space is one space), within a keyword or an alias
         of one, or within where the document came from, as typed (LIKE, which leaves the case of Latin letters out; the
-        backslashes of a Windows path stay what they are)."""
+        backslashes of a Windows path stay what they are).
+
+        The documents are found once for the whole list, each place by a pass over its own table, rather than each
+        place asked about every document: the title and summary as the search text keeps them, already compared as
+        search compares text and read without the content (db.search_fields: the summaries of the sections follow the
+        summary after a line break, which this text never holds), and the document's own title and summary where the
+        search text of it is missing, or was marked out of date by a change of either (documents_search_stale). A page
+        of the list finds them once for its count and its entries (Service.wiki_page): on 10,000 documents a rare text
+        takes a quarter of the time it took asked of each document."""
         from .service import SOURCES, like
 
         folded, pattern = search_text(self.text), like(self.text)
-        clauses = [
-            f"instr(search_text({d}.title), ?)",
-            f"instr(search_text({d}.summary), ?)",
-            f"EXISTS (SELECT 1 FROM keywords WHERE doc_id={d}.id AND instr(keyword, ?))",
-            f"""EXISTS (SELECT 1 FROM keyword_aliases a JOIN keywords k ON k.doc_id=a.doc_id AND k.keyword=a.keyword
-                WHERE a.doc_id={d}.id AND instr(a.normalized, ?))""",
+        own = "(instr(search_text(o.title), ?) OR instr(search_text(o.summary), ?))"
+        # The summary of the search text up to the line break before its sections, or to its end.
+        summary = "instr(s.summary, ?) BETWEEN 1 AND instr(s.summary || char(10), char(10))"
+        places = [
+            f"""SELECT s.doc_id FROM document_search s WHERE CASE WHEN s.title IS NULL OR s.revision=-1
+                THEN (SELECT {own} FROM documents o WHERE o.id=s.doc_id) ELSE instr(s.title, ?) OR {summary} END""",
+            f"SELECT o.id FROM documents o WHERE o.id NOT IN (SELECT doc_id FROM document_search) AND {own}",
+            "SELECT doc_id FROM keywords WHERE instr(keyword, ?)",
+            """SELECT a.doc_id FROM keyword_aliases a JOIN keywords k ON k.doc_id=a.doc_id AND k.keyword=a.keyword
+                WHERE instr(a.normalized, ?)""",
         ]
-        args = [folded] * len(clauses)
+        args = [folded] * 8
         for table, _, _ in SOURCES:
             columns = [c for c in WHERE_FROM if c in SOURCE_TABLES[table][0]]
-            matches = " OR ".join(f"{column} LIKE ? ESCAPE '\\'" for column in columns)
-            clauses.append(f"EXISTS (SELECT 1 FROM {table} WHERE doc_id={d}.id AND ({matches}))")
+            places.append(
+                f"SELECT doc_id FROM {table} WHERE " + " OR ".join(f"{c} LIKE ? ESCAPE '\\'" for c in columns)
+            )
             args += [pattern] * len(columns)
-        return " OR ".join(clauses), args
+        return f"{d}.id IN ({' UNION ALL '.join(places)})", args
 
 
 def found_text(value):
