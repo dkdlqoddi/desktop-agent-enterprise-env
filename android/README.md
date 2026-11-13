@@ -82,7 +82,7 @@ Kotlin과 Jetpack Compose(Material 3)로 만들었고 Android 8.0(API 26) 이상
 
 - WorkManager가 예약한 시각에 "예약한 광고 기록: 쿠팡 '노트북'" 알림을 보냅니다. 알림을 누르면 앱이 열리고 브라우저 탭에서 기록합니다.
 - Android 13 이상에서는 알림 권한이 있어야 알림이 옵니다. 기본 계획기는 예약 카드를 승인할 때 권한을 묻습니다. 내장 Hermes는 승인 없이 예약을 만들므로 **설정**의 알림 허용에서 직접 허용합니다. 권한이 없으면 예약은 만들어지지만 알림이 오지 않습니다.
-- 휴대폰이 절전(Doze) 상태면 알림이 늦습니다. 가만히 둔 휴대폰의 깊은 절전에서는 한 시간 넘게 늦을 수 있습니다. 시간대를 바꾼 뒤의 첫 알림은 바꾸기 전 시간대의 시각에 옵니다.
+- 휴대폰이 절전(Doze) 상태면 알림이 늦습니다. 가만히 둔 휴대폰의 깊은 절전에서는 한 시간 넘게 늦을 수 있습니다. 시간대나 시계를 바꾸면 예약한 알림을 새 시간대의 그 시각으로 다시 맞춥니다.
 
 ## 빌드와 설치
 
@@ -101,7 +101,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 계측 테스트는 테스트 assets의 가짜 검색 페이지(`capture-fixture.html`, `shop.example.com` 링크)를 씁니다. 실제 쇼핑 사이트에는 접속하지 않고, 이 예시 호스트는 주소가 없어 링크를 눌러도 어느 서버에도 닿지 않습니다.
   - `CaptureScriptTest`: 앱과 같은 설정의 WebView에서 복사된 `capture.js`가 광고 3건·상품 4건을 세는지, 일반 규칙이 광고 표시 글자로 3건을 찾는지, 스크립트의 클릭은 무시하고 화면을 실제로 누른 탭만 `PaBridge.reportClick`에 닿는지 확인합니다.
   - `BrowserControllerTest`: 앱 화면의 브라우저에서 **이 페이지 기록**과 같은 기록을 실행해 데이터베이스에 저장되는지, 기록한 광고를 실제로 누르면 누른 시각·링크와 도착 페이지가 기록되는지 확인합니다. 테스트가 만든 기록만 지웁니다.
-  - `StoresTest`(SQLite 거르기·누른 광고·한 번만 실행되는 카드·CSV 파일, 메시지와 함께 남고 지워지는 ‘한 일’, 버전 1 데이터베이스의 올림, 설정에 남는 ‘항상 허용’ 목록), `SecretBoxTest`(Keystore 암호화), `ActionCardTest`(카드의 승인 대기·완료·실패 표시), `AgentCardsTest`(명령 확인 카드가 내놓은 범위만 보이는지, ‘한 일’ 목록), `ApprovalScopesTest`(대신 답하는 워커가 명령을 물을 때 네 가지 답이 허용 목록, 다음 턴에 넘기는 값, ‘한 일’에 맞게 남는지. 휴대폰의 Hermes에는 터미널이 없어 실제 워커는 묻지 않습니다), `AgentSectionTest`(설정의 채팅 에이전트: 허용 취소, 다시 묻기, 기억 추가·고치기·지우기, 작업 기록 지우기), `ProtectedFoldersTest`(기기의 실제 폴더 배치에서 앱의 데이터가 막히고 에이전트의 홈만 열려 있는지).
+  - `StoresTest`(SQLite 거르기·누른 광고·한 번만 실행되는 카드·CSV 파일, 메시지와 함께 남고 지워지는 ‘한 일’, 버전 1 데이터베이스의 올림, 설정에 남는 ‘항상 허용’ 목록), `SecretBoxTest`(Keystore 암호화), `ActionCardTest`(카드의 승인 대기·완료·실패 표시), `AgentCardsTest`(명령 확인 카드가 내놓은 범위만 보이는지, ‘한 일’ 목록), `ApprovalScopesTest`(대신 답하는 워커가 명령을 물을 때 네 가지 답이 허용 목록, 다음 턴에 넘기는 값, ‘한 일’에 맞게 남는지. 휴대폰의 Hermes에는 터미널이 없어 실제 워커는 묻지 않습니다), `AgentSectionTest`(설정의 채팅 에이전트: 허용 취소, 다시 묻기, 기억 추가·고치기·지우기, 작업 기록 지우기), `ProtectedFoldersTest`(기기의 실제 폴더 배치에서 앱의 데이터가 막히고 에이전트의 홈만 열려 있는지), `ScheduleTimeZoneTest`(기기의 시간대를 바꾸면 예약한 알림이 새 시간대의 그 시각으로 옮겨지는지. 셸의 `cmd alarm set-timezone`으로 바꾸고 끝나면 되돌림).
 - 릴리스 빌드는 서명 설정이 없습니다. 배포하려면 서명 키를 따로 만들어 `signingConfigs`에 지정합니다(키 파일은 커밋하지 않습니다).
 
 ## 내장 Hermes 실행 환경
@@ -133,7 +133,7 @@ app/src/main/java/dev/privateagent/android/
   data/      SQLite(messages, activity, captures, items, schedules)와 저장소
   llm/       엔드포인트 규칙, 요청·응답 형식(OpenAI 호환·Anthropic, JSON 계획), HTTPS 클라이언트
   web/       보이는 브라우저(BrowserController), WebView 설정, PaBridge, 사이트 목록, capture.js 결과 읽기
-  schedule/  다음 실행 시각, WorkManager 작업, 알림
+  schedule/  다음 실행 시각, WorkManager 작업, 알림, 시간대·시계가 바뀔 때 다시 맞추기
   security/  Keystore 암호화(SecretBox), 설정 저장
   export/    CSV(UTF-8 BOM, RFC 4180, 수식 무력화)와 공유
   hermes/    내장 Hermes: 풀기(HermesRuntime), Python 프로세스(HermesProcess), 워커 프로토콜(HermesSession), LLM 연결(HermesModel)

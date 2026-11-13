@@ -14,6 +14,8 @@ import dev.privateagent.android.data.ScheduleStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
@@ -65,17 +67,30 @@ class ScheduleManager(private val context: Context, private val store: ScheduleS
         enqueue(row, ExistingWorkPolicy.APPEND_OR_REPLACE, ZonedDateTime.now().plusMinutes(1))
     }
 
+    /**
+     * After the device's time zone or clock changed ([ClockChangeReceiver]): every enabled schedule is queued again
+     * for its time in [zone], replacing the reminder queued before, which would come at the old zone's time.
+     */
+    suspend fun retimeAll(zone: ZoneId) {
+        for ((id, next) in NextRun.retimed(store.all(), Instant.now(), zone)) {
+            queue(id, ExistingWorkPolicy.REPLACE, next)
+        }
+    }
+
     private suspend fun enqueue(row: ScheduleRow, policy: ExistingWorkPolicy, after: ZonedDateTime = ZonedDateTime.now()) {
         val time = NextRun.parse(row.time) ?: return
-        val next = NextRun.after(after, time, row.days)
-        val delay = Duration.between(ZonedDateTime.now(), next).toMillis().coerceAtLeast(0)
+        queue(row.id, policy, NextRun.after(after, time, row.days))
+    }
+
+    private suspend fun queue(id: Long, policy: ExistingWorkPolicy, next: ZonedDateTime) {
+        val delay = Duration.between(Instant.now(), next.toInstant()).toMillis().coerceAtLeast(0)
         val request = OneTimeWorkRequestBuilder<CaptureReminderWorker>()
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
-            .setInputData(workDataOf(KEY_SCHEDULE_ID to row.id))
+            .setInputData(workDataOf(KEY_SCHEDULE_ID to id))
             .addTag(TAG)
             .build()
-        work.enqueueUniqueWork(name(row.id), policy, request)
-        store.setNextRun(row.id, next.toInstant().toEpochMilli())
+        work.enqueueUniqueWork(name(id), policy, request)
+        store.setNextRun(id, next.toInstant().toEpochMilli())
     }
 
     companion object {

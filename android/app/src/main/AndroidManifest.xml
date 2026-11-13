@@ -41,6 +41,16 @@
             </intent-filter>
         </activity>
 
+        <!-- A change of time zone or clock re-times the scheduled reminders. Only the system sends these. -->
+        <receiver
+            android:name=".schedule.ClockChangeReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
