@@ -146,9 +146,9 @@ def test_a_word_in_every_document_has_every_document_counted(wiki):
         print(f"\n{mode}, a word in every document: {found:,} documents found, {seconds * 1000:.0f} ms")
 
 
-def test_words_shorter_than_a_trigram_are_compared_over_the_search_text(wiki):
-    """Two-letter words have no trigram to look up: they are read from the search text, which costs more. Reported,
-    not limited."""
+def test_words_of_two_characters_are_looked_up_by_the_trigrams_that_begin_with_them(wiki):
+    """A word of two characters has no trigram of its own: the index gives the documents holding a trigram that begins
+    with it (search.indexed), and a word in most documents has them all read in one pass. Reported, not limited."""
     service, long, _ = wiki
     with service.db.connect() as db:
         short = [

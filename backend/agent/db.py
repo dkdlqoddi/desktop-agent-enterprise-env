@@ -40,22 +40,44 @@ def search_text(value):
     return value.strip()
 
 
+# The end of each column of the search text: every character of a column, its last included, is followed by one, so a
+# word of two characters is always the start of a trigram of the index (search.py). A space, which the text never ends
+# with otherwise (search_text) and no search word holds at its end.
+END = " "
+# The summaries of a document's sections (PageIndex) for its revision, which its search text holds after its summary.
+SECTIONS = "(SELECT group_concat(n.summary, ' ') FROM doc_nodes n WHERE n.doc_id=d.id AND n.revision=d.revision)"
+
+
+def search_fields(title, summary, sections, content):
+    """The search text of a document, as index_text keeps it: (title, summary, length, content), each column as
+    search_text has it and ended with END, and the length of the content without it. The summaries of the document's
+    sections (`sections`, from SECTIONS) follow its summary after a line break, which search_text never leaves in a
+    text, so that search tells the two apart and weighs them as it does (search.py)."""
+    body = search_text(content)
+    about = search_text(summary)
+    if sections:
+        about += "\n" + search_text(sections)
+    return search_text(title) + END, about + END, len(body), body + END
+
+
 def index_text(db, ids):
-    """Keep the search text of the documents `ids` (search_text of their title, summary and content, and the length of
-    that content) with their revision. Every write of a document's content, title or summary calls it in the same
-    transaction; a search reads a document whose row is missing, of an older revision or written by an earlier version
-    (no title) from the document itself instead, so a write that does not call it is slower to search, never wrong.
+    """Keep the search text of the documents `ids` (search_fields of their title, summary, sections and content) with
+    their revision. Every write of a document's content, title, summary or sections calls it in the same transaction. A
+    search reads a document whose row is missing, of an older revision or written by an earlier version (no title) from
+    the document itself instead, so a write of its content, title or summary that does not call it is slower to search,
+    never wrong; its sections are searched as the last call found them, so a write of the sections alone must call it.
     The upsert keeps the row's id, by which the trigram index (document_fts) knows it, and the triggers of
     document_search change the index with it: INSERT OR REPLACE would delete the row without them."""
     ids = list(ids)
     for start in range(0, len(ids), 500):
         chunk = ids[start : start + 500]
         rows = []
-        for ident, revision, title, summary, content in db.execute(
-            f"SELECT id,revision,title,summary,content FROM documents WHERE id IN ({','.join('?' * len(chunk))})", chunk
+        for ident, revision, *fields in db.execute(
+            f"""SELECT d.id,d.revision,d.title,d.summary,{SECTIONS},d.content FROM documents d
+            WHERE d.id IN ({",".join("?" * len(chunk))})""",
+            chunk,
         ):
-            body = search_text(content)
-            rows.append((ident, revision, search_text(title), search_text(summary), len(body), body))
+            rows.append((ident, revision, *search_fields(*fields)))
         db.executemany(
             """INSERT INTO document_search(doc_id,revision,title,summary,length,content) VALUES (?,?,?,?,?,?)
             ON CONFLICT(doc_id) DO UPDATE SET revision=excluded.revision,title=excluded.title,

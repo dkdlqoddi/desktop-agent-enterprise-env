@@ -53,7 +53,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 | 경로                    | 내용                                                                                                                                                                          |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wiki.db`               | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 2입니다(`backend/agent/migrations.py`)                                                                            |
+| `wiki.db`               | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 3입니다(`backend/agent/migrations.py`)                                                                            |
 | `backups/`              | `wiki-YYYYMMDD-HHMMSS.db`(하루 한 번 자동, 최근 7개), `wiki-manual-….db`(직접 백업, 최근 7개), `wiki-before-restore-….db`(복원으로 바뀐 Wiki, 지우지 않음)                    |
 | `backups/restore.json`  | 예약된 복원. 함께 있는 `restore-<id>.db`를 앱의 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                                     |
 | `원본 백업/`            | 원본 반영 전에 복사한 Office 파일(파일마다 최근 5개)과 저장 단계를 적는 `.writing` 파일                                                                                       |

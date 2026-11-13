@@ -9,7 +9,7 @@ import pytest
 
 from agent import db as database_module, pageindex, paging, search
 from agent.confluence import import_page
-from agent.db import FTS_DONE, Database, index_text
+from agent.db import END, FTS_DONE, Database, index_text
 from agent.html_document import page
 from agent.llm import UserError
 from agent.rtf_import import RtfImporter
@@ -230,7 +230,7 @@ def test_the_search_text_follows_every_change_and_fills_in_what_an_earlier_versi
     doc = save(service, "메모", "첫 내용")
     with service.db.connect() as db:
         row = db.execute("SELECT revision,content FROM document_search WHERE doc_id=?", (doc["id"],)).fetchone()
-    assert tuple(row) == (1, "첫 내용")
+    assert tuple(row) == (1, "첫 내용" + END)
     service.wiki_save({"id": doc["id"], "title": "메모", "content": "R\\&D 두 번째"})
     assert [d["id"] for d in service.wiki_search({"query": "r&d", "mode": "word"})["documents"]] == [doc["id"]]
     # An earlier version (or another program) changed a document without its search text: the search reads the content
@@ -246,8 +246,8 @@ def test_the_search_text_follows_every_change_and_fills_in_what_an_earlier_versi
     Database(service.db.path)
     with service.db.connect() as db:
         assert dict(db.execute("SELECT doc_id,content FROM document_search").fetchall()) == {
-            doc["id"]: "abc 세 번째",
-            "old": "ärger",
+            doc["id"]: "abc 세 번째" + END,
+            "old": "ärger" + END,
         }
     # In the trash the document is not searched; its search text goes with it when the trash is emptied.
     service.wiki_delete({"id": "old"})
@@ -518,7 +518,7 @@ def test_a_title_or_summary_changed_without_the_search_text_is_searched_as_it_is
     with service.db.connect() as db:
         assert tuple(
             db.execute("SELECT revision,title,summary FROM document_search WHERE doc_id=?", (doc["id"],)).fetchone()
-        ) == (1, "월간회고록", "릴리스일정 정리")
+        ) == (1, "월간회고록" + END, "릴리스일정 정리" + END)
     assert found(service, "회고록") == [doc["id"]] and (not service.db.fts or index_matches(service))
 
 
@@ -537,6 +537,10 @@ SEARCHES = [
     ("auto", "지연 시간과"),
     ("auto", "캐싱"),
     ("keyword", "캐싱"),
+    ("auto", "운영"),
+    ("word", "점검"),
+    ("auto", "롤백"),
+    ("auto", "롤백 절차와 캐시"),
     ("word", "레디스 메뉴"),
 ]
 
@@ -555,7 +559,8 @@ def searched(service):
 
 def fill(service):
     """Documents the searches reach by every way: words of three or more characters and shorter ones, in titles,
-    summaries and bodies, keywords and their aliases, Markdown escapes and full-width letters."""
+    summaries, the summaries of sections and bodies, keywords and their aliases, Markdown escapes and full-width
+    letters."""
     for title, content in (
         ("캐시 도입 회의", "레디스 클러스터로 캐시를 도입했습니다. R\\&D 검토"),
         ("ＡＢＣ 보고서", "Kafka 스트림 전환과 캐시 무효화 정책"),
@@ -570,7 +575,13 @@ def fill(service):
         db.execute("INSERT INTO keywords VALUES (?, 'cache')", (ident,))
         # A word no text holds, which only the alias reaches past the trigram index.
         db.execute("INSERT INTO keyword_aliases VALUES (?, 'cache', '캐싱', '캐싱')", (ident,))
-        index_text(db, [ident])
+        # Words that only the summary of a section holds.
+        notes = db.execute("SELECT id FROM documents WHERE title='릴리스 노트'").fetchone()[0]
+        db.execute(
+            "INSERT INTO doc_nodes VALUES (?, 1, '1', NULL, 0, 1, '배포', 'section', '배포 일정과 롤백 절차', 0, 5)",
+            (notes,),
+        )
+        index_text(db, [ident, notes])
 
 
 def test_without_a_trigram_index_search_compares_the_search_text_and_finds_the_same(tmp_path, monkeypatch):
@@ -599,6 +610,47 @@ def test_without_a_trigram_index_search_compares_the_search_text_and_finds_the_s
     again = Service(Database(tmp_path / "indexed.db"), RoutingLLM())
     assert again.db.fts == database_module.fts_supported() and found(again, "장애 원인", "word") == [added]
     assert not again.db.fts or index_matches(again)
+
+
+@needs_fts
+def test_a_word_of_two_characters_is_looked_up_in_the_trigram_index_wherever_it_is(service, monkeypatch):
+    """Each column of the search text ends with a mark (db.END), so every two characters of it begin a trigram: the
+    index finds a word of two characters at the end of a title or a body, as a whole body, in a summary and in the
+    summary of a section, and the search reads no other document (Search.scanned)."""
+    expected = {
+        save(service, "분산 캐시", "본문")["id"],
+        save(service, "끝", "마지막 낱말은 캐시")["id"],
+        save(service, "하나", "캐시")["id"],
+        save(service, "처음", "캐시를 먼저 봅니다")["id"],
+    }
+    for i in range(12):
+        save(service, f"기타 {i}", "캐스팅과 시스템, 캐 시")
+    summarized = save(service, "요약", "본문")["id"]
+    sectioned = save(service, "설계서", "본문")["id"]
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET summary='캐시 정책 요약' WHERE id=?", (summarized,))
+        db.execute(
+            "INSERT INTO doc_nodes VALUES (?, 1, '1', NULL, 0, 1, '개요', 'section', '레디스 캐시', 0, 2)", (sectioned,)
+        )
+        index_text(db, [summarized, sectioned])
+
+    def whole(*args):
+        raise AssertionError("the search text was read in one pass")
+
+    monkeypatch.setattr(search, "SCAN_SHARE", 0)
+    monkeypatch.setattr(search.Search, "scanned", staticmethod(whole))
+    assert set(found(service, "캐시", "word")) == expected
+    ranked = found(service, "캐시")
+    assert set(ranked) == expected | {summarized, sectioned}
+    # The summary of a section weighs less than the document's own summary, as it did when search read it apart.
+    assert ranked.index(summarized) < ranked.index(sectioned)
+    # A search text out of date is read from the document, its sections with it.
+    with contextlib.closing(sqlite3.connect(service.db.path)) as db, db:
+        db.execute("UPDATE documents SET title='설계서 2' WHERE id=?", (sectioned,))
+    assert sectioned in found(service, "캐시")
+    # New text takes the analysis back, and the summaries of the sections go with it.
+    service.wiki_save({"id": sectioned, "title": "설계서", "content": "새 본문"})
+    assert sectioned not in found(service, "캐시") and index_matches(service)
 
 
 @needs_fts
@@ -676,7 +728,11 @@ def test_the_search_text_of_an_earlier_version_is_made_anew(tmp_path):
             "length",
             "content",
         ]
-        assert tuple(db.execute("SELECT title,summary,length FROM document_search").fetchone()) == ("이전 버전", "", 13)
+        assert tuple(db.execute("SELECT title,summary,length FROM document_search").fetchone()) == (
+            "이전 버전" + END,
+            END,
+            13,
+        )
     assert found(reopened, "형식의 검색") == [doc["id"]] and (not reopened.db.fts or index_matches(reopened))
 
 

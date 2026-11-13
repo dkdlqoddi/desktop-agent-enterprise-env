@@ -15,10 +15,11 @@ Every result carries the passages where the search words occur, so the screen ca
 Words and documents are compared as db.search_text has them: an imported page's Markdown escapes (R\\&D) are not
 there, full-width letters, ① or decomposed Hangul are their plain text, case does not count, and every run of white
 space is one space, so a "quoted phrase" is found across the line break or double space a document has within it.
-Each document's title, summary and content are kept so in document_search, with a trigram index (document_fts) that
-finds the documents which may hold a word of three or more characters; shorter words are compared with LIKE over the
-kept text, as every word is where SQLite has no trigram index. The words are counted in what is found, so the index
-only decides which documents are read, never how they rank.
+Each document's title, summary (with the summaries of its sections) and content are kept so in document_search, with a
+trigram index (document_fts) that finds the documents which may hold a word: one of three or more characters by its
+trigrams, one of two by the trigrams that begin with it. A single character is compared over the kept text, as every
+word is where SQLite has no trigram index. The words are counted in what is found, so the index only decides which
+documents are read, never how they rank.
 
 Extracted keywords are canonical lowercase English, and the analysis keeps other names of each beside it
 (keyword_aliases): its Korean form, abbreviations, other spellings. A search word or keyword that is an alias, or lies
@@ -37,7 +38,7 @@ from collections import defaultdict
 from urllib.parse import urlsplit
 
 from . import pageindex, paging
-from .db import FTS_COVERED, FTS_DONE, search_text
+from .db import FTS_COVERED, FTS_DONE, SECTIONS, search_fields, search_text
 from .llm import UserError
 from .service import keyword, like, text
 
@@ -149,9 +150,13 @@ FILLER = {
 }
 # ASCII punctuation, which the Markdown of an imported page may escape (R\&D).
 PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
-# Terms at least this long are looked up in the trigram index; shorter ones have no trigram to look up.
+# Terms at least this long are looked up in the trigram index by their trigrams; one of BIGRAM characters by the
+# trigrams that begin with it (indexed). A single character has neither, and is compared over the search text.
 TRIGRAM = 3
+BIGRAM = 2
 LOOKUP = 6  # Trigrams a long term is looked up by: fewer than all narrow as surely, and read less of the index.
+# The last character of Unicode: no trigram that begins with a term sorts after the term followed by it.
+LAST = chr(0x10FFFF)
 # Rows found in the index that are more than one in SCAN_SHARE of all cost more read one by one, with the stale ones
 # looked for apart, than read in one pass with the rest (Search.scanned): about as much at a third of 10,000, less
 # above.
@@ -261,6 +266,22 @@ def lookup(term):
     if len(grams) > LOOKUP:
         grams = [grams[round(i * (len(grams) - 1) / (LOOKUP - 1))] for i in range(LOOKUP)]
     return " AND ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
+
+
+# The trigram index's own list of the trigrams it holds and the rows that hold each (an fts5vocab table of its
+# instances), in the order of the trigrams, made for the connection of a search that needs it (temp).
+VOCABULARY = "CREATE VIRTUAL TABLE IF NOT EXISTS temp.document_fts_rows USING fts5vocab(main, document_fts, instance)"
+
+
+def indexed(db, term):
+    """The rows of the search text that the trigram index finds may hold `term`, of BIGRAM or more characters: for a
+    term of TRIGRAM or more, the rows that hold the trigrams of lookup(); for one of two, the rows that hold a trigram
+    beginning with it, which the index lists in one range of its trigrams. Each column of the search text ends with a
+    mark (db.END), so every two characters of it are followed by a third and begin a trigram."""
+    if len(term) >= TRIGRAM:
+        return db.execute("SELECT rowid FROM document_fts WHERE document_fts MATCH ?", (lookup(term),))
+    db.execute(VOCABULARY)
+    return db.execute("SELECT DISTINCT doc FROM temp.document_fts_rows WHERE term>=? AND term<=?", (term, term + LAST))
 
 
 def tuples(db, sql, args=()):
@@ -414,10 +435,11 @@ ALIASES = f"""keyword_aliases a JOIN keywords k ON k.doc_id=a.doc_id AND k.keywo
 # (an earlier one kept the content alone) and marks it stale when the title or summary changes (documents_search_stale).
 FRESH = "(s.revision IS d.revision AND s.title IS NOT NULL)"
 # What measure() reads of a document: its fresh search text, with the content as UTF-8, which is counted without being
-# decoded, and its length; else the document's own title, summary and content, to be made so (search_text).
+# decoded, and its length; else the document's own title, summary, sections and content, to be made so (search_fields).
 FIELDS = f"""d.rowid, d.id, d.updated_at, {FRESH}, s.id, s.title, s.summary, s.length,
     CASE WHEN {FRESH} THEN CAST(s.content AS BLOB) END, CASE WHEN NOT {FRESH} THEN d.title END,
-    CASE WHEN NOT {FRESH} THEN d.summary END, CASE WHEN NOT {FRESH} THEN d.content END"""
+    CASE WHEN NOT {FRESH} THEN d.summary END, CASE WHEN NOT {FRESH} THEN {SECTIONS} END,
+    CASE WHEN NOT {FRESH} THEN d.content END"""
 
 
 class Search:
@@ -437,22 +459,20 @@ class Search:
         """What measure() reads of the live documents that may hold any of the terms (strict: in the title or body), in
         the order of the documents table: (id, updated_at, title, summary, body, length, look), where `look` names the
         terms, by their place in `terms`, that the document may hold and measure() counts; None counts every term.
-        For a row the trigram index covers they are the long terms it found the row by and the short terms the row
-        holds, as it holds no other."""
+        For a row the trigram index covers they are the terms it found the row by (every term of two or more
+        characters, indexed) and the single characters the row holds, as it holds no other."""
         covered = self.covered(db)
-        long = [i for i, t in enumerate(terms) if len(t) >= TRIGRAM] if covered is not None else []
+        looked = [i for i, t in enumerate(terms) if len(t) >= BIGRAM] if covered is not None else []
         maybe = defaultdict(list)
         try:
-            for i in long:
-                for (rid,) in db.execute(
-                    "SELECT rowid FROM document_fts WHERE document_fts MATCH ?", (lookup(terms[i]),)
-                ):
+            for i in looked:
+                for (rid,) in indexed(db, terms[i]):
                     maybe[rid].append(i)
         except sqlite3.DatabaseError:
             # An index this SQLite cannot read after all, or a damaged one: the terms are compared over the search text,
             # as without an index.
-            covered, long, maybe = None, [], defaultdict(list)
-        short = [i for i in range(len(terms)) if i not in long]
+            covered, looked, maybe = None, [], defaultdict(list)
+        short = [i for i in range(len(terms)) if i not in looked]
         many = maybe and len(maybe) * SCAN_SHARE > (
             db.execute("SELECT max(id) FROM document_search").fetchone()[0] or 0
         )
@@ -470,20 +490,20 @@ class Search:
             ):
                 found[order] = (ident, updated, title, summary, body, length, maybe[rid])
         # ...and the documents whose search text is not fresh, made so to be counted as they are now.
-        for order, ident, updated, *_, title, summary, content in tuples(
+        for order, ident, updated, *_, title, summary, sections, content in tuples(
             db, f"SELECT {FIELDS} FROM {INDEXED} WHERE {LIVE} AND NOT {FRESH}"
         ):
-            body = search_text(content)
-            found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
+            title, summary, length, body = search_fields(title, summary, sections, content)
+            found[order] = (ident, updated, title, summary, body, length, None)
         return [found[order] for order in sorted(found)]
 
     @staticmethod
     def scanned(db, terms, strict, covered, maybe, short):
-        """The documents that may hold a term, read in one pass over the search text, as a search with a word too short
-        for the trigram index, or without the index, must read every row: the rows the index found, the other rows it
-        covers that hold a short term, and the rows it does not cover (yet) that hold any term. Python finds a word in a
-        row's text as LIKE does, twice as fast, and what it finds is all measure() then counts. A live document without
-        a fresh row is read itself and made so. Returns {documents.rowid: text}."""
+        """The documents that may hold a term, read in one pass over the search text, as a search with a single
+        character, or without the index, must read every row: the rows the index found, the other rows it covers that
+        hold a term it did not look up (`short`), and the rows it does not cover (yet) that hold any term. Python finds
+        a word in a row's text as LIKE does, twice as fast, and what it finds is all measure() then counts. A live
+        document without a fresh row is read itself and made so. Returns {documents.rowid: text}."""
         live = {
             ident: (order, updated, revision)
             for order, ident, updated, revision in tuples(
@@ -501,24 +521,24 @@ class Search:
                 continue  # In the trash, or not fresh: read below.
             fresh.add(ident)
             summary = "" if strict else summary or ""
-            indexed = covered is not None and rid <= covered
+            in_index = covered is not None and rid <= covered
             look = [
-                i for i, t, encoded in (some if indexed else every) if t in title or t in summary or encoded in body
+                i for i, t, encoded in (some if in_index else every) if t in title or t in summary or encoded in body
             ]
-            if indexed and rid in maybe:
+            if in_index and rid in maybe:
                 look = sorted(maybe[rid] + look) if look else maybe[rid]
             if look:
                 found[known[0]] = (ident, known[1], title, summary, body, length, look)
         stale = [ident for ident in live if ident not in fresh]
         for chunk in chunks(stale):
-            for order, ident, updated, title, summary, content in tuples(
+            for order, ident, updated, *fields in tuples(
                 db,
-                f"SELECT d.rowid,d.id,d.updated_at,d.title,d.summary,d.content FROM documents d WHERE {LIVE_ROW} "
-                f"AND d.id IN ({','.join('?' * len(chunk))})",
+                f"SELECT d.rowid,d.id,d.updated_at,d.title,d.summary,{SECTIONS},d.content FROM documents d "
+                f"WHERE {LIVE_ROW} AND d.id IN ({','.join('?' * len(chunk))})",
                 chunk,
             ):
-                body = search_text(content)
-                found[order] = (ident, updated, search_text(title), search_text(summary), body, len(body), None)
+                title, summary, length, body = search_fields(*fields)
+                found[order] = (ident, updated, title, summary, body, length, None)
         return found
 
     @staticmethod
@@ -558,7 +578,6 @@ class Search:
         # The keywords of a document that a search word or keyword named by their alias: {id: {keyword: (place,
         # alias)}}, the place of that word in the search, so the first of several is shown.
         by_alias = defaultdict(dict)
-        nodes = {}
         stats = {}
         held = [0] * len(terms)  # Strict: documents holding each term in the title or body.
         with self.db.connect() as db:
@@ -589,15 +608,6 @@ class Search:
                     place = names.index(name) if name in names else None
                     if place is not None and place < by_alias[ident].get(key, (len(names),))[0]:
                         by_alias[ident][key] = (place, alias)
-            if not strict and terms:
-                where = " OR ".join("n.summary LIKE ? ESCAPE '\\'" for _ in terms)
-                for row in db.execute(
-                    f"""SELECT n.doc_id, group_concat(n.summary, ' ') AS text FROM doc_nodes n
-                        JOIN documents d ON d.id=n.doc_id AND d.revision=n.revision AND {LIVE} WHERE {where}
-                        GROUP BY n.doc_id""",
-                    [like(t) for t in terms],
-                ):
-                    nodes[row["doc_id"]] = search_text(row["text"])
 
             encoded = {t: t.encode("utf-8") for t in terms}
             every = range(len(terms))
@@ -608,14 +618,16 @@ class Search:
 
             def measure(item, check=True):
                 """Count the terms in a document: those it may hold (texts() `look`), as it holds no other in its title,
-                summary or body, or every term. With `check` the document is kept only when it holds a term there
-                (strict: every term in the title or body), as the search found it."""
+                summary, sections or body, or every term. With `check` the document is kept only when it holds a term
+                there (strict: every term in the title or body), as the search found it."""
                 ident, updated, title, summary, body, length, look = item
-                summary, sections = "" if strict else summary, nodes.get(ident, "")
+                # The summary of the search text holds the summaries of the sections after a line break
+                # (db.search_fields), which weigh apart; the strict search counts neither.
+                summary, _, sections = ("", "", "") if strict else summary.partition("\n")
                 binary = isinstance(body, bytes)
-                if look is None or sections:
+                if look is None:
                     look = every
-                tf, counted, holding = [ABSENT] * len(terms), [], []
+                tf, counted = [ABSENT] * len(terms), []
                 for i in look:
                     t = terms[i]
                     counts = (
@@ -627,12 +639,10 @@ class Search:
                     if counts != ABSENT:
                         tf[i] = counts
                         counted.append(i)
-                        if counts[0] or counts[1] or counts[3]:
-                            holding.append(i)
                 if check and strict:
-                    for i in holding:
+                    for i in counted:
                         held[i] += 1
-                if check and not (len(holding) == len(terms) if strict else holding):
+                if check and not (len(counted) == len(terms) if strict else counted):
                     return
                 # `counted` keeps the terms counted somewhere, in order: the only ones that weigh unless a keyword
                 # matches.
@@ -648,7 +658,7 @@ class Search:
             if terms:
                 for item in self.texts(db, terms, strict):
                     measure(item)
-            rest = [i for i in set(hits) | set(nodes) if i not in stats]
+            rest = [i for i in hits if i not in stats]
             for chunk in chunks(rest):
                 own = {}
                 for row in tuples(
@@ -658,8 +668,7 @@ class Search:
                 ):
                     order, ident, updated, fresh, _, title, summary, length, body, *values = row
                     if not fresh:
-                        title, summary, body = (search_text(value) for value in values)
-                        length = len(body)
+                        title, summary, length, body = search_fields(*values)
                     own[order] = (ident, updated, title, summary, body, length, None)
                 for order in sorted(own):
                     measure(own[order], check=False)

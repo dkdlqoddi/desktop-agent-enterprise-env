@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-from agent import db as database_module, migrations
-from agent.db import FTS_DONE, Database
+from agent import db as database_module, migrations, search
+from agent.db import END, FTS_DONE, Database, index_text, search_text
 from agent.service import Service
 from agent.storage import Refused
 
@@ -31,7 +31,7 @@ def steps(monkeypatch, *functions):
 def test_a_new_wiki_and_one_from_before_versions_are_at_the_newest_version(tmp_path):
     fresh = tmp_path / "new" / "wiki.db"
     Database(fresh)
-    assert user_version(fresh) == migrations.SCHEMA_VERSION == 2
+    assert user_version(fresh) == migrations.SCHEMA_VERSION == 3
     # A Wiki of an earlier version: the block's compatibility steps bring it to version 1, the migrations the rest.
     old = tmp_path / "old.db"
     with contextlib.closing(sqlite3.connect(old)) as db:
@@ -233,12 +233,12 @@ def test_version_2_makes_the_search_text_anew_so_a_phrase_is_found_across_a_line
     if not fts:  # A start with an SQLite without FTS5, which cannot touch the index the earlier starts made.
         monkeypatch.setattr(database_module, "fts_supported", lambda: False)
     Database(path)
-    assert user_version(path) == 2
+    assert user_version(path) == migrations.SCHEMA_VERSION
     assert found(service, '"캐시 전략"') == found(service, '"캐시 전략"', "auto") == [broken]
     assert found(service, '"Redis 클러스터 도입 검토"') == [spaced]
     with service.db.connect() as db:
         stored = db.execute("SELECT content FROM document_search WHERE doc_id=?", (spaced,)).fetchone()[0]
-    assert stored == "redis 클러스터 도입 검토"
+    assert stored == "redis 클러스터 도입 검토" + END
     # The passage shown is the document's own text, where the screen marks the phrase across the line break.
     result = service.wiki_search({"query": '"캐시 전략"', "mode": "word"})
     snippet = result["documents"][0]["match"]["snippets"][0]["text"]
@@ -251,8 +251,9 @@ def test_version_2_makes_the_search_text_anew_so_a_phrase_is_found_across_a_line
         assert reopened.db.fts == database_module.fts_supported() and found(reopened, '"캐시 전략"') == [broken]
         assert not reopened.db.fts or index_whole(reopened)
     # Version 1 of the app, which this Wiki is now newer than, refuses it rather than misread its search text.
+    newest = migrations.SCHEMA_VERSION
     steps(monkeypatch)
-    with pytest.raises(Refused, match="버전 2"):
+    with pytest.raises(Refused, match=rf"\(버전 {newest}\)"):
         Database(path)
 
 
@@ -274,3 +275,53 @@ def test_while_the_search_text_is_made_anew_a_search_reads_the_documents_themsel
     assert service.db._index() is True
     assert found(service, '"시간을 30%"') == [ident]
     assert not service.db.fts or index_whole(service)
+
+
+# -- Version 3: the search text with an end mark and the sections ------------------------------------------------------
+
+
+def as_version_2(path):
+    """The Wiki at `path` as version 2 left it: each column of the search text as search_text has it, ending with its
+    last word, the summaries of the sections left to doc_nodes, and the version number 2."""
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        for ident, title, summary, content in db.execute("SELECT id,title,summary,content FROM documents").fetchall():
+            db.execute(
+                "UPDATE document_search SET title=?,summary=?,content=? WHERE doc_id=?",
+                (search_text(title), search_text(summary), search_text(content), ident),
+            )
+        db.execute("PRAGMA user_version=2")
+
+
+@pytest.mark.skipif(not database_module.fts_supported(), reason="SQLite without the FTS5 trigram tokenizer")
+def test_version_3_lets_the_trigram_index_find_two_characters_and_the_sections(tmp_path, monkeypatch):
+    """Version 2 ended each column of the search text with its last word, and kept the summaries of a document's
+    sections apart, which search read with LIKE. Version 3 ends each column with a mark and keeps the sections after
+    the summary, so the trigram index finds a word of two characters, the last of a title included, and a word of a
+    section's summary. Its search text is made anew as version 2's was."""
+    path = tmp_path / "wiki.db"
+    service = Service(Database(path), None)
+    titled = service.wiki_save({"title": "분산 캐시", "content": "본문 내용"})["id"]
+    ended = service.wiki_save({"title": "메모", "content": "마지막 낱말은 캐시"})["id"]
+    sectioned = service.wiki_save({"title": "설계서", "content": "긴 문서"})["id"]
+    for i in range(6):
+        service.wiki_save({"title": f"기타 {i}", "content": "캐스팅과 시스템"})
+    with service.db.connect() as db:
+        db.execute(
+            "INSERT INTO doc_nodes VALUES (?, 1, '1', NULL, 0, 1, '개요', 'section', '레디스 캐시 전략', 0, 4)",
+            (sectioned,),
+        )
+        index_text(db, [sectioned])
+    as_version_2(path)
+    # The index alone decides which documents are read (search.SCAN_SHARE 0), and the search text of version 2 has no
+    # trigram that begins with the word nor the sections.
+    monkeypatch.setattr(search, "SCAN_SHARE", 0)
+    assert found(service, "캐시", "auto") == []
+
+    Database(path)
+    assert user_version(path) == migrations.SCHEMA_VERSION == 3 and index_whole(service)
+    with service.db.connect() as db:
+        row = db.execute("SELECT title,summary,content FROM document_search WHERE doc_id=?", (sectioned,)).fetchone()
+    assert tuple(row) == ("설계서" + END, "\n레디스 캐시 전략" + END, "긴 문서" + END)
+    assert sorted(found(service, "캐시", "auto")) == sorted([titled, ended, sectioned])
+    # The word search leaves the AI's summaries out, those of the sections too.
+    assert sorted(found(service, "캐시")) == sorted([titled, ended])

@@ -19,13 +19,12 @@ A Wiki whose version is newer than SCHEMA_VERSION was changed by a later version
 what its rows mean; storage.prepare refuses to open it before anything is written to it (downgrade protection)."""
 
 
-def search_text_anew(db):
-    """Version 2: the search text holds every run of white space as one space (db.search_text), as a query does, so a
-    quoted phrase is found across a line break or a double space in a document. What version 1 kept is dropped, with
-    what the trigram index holds of it, and made anew from the documents as for a Wiki that never had it: each start
-    goes on with it a chunk at a time, for its budget before the backend answers and then on a thread of its own
-    (db.Database._index), and a search meanwhile reads the documents that have none yet themselves. Dropping it takes
-    a moment whatever the size of the Wiki, where making it anew here would keep a large Wiki's start waiting."""
+def drop_search_text(db):
+    """Drop the search text (document_search, as versions 1 to 3 have it) and what the trigram index holds of it, to be
+    made anew from the documents as for a Wiki that never had it: each start goes on with it a chunk at a time, for its
+    budget before the backend answers and then on a thread of its own (db.Database._index), and a search meanwhile
+    reads the documents that have none yet themselves. Dropping takes a moment whatever the size of the Wiki, where
+    making it anew in the migration would keep a large Wiki's start waiting."""
     # Covering no row from here on, the index is left alone by the triggers that keep it while the rows go, and it is
     # emptied in one statement. A mark of -1 is an index this SQLite cannot read (without FTS5), which a later start
     # with FTS5 empties before it fills it; without a table there is nothing to empty.
@@ -38,10 +37,24 @@ def search_text_anew(db):
     db.execute("DELETE FROM document_search")
 
 
+def search_text_anew(db):
+    """Version 2: the search text holds every run of white space as one space (db.search_text), as a query does, so a
+    quoted phrase is found across a line break or a double space in a document. What version 1 kept is made anew."""
+    drop_search_text(db)
+
+
+def search_text_ended(db):
+    """Version 3: each column of the search text ends with a mark, so that a word of two characters is looked up in the
+    trigram index, and its summary holds the summaries of the document's sections, which the index then finds as well
+    (db.search_fields). What version 2 kept is made anew; a Wiki of version 1 takes both in one start, and makes its
+    search text once."""
+    drop_search_text(db)
+
+
 # The migrations in order: the first takes a Wiki from version 1 to 2, the next from 2 to 3, and so on. Each is a
 # function of the connection that must neither commit nor roll back. It writes its changes in SQL of its own, for the
 # tables as its version has them, not through code that a later version may change.
-MIGRATIONS = (search_text_anew,)
+MIGRATIONS = (search_text_anew, search_text_ended)
 # The version this code writes and the newest it opens.
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
