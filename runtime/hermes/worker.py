@@ -461,6 +461,15 @@ def tell_grants(messenger=False):
     approval._persist_choice = persisted
 
 
+def protected_path(path):
+    """Whether `path` is one of the protected paths (protect) or lies inside one, as it resolves."""
+    try:
+        resolved = os.path.normcase(os.path.realpath(os.path.expanduser(str(path))))
+    except (OSError, ValueError):
+        return False
+    return any(resolved == zone or resolved.startswith(zone.rstrip("/\\") + os.sep) for zone in PROTECTED)
+
+
 def guard_files():
     """Hermes' file tools refuse the protected paths (protect) as they refuse its own credential files: its rules
     for reads and for writes, deletes and moves (agent.file_safety) are asked first, and here they also say no to
@@ -474,13 +483,7 @@ def guard_files():
         return
     told = ("is in a folder the user protected in Private Agent's settings. Do not read, change or copy it by "
             "another way; tell the user it is protected.")
-
-    def inside(path):
-        try:
-            resolved = os.path.normcase(os.path.realpath(os.path.expanduser(str(path))))
-        except (OSError, ValueError):
-            return False
-        return any(resolved == zone or resolved.startswith(zone.rstrip("/\\") + os.sep) for zone in PROTECTED)
+    inside = protected_path
 
     def read_error(path, *args, **kwargs):
         return f"Access denied: {path} {told}" if inside(path) else read(path, *args, **kwargs)
@@ -500,6 +503,47 @@ def guard_files():
             if getattr(module, name, None) is old:
                 with contextlib.suppress(Exception):
                     setattr(module, name, new)
+
+
+def guard_searches():
+    """Hermes' file search (search_files) over a folder that holds a protected path tells nothing of what lies in
+    it. The search engine walks the whole folder: ripgrep's exclusion rules only reach the paths under the folder a
+    search runs from, which a search of a parent folder is not. So what it found is sorted afterwards. Its lines,
+    files and counts inside a protected path are already left out by the read rule (guard_files), which Hermes asks
+    of each; here the number found leaves them out too, and so do the unreadable paths it names. And a search that
+    found nothing is not told where the same words would match in another spelling: that hint is asked of the walk
+    without the read rule and names the files, so it is not given while a protected path lies in the folder. (A
+    search rooted in a protected path is refused whole by the read rule.)"""
+    from tools import file_tools
+    from tools.file_operations_search import SearchMixin
+
+    filtered, probe = file_tools._filter_read_blocked_search_results, SearchMixin._zero_match_probe
+    if getattr(filtered, "private_agent", False):
+        return
+
+    def left_out(result, task_id="default"):
+        omitted = filtered(result, task_id)
+        if omitted and getattr(result, "total_count", 0):
+            shown = max(len(result.matches or ()), len(result.files or ()), len(result.counts or ()))
+            result.total_count = max(shown, result.total_count - omitted)
+        if getattr(result, "skipped_paths", None):
+            result.skipped_paths = [path for path in result.skipped_paths
+                                    if not protected_path(file_tools._resolved_match_path(path, task_id))]
+        return omitted
+
+    def no_hint_near_protected(self, pattern, path, file_glob):
+        try:
+            cwd = getattr(getattr(self, "env", None), "cwd", None) or self.cwd
+            root = os.path.normcase(os.path.realpath(os.path.join(cwd, os.path.expanduser(str(path)))))
+        except (OSError, TypeError, ValueError):
+            return None
+        if any(zone.startswith(root.rstrip("/\\") + os.sep) for zone in PROTECTED):
+            return None
+        return probe(self, pattern, path, file_glob)
+
+    left_out.private_agent = True
+    file_tools._filter_read_blocked_search_results = left_out
+    SearchMixin._zero_match_probe = no_hint_near_protected
 
 
 def approval_callback(command, description="", *, allow_permanent=True, allow_session=True, smart_denied=False, **kw):
@@ -629,6 +673,7 @@ def run_turn(request):
     own_settings_only()
     guard_files()
     config = prepare_home(request)
+    guard_searches()
     patch_model_calls()
     prepare_tools(request)
 
@@ -772,6 +817,7 @@ def run_gateway(request, requests):
     own_settings_only(policy)
     guard_files()
     config = prepare_home(request)
+    guard_searches()
     write_config(policy / "config.yaml", gateway_policy(request, config, accounts))
     patch_model_calls()
     prepare_tools(request)

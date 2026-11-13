@@ -322,6 +322,43 @@ def test_protected_paths_are_closed_to_the_file_tools_and_to_commands_naming_the
 
 
 @bundled
+def test_a_search_of_a_parent_folder_leaves_out_what_lies_in_a_protected_one(tmp_path, model_server):
+    work = tmp_path / "work"
+    vault = work / "vault"
+    vault.mkdir(parents=True)
+    (vault / "key.txt").write_text("PROTECTED-CONTENT\nZebra-Secret\n", encoding="utf-8")
+    (work / "open.txt").write_text("PROTECTED-CONTENT open\n", encoding="utf-8")
+    service = chat(tmp_path, connection(model_server))
+    service.dispatch("agent.configure", {"protected": {"credentials": False, "folders": [str(vault)]}})
+    heard, asked = [], []
+
+    def search(**args):
+        """What the agent's file search returns for `args` over the folder that holds the protected one."""
+        asked.append(args)
+        model_server.reply = tool_call("search_files", {"path": str(work), **args}, heard)
+        service.dispatch("agent.send", {"text": "찾아 줘", "request_id": f"r-search-{len(asked)}"})
+        return heard[0]
+
+    try:
+        # Its lines, its files and its counts leave out the protected folder, and so does the number found.
+        for mode in ("content", "files_only", "count"):
+            found = search(pattern="PROTECTED-CONTENT", output_mode=mode)
+            assert "open.txt" in found and "vault" not in found and "key.txt" not in found, (mode, found)
+            assert json.loads(found)["total_count"] == 1, (mode, found)
+        listed = search(pattern="*", target="files")
+        assert "open.txt" in listed and "vault" not in listed and "key.txt" not in listed, listed
+        assert json.loads(listed)["total_count"] == 1, listed
+        # A search that finds nothing is not told what a protected file would have matched, as it otherwise would be.
+        missed = search(pattern="zebra-secret")
+        assert "vault" not in missed and "key.txt" not in missed and json.loads(missed)["total_count"] == 0, missed
+        # A search of the protected folder itself is refused.
+        refused = search(pattern="PROTECTED-CONTENT", path=str(vault))
+        assert "protected" in refused and "PROTECTED-CONTENT" not in refused, refused
+    finally:
+        service.agent.shutdown()
+
+
+@bundled
 def test_the_config_of_a_turn_holds_what_runs_unasked_and_what_is_refused(tmp_path):
     home = tmp_path / "hermes"
     home.mkdir()
