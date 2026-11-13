@@ -10,7 +10,9 @@ dangerous is asked in the messenger it came from and waits there for one of the 
 
 The process is started again when a setting it was started with changes, and, a few times and further apart each
 time, when it ends by itself. A change is applied behind the request that brought it (ending a gateway lets it finish
-what it has in hand first), so the settings screen is answered at once and reads the outcome from the status.
+what it has in hand first), so the settings screen is answered at once and reads the outcome from the status. A change
+of the LLM connection starts nothing again: each model request goes out on the connection as it is then, and the name
+of its model, which a messenger's /status shows, is told to the running process (follow_model).
 """
 
 import json
@@ -83,6 +85,8 @@ class Gateway:
         self.enabled, self.launch = False, None
         self.state, self.reason, self.platforms = "off", "", {}
         self.failures, self.started_at, self.timer = 0, 0.0, None
+        # The model's name the running process was last given (follow_model).
+        self.told_model = ""
         self.closing = False
         # A change of settings waiting to be applied (`changed`, to `target`), one at a time and the latest only.
         self.applying = threading.Lock()
@@ -215,11 +219,27 @@ class Gateway:
                 self.reason = "내장 Hermes 실행 파일을 시작하지 못했습니다. 배포 파일과 백신 격리 기록을 확인해 주세요."
                 return
             self.child, self.stopped = child, threading.Event()
+            self.told_model = frame["model"]
             self.state, self.reason, self.started_at = "starting", "", time.monotonic()
             self.platforms = {name: {"state": "", "error": ""} for name in frame["users"]}
             stopped = self.stopped
         threading.Thread(target=self.read, args=(child, stopped), daemon=True).start()
         self.send(child, frame)
+
+    def follow_model(self):
+        """The LLM connection changed: a running process is told the name of the model it now uses, which it writes
+        into its settings for /status to show. (Its requests already go out on the connection as it is when each is
+        made.) Nothing is told while no process runs: the next one is started with the name."""
+        with self.lock:
+            child = self.child
+        if child is None:
+            return
+        name = self.model()
+        with self.lock:
+            if self.child is not child or name == self.told_model:
+                return
+            self.told_model = name
+        self.send(child, {"type": "model", "model": name})
 
     def model(self):
         """The model's name as the gateway shows it (the request itself always goes to the connection selected when it

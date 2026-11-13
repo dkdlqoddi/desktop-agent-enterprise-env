@@ -257,6 +257,12 @@ class Service:
         # When the logs were last trimmed: never yet sends the upkeep's first look to do it, after its backup.
         self.retained_at = time.time() if trimmed else 0.0
 
+    def llm_changed(self, result):
+        """After the LLM connection changed: the messenger gateway, which runs on, names the model it now uses
+        (hermes_gateway.py, follow_model). Returns `result`, the change's own answer."""
+        self.agent.gateway.follow_model()
+        return result
+
     def shutdown(self, _=None):
         """The app is closing: stop the automatic routines, the imports, a write to an original file before it saves,
         the browsers of Confluence, JIRA and the web records and the AI analysis, and give them up to 15 seconds.
@@ -290,8 +296,8 @@ class Service:
             "health": lambda p: {"ok": True},
             "backend.shutdown": self.shutdown,
             "settings.get": lambda p: self.llm.public(),
-            "settings.update": lambda p: self.llm.update(p),
-            "settings.load": lambda p: self.llm.load(p),
+            "settings.update": lambda p: self.llm_changed(self.llm.update(p)),
+            "settings.load": lambda p: self.llm_changed(self.llm.load(p)),
             # The main process alone (never a screen or an AI tool: electron/trusted-sender.cjs ALLOWED leaves it out).
             "settings.secrets": lambda p: self.llm.secrets(),
             # Answers shown as text say so when the LLM stopped them at its output limit (shown).

@@ -230,6 +230,33 @@ def test_a_dangerous_command_waits_for_the_answer_in_the_messenger(gateway, mode
 
 
 @bundled
+def test_status_names_the_model_of_the_connection_as_it_is_now(gateway, model_server, tmp_path):
+    service, telegram = gateway
+    model_server.reply = lambda request: (200, completion({"content": "네."}, request["model"]), False)
+    turn_on(service)
+    assert connected(service)["state"] == "running"
+    telegram.write("안녕")
+    assert telegram.wait(lambda: "네." in " ".join(telegram.sent(42)))
+    telegram.write("/status")
+    assert telegram.wait(lambda: "test-model" in " ".join(telegram.sent(42)[1:]))
+    child = service.agent.gateway.child
+
+    # The model of the app's LLM connection changes while the gateway runs: it is not started again, and /status
+    # names the new model at once, though this conversation's agent was made with the old one.
+    service.dispatch("settings.update", {"model_name": "other-model"})
+    policy = tmp_path / "hermes" / "gateway" / "config.yaml"
+    assert wait(lambda: "other-model" in policy.read_text(encoding="utf-8"), 20)
+    shown = len(telegram.sent(42))
+    telegram.write("/status")
+    assert telegram.wait(lambda: "other-model" in " ".join(telegram.sent(42)[shown:]))
+    assert "test-model" not in " ".join(telegram.sent(42)[shown:])
+    assert service.agent.gateway.child is child
+    # The next message goes out to it as before.
+    telegram.write("또 안녕")
+    assert telegram.wait(lambda: model_server.requests[-1]["model"] == "other-model")
+
+
+@bundled
 def test_a_model_failure_is_told_in_the_messenger_and_the_gateway_goes_on(gateway, model_server):
     service, telegram = gateway
     failing = [True]

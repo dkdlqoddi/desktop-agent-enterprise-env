@@ -19,7 +19,7 @@ frame and ends (forget_sessions). Either way its home is the Wiki's hermes folde
 Frames to the parent: inference, approval, grant, app_tool, clarify, progress, draft, result, error, gateway,
 forgotten.
 Frames from the parent: turn, gateway, forget, completion, approval_reply, app_tool_reply, clarify_reply, cancel,
-shutdown.
+model (to a gateway: the LLM connection's model now), shutdown.
 """
 import contextlib
 import json
@@ -807,6 +807,33 @@ def only_listed_accounts(runner_class, accounts):
     runner_class._principal_authorized = listed
 
 
+def with_model(config, name):
+    """The settings of a turn (prepare_home) with the model named `name`: the main one and every auxiliary task's."""
+    auxiliary = {task: {**entry, "model": name} if "model" in entry else entry
+                 for task, entry in config["auxiliary"].items()}
+    return {**config, "model": {**config["model"], "default": name}, "auxiliary": auxiliary}
+
+
+def show_the_model_in_use():
+    """A messenger's /status names the model of the gateway's settings, which follow the app's LLM connection
+    (run_gateway: a "model" frame). Hermes would name the model a conversation's agent was made with, or the one its
+    record noted last, which keep the name the connection had before it changed until that conversation's next
+    message. (Each request goes out on the connection as it is when it is made, whatever name is shown.)"""
+    from gateway import slash_commands_status
+    from gateway.run import _resolve_gateway_model
+
+    route = slash_commands_status._status_model_route
+    if getattr(route, "private_agent", False):
+        return
+
+    def configured(*args, **kwargs):
+        model, *rest = route(*args, **kwargs)
+        return (_resolve_gateway_model() or model, *rest)
+
+    configured.private_agent = True
+    slash_commands_status._status_model_route = configured
+
+
 def offer_only(commands):
     """The messengers' command menus and /help without the commands no listed account may run. (Typed all the same,
     one of those is refused by Hermes' command tiers: gateway_policy.)"""
@@ -877,6 +904,7 @@ def run_gateway(request, requests):
         del loaded.platforms[platform]
     only_listed_accounts(GatewayRunner, accounts)
     offer_only({*GATEWAY_COMMANDS, "help", "whoami"})
+    show_the_model_in_use()
     # The heartbeat serves programs that watch a Hermes service from outside, through a socket it would open.
     GatewayRunner._start_loop_heartbeat_task = lambda self: None
 
@@ -899,10 +927,19 @@ def run_gateway(request, requests):
                 emit({"type": "gateway", "state": "failed", "platforms": gateway_states(accounts)})
                 return
             told = None
+            settings = config
             while not ended.done():
                 with contextlib.suppress(queue.Empty):
-                    if requests.get_nowait().get("type") == "shutdown":
+                    frame = requests.get_nowait()
+                    if frame.get("type") == "shutdown":
                         break
+                    name = frame.get("model")
+                    if frame.get("type") == "model" and isinstance(name, str) and 0 < len(name) <= 200:
+                        # Read again by Hermes at its next message or command: the home's settings, and over them
+                        # the gateway's own.
+                        settings = with_model(settings, name)
+                        write_config(HOME / "config.yaml", settings)
+                        write_config(policy / "config.yaml", gateway_policy(request, settings, accounts))
                 for name in (".env", ".op.env"):
                     with contextlib.suppress(OSError):
                         (HOME / name).unlink()
@@ -942,7 +979,7 @@ def reader_loop(requests):
             if agent is not None:
                 with contextlib.suppress(Exception):
                     agent.interrupt(hard_cancel=True)
-        elif kind in ("turn", "gateway", "forget", "shutdown"):
+        elif kind in ("turn", "gateway", "forget", "model", "shutdown"):
             requests.put(frame)
 
 
@@ -980,6 +1017,8 @@ def main():
                     emit({"type": "error", "kind": type(error).__name__})
                 OUTPUT.flush()
                 os._exit(0)
+            if request.get("type") != "turn":
+                continue  # A frame for a gateway (model) that reached a chat's worker.
             CHANNEL.reset()
             try:
                 run_turn(request)
