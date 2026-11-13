@@ -1,7 +1,10 @@
 import { useEffect, useState, type RefObject } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
-const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A search word as a pattern of its own characters, with any run of white space where it has a space: the search finds
+// a phrase across the line break or double space a document has within it (backend/agent/db.py search_text).
+const escape = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
 
 // A case-insensitive pattern of the search words, longest first so "캐시 도입" wins over "캐시".
 export function highlighter(terms: readonly string[] = []) {

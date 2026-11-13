@@ -202,6 +202,30 @@ def test_documents_are_found_in_full_width_decomposed_and_other_case_forms(servi
     assert "ΔT" in snippet["text"]
 
 
+def test_a_quoted_phrase_is_found_across_a_line_break_or_any_run_of_white_space(service):
+    """A query has one space between the words of a phrase, where a document may have a line break, two spaces, a tab
+    or a no-break space. Search compares every run of white space as one space, and the passage shown is the
+    document's own text, where the screen marks the phrase whatever white space it has."""
+    wrapped = save(service, "회의록", "다음 분기에는 캐시\n전략을 바꿉니다.")["id"]
+    spaced = save(service, "메모", "캐시  전략\t검토 · 캐시 전략 · 캐시\r\n\n전략")["id"]
+    save(service, "기타", "캐시와 전략은 따로 봅니다.")
+    for query in ('"캐시 전략"', '"캐시\n전략"', '"캐시   전략"'):
+        for mode in ("word", "auto"):
+            assert sorted(found(service, query, mode)) == sorted([wrapped, spaced]), (query, mode)
+    result = service.wiki_search({"query": '"캐시 전략"', "mode": "word"})
+    assert result["highlights"] == ["캐시 전략"]
+    passage = next(d for d in result["documents"] if d["id"] == wrapped)["match"]["snippets"][0]["text"]
+    assert "캐시 전략을 바꿉니다" in passage
+    pattern = search.matcher(result["highlights"])
+    content = service.wiki_get({"id": spaced})["content"]
+    assert [hit.group(0) for hit in pattern.finditer(content)] == ["캐시  전략", "캐시 전략", "캐시\r\n\n전략"]
+    # The whole query as a phrase ranks first, written across lines or not.
+    assert found(service, "다음 분기에는 캐시 전략을", "word") == [wrapped]
+    # The document list's text finds a title as search compares it too.
+    titled = save(service, "주간\t보고  정리", "내용")["id"]
+    assert [d["id"] for d in service.wiki_list({"query": "주간 보고 정리"})] == [titled]
+
+
 def test_the_search_text_follows_every_change_and_fills_in_what_an_earlier_version_saved(service):
     doc = save(service, "메모", "첫 내용")
     with service.db.connect() as db:

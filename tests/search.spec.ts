@@ -204,6 +204,22 @@ test('keywords search every document, whatever the next question is about, once 
     await searchBox(page).press('Enter');
     await expect(results(page).locator('.result-card')).toHaveCount(1);
     await expect(results(page).locator('.result-card .tag.matched')).toHaveText('# 캐시 (cache)');
+
+    // A quoted phrase is found across the line break the document has within it, and marked there as one.
+    await page.evaluate(() =>
+      window.privateAgent!.request('wiki.save', {
+        title: '운영 메모',
+        content: '이번 분기의 배포\n일정을 정했습니다.',
+      }),
+    );
+    await searchBox(page).fill('"배포 일정"');
+    await searchBox(page).press('Enter');
+    const phrase = results(page).locator('.result-card');
+    await expect(phrase).toHaveCount(1);
+    await expect(phrase.locator('mark.search-hit')).toHaveText(['배포 일정']);
+    await phrase.locator('.document-open').click();
+    await expect(page.getByRole('group', { name: '검색어 위치 이동' })).toContainText('1곳');
+    await expect(page.locator('.document-content mark.search-hit')).toHaveText(['배포 일정']);
     expect(errors).toEqual([]);
   } finally {
     await app?.close();

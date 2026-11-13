@@ -13,17 +13,31 @@ from . import migrations, storage
 # A backslash before an ASCII punctuation mark is a Markdown escape (CommonMark), which the screen does not show. The
 # text of an imported page has many: markdownify writes R\&D, API\_SPEC and C\+\+.
 MARKDOWN_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
+# White space other than spaces and line breaks: tabs, carriage returns, form feeds, Unicode's line and paragraph
+# separators. NFKC has made the no-break and ideographic spaces spaces already; these are rare, and looked for before
+# anything is replaced.
+OTHER_SPACE = re.compile(r"[^\S \n]")
 
 
 def search_text(value):
     """Text as search compares it (search.py), queries and documents alike: without Markdown escapes, with
-    compatibility forms (full-width letters, ①, ℃) and decomposed Hangul as their plain composed text (NFKC), and
-    case folded (Ärger, ΔT). Registered as an SQL function of every connection."""
+    compatibility forms (full-width letters, ①, ℃) and decomposed Hangul as their plain composed text (NFKC), case
+    folded (Ärger, ΔT), and every run of white space one space, so a phrase is found whatever line breaks or spaces the
+    document has between its words. Registered as an SQL function of every connection.
+
+    The white space is made one space as " ".join(value.split()) would, in passes over the text that replace what is
+    there: as fast on a page of text, and a fraction of the time and memory on a long document, whose words split()
+    would hold one by one."""
     if not isinstance(value, str):
         return value
     if "\\" in value:
         value = MARKDOWN_ESCAPE.sub(r"\1", value)
-    return unicodedata.normalize("NFKC", value).casefold()
+    value = unicodedata.normalize("NFKC", value).casefold().replace("\n", " ")
+    if OTHER_SPACE.search(value):
+        value = OTHER_SPACE.sub(" ", value)
+    while "  " in value:
+        value = value.replace("  ", " ")
+    return value.strip()
 
 
 def index_text(db, ids):

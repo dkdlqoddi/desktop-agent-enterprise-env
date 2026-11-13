@@ -153,9 +153,9 @@ class Filters:
 
     def holding(self, d):
         """The condition of `query`: the text within the title or summary as search compares text (search_text: case,
-        full width and decomposed Hangul do not count), within a keyword or an alias of one, or within where the
-        document came from, as typed (LIKE, which leaves the case of Latin letters out; the backslashes of a Windows
-        path stay what they are)."""
+        full width and decomposed Hangul do not count, a run of white space is one space), within a keyword or an alias
+        of one, or within where the document came from, as typed (LIKE, which leaves the case of Latin letters out; the
+        backslashes of a Windows path stay what they are)."""
         from .service import SOURCES, like
 
         folded, pattern = search_text(self.text), like(self.text)

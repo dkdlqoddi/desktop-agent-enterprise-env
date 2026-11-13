@@ -13,11 +13,12 @@ Prompt search, and the assistant's automatic search, run in three stages:
 Every result carries the passages where the search words occur, so the screen can highlight them.
 
 Words and documents are compared as db.search_text has them: an imported page's Markdown escapes (R\\&D) are not
-there, full-width letters, ① or decomposed Hangul are their plain text, and case does not count. Each document's
-title, summary and content are kept so in document_search, with a trigram index (document_fts) that finds the documents
-which may hold a word of three or more characters; shorter words are compared with LIKE over the kept text, as every
-word is where SQLite has no trigram index. The words are counted in what is found, so the index only decides which
-documents are read, never how they rank.
+there, full-width letters, ① or decomposed Hangul are their plain text, case does not count, and every run of white
+space is one space, so a "quoted phrase" is found across the line break or double space a document has within it.
+Each document's title, summary and content are kept so in document_search, with a trigram index (document_fts) that
+finds the documents which may hold a word of three or more characters; shorter words are compared with LIKE over the
+kept text, as every word is where SQLite has no trigram index. The words are counted in what is found, so the index
+only decides which documents are read, never how they rank.
 
 Extracted keywords are canonical lowercase English, and the analysis keeps other names of each beside it
 (keyword_aliases): its Korean form, abbreviations, other spellings. A search word or keyword that is an alias, or lies
@@ -163,8 +164,8 @@ def normalize(value):
 
 
 def fold(value):
-    """A query, word or text as search compares it (db.search_text), with runs of white space as one space."""
-    return " ".join(search_text(value).split()) if isinstance(value, str) else ""
+    """A query, word or text as search compares it (db.search_text); "" for what is not text."""
+    return search_text(value) if isinstance(value, str) else ""
 
 
 def words(sentence):
@@ -231,8 +232,12 @@ def canonical(value):
 
 
 def literal(term):
-    """A pattern of a term that a Markdown escape may come before each punctuation mark of (R\\&D for r&d)."""
-    return "".join(r"\\?" + re.escape(char) if char in PUNCTUATION else re.escape(char) for char in term)
+    """A pattern of a term that a Markdown escape may come before each punctuation mark of (R\\&D for r&d), with any
+    run of white space where the term has a space: search folds a document's line breaks and double spaces into the one
+    space of a phrase (db.search_text), and the passage shown is where they are."""
+    return "".join(
+        r"\\?" + re.escape(char) if char in PUNCTUATION else r"\s+" if char == " " else re.escape(char) for char in term
+    )
 
 
 def matcher(terms):
