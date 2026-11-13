@@ -1,12 +1,14 @@
 """Search pages in the markup of the sites the web records know, on one local origin, for test_web_capture.py: their
 ads (marked as each site marks them), products and results, a page whose ads only a label tells apart, a robot check,
-and a landing page an ad links to. The words and links are made up (example.test)."""
+ad cards whose parts open different things, and a landing page an ad links to (/redirect?to=... sends there). The words
+and links are made up (example.test, and .invalid for a host that does not resolve)."""
 
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 LANDING = "<!doctype html><title>도착 페이지</title><h1>광고주 페이지</h1>"
+CARD = "width:420px;padding:24px;margin:8px;border:1px solid #ccc"
 
 PAGES = {
     "/coupang": """<!doctype html><title>쿠팡 검색</title><ul id="product-list">
@@ -54,6 +56,28 @@ PAGES = {
     "/svg": """<!doctype html><title>다른 사이트</title>
       <div class="card"><div class="badge">광고</div><svg width="300" height="40">
         <a href="/landing?svg=1"><text x="4" y="24">그림 링크 광고 상품</text></a></svg></div>""",
+    # Ad cards whose parts open different things: a wish-list button, a link to a place on the same page, the ad's own
+    # link (in this tab, a new one, through a redirect, to a host that does not resolve, one a click counter points
+    # elsewhere as it is clicked, one whose page moves on by itself), one whose click the page keeps for itself, and a
+    # link outside the ads.
+    "/cards": f"""<!doctype html><title>카드</title>
+      <div class="card" id="plain" style="{CARD}"><span>광고</span>
+        <a class="title" href="/landing?ad=plain">일반 링크 광고 상품</a> <button class="wish">찜</button>
+        <a class="wish-link" href="#">찜하기 목록</a></div>
+      <div class="card" id="blank" style="{CARD}"><span>광고</span>
+        <a class="title" href="/landing?ad=blank" target="_blank">새 탭 광고 상품</a></div>
+      <div class="card" id="redirect" style="{CARD}"><span>광고</span>
+        <a class="title" href="/redirect?to=/landing%3Fad%3Dredirect">리다이렉트 광고 상품</a></div>
+      <div class="card" id="fail" style="{CARD}"><span>광고</span>
+        <a class="title" href="http://nowhere.invalid/ad">열리지 않는 광고 상품</a></div>
+      <div class="card" id="counted" style="{CARD}"><span>광고</span> <a class="title" href="/landing?ad=shown"
+        onclick="this.href = '/redirect?to=/landing%3Fad%3Dcounted'">집계하는 광고 상품</a></div>
+      <div class="card" id="hop" style="{CARD}"><span>광고</span>
+        <a class="title" href="/hop">스스로 넘어가는 광고 상품</a></div>
+      <div class="card" id="kept" style="{CARD}"><span>광고</span>
+        <a class="title" href="/landing?ad=kept" onclick="event.preventDefault()">페이지가 처리하는 광고 상품</a></div>
+      <p><a id="other" href="/home">다른 페이지로</a></p>""",
+    "/hop": "<!doctype html><title>잠시만</title><script>location.replace('/landing?ad=hop')</script>",
     "/landing": LANDING,
     "/home": "<!doctype html><title>홈</title><p>홈</p>",
 }
@@ -61,7 +85,13 @@ PAGES = {
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = PAGES.get(urlsplit(self.path).path)
+        parts = urlsplit(self.path)
+        if parts.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", parse_qs(parts.query).get("to", ["/home"])[0])
+            self.end_headers()
+            return
+        body = PAGES.get(parts.path)
         self.send_response(200 if body else 404)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()

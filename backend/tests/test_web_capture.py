@@ -372,6 +372,96 @@ def test_real_browser_a_click_on_an_svg_ad_link_keeps_its_address(service, site_
     assert clicked[0]["landing_title"] == "도착 페이지"
 
 
+def cards(web, site_server):
+    """The ad cards page, opened and recorded: its tab and the capture's ID."""
+    web.open(url=f"{site_server}/cards")
+    kept = web.capture_page()
+    assert kept["counts"]["ad"] == 7
+    return web.current, kept["capture_id"]
+
+
+def clicked_item(web, capture, title, done=lambda item: bool(item["landing_url"]), seconds=15):
+    """The item `title` of a capture once it is clicked and `done` holds for it (its landing page is recorded), or as
+    it is after `seconds` (None when it was never clicked)."""
+    deadline = time.monotonic() + seconds
+    while True:
+        found = [
+            item for item in web.records({"kind": "clicked", "capture_id": capture})["items"] if item["title"] == title
+        ]
+        if (found and done(found[0])) or time.monotonic() > deadline:
+            return found[0] if found else None
+        time.sleep(0.2)
+
+
+def test_real_browser_a_click_beside_an_ads_link_opens_nothing_and_records_nothing(service, site_server):
+    """A click on an ad's card that is not on its link (a wish-list button, an empty spot, a link to a place on the
+    same page) is no click on the ad: the page opened next, by the user or by the app, is no landing page."""
+    web = service.web
+    page, _ = cards(web, site_server)
+    web._call(page.click("#plain .wish"), 30)
+    web._call(page.click("#plain", position={"x": 4, "y": 4}), 30)
+    web._call(page.click("#plain .wish-link"), 30)
+    web._call(page.click("#other"), 30)
+    web._call(page.wait_for_url(f"{site_server}/home"), 30)
+    web.open(url=f"{site_server}/landing?ad=later")
+    time.sleep(1)
+    assert web.records({"kind": "clicked"})["total"] == 0
+    # The ad's own link is a click on it, and its page the landing page.
+    page, capture = cards(web, site_server)
+    web._call(page.click("#plain .title"), 30)
+    assert clicked_item(web, capture, "일반 링크 광고 상품")["landing_url"] == f"{site_server}/landing?ad=plain"
+
+
+def test_real_browser_the_landing_page_is_the_one_the_ads_link_opens(service, site_server):
+    """The landing page is where the ad's link leads: through the server's redirects, in a new tab when the link opens
+    one or the user asks for one (a middle click), to the address a click counter gave the link as it was clicked
+    (the link the page showed stays recorded), and on to the page the landing page moves to by itself."""
+    web = service.web
+    page, capture = cards(web, site_server)
+    web._call(page.click("#redirect .title"), 30)
+    landed = clicked_item(web, capture, "리다이렉트 광고 상품")
+    assert landed["landing_url"] == f"{site_server}/landing?ad=redirect"
+    page, capture = cards(web, site_server)
+    web._call(page.click("#blank .title"), 30)
+    assert clicked_item(web, capture, "새 탭 광고 상품")["landing_url"] == f"{site_server}/landing?ad=blank"
+    web._call(page.click("#redirect .title", button="middle"), 30)
+    landed = clicked_item(web, capture, "리다이렉트 광고 상품")
+    assert landed["landing_url"] == f"{site_server}/landing?ad=redirect" and page.url == f"{site_server}/cards"
+    web._call(page.click("#counted .title"), 30)
+    counted = clicked_item(web, capture, "집계하는 광고 상품")
+    assert counted["landing_url"] == f"{site_server}/landing?ad=counted"
+    assert counted["link_url"] == f"{site_server}/landing?ad=shown" and counted["landing_title"] == "도착 페이지"
+    page, capture = cards(web, site_server)
+    web._call(page.click("#hop .title"), 30)
+    hop = clicked_item(web, capture, "스스로 넘어가는 광고 상품", lambda item: item["landing_url"].endswith("ad=hop"))
+    assert hop["landing_url"] == f"{site_server}/landing?ad=hop"
+
+
+def test_real_browser_no_landing_page_but_the_one_the_click_opened(service, site_server, monkeypatch):
+    """A link whose page does not load leaves no landing page, and the page opened after it is none either; when the
+    page keeps the click for itself, neither a tab the app opens next nor a page the user opens next is one."""
+    monkeypatch.setattr(web_capture, "QUIET", 0)
+    web = service.web
+    page, capture = cards(web, site_server)
+    web._call(page.click("#fail .title"), 30)
+    failed = clicked_item(web, capture, "열리지 않는 광고 상품", lambda item: bool(item["clicked_at"]))
+    assert failed["link_url"] == "http://nowhere.invalid/ad"
+    time.sleep(2)
+    web.open(url=f"{site_server}/home")
+    time.sleep(1)
+    failed = clicked_item(web, capture, "열리지 않는 광고 상품", seconds=0)
+    assert (failed["landing_url"], failed["landing_title"]) == ("", "")
+    page, capture = cards(web, site_server)
+    web._call(page.click("#kept .title"), 30)
+    assert clicked_item(web, capture, "페이지가 처리하는 광고 상품", lambda item: bool(item["clicked_at"]))
+    web.capture("coupang", "이어폰", source="schedule", scheduled=True)  # A tab of the app's own.
+    web._call(page.click("#other"), 30)
+    web._call(page.wait_for_url(f"{site_server}/home"), 30)
+    time.sleep(1)
+    kept = clicked_item(web, capture, "페이지가 처리하는 광고 상품", seconds=0)
+    assert (kept["landing_url"], kept["landing_title"]) == ("", "")
+
+
 def test_a_click_report_from_a_frame_inside_the_page_is_not_the_users(tmp_path):
     service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
     web = service.web

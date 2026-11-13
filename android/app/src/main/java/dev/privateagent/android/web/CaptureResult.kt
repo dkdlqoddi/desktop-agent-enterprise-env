@@ -124,6 +124,8 @@ object ClickReportParser {
         }
         val token = root.text("token")
         if (!TOKEN.matches(token)) return null
+        // Not a click: the address a site's script gave the clicked link as the click went, after the click's report.
+        if (root.flag("follow")) return null
         val ref = root.wholeOrNull("ref")?.takeIf { it in 0..9_999 }?.toInt() ?: return null
         return ClickReport(token, ref, ItemKind.of(root.text("kind")), CaptureResultParser.webUrl(root.text("href")))
     }

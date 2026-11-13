@@ -19,6 +19,7 @@ its exports folder.
 
 import asyncio
 import base64
+import collections
 import concurrent.futures
 import contextlib
 import csv
@@ -30,6 +31,7 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -61,7 +63,13 @@ TASK_SECONDS = 150  # A capture or a page to open, the browser's start included.
 # Seconds the browser stays free after a web task before a scheduled capture may take it: the user's (or the chat's)
 # next task in a row goes first.
 QUIET = 10
-LANDING_SECONDS = 60  # How long after a click a navigation still counts as the clicked item's landing page.
+# A click's landing page: the navigation the click started begins (or its new tab opens) within START_SECONDS of it,
+# and its page loads within LANDING_SECONDS. A move the page makes by itself up to REDIRECT_SECONDS after it loaded is
+# followed. What the browser told of up to EARLY seconds before the click's report came may be the click's doing.
+START_SECONDS = 15
+LANDING_SECONDS = 60
+REDIRECT_SECONDS = 3
+EARLY = 1.0
 WINDOW = {"width": 1280, "height": 900}
 STOPPED = "웹 작업을 중지했습니다."
 BLOCKED = (
@@ -132,6 +140,11 @@ def link(value):
     return value if urlsplit(value).scheme in ("http", "https") else ""
 
 
+def same(address, other):
+    """Whether two addresses name one page: a place in it (#...) aside, which a request does not carry."""
+    return address.split("#")[0] == other.split("#")[0]
+
+
 DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -164,7 +177,13 @@ class WebCapture:
         # site key -> (page, address): the tab the last scheduled capture of that site read in, and the page it left.
         self.apart = {}
         self.tokens = {}  # A capture's token (in its page's marks) -> its ID, for the clicks of pages still open.
-        self.pending = None  # After a click: {"item", "at", "page"}, until its landing page has loaded.
+        self.pending = None  # The user's last click on a marked link, until its landing page settled (_clicked).
+        self.watched = weakref.WeakSet()  # The pages whose navigations are followed.
+        # The main-frame navigations of each page and the tabs opened in the last moments: the browser may tell of
+        # them before the report of the click that caused them comes.
+        self.recent = weakref.WeakKeyDictionary()
+        self.opened = collections.deque(maxlen=8)
+        self.claimed = weakref.WeakSet()  # The new tabs that were a click's landing page.
         self.busy = False
         self.freed = float("-inf")  # When the last web task ended (time.monotonic()).
         self.methods = {
@@ -296,6 +315,7 @@ class WebCapture:
         self.context = self.playwright = self.current = self.pending = None
         self.tabs.clear()
         self.apart.clear()
+        self.opened.clear()
         if playwright is not None:
             asyncio.ensure_future(playwright.stop())
 
@@ -328,56 +348,193 @@ class WebCapture:
             await page.bring_to_front()
         return page
 
+    # Clicks and their landing pages. click-watch.js reports a click of the user's on a link of an item a capture
+    # marked. The page that click opens is the item's landing page: the main-frame navigation to the link's address (or
+    # to the address the site's script gave the link as the click went, which a follow-up report tells), in this tab,
+    # another one or a new one, followed through its redirects and through a move the page makes by itself as it loads.
+    # Nothing else is: a page that did not load, going back, a page the user or the app opened afterwards, any page that
+    # merely came next. The pending click (self.pending) is {item, token, ref, at, page (where the click was), source
+    # (its address), starts (the link's addresses), elsewhere (meant to open a tab), tab (where its navigation runs,
+    # once seen), chain (that navigation's addresses), committed, loaded (when its page was recorded)}.
+
     def _watch(self, page):
+        if page in self.watched:
+            return
+        self.watched.add(page)
+        page.on("request", lambda request: self._requested(page, request))
+        page.on("requestfailed", lambda request: self._failed(page, request))
         page.on("framenavigated", lambda frame: self._navigated(page, frame))
+        # Its requests hold the page: they go with it.
+        page.on("close", lambda _page: self.recent.pop(page, None))
+
+    def _live(self):
+        """The pending click, or None once its time is over: its navigation never came, or its page settled."""
+        pending, at = self.pending, time.monotonic()
+        if pending is None:
+            return None
+        loaded = pending["loaded"]
+        if (loaded is None and at - pending["at"] > LANDING_SECONDS) or (
+            loaded is not None and at - loaded > REDIRECT_SECONDS
+        ):
+            self.pending = None
+            return None
+        return pending
 
     def _opened(self, page):
-        """A page the site opened in a new tab or window: the landing page of an ad clicked to open there."""
+        """A page opened in a new tab or window: the landing page of a click meant to open there, or one that opened
+        the link's own address. The app's own new tabs open blank and are not; neither is a tab that failed to load."""
         self._watch(page)
-        pending = self.pending
-        if pending and time.monotonic() - pending["at"] < LANDING_SECONDS:
-            pending["page"] = page
+        at = time.monotonic()
+        self.opened.append((at, page))
+        self._new_tab(page, at)
+
+    def _new_tab(self, page, at):
+        pending = self._live()
+        # A tab that opened for an earlier click is that click's, not a new tab of this one.
+        if pending is None or pending["tab"] is not None or page is pending["page"] or page in self.claimed:
+            return
+        if not pending["at"] - EARLY <= at <= pending["at"] + START_SECONDS:
+            return
+        url = link(page.url)
+        if url and (pending["elsewhere"] or any(same(url, start) for start in pending["starts"])):
+            self.claimed.add(page)
+            pending.update(tab=page, chain=[page.url], committed=True)
             asyncio.ensure_future(self._landing(page, pending))
 
-    def _navigated(self, page, frame):
-        pending = self.pending
-        if frame != page.main_frame or not pending or pending["page"] is not page or pending.get("started"):
+    def _requested(self, page, request):
+        try:
+            if not request.is_navigation_request() or request.frame != page.main_frame:
+                return
+        except Exception:  # A request of a frame that is gone.
             return
-        if time.monotonic() - pending["at"] < LANDING_SECONDS:
-            pending["started"] = True
+        at = time.monotonic()
+        self.recent.setdefault(page, collections.deque(maxlen=12)).append((at, request))
+        self._step(page, request, at)
+
+    def _step(self, page, request, at):
+        """A main-frame navigation of `page` began at `at`: the pending click's own (its link's address), the next step
+        of its chain, or another page in its place."""
+        pending = self._live()
+        if pending is None:
+            return
+        if pending["tab"] is None:
+            in_time = pending["at"] - EARLY <= at <= pending["at"] + START_SECONDS
+            if in_time and any(same(request.url, start) for start in pending["starts"]):
+                pending.update(tab=page, chain=[request.url])
+            return
+        if pending["tab"] is not page:
+            return
+        before = request.redirected_from
+        if before is not None and same(before.url, pending["chain"][-1]):
+            pending["chain"].append(request.url)  # The server sent it on.
+        elif (
+            pending["committed"]
+            and not same(request.url, pending["source"])
+            and (pending["loaded"] is None or at - pending["loaded"] <= REDIRECT_SECONDS)
+        ):
+            # The landing page moved on by itself (a script or a meta refresh): the page it moves to is the one.
+            pending["chain"].append(request.url)
+            pending.update(committed=False, loaded=None)
+        else:
+            # Another page took its place before it opened, the user went back, or went on from it: what was recorded
+            # stays, and nothing after it is the landing page.
+            self.pending = None
+
+    def _failed(self, page, request):
+        pending = self.pending
+        if pending is None or pending["tab"] is not page or not pending["chain"]:
+            return
+        with contextlib.suppress(Exception):
+            if request.is_navigation_request() and same(request.url, pending["chain"][-1]):
+                self.pending = None  # The page did not open (no connection, a download, a stop): no landing page.
+
+    def _navigated(self, page, frame):
+        pending = self._live()
+        if pending is None or frame != page.main_frame or pending["tab"] is not page:
+            return
+        if any(same(frame.url, step) for step in pending["chain"]):
+            pending["committed"] = True
             asyncio.ensure_future(self._landing(page, pending))
 
     async def _landing(self, page, pending):
+        """Record the page of the click's navigation once it has loaded: only a page its chain led to (an error page,
+        or the page before it while it is still on its way, is not)."""
         with contextlib.suppress(Exception):
             await page.wait_for_load_state("load", timeout=30_000)
         if self.pending is not pending or page.is_closed():
             return
-        self.pending = None
+        url = link(page.url)
+        if not url or not any(same(url, step) for step in pending["chain"]):
+            return
         try:
             title = clip(await page.title(), 300)
         except Exception:
             title = ""
-        url = link(page.url)
+        if self.pending is not pending:
+            return
+        pending.update(committed=True, loaded=time.monotonic())
         await asyncio.to_thread(self._save_landing, pending["item"], url, title)
 
     def _save_landing(self, item, url, title):
         with self.service.db.connect() as conn:
             conn.execute("UPDATE web_items SET landing_url=?, landing_title=? WHERE id=?", (url, title, item))
 
+    def _leave(self, page):
+        """The app is about to open another page in `page`: a click's navigation there ends, unrecorded if its page has
+        not loaded yet, as the app's page takes its place. One running in another tab goes on."""
+        pending = self.pending
+        if pending is not None and (pending["tab"] is page or (pending["tab"] is None and pending["page"] is page)):
+            self.pending = None
+
+    def _catch_up(self, pending):
+        """What the browser did in the moment before a report came (its messages may come in either order): the
+        navigations and new tabs since just before the click, taken as if they came after it."""
+        events = [(at, page, request) for page, recent in list(self.recent.items()) for at, request in recent]
+        events += [(at, page, None) for at, page in self.opened]
+        for at, page, request in sorted(events, key=lambda event: event[0]):
+            if at < pending["at"] - EARLY or self.pending is not pending:
+                continue
+            if request is None:
+                self._new_tab(page, at)
+            else:
+                self._step(page, request, at)
+        tab = pending["tab"]
+        if tab is not None and self.pending is pending:
+            # Its page may have opened already, before the report came.
+            if any(same(tab.url, step) for step in pending["chain"]):
+                pending["committed"] = True
+            asyncio.ensure_future(self._landing(tab, pending))
+
     def _clicked(self, source, message):
-        """click-watch.js reports a click of the user's on an item it marked: {token, ref, kind, href, at}. Only the
-        page's own document carries the marks, so a report from a frame inside it (an ad's iframe) is not one."""
+        """click-watch.js reports a click of the user's on a link of an item it marked: {token, ref, kind, href, tab,
+        at}, and with `follow` the address the site's script gave the link as the click went. Only the page's own
+        document carries the marks, so a report from a frame inside it (an ad's iframe) is not one."""
         frame = source.get("frame") if isinstance(source, dict) else None
         if frame is not None and frame.parent_frame is not None:
             return
         try:
             report = json.loads(message) if isinstance(message, str) else {}
-            capture, ref = self.tokens.get(str(report.get("token", ""))), int(report.get("ref"))
-        except (TypeError, ValueError):
+            token = str(report.get("token", ""))
+            capture, ref = self.tokens.get(token), int(report.get("ref"))
+        except (TypeError, ValueError, AttributeError):
             return
         if capture is None:
             return
         href = link(report.get("href"))
+        if report.get("follow"):
+            # Not a click of its own: the address the clicked link's page opens. It counts for that click alone, as
+            # long as the click's navigation has not been seen.
+            pending = self._live()
+            if (
+                href
+                and pending is not None
+                and (pending["token"], pending["ref"]) == (token, ref)
+                and pending["tab"] is None
+                and time.monotonic() - pending["at"] <= START_SECONDS
+            ):
+                pending["starts"].append(href)
+                self._catch_up(pending)
+            return
         with self.service.db.connect() as conn:
             row = conn.execute("SELECT id FROM web_items WHERE capture_id=? AND ref=?", (capture, ref)).fetchone()
             if row is None:
@@ -389,7 +546,25 @@ class WebCapture:
                 "link_url=CASE WHEN link_url='' THEN ? ELSE link_url END WHERE id=?",
                 (now(), href, row[0]),
             )
-        self.pending = {"item": row[0], "at": time.monotonic(), "page": source.get("page")}
+        page = source.get("page") if isinstance(source, dict) else None
+        self.pending = None
+        if not href:
+            return  # A link to another app or a mail address: no page of its own to record.
+        self.pending = {
+            "item": row[0],
+            "token": token,
+            "ref": ref,
+            "at": time.monotonic(),
+            "page": page,
+            "source": page.url if page is not None else "",
+            "starts": [href],
+            "elsewhere": bool(report.get("tab")),
+            "tab": None,
+            "chain": [],
+            "committed": False,
+            "loaded": None,
+        }
+        self._catch_up(self.pending)
 
     # Web tasks.
 
@@ -431,6 +606,7 @@ class WebCapture:
     async def _search(self, site, query, apart=False):
         page = await (self._apart(site) if apart else self._tab(site))
         url = self.sites[site]["search"].replace("{query}", quote(query, safe=""))
+        self._leave(page)
         await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_MS)
         read = await self._read(page, site)
         if apart:
@@ -439,6 +615,7 @@ class WebCapture:
 
     async def _visit(self, site, url):
         page = await self._tab(site or "other")
+        self._leave(page)
         await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_MS)
         return page.url
 
@@ -487,6 +664,7 @@ class WebCapture:
             self.context = self.playwright = self.current = self.pending = None
             self.tabs.clear()
             self.apart.clear()
+            self.opened.clear()
             if context is not None:
                 with contextlib.suppress(Exception):
                     await context.close()

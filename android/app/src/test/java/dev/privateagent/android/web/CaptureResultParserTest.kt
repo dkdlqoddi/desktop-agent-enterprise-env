@@ -106,5 +106,7 @@ class CaptureResultParserTest {
         // An SVG link's href is an object in the page; JSON.stringify makes it {}.
         assertEquals("", ClickReportParser.parse(good().put("href", JSONObject()).toString())!!.href)
         assertNull(ClickReportParser.parse(good().put("kind", "banner").toString())!!.kind)
+        // A follow-up of a click (the address the site's script gave the link) is no click of its own.
+        assertNull(ClickReportParser.parse(good().put("follow", true).toString()))
     }
 }
