@@ -845,6 +845,13 @@ def test_an_answer_whose_stream_stopped_before_it_was_whole_keeps_its_text_with_
     service.llm.responses = [llm.reply('{"citations": [1], "ans', cut="time")]
     with pytest.raises(UserError, match="제한 시간을 초과"):
         call(service, "assistant.ask", question="다시?", document_ids=[doc["id"]])
+    # A stream the server closed before its end says so in its own words.
+    service.llm.responses = [llm.reply('{"answer": "캐시를 도입했', cut="ended")]
+    result = call(service, "assistant.ask", question="결정은?", document_ids=[doc["id"]], stream=True)
+    assert result["truncated"] and result["messages"][-1]["content"] == f"캐시를 도입했\n\n{llm.CUT_NOTES['ended']}"
+    service.llm.responses = [llm.reply('{"citations": [], "ans', cut="ended")]
+    with pytest.raises(UserError, match="끝맺지 않은 채"):
+        call(service, "assistant.ask", question="다시?", document_ids=[doc["id"]])
 
 
 def test_the_context_window_scales_the_evidence_and_the_history(service):

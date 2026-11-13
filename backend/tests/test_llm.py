@@ -1091,3 +1091,47 @@ def test_an_answer_that_came_whole_before_the_time_ran_out_is_not_cut(monkeypatc
     answer(monkeypatch, response)
     reply = general().complete(HELLO, stream=lambda text: None)
     assert reply == "다 왔습니다" and reply.cut is None
+
+
+def anthropic_text(text):
+    return {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}
+
+
+def test_a_stream_closed_before_its_end_is_a_cut_answer(monkeypatch):
+    def streamed(response, api_format="openai"):
+        answer(monkeypatch, response)
+        return general(api_format=api_format).complete(HELLO, stream=lambda text: None)
+
+    # The end each protocol marks an answer with: OpenAI's data: [DONE] or a finish_reason, Anthropic's message_stop or
+    # a stop_reason. Either one makes it whole.
+    assert streamed(events(openai_delta("다 왔습니다"), "[DONE]")).cut is None
+    assert streamed(events(openai_delta("다 왔습니다", finish="stop"))).cut is None
+    assert streamed(events(anthropic_text("다 왔습니다"), {"type": "message_stop"}), "anthropic").cut is None
+    stop_reason = {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
+    assert streamed(events(anthropic_text("다 왔습니다"), stop_reason), "anthropic").cut is None
+    # Without it, the answer may have broken off anywhere: what came is kept, marked as cut, and not asked for again.
+    calls = answer(monkeypatch, events(openai_delta("앞부분"), openai_delta("만")))
+    reply = general().complete(HELLO, stream=lambda text: None)
+    assert reply == "앞부분만" and reply.cut == "ended" and not reply.truncated and len(calls) == 1
+    assert module.shown(reply) == f"앞부분만\n\n{module.CUT_NOTES['ended']}"
+    cut = streamed(events(anthropic_text("앞부분"), {"type": "content_block_stop", "index": 0}), "anthropic")
+    assert cut == "앞부분" and cut.cut == "ended"
+    # Closed before any of the answer came, it is told so.
+    with pytest.raises(LLMRequestError, match="끝맺지 않은 채") as error:
+        streamed(events({"choices": []}))
+    assert error.value.transient
+
+
+def test_a_server_that_closes_its_stream_early_gives_a_cut_answer(monkeypatch):
+    def respond(handler, body):
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.send_header("Transfer-Encoding", "chunked")
+        handler.end_headers()
+        data = b"data: " + json.dumps(openai_delta("앞부분")).encode() + b"\n\n"
+        # The last chunk ends the response as it should, though the answer had not.
+        handler.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(data), data))
+
+    with local_llm(monkeypatch, respond) as (server, url):
+        reply = general(base_url=url).complete(HELLO, stream=lambda text: None)
+    assert reply == "앞부분" and reply.cut == "ended" and len(server.requests) == 1

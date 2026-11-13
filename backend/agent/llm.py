@@ -227,15 +227,20 @@ TRUNCATED_THINKING = (
 )
 TIMED_OUT = "LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요."
 # A streamed answer that stopped coming before it was whole (Reply.cut), by why: the response time limit, which bounds
-# the whole answer as it does one that is not streamed, ended its read ("time"). What came of it is kept with the note
-# after it (assistant.py); a JSON answer of which nothing usable came is the error.
+# the whole answer as it does one that is not streamed, ended its read ("time"), or the server closed the stream
+# without the end its protocol marks ("ended"). What came of it is kept with the note after it (assistant.py); a JSON
+# answer of which nothing usable came is the error.
 CUT_NOTES = {
     "time": (
         "(답변이 LLM 응답 제한 시간 안에 끝나지 않아 여기까지 받았습니다. 관리 → LLM 연결에서 응답 제한 시간을 "
         "늘리거나 다시 질문해 주세요.)"
     ),
+    "ended": "(LLM 서버가 답변을 끝맺지 않은 채 응답을 닫아 여기까지 받았습니다. 다시 질문해 주세요.)",
 }
-CUT_ERRORS = {"time": TIMED_OUT}
+CUT_ERRORS = {
+    "time": TIMED_OUT,
+    "ended": "LLM 서버가 답변을 끝맺지 않은 채 응답을 닫았습니다. 다시 질문해 주세요.",
+}
 RETRY_TOKENS = 16_000  # The cap a JSON answer cut short is asked again with when its request named none...
 MAX_RETRY_TOKENS = 64_000  # ...and otherwise twice the cap it named, up to this.
 
@@ -583,7 +588,9 @@ def read_stream(response, api_format, on_text, cancel, ends):
     server that answered at once despite the stream (JSON) is read as a whole answer. The stream is read apart, so that
     a cancel (`cancel`) never waits for the server: Cancelled is raised with the text so far. The answer has until
     `ends` (a time.monotonic() value), the end of its request's time limit, to come whole: one still coming then is
-    what had come of it, cut for "time" (CUT_NOTES), or a time-out when nothing had."""
+    what had come of it, cut for "time" (CUT_NOTES), or a time-out when nothing had. One the server closed without
+    the end its protocol marks it with (OpenAI's data: [DONE] or a finish_reason, Anthropic's message_stop or a
+    stop_reason) is cut too, for "ended": it may have broken off anywhere."""
     if "text/event-stream" not in (response.headers.get("Content-Type") or "").lower():
         try:
             data = response.json()
@@ -592,24 +599,26 @@ def read_stream(response, api_format, on_text, cancel, ends):
         text, finish = reply_text(api_format, data)
         on_text(text)
         return text, finish, None
-    text, finish, cut = "", None, None
+    text, finish, cut, ended = "", None, None, False
     lines = sse_data(response.iter_content(chunk_size=None))
     try:
         for data in apart(lines, cancel, ends):
             if cancel is not None and cancel.is_set():
                 raise Cancelled(text)
             if data == "[DONE]":
+                ended = True
                 break
             try:
                 event = json.loads(data)
             except ValueError:
                 continue  # A keep-alive or comment a gateway writes its own way.
-            piece, ended = stream_part(api_format, event)
-            finish = ended or finish
+            piece, reason = stream_part(api_format, event)
+            finish = reason or finish
             if piece:
                 text += piece
                 on_text(text)
             if isinstance(event, dict) and event.get("type") == "message_stop":
+                ended = True
                 break
     except Cancelled:
         raise Cancelled(text) from None
@@ -636,6 +645,8 @@ def read_stream(response, api_format, on_text, cancel, ends):
         raise Cancelled(text)
     if finish == "refusal" or (finish == "content_filter" and not text.strip()):
         raise UserError(REFUSED)
+    if cut is None and not ended and finish is None:
+        cut = "ended"
     return text, finish, cut
 
 
