@@ -45,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,7 +86,8 @@ fun BrowserScreen(graph: AppGraph, visible: Boolean) {
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    var address by remember { mutableStateOf("") }
+    // Saved with the screen: a screen made anew with the address bar in focus shows what was typed there.
+    var address by rememberSaveable { mutableStateOf("") }
     var editing by remember { mutableStateOf(false) }
     LaunchedEffect(page.url, editing) { if (!editing) address = page.url }
     BackHandler(enabled = visible && page.canGoBack) { browser.back() }

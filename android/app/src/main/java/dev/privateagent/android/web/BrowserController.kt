@@ -3,6 +3,8 @@ package dev.privateagent.android.web
 import android.app.Activity
 import android.graphics.Bitmap
 import android.net.http.SslError
+import android.os.Bundle
+import android.os.Parcel
 import android.os.SystemClock
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
@@ -144,13 +146,52 @@ class BrowserController(
 
     private var pendingLanding: PendingLanding? = null
 
+    /**
+     * Makes the browser's WebView for [activity]. [saved] is what [saveState] kept for the screen the system ended (its
+     * process, in the background): its page and history open again.
+     */
     @MainThread
-    fun attach(activity: Activity) {
+    fun attach(activity: Activity, saved: Bundle? = null) {
         if (host === activity && webViewState.value != null) return
         webViewState.value?.let(::destroy)
         host = activity
-        webViewState.value = create(activity)
+        val view = create(activity)
+        webViewState.value = view
         pageState.value = PageState()
+        saved?.let { restore(view, it) }
+    }
+
+    /**
+     * The page and the browser's history, for the screen's saved state. The screen handles a change of font size,
+     * language or theme in place, so this is for a screen made anew: after the system ended the app in the background.
+     * A history too large for the saved state keeps the page alone.
+     */
+    @MainThread
+    fun saveState(out: Bundle) {
+        val view = webViewState.value ?: return
+        val history = Bundle()
+        if (view.saveState(history) != null && parcelSize(history) <= MAX_SAVED_HISTORY) {
+            out.putBundle(KEY_HISTORY, history)
+        }
+        view.url?.let { out.putString(KEY_URL, it) }
+    }
+
+    private fun restore(view: WebView, saved: Bundle) {
+        val history = saved.getBundle(KEY_HISTORY)
+        if (history != null && view.restoreState(history) != null) return
+        // Only an https page opens again, as any address the app opens; anything else stays closed, without a notice.
+        val check = saved.getString(KEY_URL)?.let(BrowserUrls::normalize)
+        if (check is BrowserUrls.Check.Ok) view.loadUrl(check.url)
+    }
+
+    private fun parcelSize(bundle: Bundle): Int {
+        val parcel = Parcel.obtain()
+        return try {
+            bundle.writeToParcel(parcel, 0)
+            parcel.dataSize()
+        } finally {
+            parcel.recycle()
+        }
     }
 
     @MainThread
@@ -562,5 +603,14 @@ class BrowserController(
         private const val CAPTURE_TIMEOUT_MS = 20_000L
         private const val LANDING_WINDOW_MS = 30_000L
         private const val REDIRECT_WINDOW_MS = 3_000L
+
+        private const val KEY_HISTORY = "browser.history"
+        private const val KEY_URL = "browser.url"
+
+        /**
+         * The largest history kept in the saved state, in bytes. All of a screen's saved state crosses to the system
+         * in one transaction of at most 1 MB, and a larger one ends the app.
+         */
+        private const val MAX_SAVED_HISTORY = 200_000
     }
 }

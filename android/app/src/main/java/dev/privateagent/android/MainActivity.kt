@@ -7,21 +7,35 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import dev.privateagent.android.schedule.Notifications
 import dev.privateagent.android.ui.AppRoot
+import dev.privateagent.android.ui.Tab
 import dev.privateagent.android.ui.theme.PrivateAgentTheme
 
+/**
+ * The app's one screen. It handles configuration changes in place (the manifest's configChanges), so the browser's
+ * page stays as it is; what it saves is for a screen made anew after the system ended the app in the background: the
+ * tab in front and the browser's page and history.
+ */
 class MainActivity : ComponentActivity() {
     private val graph get() = (application as PrivateAgentApp).graph
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        graph.browser.attach(this)
+        graph.browser.attach(this, savedInstanceState?.getBundle(KEY_BROWSER))
+        savedInstanceState?.getString(KEY_TAB)?.let { name -> Tab.entries.firstOrNull { it.name == name } }
+            ?.let(graph.navigator::show)
         setContent {
             PrivateAgentTheme {
                 AppRoot(graph)
             }
         }
         if (savedInstanceState == null) handle(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_TAB, graph.navigator.tab.value.name)
+        outState.putBundle(KEY_BROWSER, Bundle().also(graph.browser::saveState))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -52,5 +66,10 @@ class MainActivity : ComponentActivity() {
         intent.action = null
         if (id <= 0 || key == null || key != graph.settings.launchSecret) return
         graph.agent.runSchedule(id)
+    }
+
+    private companion object {
+        const val KEY_TAB = "tab"
+        const val KEY_BROWSER = "browser"
     }
 }
