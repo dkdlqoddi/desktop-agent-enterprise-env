@@ -17,7 +17,7 @@ import json
 import re
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 
-from .llm import LLMFormatError, LLMTruncatedError, UserError
+from .llm import LLMFormatError, LLMTruncatedError, OutOfTime, UserError, out_of_time
 
 MIN_CHARS = 12_000  # Longer documents get a tree index instead of one full-text request.
 MAX_SECTIONS = 40  # Beyond this many sections the deepest heading level is folded into its parents.
@@ -270,9 +270,11 @@ def summarize(llm, title, content, nodes):
     again once, in halves, and the sections of a half that fails again keep the beginning of their text, as those of an
     answer in the wrong form do. When not one of two or more batches of the first round succeeded, the LLM is not
     answering, so only answers cut short are asked again. A failure no retry mends (a rejected key, a missing setting)
-    is raised at once, and so is the error when no section got its AI summary. Returns {"batches": the requests of the
-    first round, "failed": the ids of the sections left without an AI summary in document order, "labels": their ids
-    and titles, "error": why}."""
+    is raised at once, and so is the error when no section got its AI summary. A batch the deadline of the context
+    (llm.deadline) leaves no time for is neither sent nor asked again: its sections keep the beginning of their text
+    too. Returns {"batches": the requests of the first round, "failed": the ids of the sections left without an AI
+    summary in document order, "labels": their ids and titles, "error": why, "late": whether the deadline cost them
+    their summaries}."""
     work = []
     for index, node in enumerate(nodes):
         text = own_text(content, nodes, index).strip()
@@ -294,6 +296,8 @@ def summarize(llm, title, content, nodes):
     def run(batch):
         """None once the sections of `batch` have their summaries, or the error of a request that may succeed when
         asked again; any other error is raised."""
+        if out_of_time():
+            return OutOfTime()  # Not sent: no answer could come in the time left.
         payload = {
             "document_title": title,
             "sections": [{"id": node["id"], "title": node["title"], "text": text} for node, text in batch],
@@ -339,14 +343,18 @@ def summarize(llm, title, content, nodes):
     answered = len(first) < len(batches) or len(batches) == 1
 
     def retried(error):
-        return answered or isinstance(error, LLMTruncatedError)
+        # A batch the time ran out for would meet even less of it.
+        return not isinstance(error, OutOfTime) and (answered or isinstance(error, LLMTruncatedError))
 
     again = [half for batch, error in first if retried(error) for half in halves(batch)]
     lost = [(batch, error) for batch, error in first if not retried(error)]
     lost += [(batch, error) for batch, error in requests(again) if error is not None]
     failed = sorted((item for batch, _ in lost for item in batch), key=lambda item: item[0]["start"])
     if failed and len(failed) == len(work):
-        raise lost[-1][1]  # Not one summary: the LLM is not answering, and the analysis fails with why.
+        # Not one summary: the LLM is not answering, and the analysis fails with why, as a request that was sent
+        # ended rather than that the others had no time left.
+        sent = [error for _, error in lost if not isinstance(error, OutOfTime)]
+        raise (sent or [lost[-1][1]])[-1]
     for node, text in failed:
         node["summary"] = lead(text)
     return {
@@ -354,18 +362,26 @@ def summarize(llm, title, content, nodes):
         "failed": [node["id"] for node, _ in failed],
         "labels": [f"{node['id']} {node['title']}" for node, _ in failed],
         "error": str(lost[-1][1]) if lost else "",
+        # Batches not sent for want of time, or cut off as it ran out.
+        "late": bool(lost) and (out_of_time() or any(isinstance(error, OutOfTime) for _, error in lost)),
     }
 
 
 def failure_note(result):
     """What an analysis whose section summaries partly failed (summarize) says of them in the document's error, for the
-    document window: how many sections, which, and why; '' when every section has its AI summary."""
+    document window: how many sections, which, and why; '' when every section has its AI summary. Those the deadline
+    left without one are summarized by an analysis that has no time limit, which the document list starts."""
     labels = result["labels"]
     if not labels:
         return ""
     named = ", ".join(labels[:FAILED_SHOWN])
     if len(labels) > FAILED_SHOWN:
         named += f" 외 {len(labels) - FAILED_SHOWN}개"
+    if result["late"]:
+        return (
+            f"섹션 {len(labels)}개({named})는 제한 시간 안에 요약하지 못해 본문 앞부분으로 요약을 대신했습니다. "
+            "문서 목록에서 이 문서를 골라 AI 분석을 실행하면 시간 제한 없이 모든 섹션을 요약합니다."
+        )
     return (
         f"섹션 {len(labels)}개({named})는 LLM 요약에 실패해 본문 앞부분으로 요약을 대신했습니다: {result['error']} "
         "다시 분석하면 이 섹션들도 다시 요약합니다."

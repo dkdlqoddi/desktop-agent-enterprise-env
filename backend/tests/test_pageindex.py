@@ -1,11 +1,14 @@
+import json
 from itertools import pairwise
 
 import pytest
+import requests
 
-from agent import pageindex
+from agent import llm as llm_module, pageindex
 from agent.db import Database
-from agent.llm import LLMRequestError, LLMTruncatedError, UserError
+from agent.llm import LLM, LLMRequestError, LLMTruncatedError, OutOfTime, UserError, deadline
 from agent.service import Service
+from test_llm import Clock, Response
 from test_search import RoutingLLM, long_document, paragraphs
 
 BUSY = "LLM API가 HTTP 503를 반환했습니다. 서버가 바쁘거나 일시적인 오류일 수 있으니 잠시 후 다시 시도해 주세요."
@@ -169,7 +172,13 @@ def test_summaries_are_packed_into_few_bounded_requests():
     content = alternating()
     nodes = pageindex.build(content)
     llm = RoutingLLM()
-    assert pageindex.summarize(llm, "문서", content, nodes) == {"batches": 4, "failed": [], "labels": [], "error": ""}
+    assert pageindex.summarize(llm, "문서", content, nodes) == {
+        "batches": 4,
+        "failed": [],
+        "labels": [],
+        "error": "",
+        "late": False,
+    }
     for _, payload, _ in llm.calls:
         sections = payload["sections"]
         assert sum(len(s["text"]) for s in sections) <= pageindex.BATCH_CHARS
@@ -311,3 +320,249 @@ def test_stored_tree_is_ignored_after_content_changes_elsewhere(service):
         nodes = pageindex.tree(db, row)
     assert nodes and all(n["end"] <= 13000 for n in nodes)
     assert not any(n["summary"].startswith("요약 ") for n in nodes)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """The time agent.llm reads, which the requests of a test's LLM move on. The summary requests go one at a time, so
+    a test knows the time at which each is sent."""
+    clock = Clock()
+    monkeypatch.setattr(llm_module, "time", clock)
+    monkeypatch.setattr(pageindex, "CONCURRENCY", 1)
+    return clock
+
+
+def taking(llm, clock, seconds, answer=None):
+    """Summary requests that take `seconds` each and are answered by `answer` (the LLM's own by default)."""
+    answer = answer or llm.summarize
+
+    def summarize(payload):
+        clock.now += seconds
+        return answer(payload)
+
+    llm.summarize = summarize
+
+
+def test_summary_batches_the_deadline_leaves_no_time_for_are_not_sent(clock):
+    content, llm = alternating(), RoutingLLM()
+    nodes = pageindex.build(content)
+    taking(llm, clock, 10)
+    with deadline(15):
+        result = pageindex.summarize(llm, "문서", content, nodes)
+    # The second request went with five seconds left; for the others there was no time.
+    assert asked(llm) == [("1", "3"), ("5", "7")]
+    assert result["late"] and result["failed"] == ["2", "4", "6", "8", "9", "10", "11", "12", "13", "14"]
+    assert all(n["summary"] == f"요약 {n['id']}" for n in nodes if n["id"] in ("1", "3", "5", "7"))
+    assert all(n["summary"] and not n["summary"].startswith("요약 ") for n in nodes if n["id"] in result["failed"])
+    note = pageindex.failure_note(result)
+    assert note.startswith("섹션 10개(2 짧은 0, 4 짧은 1, 6 짧은 2, 8 짧은 3, 9 긴 4 외 5개)는 제한 시간 안에")
+    assert "문서 목록에서 이 문서를 골라 AI 분석을 실행하면 시간 제한 없이" in note
+
+
+def test_a_retry_in_halves_is_not_started_without_the_time_for_it(clock):
+    content, llm = alternating(), RoutingLLM()
+    nodes = pageindex.build(content)
+    answer = llm.summarize
+
+    def busy_first(payload):
+        if [s["id"] for s in payload["sections"]] == ["1", "3"]:
+            raise LLMRequestError(BUSY, 503, transient=True)
+        return answer(payload)
+
+    taking(llm, clock, 10, busy_first)
+    with deadline(35):
+        result = pageindex.summarize(llm, "문서", content, nodes)
+    # Every batch of the first round went, the last with five seconds left; the halves of the one that failed found no
+    # time left, where they would have been asked (test_a_summary_batch_that_fails_is_asked_again_in_halves).
+    assert len(asked(llm)) == 4 and result["failed"] == ["1", "3"] and result["late"]
+
+
+def test_when_no_summary_came_in_time_the_error_of_a_request_sent_is_told(clock):
+    content, llm = alternating(), RoutingLLM()
+    nodes = pageindex.build(content)
+
+    def timed_out(payload):
+        raise LLMRequestError("LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요.", transient=True)
+
+    taking(llm, clock, 10, timed_out)
+    with deadline(5), pytest.raises(LLMRequestError, match="응답 제한 시간을 초과") as error:
+        pageindex.summarize(llm, "문서", content, nodes)
+    # Not that time ran out for the three requests never sent.
+    assert not isinstance(error.value, OutOfTime) and len(asked(llm)) == 1
+
+
+def scripted(monkeypatch, clock, seconds):
+    """The LLM server, answering each request in `seconds(system)` of the test's clock: a summary request with a
+    summary of each section, the request for the document's metadata with them. A request that would take longer than
+    the time it was given times out at its end, as a read of the server's answer does. Returns the requests, as
+    (system prompt, seconds given, time sent)."""
+    sent = []
+
+    def post(session, url, **kwargs):
+        system, content = (message["content"] for message in kwargs["json"]["messages"])
+        given = kwargs["timeout"][1]
+        sent.append((system, given, clock.now))
+        took = seconds(system)
+        if took > given:
+            clock.now += given
+            raise requests.exceptions.ReadTimeout()
+        clock.now += took
+        if system == pageindex.SUMMARIZE:
+            sections = json.loads(content)["sections"]
+            reply = {"summaries": [{"id": s["id"], "summary": f"요약 {s['id']}"} for s in sections]}
+        else:
+            reply = {"summary": "설계 요약", "keywords": ["design"], "relations": []}
+        return Response(body={"choices": [{"message": {"content": json.dumps(reply, ensure_ascii=False)}}]})
+
+    monkeypatch.setattr("agent.llm.requests.Session.post", post)
+    return sent
+
+
+@pytest.fixture
+def timed(tmp_path, clock):
+    """A Wiki with a long document of twelve long sections, summarized two to a request in six requests, whose LLM has
+    the settings' default time limit of 300 seconds."""
+    llm = LLM()
+    llm.update(
+        {
+            "provider": "general",
+            "api_format": "openai",
+            "base_url": "https://llm.example/v1/chat/completions",
+            "api_key": "sk-test",
+            "model_name": "test-model",
+            "headers": [],
+            "timeout": 300,
+            "max_tokens": 0,
+        }
+    )
+    service = Service(Database(tmp_path / "wiki.db"), llm)
+    content = "".join(f"## 장 {i}\n\n{'가' * 5900}\n\n" for i in range(12)).strip()
+    return service, service.wiki_save({"title": "설계서", "content": content})
+
+
+def test_an_analysis_its_caller_waits_for_keeps_what_it_had_time_for(monkeypatch, clock, timed):
+    """The window waits 31 minutes for wiki.analyze (electron/main.cjs RPC_TIMEOUTS): its LLM requests end a minute
+    before, and the summaries leave the request that reads them the LLM's time limit of 300 seconds."""
+    service, doc = timed
+    started = clock.now
+    sent = scripted(monkeypatch, clock, lambda system: 290 if system == pageindex.SUMMARIZE else 5)
+    analyzed = service.dispatch("wiki.analyze", {"id": doc["id"]}, within=1860)
+    summaries = [(given, at - started) for system, given, at in sent if system == pageindex.SUMMARIZE]
+    # The sixth summary had the 50 seconds left before the summaries end at 1,500 and ran out of them; the halves it
+    # would have been asked again in found no time.
+    assert summaries == [(300, 0), (300, 290), (300, 580), (300, 870), (300, 1160), (50, 1450)]
+    extract = [(given, at - started) for system, given, at in sent if system != pageindex.SUMMARIZE]
+    assert extract == [(300, 1500)] and clock.now - started <= 1800
+    assert analyzed["status"] == "ready" and analyzed["keywords"] == ["design"]
+    assert analyzed["error"] == (
+        "섹션 2개(11 장 10, 12 장 11)는 제한 시간 안에 요약하지 못해 본문 앞부분으로 요약을 대신했습니다. 문서 "
+        "목록에서 이 문서를 골라 AI 분석을 실행하면 시간 제한 없이 모든 섹션을 요약합니다."
+    )
+    summaries = {o["id"]: o["summary"] for o in analyzed["outline"]}
+    assert all(summaries[str(i)] == f"요약 {i}" for i in range(1, 11)) and summaries["12"].startswith("가가")
+    # Analyzed from the document list, or by an import, it has no time limit.
+    sent.clear()
+    assert service.wiki_analyze({"id": doc["id"]})["error"] == ""
+    assert sum(system == pageindex.SUMMARIZE for system, _, _ in sent) == 6
+
+
+def test_an_analysis_that_cannot_end_in_time_says_so_before_its_caller_stops_waiting(monkeypatch, clock, timed):
+    service, doc = timed
+    started = clock.now
+    # The request that reads the summaries would take longer than the time kept for it.
+    sent = scripted(monkeypatch, clock, lambda system: 290 if system == pageindex.SUMMARIZE else 1000)
+    with pytest.raises(UserError, match=r"요청의 제한 시간\(31분\) 안에 끝나지 않아") as error:
+        service.dispatch("wiki.analyze", {"id": doc["id"]}, within=1860)
+    assert "시간 제한 없이 분석합니다" in str(error.value) and clock.now - started == 1800
+    assert [at - started for _, _, at in sent] == [0, 290, 580, 870, 1160, 1450, 1500]
+    failed = service.wiki_get({"id": doc["id"]})
+    assert failed["status"] == "error" and failed["error"] == str(error.value)
+
+
+def test_the_backend_answers_an_analysis_before_its_caller_stops_waiting(tmp_path):
+    """Through the backend's own input and output, as Electron talks to it: the time limit a wiki.analyze line carries
+    (limit_ms) bounds the analysis, so an LLM that never answers costs it no more than that time."""
+    import contextlib
+    import os
+    import queue
+    import subprocess
+    import sys
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+
+    release = threading.Event()
+
+    class SilentLLM(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            release.wait(60)  # No answer while the test runs.
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SilentLLM)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    backend = Path(__file__).resolve().parents[1]
+    # Every LLM setting is given, so a developer's .env changes nothing, and no proxy stands before the local LLM.
+    env = {name: value for name, value in os.environ.items() if not name.lower().endswith("_proxy")}
+    env.update(
+        {
+            "PRIVATE_AGENT_DATA_DIR": str(tmp_path),
+            "PYTHONUTF8": "1",
+            "PYTHONPATH": "",
+            "NO_PROXY": "127.0.0.1",
+            "BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+            "API_KEY": "k",
+            "MODEL_NAME": "m",
+            "TEMPERATURE": "0.5",
+            "LLM_TIMEOUT": "60",
+            "CA_BUNDLE": "",
+            "LLM_MAX_TOKENS": "0",
+            "LLM_CONTEXT_WINDOW": "64000",
+            "LLM_CONCURRENCY": "3",
+        }
+    )
+    child = subprocess.Popen(
+        [sys.executable, str(backend / "main.py")],
+        cwd=backend,
+        text=True,
+        encoding="utf-8",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    lines = queue.Queue()
+    threading.Thread(target=lambda: [lines.put(json.loads(line)) for line in child.stdout], daemon=True).start()
+    try:
+
+        def send(ident, method, params, **extra):
+            child.stdin.write(json.dumps({"id": ident, "method": method, "params": params, **extra}) + "\n")
+            child.stdin.flush()
+
+        def until(ident, seconds):
+            while True:
+                message = lines.get(timeout=seconds)
+                if message.get("id") == ident:
+                    return message
+
+        send("save", "wiki.save", {"title": "설계서", "content": alternating()})
+        # A cold start of the backend on a slow machine takes a while.
+        doc = until("save", 120)["result"]["id"]
+        started = time.monotonic()
+        send("analyze", "wiki.analyze", {"id": doc}, limit_ms=8000)
+        reply = until("analyze", 20)
+        assert time.monotonic() - started < 8
+        assert reply["error"] == "LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요."
+        send("get", "wiki.get", {"id": doc})
+        assert until("get", 20)["result"]["status"] == "error"
+    finally:
+        release.set()
+        with contextlib.suppress(OSError):  # The pipe is already closed when the backend has exited.
+            child.stdin.close()
+        child.wait(20)
+        child.stdout.close()
+        server.shutdown()
+        server.server_close()

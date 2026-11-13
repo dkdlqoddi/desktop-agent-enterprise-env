@@ -31,7 +31,7 @@ Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 에이전트: 자�
 2. preload(`electron/preload.cjs`)가 `ipcRenderer.invoke('agent:request', method, params)`로 보냅니다.
 3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `allowedRequest()`(`electron/trusted-sender.cjs`)로 보낸 곳이 메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버인지(`trustedSender`), 메서드가 `ALLOWED`에 있는지 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다. 문서의 글을 싣는 `wiki.save`와 `wiki.compare`만 문서 한도(800만 자)에 맞춰 더 크게 받고(`DOCUMENT_PARAMS`), 백엔드도 그 두 메서드의 줄만 길게 읽습니다(`backend/main.py`의 `DOCUMENT_LINES`). AI 도구의 요청은 로컬 API의 본문 1MiB 상한을 거치므로 900,000자 그대로입니다.
 4. `api.*`는 로컬 API 설정(`apiRequest`), `app.relaunch`(예약한 백업 복원을 적용하는 ‘지금 다시 시작’)는 앱을 닫고 같은 프로그램으로 다시 실행하며, `app.theme`(화면 테마 설정)은 창의 바탕색과 Electron의 테마를 그 설정에 맞추고(`window-theme.cjs`), 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
-5. `rpc()`는 백엔드가 (다시) 시작하는 동안 기다렸다가 `{"id", "method", "params"}` 한 줄을 표준 입력에 씁니다. 응답 제한 시간은 `RPC_TIMEOUTS`(`electron/main.cjs`)에 있으면 그 값, 없으면 330초입니다. 시간이 지나면 메인 프로세스 쪽만 실패로 끝나고 백엔드의 작업은 계속됩니다.
+5. `rpc()`는 백엔드가 (다시) 시작하는 동안 기다렸다가 `{"id", "method", "params", "limit_ms"}` 한 줄을 표준 입력에 씁니다. 응답 제한 시간 `limit_ms`는 `RPC_TIMEOUTS`(`electron/main.cjs`)에 있으면 그 값, 없으면 330초입니다. 시간이 지나면 메인 프로세스 쪽만 실패로 끝나고 백엔드의 작업은 계속됩니다. 그래서 오래 걸릴 수 있는 작업은 줄에 실린 제한 시간 안에 스스로 끝냅니다. AI 분석(`wiki.analyze`)은 그 1분 전까지 LLM 요청을 마치고, 시간이 모자라 요약하지 못한 섹션은 문서의 안내에 적습니다(`service.py`의 `wiki_analyze`).
 6. 백엔드(`backend/main.py`)는 줄마다 처리 줄을 고릅니다. `SLOW`의 메서드와 `mode`가 `prompt`인 `wiki.search`는 느린 줄(4개), 나머지는 빠른 줄(24개)입니다. 줄이 차 있으면 기다리지 않고 바로 "진행 중인 요청이 많습니다"로 답합니다. `INTERACTIVE_METHODS`의 LLM 요청은 일괄 작업보다 먼저 갑니다(`agent/llm.py`의 `Slots`).
 7. `Service.dispatch`(`agent/service.py`)가 처리 함수를 부르고, 백엔드는 `{"id", "result"}`나 `{"id", "error"}`로 답합니다. `UserError`는 그 메시지를, 예기치 않은 예외는 로그에 남긴 뒤 오류 ID가 붙은 일반 메시지를 돌려줍니다. 스택이나 비밀 값은 화면으로 가지 않습니다.
 8. 메인 프로세스가 `{ok: true, result}`나 `{ok: false, error}`로 답하고, `api()`는 실패를 `Error`로 던집니다.
@@ -180,7 +180,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 
 1. 백엔드: `backend/agent/service.py`의 `dispatch` 표(또는 그 표에 합쳐지는 `assistant.py`·`schedules.py`·`routines.py`의 `methods`)에 처리 함수를 등록합니다. 사용자가 고칠 수 있는 문제는 `UserError`로 알립니다.
 2. LLM이나 브라우저를 기다리는 메서드는 `backend/main.py`의 `SLOW`에, 사용자가 화면에서 기다리는 메서드는 `INTERACTIVE_METHODS`에 넣습니다.
-3. 330초보다 오래 걸릴 수 있으면 `electron/main.cjs`의 `RPC_TIMEOUTS`에 제한 시간을 정합니다.
+3. 330초보다 오래 걸릴 수 있으면 `electron/main.cjs`의 `RPC_TIMEOUTS`에 제한 시간을 정합니다. 처리 함수는 그 제한 시간에서 남은 초를 `Service.dispatch`의 `within`으로 받으므로, 시간 안에 스스로 끝내야 하는 작업은 이 값을 씁니다(`wiki.analyze`).
 4. 화면이 부르는 메서드는 `electron/trusted-sender.cjs`의 `ALLOWED`에 넣습니다. 비밀 값, 대화 상자, 클립보드, 사이트 계정처럼 메인 프로세스만 할 수 있는 일은 `handle()`에서 처리합니다.
 5. 응답 타입을 `src/lib/api/types.ts`에 적습니다. 화면이 캐시하는 목록이면 `src/lib/query.ts`의 `TAGS`와, 바꾼 뒤 무효로 할 태그를 정합니다.
 6. AI 도구도 쓰게 하려면 `electron/api-catalog.cjs`의 `METHODS`에 범위와 설명을 넣고, 필요하면 `GROUPS`에 REST 경로와 매개변수를, 값 하나가 더 높은 범위를 요구하면 `FIELD_SCOPES`를 적습니다. 전용 MCP 도구가 필요하면 `electron/mcp.cjs`의 `TOOLS`에 추가합니다. 파괴적인 기능은 범위 `destructive`나 `admin`으로 둡니다.

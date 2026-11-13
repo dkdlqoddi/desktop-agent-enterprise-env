@@ -16,9 +16,10 @@ if (process.env.FAIL_AT_START === '1') {
 }
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (process.env.SILENT === '1') return;
-  const { id, method, params } = JSON.parse(line);
+  const { id, method, params, limit_ms } = JSON.parse(line);
   if (method === 'health') reply({ id, result: { ok: true } });
   else if (method === 'echo') reply({ id, result: params });
+  else if (method.startsWith('limit')) reply({ id, result: limit_ms });
   else if (method === 'fail') reply({ id, error: '설정 값이 올바르지 않습니다.' });
   else if (method === 'noise') {
     process.stdout.write('null\\nnot json\\n{"id": null}\\n');
@@ -196,6 +197,14 @@ test('a backend that ends while it starts says so, with its exit code', async (t
   });
   assert.deepEqual(exits, [{ code: 1, signal: null }]);
   assert.match(diagnostics.stderr, /DLL load failed/);
+});
+
+test('each request tells the backend how long its answer is waited for', async (t) => {
+  const { backend } = await setup(t, { limits: { 'limit.long': 1_860_000 } });
+  await backend.started();
+  assert.equal(await backend.request('limit.long'), 1_860_000);
+  // Without a limit of its own, a request is waited for one LLM call of up to 300 seconds and a margin.
+  assert.equal(await backend.request('limit.default'), 330_000);
 });
 
 test('a backend that ends fails its waiting requests with the message the app gives, and keeps its error output', async (t) => {

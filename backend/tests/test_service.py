@@ -875,6 +875,20 @@ def test_requests_the_user_waits_for_get_the_llm_first():
     assert not main.slow({"method": "assistant.cancel"}) and main.slow({"method": "assistant.ask"})
 
 
+def test_a_request_says_how_long_its_caller_waits_for_the_answer():
+    """Electron sends its time limit with each request (limit_ms), less what passed since the line was read."""
+    import time
+
+    import main
+
+    now = time.monotonic()
+    assert 1859 < main.waited({"limit_ms": 1_860_000}, now) <= 1860
+    assert main.waited({"limit_ms": 1_860_000}, now - 60) <= 1800
+    for limit in (None, "1860000", True, 0, -5, float("nan"), float("inf")):
+        assert main.waited({"limit_ms": limit}, now) is None
+    assert main.waited({}, now) is None
+
+
 def test_a_streamed_answer_comes_as_events_before_its_answer_and_stops_when_asked(tmp_path):
     """Through the backend's own input and output, as Electron talks to it: the parts of an answer asked with stream
     are lines without an id, ended by assistant.done, before the answer's line; assistant.cancel, a quick request,

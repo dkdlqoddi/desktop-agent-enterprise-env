@@ -540,6 +540,66 @@ def test_failed_and_timed_out_connections_are_retried_while_the_time_limit_leave
     assert len(calls) == 1
 
 
+class Clock:
+    """The time agent.llm reads, which a test moves on."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(module, "time", clock)
+    return clock
+
+
+def test_a_deadline_bounds_the_request_and_leaves_out_what_it_has_no_room_for(monkeypatch, clock, waits):
+    calls = answer(monkeypatch, Response(body=OPENAI_REPLY))
+    llm = general()
+    with module.deadline(50):
+        assert llm.complete(HELLO) == "연결 성공"
+    # What is left of the deadline to answer, not the settings' 300 seconds.
+    assert calls[-1]["timeout"] == (10, 50)
+    # A failure that may pass is asked again only while the deadline leaves room for another request: the first one
+    # took two of its three seconds.
+    sent = []
+
+    def busy(session, url, **kwargs):
+        sent.append(kwargs)
+        clock.now += 2
+        return Response(503)
+
+    monkeypatch.setattr("agent.llm.requests.Session.post", busy)
+    with module.deadline(3), pytest.raises(LLMRequestError, match="HTTP 503"):
+        llm.complete(HELLO)
+    assert len(sent) == 1 and waits == []
+    # With too little time for an answer, nothing is sent; a deadline inside another cannot put it off.
+    calls = answer(monkeypatch, Response(body=OPENAI_REPLY))
+    with module.deadline(1), pytest.raises(module.OutOfTime) as error:
+        llm.complete(HELLO)
+    assert calls == [] and error.value.transient and "제한 시간" in str(error.value)
+    with module.deadline(10), module.deadline(100), module.deadline(None):
+        assert module.time_left() == 10
+    assert module.time_left() is None
+
+
+def test_a_deadline_ends_the_wait_for_a_slot(monkeypatch):
+    monkeypatch.setattr(module, "MIN_ATTEMPT", 0.1)
+    calls = answer(monkeypatch, Response(body=OPENAI_REPLY))
+    llm = general(concurrency=1)
+    started = time.monotonic()
+    with llm.slots.hold(INTERACTIVE), module.deadline(0.5), pytest.raises(LLMRequestError, match="요청이 많아"):
+        llm.complete(HELLO)
+    assert time.monotonic() - started < 3 and calls == []
+
+
 def test_every_request_keeps_tls_verification_and_follows_no_redirect(monkeypatch):
     calls = answer(monkeypatch, Response(body=OPENAI_REPLY))
     llm = general(ca_bundle='"C:\\certs\\private-ca.pem"')

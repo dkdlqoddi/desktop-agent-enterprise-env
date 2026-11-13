@@ -166,6 +166,8 @@ const RPC_TIMEOUTS = {
   'jira.check': 900_000,
   'wiki.search': 960_000,
   'assistant.ask': 1_260_000,
+  // The analysis bounds itself by this limit, which reaches it with the request (limit_ms): it ends a minute before,
+  // sections of a long document it had no time for keeping the beginning of their text (service.py wiki_analyze).
   'wiki.analyze': 1_860_000,
   // A backup, and the copy of one to restore, read and write the whole Wiki: minutes for a large one on a slow drive.
   'wiki.backup': 900_000,

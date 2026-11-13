@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import math
 import multiprocessing
 import os
 import re
@@ -102,6 +103,16 @@ def priority_of(request):
     return INTERACTIVE if request.get("method") in INTERACTIVE_METHODS else BATCH
 
 
+def waited(request, received):
+    """How many seconds the caller still waits for the answer to `request`, whose line was read at `received`
+    (time.monotonic()): Electron sends its time limit with each request (limit_ms, from electron/main.cjs
+    RPC_TIMEOUTS). None without one, as from a test or a backend started by hand."""
+    limit = request.get("limit_ms")
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not 0 < limit < math.inf:
+        return None
+    return limit / 1000 - (time.monotonic() - received)
+
+
 def sweep_leftovers():
     """Remove the import scratch folders an earlier run left in the temporary folder, beside answering requests."""
     removed = sweep_scratch()
@@ -198,11 +209,13 @@ def main():
 
     service.emit = emit
 
-    def handle(request, slots):
+    def handle(request, slots, received):
         ident = request.get("id")
         try:
             with priority(priority_of(request)):
-                result = service.dispatch(request.get("method"), request.get("params", {}))
+                result = service.dispatch(
+                    request.get("method"), request.get("params", {}), within=waited(request, received)
+                )
             write({"id": ident, "result": result})
         except UserError as exc:
             write({"id": ident, "error": str(exc)})
@@ -224,7 +237,7 @@ def main():
 
     with ThreadPoolExecutor(max_workers=SLOW_SLOTS + QUICK_SLOTS) as pool:
         for line in sys.stdin:
-            ident = None
+            ident, received = None, time.monotonic()
             try:
                 if len(line) > MAX_LINE and len(line) > line_limit(line):
                     write({"id": request_id(line), "error": "요청이 너무 큽니다."})
@@ -239,7 +252,7 @@ def main():
                 if not slots.acquire(blocking=False):
                     write({"id": ident, "error": "진행 중인 요청이 많습니다. 잠시 후 다시 시도해 주세요."})
                     continue
-                pool.submit(handle, request, slots)
+                pool.submit(handle, request, slots, received)
             except Exception:
                 # Whatever a line holds (not JSON, nesting deeper than the parser goes, the wrong shape), it is refused
                 # and the next one is read: one request must never end the backend.

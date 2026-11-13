@@ -61,6 +61,13 @@ class Cancelled(UserError):
         self.partial = partial
 
 
+class OutOfTime(LLMRequestError):
+    """A request not sent, because the deadline of its context (deadline()) leaves it no time to be answered."""
+
+    def __init__(self):
+        super().__init__("제한 시간이 얼마 남지 않아 LLM에 더 요청하지 않았습니다.", transient=True)
+
+
 class StreamFailure(Exception):
     """The server broke off a streamed answer with an error of its own, such as an overloaded server's."""
 
@@ -231,6 +238,9 @@ INTERACTIVE, BATCH = "interactive", "batch"
 PRIORITY = contextvars.ContextVar("llm_priority", default=BATCH)
 # The Cancel of a request the user may stop (assistant.ask), for every LLM request it makes.
 CANCEL = contextvars.ContextVar("llm_cancel", default=None)
+# When the LLM requests made in a context must have ended (a time.monotonic() value), or None: an analysis its caller
+# waits for sets it (deadline()), so that no request, retry or wait for a slot of it outlasts that wait.
+DEADLINE = contextvars.ContextVar("llm_deadline", default=None)
 POLL = 0.25  # How often a request waiting for a slot looks whether it was cancelled.
 
 
@@ -252,6 +262,33 @@ def cancellable(cancel):
         yield
     finally:
         CANCEL.reset(token)
+
+
+@contextlib.contextmanager
+def deadline(seconds):
+    """The LLM requests made inside end within `seconds` from now, or by an earlier deadline already set; None sets
+    none of its own."""
+    at = DEADLINE.get()
+    if seconds is not None:
+        mine = time.monotonic() + seconds
+        at = mine if at is None else min(at, mine)
+    token = DEADLINE.set(at)
+    try:
+        yield
+    finally:
+        DEADLINE.reset(token)
+
+
+def time_left():
+    """The seconds left before the deadline of the context (0 once it has passed), or None without one."""
+    at = DEADLINE.get()
+    return None if at is None else max(0.0, at - time.monotonic())
+
+
+def out_of_time():
+    """Whether the deadline of the context leaves a request too little time to be answered (MIN_ATTEMPT)."""
+    left = time_left()
+    return left is not None and left < MIN_ATTEMPT
 
 
 def environment(name):
@@ -907,7 +944,8 @@ class LLM:
         (with '' when a failed attempt starts over); a server that does not stream gives it the whole answer at once.
         `max_tokens` overrides the settings' cap. The request waits for a slot (Slots) at its PRIORITY, at most
         `timeout` seconds when given. `cancel`, or the CANCEL of the context, stops it: Cancelled is raised with what
-        had come."""
+        had come. The DEADLINE of the context bounds the wait for a slot and the call as well; a request it leaves
+        less than MIN_ATTEMPT seconds is not sent (OutOfTime)."""
         with self.lock:
             config = self.config.copy()
             target = profile(config)
@@ -915,7 +953,11 @@ class LLM:
             plain_only, unstreamed = model in self.plain_models, model in self.unstreamed
         if problem := missing(config, target):
             raise UserError(problem)
+        if out_of_time():
+            raise OutOfTime()
         limit = config["timeout"] if timeout is None else min(config["timeout"], timeout)
+        left = time_left()
+        waiting = timeout if left is None else left if timeout is None else min(timeout, left)
         cancel = CANCEL.get() if cancel is None else cancel
         streamed = stream is not None and not unstreamed
         body = request_body(
@@ -926,16 +968,19 @@ class LLM:
             streamed,
         )
         plain = plain_body(target, body)
-        with self.slots.hold(PRIORITY.get(), timeout=timeout, cancel=cancel):
-            deadline = time.monotonic() + limit
+        with self.slots.hold(PRIORITY.get(), timeout=waiting, cancel=cancel):
+            if out_of_time():
+                raise OutOfTime()  # The wait for a slot took the time.
+            left = time_left()
+            ends = time.monotonic() + (limit if left is None else min(limit, left))
             try:
                 sent = plain if plain_only else body
-                outcome = self._attempts(target, config, sent, deadline, stream if streamed else None, cancel)
+                outcome = self._attempts(target, config, sent, ends, stream if streamed else None, cancel)
                 if outcome.status == 400 and sent is not plain and plain != body:
                     # OpenAI's reasoning models (o-series, GPT-5) take only their own temperature, and their cap as
                     # max_completion_tokens, and refuse the request otherwise.
                     sent = plain
-                    outcome = self._attempts(target, config, sent, deadline, stream if streamed else None, cancel)
+                    outcome = self._attempts(target, config, sent, ends, stream if streamed else None, cancel)
                     if outcome.status == 200:
                         with self.lock:
                             self.plain_models.add(model)
@@ -944,7 +989,7 @@ class LLM:
                     whole_body = {key: value for key, value in sent.items() if key != "stream"}
                     if target["format"] == "openai":
                         whole_body["stream"] = False
-                    outcome = self._attempts(target, config, whole_body, deadline, None, cancel)
+                    outcome = self._attempts(target, config, whole_body, ends, None, cancel)
                     if outcome.status == 200:
                         with self.lock:
                             self.unstreamed.add(model)

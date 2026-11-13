@@ -151,7 +151,9 @@ class BackendProcess {
     }
   }
 
-  // One request: the backend's answer, or the error it gave. A request it cannot take fails at once.
+  // One request: the backend's answer, or the error it gave. A request it cannot take fails at once. The line carries
+  // the time this process waits for the answer (limit_ms), so that work the backend bounds by it (an AI analysis) ends
+  // before then.
   request(method, params = {}) {
     if (!this.running) return Promise.reject(new Error(this.failure || ENDED));
     // Running: the process exists.
@@ -169,7 +171,7 @@ class BackendProcess {
         reject(new Error('응답 제한 시간을 초과했습니다.'));
       }, limit);
       this.pending.set(id, { resolve, reject, timer, method, started: Date.now() });
-      child.stdin.write(JSON.stringify({ id, method, params }) + '\n', (error) => {
+      child.stdin.write(JSON.stringify({ id, method, params, limit_ms: limit }) + '\n', (error) => {
         if (error && this.pending.has(id)) {
           clearTimeout(timer);
           this.pending.delete(id);

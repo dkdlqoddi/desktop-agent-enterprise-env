@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import diagnostics, pageindex, paging, sources, storage
 from .db import index_text
-from .llm import UserError, shown
+from .llm import LLMRequestError, UserError, deadline, out_of_time, shown, time_left
 from .markdown_import import MAX_DOCUMENT_CHARS
 
 _clock = threading.Lock()
@@ -100,6 +100,14 @@ Extract 3-12 concise canonical keywords that occur in or are directly supported 
 Use lowercase English keywords. Every relation source and target MUST be a member of keywords.
 aliases: for each keyword, at most 5 other names users search it by: its Korean and English forms, common abbreviations and spellings, e.g. "database":["데이터베이스","DB"]. Only true equivalents; leave out keywords without any.
 At most 20 relations, only relationships supported by the document; do not invent facts. No markdown fences."""  # noqa: E501
+# An analysis its caller waits for (wiki.analyze) ends within the time the caller gives it, which Electron sends with
+# the request (electron/main.cjs RPC_TIMEOUTS): its LLM requests end this many seconds before, at most a tenth of that
+# time, which is kept to save the result and answer.
+FINISH_SECONDS = 60
+ANALYSIS_LATE = (
+    "AI 분석이 요청의 제한 시간({minutes}분) 안에 끝나지 않아 멈췄습니다. 문서 목록에서 이 문서를 골라 AI 분석을 "
+    "실행하면 시간 제한 없이 분석합니다."
+)
 
 # Dashboard preferences: which widgets, in what order, format, width and height, and whether searches ask the AI.
 WIDGET_ID = re.compile(r"[a-z][a-z0-9-]{0,39}")
@@ -261,7 +269,10 @@ class Service:
         the option on."""
         return bool(self.llm and self.llm.public()["configured"]) and self.preferences_get({})["web_assist"]
 
-    def dispatch(self, method, params):
+    def dispatch(self, method, params, within=None):
+        """Handle request `method`. `within`, when known, is how many seconds its caller still waits for the answer:
+        main.py has it from the time limit Electron sends with each request (electron/main.cjs RPC_TIMEOUTS), and the
+        requests that may outlast it end themselves before (wiki.analyze)."""
         methods = {
             "health": lambda p: {"ok": True},
             "backend.shutdown": self.shutdown,
@@ -293,7 +304,7 @@ class Service:
             "wiki.save": self.wiki_save,
             "wiki.compare": self.wiki_compare,
             "wiki.delete": self.wiki_delete,
-            "wiki.analyze": lambda p: self.wiki_analyze(p, html=True),
+            "wiki.analyze": lambda p: self.wiki_analyze(p, html=True, within=within),
             "wiki.delete_many": self.wiki_delete_many,
             "wiki.clear_analysis": self.wiki_clear_analysis,
             "wiki.trash": self.wiki_trash,
@@ -1254,9 +1265,15 @@ class Service:
 
         return import_file(self, p)
 
-    def wiki_analyze(self, p, html=False):
+    def wiki_analyze(self, p, html=False, within=None):
         """Analyze a document and return it. Only the document window (the wiki.analyze request) shows the HTML page
-        it returns with `html`; imports and batch analysis, which analyze one document after another, do not load it."""
+        it returns with `html`; imports and batch analysis, which analyze one document after another, do not load it.
+
+        `within`, the seconds the caller waits for the answer (main.py has them from the request), bounds the
+        analysis: its LLM requests, their retries included, end FINISH_SECONDS before, and the section summaries of a
+        long document leave the request that reads them the LLM's response time limit. Sections the time left without
+        an AI summary are named in the document's note; an analysis that could not end in time fails saying so. The
+        analyses of imports and of the document list are not bounded."""
         doc = self.document(p.get("id"))
         with self.db.connect() as db:
             updated = db.execute(
@@ -1268,14 +1285,24 @@ class Service:
         try:
             nodes, note = None, ""
             body = doc["content"]
-            if len(body) > pageindex.MIN_CHARS:
-                # PageIndex: summarize the section tree in bounded batches, then extract the metadata
-                # from the outline, so no request carries the whole document. Sections whose summary requests
-                # failed keep the beginning of their text, and the document's error says which (a note).
-                nodes = pageindex.build(body)
-                note = pageindex.failure_note(pageindex.summarize(self.llm, doc["title"], body, nodes))
-                body = f"[긴 문서 · 본문 {len(body):,}자 · 목차와 섹션 요약]\n{pageindex.outline(nodes)}"
-            result = self.llm.structured(EXTRACT, f"제목: {doc['title']}\n\n{body}")
+            with deadline(None if within is None else within - min(FINISH_SECONDS, within / 10)):
+                try:
+                    if len(body) > pageindex.MIN_CHARS:
+                        # PageIndex: summarize the section tree in bounded batches, then extract the metadata
+                        # from the outline, so no request carries the whole document. Sections whose summary
+                        # requests failed keep the beginning of their text, and the document's error says which (a
+                        # note).
+                        nodes = pageindex.build(body)
+                        left = time_left()
+                        reading = None if left is None else min(float(self.llm.public()["timeout"]), left / 2)
+                        with deadline(None if left is None else left - reading):
+                            note = pageindex.failure_note(pageindex.summarize(self.llm, doc["title"], body, nodes))
+                        body = f"[긴 문서 · 본문 {len(body):,}자 · 목차와 섹션 요약]\n{pageindex.outline(nodes)}"
+                    result = self.llm.structured(EXTRACT, f"제목: {doc['title']}\n\n{body}")
+                except LLMRequestError:
+                    if out_of_time():
+                        raise UserError(ANALYSIS_LATE.format(minutes=max(1, round(within / 60)))) from None
+                    raise
             summary = result.get("summary")
             if not isinstance(summary, str) or not summary.strip():
                 raise UserError("LLM이 문서 요약을 돌려주지 않았습니다. 다시 분석해 주세요.")
