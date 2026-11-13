@@ -66,7 +66,7 @@ class Notifications(
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
-        NotificationManagerCompat.from(context).notify(NOTIFICATION_BASE + row.id.toInt(), notification)
+        NotificationManagerCompat.from(context).notify(id(row.id), notification)
     }
 
     companion object {
@@ -75,5 +75,8 @@ class Notifications(
         const val EXTRA_SCHEDULE_ID = "schedule_id"
         const val EXTRA_LAUNCH_KEY = "launch_key"
         private const val NOTIFICATION_BASE = 1000
+
+        /** The notification of the schedule [scheduleId]: one per schedule, the latest reminder in place of the last. */
+        fun id(scheduleId: Long): Int = NOTIFICATION_BASE + scheduleId.toInt()
     }
 }

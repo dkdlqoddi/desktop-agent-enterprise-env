@@ -50,6 +50,18 @@ class NextRunTest {
         assertEquals(java.time.LocalDate.of(2026, 3, 8), next.toLocalDate())
     }
 
+    @Test
+    fun aReminderQueuesTheNextRunAfterItself() {
+        // On time, late or a little early (a clock set back): never the same run again.
+        for (ran in listOf("2026-11-11T09:00:00", "2026-11-11T09:00:59", "2026-11-11T13:40", "2026-11-11T08:59:30")) {
+            assertEquals(ran, at("2026-11-12T09:00"), NextRun.following(at(ran), nine, ScheduleDays.DAILY))
+        }
+        // A reminder held back past midnight (a phone in deep sleep) does not skip the day it came on.
+        assertEquals(at("2026-11-12T09:00"), NextRun.following(at("2026-11-12T00:30"), nine, ScheduleDays.DAILY))
+        // Weekdays: Friday's reminder queues Monday's.
+        assertEquals(at("2026-11-16T09:00"), NextRun.following(at("2026-11-13T09:00"), nine, ScheduleDays.WEEKDAYS))
+    }
+
     private fun row(id: Long, time: String, days: ScheduleDays = ScheduleDays.DAILY, enabled: Boolean = true) =
         ScheduleRow(id, "coupang", "노트북", time, days, enabled, createdAt = 0, nextRunAt = null)
 

@@ -24,10 +24,11 @@ class LlmConnection(val format: ApiFormat, val endpoint: String, val model: Stri
 
 /**
  * The app's settings in private SharedPreferences. The API Key is stored sealed by [SecretBox] (Android Keystore,
- * AES-GCM) together with the server it was entered for, and is sent only to that server.
+ * AES-GCM) together with the server it was entered for, and is sent only to that server. [file] is the preferences
+ * file: the app's own, or a test's.
  */
-class SettingsStore(context: Context, private val box: SecretBox = SecretBox()) {
-    private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+class SettingsStore(context: Context, private val box: SecretBox = SecretBox(), file: String = FILE) {
+    private val prefs = context.applicationContext.getSharedPreferences(file, Context.MODE_PRIVATE)
     private val state = MutableStateFlow(read())
     val llm: StateFlow<LlmSettings> = state
 

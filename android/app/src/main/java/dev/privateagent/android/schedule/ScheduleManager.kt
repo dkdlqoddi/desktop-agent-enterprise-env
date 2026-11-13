@@ -65,7 +65,8 @@ class ScheduleManager(private val context: Context, private val store: ScheduleS
 
     /** Queues the run after this one, from within the running job: appended, so the running job is not stopped. */
     suspend fun enqueueNext(row: ScheduleRow) {
-        enqueue(row, ExistingWorkPolicy.APPEND_OR_REPLACE, ZonedDateTime.now().plusMinutes(1))
+        val time = NextRun.parse(row.time) ?: return
+        queue(row.id, ExistingWorkPolicy.APPEND_OR_REPLACE, NextRun.following(ZonedDateTime.now(), time, row.days))
     }
 
     /**
@@ -78,9 +79,9 @@ class ScheduleManager(private val context: Context, private val store: ScheduleS
         }
     }
 
-    private suspend fun enqueue(row: ScheduleRow, policy: ExistingWorkPolicy, after: ZonedDateTime = ZonedDateTime.now()) {
+    private suspend fun enqueue(row: ScheduleRow, policy: ExistingWorkPolicy) {
         val time = NextRun.parse(row.time) ?: return
-        queue(row.id, policy, NextRun.after(after, time, row.days))
+        queue(row.id, policy, NextRun.after(ZonedDateTime.now(), time, row.days))
     }
 
     private suspend fun queue(id: Long, policy: ExistingWorkPolicy, next: ZonedDateTime) {

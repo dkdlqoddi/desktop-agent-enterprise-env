@@ -25,6 +25,13 @@ object NextRun {
     }
 
     /**
+     * The run a reminder that ran at [ranAt] queues after itself (the chain of a schedule's reminders): the first
+     * time more than a minute later, so a reminder that came a little before its time does not come again for it.
+     */
+    fun following(ranAt: ZonedDateTime, time: LocalTime, days: ScheduleDays): ZonedDateTime =
+        after(ranAt.plusMinutes(1), time, days)
+
+    /**
      * When each enabled schedule of [rows] runs next, worked out again at [now] in [zone], by schedule id. A queued
      * reminder waits for a span worked out when it was queued: after the device's time zone changes, it would come
      * at the schedule's time in the old zone. A schedule whose time cannot be read is left out, as it was never queued.
