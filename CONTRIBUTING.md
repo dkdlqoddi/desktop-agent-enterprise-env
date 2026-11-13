@@ -158,6 +158,43 @@ GitHub Actions는 쓰지 않습니다. 대신 `npm run ci`가 설치된 Node.js�
 
 핵심 검사가 하나라도 실패하면 E2E는 건너뛰고, 끝에 통과·실패를 정리해 보여 줍니다. 처음에는 `npm ci`와 `npm run setup:python`으로 의존성을 준비하세요. 화면이나 메인 프로세스를 바꿨다면 관련 E2E 스펙(`npm run test:e2e -- tests/<이름>.spec.ts`)도 실행합니다. Windows exe는 Windows에서 `npm run build:exe`로 따로 빌드합니다.
 
+## 월간 의존성 갱신
+
+Electron(Chromium 포함), Playwright의 Chromium, Python과 내장 Hermes는 보안 수정이 자주 나오므로 한 달에 한 번 올립니다. [Renovate](renovate.json) GitHub 앱을 설치하면 매달 1일에 나온 지 14일이 지난 릴리스로 PR이 올라오고, 설치하기 전에는 아래 순서를 직접 밟습니다.
+
+### 무엇을 올리나
+
+| 대상                                     | 고칠 곳                                                                                                                    | 누가                                                                                  |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Electron(Chromium), electron-builder     | `package.json`, `package-lock.json`                                                                                        | Renovate, PR 하나(`Electron`)                                                         |
+| Playwright(E2E와 백엔드가 쓰는 Chromium) | `package.json`의 `@playwright/test`, `backend/pyproject.toml`과 `backend/constraints.txt`의 `playwright`                   | Renovate, 세 곳을 PR 하나로(`Playwright`). 백엔드는 자기 릴리스의 Chromium을 받습니다 |
+| Python 패키지                            | `backend/constraints.txt`(고정 버전)와 `backend/pyproject.toml`(범위)                                                      | Renovate, PR 하나(`Python dependencies`). ruff는 따로(`Ruff`)                         |
+| Next.js·React와 그 밖의 npm 패키지       | `package.json`, `package-lock.json`                                                                                        | Renovate                                                                              |
+| Android(AGP, Kotlin, Compose, Gradle)    | `android/gradle/libs.versions.toml`, `android/gradle/wrapper/gradle-wrapper.properties`                                    | Renovate                                                                              |
+| 백엔드를 빌드하는 Python                 | `.python-version`(지금 3.13)과 `backend/pyproject.toml`의 `requires-python`                                                | 직접                                                                                  |
+| Node.js                                  | `.nvmrc`, `package.json`의 `engines`, `scripts/workflow.mjs`와 `scripts/ci-local.mjs`의 버전 확인                          | 직접                                                                                  |
+| 내장 Hermes와 그 CPython                 | `runtime/hermes/manifest.json`(버전, 커밋, CPython 내려받기 주소와 SHA-256), `runtime/hermes/requirements*.txt`(해시 고정) | 직접. Hermes의 릴리스 노트를 읽고 올립니다                                            |
+| Android의 내장 Hermes 실행 환경          | `android/hermes/pins.json`과 그 옆의 잠금 파일                                                                             | 직접([android/README.md](android/README.md))                                          |
+
+### 브랜치에서 확인하기
+
+PR 브랜치(직접 올릴 때는 새 브랜치)에서 차례로 실행합니다.
+
+1. `npm ci`, `npm run setup:python`, `npm run setup:browser`, `npm run setup:electron`으로 새 버전을 설치합니다. 빌드용 Python을 올렸으면 `backend/.venv`를 지우고 새 Python으로 `npm run setup:python`을 실행합니다(`PYTHON` 환경변수로 고릅니다).
+2. `npm run notices`로 `THIRD_PARTY_NOTICES.md`를 다시 만들어 커밋합니다. 의존성만 바뀐 PR에서 다시 만들 생성 파일은 이것 하나이고, `npm run notices:check`가 통과해야 합니다. 코드를 함께 고쳤다면 [생성 파일](#생성-파일)의 표를 따릅니다.
+3. ruff가 바뀌었으면 `npm run format:python`과 `npm run lint:python -- --fix`로 백엔드를 고칩니다.
+4. Hermes 핀을 바꿨으면 `npm run build:hermes`가 새 태그를 `build/hermes-source`로 받아 와 `dist/hermes`를 다시 만듭니다. Android 앱의 실행 환경은 그다음 `python3 android/hermes/build_runtime.py`로 다시 만듭니다.
+5. `npm run ci`로 핵심 검사와 E2E를 모두 돌립니다. Electron이나 Playwright를 올린 PR에서는 E2E를 건너뛰지 않습니다(`ci:core`가 아니라 `ci`). Electron의 메이저 버전이 바뀌면 [Electron의 호환되지 않는 변경 목록](https://www.electronjs.org/docs/latest/breaking-changes)에서 `electron/`이 쓰는 API를 찾아봅니다.
+6. Electron, electron-builder, 빌드용 Python이나 Hermes를 올렸으면 Windows에서 `npm run build:exe`로 exe를 만들고 [VERIFICATION.md](VERIFICATION.md)의 A1(설치본이 시작하는지)과 A5(설치본의 채팅 에이전트)를 확인합니다. exe의 구성은 `tests/package.test.cjs`가 확인합니다.
+7. Android 쪽을 올렸으면 `android/`에서 `./gradlew :app:testDebugUnitTest :app:assembleDebug`를, 에뮬레이터가 있으면 `./gradlew :app:connectedDebugAndroidTest`도 실행합니다.
+
+### 합치기
+
+- 자동 CI 상태 검사가 없으므로, 위의 확인을 마친 사람이 실행한 명령과 결과(`npm run ci` 통과, exe·Android를 확인했는지)를 PR에 댓글로 적고 합칩니다.
+- 묶음 PR(Electron, Playwright, Python dependencies)은 나누지 않고 한 번에 합칩니다. 일부만 올리면 다른 곳의 버전과 맞지 않습니다.
+- 고칠 것이 생기면 같은 브랜치에 커밋을 더합니다. 당장 합치지 못하는 PR은 닫지 않고 남겨 두면 Renovate가 다음 달에 새 버전으로 고쳐 올립니다.
+- 사용자가 알아차릴 변화(Electron·Hermes의 기능, 바뀐 지원 환경)가 있으면 [CHANGELOG.md](CHANGELOG.md)의 `Unreleased`에 적습니다.
+
 ## 공개 앱 규약
 
 - 누구나 자기 환경에 맞게 쓰는 공개 앱입니다. 특정 회사의 환경, 내부 주소, 시스템 이름을 가정하거나 언급하지 않습니다. 예시 주소는 `example.com`이나 `.test` 도메인을 씁니다.
