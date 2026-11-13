@@ -47,6 +47,48 @@ def download(url, digest):
     return archive
 
 
+def head(source):
+    return subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+
+
+def modified(source):
+    return bool(subprocess.check_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all"]))
+
+
+def checkout(source):
+    """build/hermes-source at the pinned commit: cloned by the first build, and moved to a new pin by fetching its
+    tag into the same checkout, so a pin changed in runtime/hermes/manifest.json needs no folder deleted by hand.
+    Whatever git fetched, the build goes on only from the very commit the manifest names."""
+    tag = "v" + PIN["version"]
+    if not source.exists():
+        call(["git", "clone", "--depth", "1", "--branch", tag, PIN["repository"], source])
+    elif head(source) != PIN["commit"]:
+        # Changes made in the checkout are never thrown away to move it.
+        if modified(source):
+            raise RuntimeError(
+                f"Hermes source checkout is modified, and runtime/hermes/manifest.json now pins {tag}: keep the "
+                f"changes elsewhere, then delete {source} and run npm run build:hermes again"
+            )
+        try:
+            call(["git", "-C", source, "fetch", "--depth", "1", "--no-tags", PIN["repository"], f"refs/tags/{tag}"])
+            call(["git", "-C", source, "checkout", "--quiet", "--detach", "FETCH_HEAD"])
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                f"Could not fetch Hermes {tag} ({PIN['commit']}) from {PIN['repository']} into {source}. Run "
+                f"npm run build:hermes again once the repository can be reached, or, to build offline, replace "
+                f"{source} with a git checkout of that commit"
+            ) from error
+    commit = head(source)
+    if commit != PIN["commit"]:
+        raise RuntimeError(
+            f"Hermes source commit {commit} differs from {PIN['commit']}, which runtime/hermes/manifest.json pins "
+            f"for {tag}"
+        )
+    # A modified cached checkout must not silently become a release dependency.
+    if modified(source):
+        raise RuntimeError("Hermes source checkout is modified")
+
+
 def unpack_standalone(archive, target):
     """python-build-standalone's install_only tree (python/...) without its bundled pip or caches."""
     with tarfile.open(archive) as bundle:
@@ -67,14 +109,7 @@ def build(output, platform, python):
     if pip_version < (24, 2):
         call([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "pip==25.3"])
     source = ROOT / "build" / "hermes-source"
-    if not source.exists():
-        call(["git", "clone", "--depth", "1", "--branch", "v" + PIN["version"], PIN["repository"], source])
-    commit = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-    if commit != PIN["commit"]:
-        raise RuntimeError("Hermes source commit differs from runtime/hermes/manifest.json")
-    # A modified cached checkout must not silently become a release dependency.
-    if subprocess.check_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all"]):
-        raise RuntimeError("Hermes source checkout is modified")
+    checkout(source)
     stage = output.with_name(output.name + ".building")
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)

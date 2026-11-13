@@ -68,7 +68,6 @@
 
 ### 품질과 운영
 
-- [ ] Hermes의 핀(`runtime/hermes/manifest.json`)을 바꾼 뒤에는 `build/hermes-source` 폴더를 지워야 `npm run build:hermes`가 다시 됩니다. 스크립트가 새 태그를 받아 오게 하거나 오류 문장에 그 방법을 적어야 합니다.
 - [ ] main 브랜치 보호 규칙(강제 푸시 금지 등)을 검토합니다. 자동 CI 상태 검사가 없으므로, 커밋 전에 `npm run ci`(핵심 검사 + E2E)로 직접 확인합니다.
 - [ ] Electron, Chromium, Python의 월간 갱신 절차를 정합니다. Renovate 설치 뒤 PR을 어떻게 검증해 합칠지가 핵심입니다.
 
