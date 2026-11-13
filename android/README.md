@@ -20,6 +20,7 @@ Kotlin과 Jetpack Compose(Material 3)로 만들었고 Android 8.0(API 26) 이상
 - Hermes는 자기 도구(웹 검색, 메모리, 기술, 할 일 목록, 지난 대화 찾기, 하위 에이전트, 이미지 분석, 질문하기)와 앱의 도구(아래 표와 `capture_page`)를 직접 부릅니다. 앱의 도구는 Hermes가 부를 때 바로 실행되고, 앱이 인자를 확인한 뒤 실행해 무엇을 했는지 카드로 보여 줍니다. 터미널, 코드 실행, 파일, 브라우저 자동화, 컴퓨터 사용은 휴대폰에서 켜지 않습니다. 페이지 본문 읽기(`web_extract`)는 읽어 주는 서비스의 키가 있어야 하는데 휴대폰 앱에는 그 설정이 없어, Hermes는 검색 결과의 제목과 요약까지만 봅니다.
 - Hermes가 모델을 부를 때마다 요청이 앱으로 돌아오고, 앱이 설정한 LLM 연결로 보냅니다. API Key는 Hermes 프로세스에 들어가지 않습니다.
 - Hermes가 묻는 질문(선택지나 짧은 답)과 Hermes의 안전 검사가 올린 명령 확인은 채팅의 답 자리에 나타나고, 답할 때까지 턴이 기다립니다. 5분 안에 답하지 않으면 질문은 취소, 명령은 거부로 처리합니다. 진행한 도구도 그 자리에 보입니다. 답은 다 쓰인 뒤에 한 번에 나타납니다(휴대폰은 LLM 응답을 조각으로 받지 않음).
+- 턴이 한 일(쓴 도구, 앱의 작업, 확인한 명령과 결정, 질문)은 그 턴의 마지막 메시지 아래 **한 일 N건**으로 남습니다. 80건까지, 한 건에 300자까지 적고 비밀 값으로 보이는 글은 가립니다.
 - **요청 중지**는 Hermes 프로세스를 끝냅니다. 다음 요청은 새 프로세스로 시작합니다(몇 초). 쓰지 않는 Hermes 프로세스는 5분 뒤 끝납니다.
 
 내장 Hermes가 없는 빌드에서는 앱이 대화의 최근 메시지와 도구 목록을 설정한 LLM에 보냅니다. LLM이 쓸 수 있는 도구는 넷입니다.
@@ -44,14 +45,14 @@ Kotlin과 Jetpack Compose(Material 3)로 만들었고 Android 8.0(API 26) 이상
 
 ## 휴대폰에 남는 것과 LLM으로 가는 것
 
-| 위치                           | 내용                                                                                                             |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| 앱 저장소의 `private-agent.db` | 채팅 메시지와 작업 카드, 기록한 페이지와 항목(제목·가격·링크·이미지 주소·카드 글), 누른 광고와 도착 페이지, 예약 |
-| 앱 저장소의 설정 파일          | API 형식, 엔드포인트, 모델 이름, 암호화한 API Key(입력한 서버의 주소와 함께)                                     |
-| WebView 데이터                 | 사용자가 브라우저 탭에서 로그인하거나 둘러본 사이트의 쿠키와 캐시                                                |
-| 캐시의 `exports/`              | 마지막으로 내보낸 CSV(새로 내보내면 지워짐)                                                                      |
-| 앱 저장소의 `hermes/`          | Hermes의 메모리, 기술, 지난 대화(세션), 설정(키 없음). 대화·기록 지우기로는 지워지지 않습니다                    |
-| code cache의 `hermes-runtime/` | 풀어 둔 Hermes 실행 환경(앱을 업데이트하면 Android가 지움)                                                       |
+| 위치                           | 내용                                                                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 앱 저장소의 `private-agent.db` | 채팅 메시지와 작업 카드, 답마다 턴이 한 일, 기록한 페이지와 항목(제목·가격·링크·이미지 주소·카드 글), 누른 광고와 도착 페이지, 예약 |
+| 앱 저장소의 설정 파일          | API 형식, 엔드포인트, 모델 이름, 암호화한 API Key(입력한 서버의 주소와 함께)                                                        |
+| WebView 데이터                 | 사용자가 브라우저 탭에서 로그인하거나 둘러본 사이트의 쿠키와 캐시                                                                   |
+| 캐시의 `exports/`              | 마지막으로 내보낸 CSV(새로 내보내면 지워짐)                                                                                         |
+| 앱 저장소의 `hermes/`          | Hermes의 메모리, 기술, 지난 대화(세션), 설정(키 없음). 대화·기록 지우기로는 지워지지 않습니다                                       |
+| code cache의 `hermes-runtime/` | 풀어 둔 Hermes 실행 환경(앱을 업데이트하면 Android가 지움)                                                                          |
 
 - **LLM으로 가는 것(Hermes)**: Hermes가 만드는 요청 그대로입니다. 시스템 프롬프트, 최근 대화(6,000자까지)와 작업 카드의 결과, Hermes의 메모리와 기술, 도구 목록과 도구 결과(앱의 기록, 웹 검색 결과).
 - **LLM으로 가는 것(기본 계획기)**: 채팅의 최근 메시지(30개, 12,000자까지)와 작업 카드의 한 줄 요약, 앱의 규칙과 도구 목록, 현재 시각. `list_records`의 결과는 개수와 최근 항목(최대 50개)의 사이트·검색어·종류·제목(80자)·가격·기록 시각·누름 여부만 보냅니다. 링크와 페이지 본문, API Key는 프롬프트에 넣지 않습니다.
@@ -97,7 +98,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 계측 테스트는 테스트 assets의 가짜 검색 페이지(`capture-fixture.html`, `shop.example.com` 링크)를 씁니다. 실제 쇼핑 사이트에는 접속하지 않고, 이 예시 호스트는 주소가 없어 링크를 눌러도 어느 서버에도 닿지 않습니다.
   - `CaptureScriptTest`: 앱과 같은 설정의 WebView에서 복사된 `capture.js`가 광고 3건·상품 4건을 세는지, 일반 규칙이 광고 표시 글자로 3건을 찾는지, 스크립트의 클릭은 무시하고 화면을 실제로 누른 탭만 `PaBridge.reportClick`에 닿는지 확인합니다.
   - `BrowserControllerTest`: 앱 화면의 브라우저에서 **이 페이지 기록**과 같은 기록을 실행해 데이터베이스에 저장되는지, 기록한 광고를 실제로 누르면 누른 시각·링크와 도착 페이지가 기록되는지 확인합니다. 테스트가 만든 기록만 지웁니다.
-  - `StoresTest`(SQLite 거르기·누른 광고·한 번만 실행되는 카드·CSV 파일), `SecretBoxTest`(Keystore 암호화), `ActionCardTest`(카드의 승인 대기·완료·실패 표시).
+  - `StoresTest`(SQLite 거르기·누른 광고·한 번만 실행되는 카드·CSV 파일, 메시지와 함께 남고 지워지는 ‘한 일’, 버전 1 데이터베이스의 올림), `SecretBoxTest`(Keystore 암호화), `ActionCardTest`(카드의 승인 대기·완료·실패 표시), `AgentCardsTest`(답 아래의 ‘한 일’ 목록).
 - 릴리스 빌드는 서명 설정이 없습니다. 배포하려면 서명 키를 따로 만들어 `signingConfigs`에 지정합니다(키 파일은 커밋하지 않습니다).
 
 ## 내장 Hermes 실행 환경
@@ -118,14 +119,15 @@ cd android && ./gradlew :app:assembleDebug -PhermesAbis=x86_64   # 한 ABI만 �
 
 - JDK 17, Android SDK(cmdline-tools), git, patch가 필요합니다. NDK 27.3.13750724, CMake 3.31.6, Rust 1.99.1(Android 대상 2개)은 `--setup-toolchain`이 사용자 폴더에 설치하고, 나머지 작업 파일은 `build/android-hermes/`에 둡니다.
 - wheel 빌드는 비트 단위로 같게 나온다는 보장이 없으므로, 다시 컴파일한 wheel은 잠금 파일의 해시를 바꿉니다. `--frozen`은 다시 컴파일하지 않고 잠금 파일과 맞는 캐시만 씁니다. 같은 입력이면 실행 환경 압축 파일은 같게 나오므로, 앱은 무언가 바뀌었을 때만 다시 풉니다.
-- 계측 테스트 `HermesRuntimeTest`는 실행 환경을 풀고, `hermes/smoke/hermes_smoke.py`로 Hermes 한 턴(도구 호출 1번)을 네트워크 없이 실행한 뒤 확장 모듈을 모두 불러 봅니다. `HermesChatTest`는 실제 워커로 채팅 한 턴을 실행합니다: 대신 답하는 모델이 `list_records`를 부르게 하고, 앱이 실행한 카드와 Hermes의 답을 확인합니다. 질문에 답하기와 중지도 확인합니다. 실제 웹 검색은 `am instrument -e hermesNetwork true`로 따로 실행합니다. 실행 환경이 없는 APK에서는 모두 건너뜁니다.
+- 계측 테스트 `HermesRuntimeTest`는 실행 환경을 풀고, `hermes/smoke/hermes_smoke.py`로 Hermes 한 턴(도구 호출 1번)을 네트워크 없이 실행한 뒤 확장 모듈을 모두 불러 봅니다. `HermesChatTest`는 실제 워커로 채팅 한 턴을 실행합니다: 대신 답하는 모델이 `list_records`를 부르게 하고, 앱이 실행한 카드와 Hermes의 답을 확인합니다. 질문에 답하기와 중지, 턴이 한 일이 답과 함께 남는지도 확인합니다. 실제 웹 검색은 `am instrument -e hermesNetwork true`로 따로 실행합니다. 실행 환경이 없는 APK에서는 모두 건너뜁니다.
 
 ## 코드 구조
 
 ```text
 app/src/main/java/dev/privateagent/android/
-  agent/     채팅 흐름(ChatAgent, Hermes는 HermesChat), 앱의 작업(AppActions), 도구 정의와 인자 검사, 시스템 프롬프트, 화면 문구
-  data/      SQLite(messages, captures, items, schedules)와 저장소
+  agent/     채팅 흐름(ChatAgent, Hermes는 HermesChat), 앱의 작업(AppActions), 도구 정의와 인자 검사, 시스템 프롬프트, 화면 문구,
+             턴이 한 일(TurnActivity, Redact)
+  data/      SQLite(messages, activity, captures, items, schedules)와 저장소
   llm/       엔드포인트 규칙, 요청·응답 형식(OpenAI 호환·Anthropic, JSON 계획), HTTPS 클라이언트
   web/       보이는 브라우저(BrowserController), WebView 설정, PaBridge, 사이트 목록, capture.js 결과 읽기
   schedule/  다음 실행 시각, WorkManager 작업, 알림

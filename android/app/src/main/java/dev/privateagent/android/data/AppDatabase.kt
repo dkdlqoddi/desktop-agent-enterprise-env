@@ -30,7 +30,8 @@ class AppDatabase(context: Context, name: String? = NAME) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Version 1 is the first; later versions add their migrations here.
+        // Version 2: what a turn did on the way, kept with the message that ended it.
+        if (oldVersion < 2) db.execSQL(ACTIVITY)
     }
 
     fun changed() {
@@ -39,7 +40,20 @@ class AppDatabase(context: Context, name: String? = NAME) :
 
     companion object {
         const val NAME = "private-agent.db"
-        const val VERSION = 1
+        const val VERSION = 2
+
+        /**
+         * What the turn a message ended did on the way (agent/TurnActivity.kt): the tools it ran, the app's actions,
+         * the commands it asked about with how each was decided, and its questions (steps: JSON, in order; more: the
+         * steps beyond those kept). It goes with its message.
+         */
+        private const val ACTIVITY = """
+            CREATE TABLE activity (
+                message_id INTEGER PRIMARY KEY REFERENCES messages (id) ON DELETE CASCADE,
+                steps TEXT NOT NULL DEFAULT '[]',
+                more INTEGER NOT NULL DEFAULT 0
+            )
+            """
 
         private val SCHEMA = listOf(
             """
@@ -106,6 +120,7 @@ class AppDatabase(context: Context, name: String? = NAME) :
                 next_run_at INTEGER
             )
             """,
+            ACTIVITY,
         )
     }
 }

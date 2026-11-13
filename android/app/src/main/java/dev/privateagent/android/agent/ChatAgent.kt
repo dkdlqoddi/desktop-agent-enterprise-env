@@ -81,12 +81,17 @@ class ChatAgent(
             try {
                 converse(message)
             } catch (stopped: CancellationException) {
-                withContext(NonCancellable) { messages.addNotice(NoticeKind.INFO, context.getString(R.string.chat_stopped)) }
+                // What the turn did before it was stopped is kept with this notice.
+                withContext(NonCancellable) {
+                    val notice = messages.addNotice(NoticeKind.INFO, context.getString(R.string.chat_stopped))
+                    hermes?.claimActivity(notice)
+                }
                 throw stopped
             } catch (_: Exception) {
                 // Never a stack trace on the screen; the message says the request did not finish.
                 withContext(NonCancellable) {
-                    messages.addNotice(NoticeKind.ERROR, context.getString(R.string.llm_error_unexpected))
+                    val notice = messages.addNotice(NoticeKind.ERROR, context.getString(R.string.llm_error_unexpected))
+                    hermes?.claimActivity(notice)
                 }
             } finally {
                 busyState.value = false

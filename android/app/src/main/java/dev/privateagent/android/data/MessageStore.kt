@@ -2,6 +2,9 @@ package dev.privateagent.android.data
 
 import android.content.ContentValues
 import android.database.Cursor
+import android.database.SQLException
+import android.database.sqlite.SQLiteDatabase
+import dev.privateagent.android.agent.Activity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -9,16 +12,34 @@ import kotlinx.coroutines.withContext
 class MessageStore(private val db: AppDatabase) {
 
     suspend fun all(limit: Int = 500): List<ChatMessage> = withContext(Dispatchers.IO) {
-        // The latest [limit] messages, oldest first.
+        // The latest [limit] messages, oldest first, each with what its turn did.
         db.readableDatabase.rawQuery(
-            "SELECT * FROM (SELECT * FROM messages ORDER BY id DESC LIMIT $limit) ORDER BY id ASC",
+            "SELECT m.*, $ACTIVITY FROM (SELECT * FROM messages ORDER BY id DESC LIMIT $limit) m $JOIN ORDER BY m.id ASC",
             null,
         ).use { cursor -> cursor.messages() }
     }
 
     suspend fun get(id: Long): ChatMessage? = withContext(Dispatchers.IO) {
-        db.readableDatabase.rawQuery("SELECT * FROM messages WHERE id = ?", arrayOf(id.toString()))
+        db.readableDatabase.rawQuery("SELECT m.*, $ACTIVITY FROM messages m $JOIN WHERE m.id = ?", arrayOf(id.toString()))
             .use { cursor -> cursor.messages().firstOrNull() }
+    }
+
+    /**
+     * Keeps what the turn the message [messageId] ended did on the way. It is shown under the message and goes with
+     * it; a message that is gone meanwhile (the conversation was cleared) takes none.
+     */
+    suspend fun setActivity(messageId: Long, activity: Activity) = withContext(Dispatchers.IO) {
+        val values = ContentValues().apply {
+            put("message_id", messageId)
+            put("steps", activity.stepsJson())
+            put("more", activity.more)
+        }
+        val kept = try {
+            db.writableDatabase.insertWithOnConflict("activity", null, values, SQLiteDatabase.CONFLICT_REPLACE) != -1L
+        } catch (_: SQLException) {
+            false
+        }
+        if (kept) db.changed()
     }
 
     suspend fun addUser(text: String): Long = insert(MessageRole.USER, text)
@@ -116,9 +137,15 @@ class MessageStore(private val db: AppDatabase) {
                 result = string("result"),
                 captureId = longOrNull("capture_id"),
                 notice = NoticeKind.of(string("notice")),
+                activity = Activity.parse(string("activity_steps"), int("activity_more")),
             )
         }
         return list
+    }
+
+    private companion object {
+        const val ACTIVITY = "a.steps AS activity_steps, a.more AS activity_more"
+        const val JOIN = "LEFT JOIN activity a ON a.message_id = m.id"
     }
 }
 

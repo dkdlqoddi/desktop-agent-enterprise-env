@@ -1,5 +1,6 @@
 package dev.privateagent.android.data
 
+import dev.privateagent.android.agent.Activity
 import dev.privateagent.android.agent.RecordKindFilter
 import dev.privateagent.android.agent.ScheduleDays
 import dev.privateagent.android.web.ItemKind
@@ -72,6 +73,8 @@ data class ChatMessage(
     val result: String? = null,
     val captureId: Long? = null,
     val notice: NoticeKind? = null,
+    /** What the turn this message ended did on the way; null for a message that ended none, or a turn that did nothing. */
+    val activity: Activity? = null,
 )
 
 data class CaptureRow(

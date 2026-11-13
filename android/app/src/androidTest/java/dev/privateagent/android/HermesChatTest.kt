@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.privateagent.android.agent.AppActions
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
+import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.data.ActionState
 import dev.privateagent.android.data.AppDatabase
 import dev.privateagent.android.data.CaptureSource
@@ -46,7 +47,7 @@ import java.util.Collections
  * One real chat turn on the bundled Hermes worker, with a stand-in model answering its inference frames (as the
  * desktop's test_hermes.py live test): Hermes calls the app's list_records itself, the app checks and runs it and
  * shows its card, and Hermes answers with what it found. Also a clarify question answered in the chat, a subagent
- * whose result comes back within the turn, and a stop.
+ * whose result comes back within the turn, and a stop. What a turn did is kept with its answer.
  */
 @RunWith(AndroidJUnit4::class)
 class HermesChatTest {
@@ -162,6 +163,11 @@ class HermesChatTest {
         val result = toolResult(model.requests.first { toolResult(it) != null }).orEmpty()
         assertTrue(result, result.contains("노트북 특가"))
         assertNull(chat.view.value)
+        // What the turn did is kept with its answer: the app's action it ran, and how that ended.
+        val did = all.last { it.role == MessageRole.ASSISTANT }.activity
+        assertNotNull(did)
+        assertEquals(listOf(StepKind.ACTION to "done"), did!!.steps.map { it.kind to it.result })
+        assertNull(card.activity)
     }
 
     @Test
@@ -195,6 +201,9 @@ class HermesChatTest {
         assertEquals("쿠팡에서 찾겠습니다.", messages.all().last { it.role == MessageRole.ASSISTANT }.text)
         val result = toolResult(model.requests.first { toolResult(it) != null }).orEmpty()
         assertTrue(result, result.contains("쿠팡") && result.contains("submitted"))
+        // The question and how it ended are among what the turn did.
+        val step = messages.all().last { it.role == MessageRole.ASSISTANT }.activity!!.steps.single { it.kind == StepKind.QUESTION }
+        assertEquals("어느 사이트에서 찾을까요?" to "submitted", step.text to step.result)
     }
 
     /**

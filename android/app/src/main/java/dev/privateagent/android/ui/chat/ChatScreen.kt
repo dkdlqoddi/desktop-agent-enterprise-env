@@ -29,6 +29,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,8 +59,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -66,10 +70,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.privateagent.android.AppGraph
 import dev.privateagent.android.R
+import dev.privateagent.android.agent.Activity
+import dev.privateagent.android.agent.ActivityStep
 import dev.privateagent.android.agent.AgentTools
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.agent.RecordKindFilter
+import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.ActionState
 import dev.privateagent.android.data.ChatMessage
@@ -269,27 +276,121 @@ fun MessageItem(
     onOpenBrowser: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    when (message.role) {
-        MessageRole.USER -> Bubble(message.text, mine = true)
-        MessageRole.ASSISTANT -> Bubble(message.text, mine = false)
-        MessageRole.ACTION -> ActionCard(message, texts, onApprove, onCancel, onViewCapture, onViewRecords, onOpenBrowser)
-        MessageRole.NOTICE -> when (message.notice) {
-            NoticeKind.SETUP -> SetupCard(onOpen = onOpenSettings)
-            NoticeKind.ERROR -> Surface(
-                color = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(message.text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+    Column {
+        when (message.role) {
+            MessageRole.USER -> Bubble(message.text, mine = true)
+            MessageRole.ASSISTANT -> Bubble(message.text, mine = false)
+            MessageRole.ACTION -> ActionCard(message, texts, onApprove, onCancel, onViewCapture, onViewRecords, onOpenBrowser)
+            MessageRole.NOTICE -> when (message.notice) {
+                NoticeKind.SETUP -> SetupCard(onOpen = onOpenSettings)
+                NoticeKind.ERROR -> Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(message.text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+                }
+                else -> Text(
+                    message.text,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
             }
-            else -> Text(
-                message.text,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
+        }
+        // What the turn this message ended did on the way.
+        message.activity?.let { ActivityNote(it) }
+    }
+}
+
+/**
+ * What a turn did on the way to the message above (the desktop's 한 일 N건): closed until asked for, then the tools
+ * it ran, the app's actions, the commands it asked about with how each was decided, and its questions, in order.
+ */
+@Composable
+fun ActivityNote(activity: Activity) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Column {
+        TextButton(onClick = { open = !open }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+            Icon(
+                if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
             )
+            Spacer(Modifier.size(4.dp))
+            Text(stringResource(R.string.activity_count, activity.count), style = MaterialTheme.typography.labelMedium)
+        }
+        if (open) {
+            val list = stringResource(R.string.activity_list)
+            Column(
+                Modifier
+                    .padding(start = 12.dp, end = 4.dp, bottom = 4.dp)
+                    .semantics { contentDescription = list },
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                for (step in activity.steps) ActivityRow(step)
+                if (activity.more > 0) {
+                    Text(
+                        stringResource(R.string.activity_more, activity.more),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActivityRow(step: ActivityStep) {
+    val kind = when (step.kind) {
+        StepKind.TOOL -> R.string.activity_kind_tool
+        StepKind.ACTION -> R.string.activity_kind_action
+        StepKind.APPROVAL -> R.string.activity_kind_approval
+        StepKind.QUESTION -> R.string.activity_kind_question
+    }
+    // How it ended, in the chat's words; a result this version does not know is shown as it was kept.
+    val result = when (step.result) {
+        "once" -> R.string.activity_result_once
+        "session" -> R.string.activity_result_session
+        "always" -> R.string.activity_result_always
+        "deny" -> R.string.activity_result_deny
+        "timeout" -> R.string.activity_result_timeout
+        "stopped" -> R.string.activity_result_stopped
+        "done" -> R.string.activity_result_done
+        "failed" -> R.string.activity_result_failed
+        "submitted" -> R.string.activity_result_submitted
+        "cancelled" -> R.string.activity_result_cancelled
+        else -> null
+    }
+    Column {
+        Row(verticalAlignment = Alignment.Top) {
+            Text(
+                stringResource(kind),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 6.dp),
+            )
+            Text(
+                step.text,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = if (step.kind == StepKind.APPROVAL) FontFamily.Monospace else null,
+                modifier = Modifier.weight(1f),
+            )
+            val ended = result?.let { stringResource(it) } ?: step.result
+            if (ended.isNotEmpty()) {
+                Text(
+                    ended,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+        }
+        if (step.note.isNotEmpty()) {
+            Text(step.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -60,6 +60,25 @@
     <string name="approval_once">이번만 실행</string>
     <string name="approval_always">항상 허용</string>
     <string name="approval_deny">거부</string>
+
+    <!-- What a turn did, under the message that ended it -->
+    <string name="activity_count">한 일 %1$d건</string>
+    <string name="activity_list">이 답을 만들며 한 일</string>
+    <string name="activity_more">그 뒤의 %1$d건은 적지 않았습니다.</string>
+    <string name="activity_kind_tool">도구</string>
+    <string name="activity_kind_action">앱 작업</string>
+    <string name="activity_kind_approval">명령 확인</string>
+    <string name="activity_kind_question">질문</string>
+    <string name="activity_result_once">이번만 실행</string>
+    <string name="activity_result_session">이 대화에서 허용</string>
+    <string name="activity_result_always">항상 허용</string>
+    <string name="activity_result_deny">거부</string>
+    <string name="activity_result_timeout">응답 없음</string>
+    <string name="activity_result_stopped">중지함</string>
+    <string name="activity_result_done">완료</string>
+    <string name="activity_result_failed">실패</string>
+    <string name="activity_result_submitted">답함</string>
+    <string name="activity_result_cancelled">답하지 않음</string>
     <string name="clarify_title">조금 더 알려 주세요</string>
     <string name="clarify_answer_hint">답을 입력하세요</string>
     <string name="clarify_send">보내기</string>
@@ -278,7 +297,7 @@
     <string name="settings_data">데이터</string>
     <string name="settings_clear_chat">대화 지우기</string>
     <string name="settings_clear_chat_title">대화를 모두 지울까요?</string>
-    <string name="settings_clear_chat_body">채팅 메시지를 모두 지웁니다. 기록과 예약은 남습니다.</string>
+    <string name="settings_clear_chat_body">채팅 메시지를 모두 지웁니다. 답마다 남긴 ‘한 일’도 함께 지웁니다. 기록과 예약은 남습니다.</string>
     <string name="settings_clear_records">기록 모두 지우기</string>
     <string name="settings_clear_records_title">기록을 모두 지울까요?</string>
     <string name="settings_clear_records_body">기록한 페이지와 항목을 모두 지웁니다. 되돌릴 수 없습니다.</string>

@@ -1,8 +1,12 @@
 package dev.privateagent.android
 
+import android.database.sqlite.SQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.privateagent.android.agent.Activity
+import dev.privateagent.android.agent.ActivityStep
 import dev.privateagent.android.agent.RecordKindFilter
+import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.ActionState
 import dev.privateagent.android.data.AppDatabase
@@ -117,6 +121,67 @@ class StoresTest {
         val running = messages.addAction("open_site", "{}", ActionState.RUNNING)
         messages.failInterrupted("중단")
         assertEquals(ActionState.FAILED, messages.get(running)!!.state)
+    }
+
+    @Test
+    fun whatATurnDidIsKeptWithItsMessageAndGoesWithIt() = runBlocking {
+        val answer = messages.addAssistant("노트북 광고 기록 1건을 찾았습니다.")
+        val other = messages.addUser("안녕")
+        assertNull(messages.get(answer)!!.activity)
+        val activity = Activity(
+            listOf(
+                ActivityStep(StepKind.TOOL, "웹 검색: 노트북", "", "", 1_000),
+                ActivityStep(StepKind.APPROVAL, "git push", "원격에 올립니다", "once", 2_000),
+            ),
+            more = 2,
+        )
+        messages.setActivity(answer, activity)
+        assertEquals(activity, messages.get(answer)!!.activity)
+        assertEquals(listOf(activity, null), messages.all().map { it.activity })
+        // A second one replaces the first, and a message that is not there takes none.
+        val shorter = activity.copy(steps = activity.steps.take(1), more = 0)
+        messages.setActivity(answer, shorter)
+        assertEquals(shorter, messages.get(answer)!!.activity)
+        messages.setActivity(other + 100, activity)
+        assertEquals(1, activityRows())
+        // 대화 지우기: an activity goes with its message.
+        messages.clear()
+        assertTrue(messages.all().isEmpty())
+        assertEquals(0, activityRows())
+    }
+
+    private fun activityRows(): Int = database.readableDatabase.rawQuery("SELECT count(*) FROM activity", null).use {
+        it.moveToFirst()
+        it.getInt(0)
+    }
+
+    @Test
+    fun aDatabaseOfTheFirstVersionGainsTheActivityTableAndKeepsItsMessages() = runBlocking {
+        val name = "migration-test.db"
+        context.deleteDatabase(name)
+        // As version 1 made it: the conversation, without what a turn did.
+        val file = context.getDatabasePath(name).also { it.parentFile!!.mkdirs() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { old ->
+            old.execSQL(
+                "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, " +
+                    "text TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, tool TEXT, args TEXT, state TEXT, " +
+                    "result TEXT, capture_id INTEGER, notice TEXT)",
+            )
+            old.execSQL("INSERT INTO messages (role, text, created_at) VALUES ('assistant', '예전 답', 1)")
+            old.version = 1
+        }
+        val upgraded = AppDatabase(context, name)
+        try {
+            val store = MessageStore(upgraded)
+            val kept = store.all().single()
+            assertEquals("예전 답", kept.text)
+            assertNull(kept.activity)
+            store.setActivity(kept.id, Activity(listOf(ActivityStep(StepKind.TOOL, "웹 검색", "", "", 1)), 0))
+            assertEquals(1, store.get(kept.id)!!.activity!!.count)
+        } finally {
+            upgraded.close()
+            context.deleteDatabase(name)
+        }
     }
 
     @Test

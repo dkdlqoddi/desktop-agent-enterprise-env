@@ -14,7 +14,9 @@ import dev.privateagent.android.llm.LlmProtocol
 import dev.privateagent.android.ui.Navigator
 import dev.privateagent.android.ui.Tab
 import dev.privateagent.android.util.cleanText
+import dev.privateagent.android.util.text
 import dev.privateagent.android.web.Sites
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -36,6 +38,9 @@ import java.util.UUID
  * which run live when it calls them, each checked first ([ToolValidator]) and shown in the chat as a card with what it
  * did. A command Hermes' own guard escalates, and a question Hermes asks, wait in the chat for the user (bounded).
  * Every model request is answered with the user's LLM connection; the key never reaches the worker.
+ *
+ * What a turn did, the tools it ran, the app's actions, the commands asked about and how each was decided, is kept
+ * with the message that ended it ([Activity]) and shown under it.
  */
 class HermesChat(
     private val context: Context,
@@ -64,13 +69,22 @@ class HermesChat(
     @Volatile
     private var waiting: Pair<String, CompletableDeferred<JSONObject>>? = null
 
+    /** The activity of a turn that ended without a message of its own to keep it with ([claimActivity]). */
+    @Volatile
+    private var loose: Activity? = null
+
     /**
      * Runs one turn for the user's [message] with the conversation before it ([history]). The answer, the cards of
-     * the actions Hermes ran and any failure go to the conversation.
+     * the actions Hermes ran and any failure go to the conversation, and what the turn did goes with the last of them.
      */
     suspend fun converse(model: HermesModel, modelName: String, message: String, history: List<ChatMessage>) {
         viewState.value = TurnView()
+        loose = null
+        val recorder = ActivityRecorder()
         var ran = 0
+        // The last message this turn added: what the turn did on the way is kept with it.
+        var last: Long? = null
+        var stopped = false
         try {
             withContext(Dispatchers.IO) { introduce(session.home) }
             val turn = HermesSession.Turn(
@@ -92,16 +106,22 @@ class HermesChat(
 
                     override suspend fun appTool(name: String, args: JSONObject): HermesSession.AppToolResult {
                         ran += 1
-                        return runAppTool(name, args)
+                        val (card, result) = runAppTool(name, args, recorder)
+                        last = card
+                        return result
                     }
 
                     override suspend fun ask(kind: HermesSession.InteractionKind, payload: JSONObject) =
-                        askUser(kind, payload)
+                        askUser(kind, payload, recorder)
 
                     override fun progress(event: String, tool: String, preview: String) {
                         // The app's own tools show as cards in the chat, with the step below saying how they ended.
                         if (tool in APP_TOOLS) return
-                        step(event, label(tool), preview)
+                        val name = label(tool)
+                        if (event == "tool.started" && name.isNotEmpty()) {
+                            recorder.step(StepKind.TOOL, if (preview.isEmpty()) name else "$name: $preview")
+                        }
+                        step(event, name, preview)
                     }
 
                     override fun draft(text: String) {
@@ -111,18 +131,39 @@ class HermesChat(
             )
             val reply = spoken(answer)
             when {
-                reply.isNotEmpty() -> messages.addAssistant(reply)
-                ran == 0 -> messages.addNotice(NoticeKind.ERROR, context.getString(R.string.hermes_no_reply))
+                reply.isNotEmpty() -> last = messages.addAssistant(reply)
+                ran == 0 -> last = messages.addNotice(NoticeKind.ERROR, context.getString(R.string.hermes_no_reply))
             }
         } catch (failure: HermesSession.TurnException) {
-            messages.addNotice(NoticeKind.ERROR, problem(failure))
+            last = messages.addNotice(NoticeKind.ERROR, problem(failure))
         } catch (failure: LlmException) {
-            messages.addNotice(NoticeKind.ERROR, texts.llmError(failure))
+            last = messages.addNotice(NoticeKind.ERROR, texts.llmError(failure))
+        } catch (stop: CancellationException) {
+            stopped = true
+            throw stop
         } finally {
             waiting?.second?.cancel()
             waiting = null
             viewState.value = null
+            val activity = recorder.snapshot()
+            val ended = last
+            when {
+                activity == null -> Unit
+                // A stop, or a failure only the caller tells of: its notice takes the activity (claimActivity).
+                stopped || ended == null -> loose = activity
+                else -> withContext(NonCancellable) { messages.setActivity(ended, activity) }
+            }
         }
+    }
+
+    /**
+     * Keeps what the last turn did with the message [messageId], when the turn ended without one of its own: the
+     * notice the caller wrote for a stop.
+     */
+    suspend fun claimActivity(messageId: Long) {
+        val activity = loose ?: return
+        loose = null
+        messages.setActivity(messageId, activity)
     }
 
     /**
@@ -152,28 +193,57 @@ class HermesChat(
         if (id == interactionId) pending.complete(answer)
     }
 
-    private suspend fun askUser(kind: HermesSession.InteractionKind, payload: JSONObject): JSONObject? {
+    private suspend fun askUser(
+        kind: HermesSession.InteractionKind,
+        payload: JSONObject,
+        recorder: ActivityRecorder,
+    ): JSONObject? {
         val id = UUID.randomUUID().toString()
         val pending = CompletableDeferred<JSONObject>()
         waiting = id to pending
         viewState.update { it?.copy(interaction = Interaction(id, kind, payload)) }
         navigator.show(Tab.CHAT)
-        return try {
-            withTimeoutOrNull(INTERACTION_MS) { pending.await() }
+        var answer: JSONObject? = null
+        // A question nobody answered ran out of its time, unless the turn was stopped meanwhile.
+        var unanswered = "timeout"
+        try {
+            answer = withTimeoutOrNull(INTERACTION_MS) { pending.await() }
+            return answer
+        } catch (stop: CancellationException) {
+            unanswered = "stopped"
+            throw stop
         } finally {
             waiting = null
             viewState.update { it?.copy(interaction = null) }
+            when (kind) {
+                HermesSession.InteractionKind.APPROVAL -> recorder.step(
+                    StepKind.APPROVAL,
+                    payload.text("command"),
+                    payload.text("description"),
+                    answer?.text("decision")?.takeIf { it in HermesSession.DECISIONS } ?: unanswered,
+                )
+                HermesSession.InteractionKind.CLARIFY -> recorder.step(
+                    StepKind.QUESTION,
+                    ActivityRecorder.questionText(payload.optJSONArray("questions")),
+                    result = if (answer == null) unanswered else "submitted",
+                )
+            }
         }
     }
 
-    /** One app action Hermes called: checked, shown as a card, run, and its result handed back. */
-    private suspend fun runAppTool(name: String, args: JSONObject): HermesSession.AppToolResult {
+    /** One app action Hermes called: checked, shown as a card, run, and its result handed back with the card's id. */
+    private suspend fun runAppTool(
+        name: String,
+        args: JSONObject,
+        recorder: ActivityRecorder,
+    ): Pair<Long, HermesSession.AppToolResult> {
         val action = when (val validation = ToolValidator(sites()).validate(name, args)) {
             is Validation.Valid -> validation.action
             is Validation.Invalid -> {
                 val problem = texts.problem(validation.problem)
-                messages.addAction(cleanText(name, 40), "{}", ActionState.FAILED, problem)
-                return HermesSession.AppToolResult("failed", JSONObject().put("text", problem))
+                val card = messages.addAction(cleanText(name, 40), "{}", ActionState.FAILED, problem)
+                recorder.step(StepKind.ACTION, cleanText(name, 40), problem, "failed")
+                return card to HermesSession.AppToolResult("failed", JSONObject().put("text", problem))
             }
         }
         val title = texts.toolTitle(action.tool)
@@ -181,18 +251,20 @@ class HermesChat(
         val id = messages.addAction(action.tool, action.toJson().toString(), ActionState.RUNNING)
         val outcome = try {
             actions.run(action)
-        } catch (stopped: kotlinx.coroutines.CancellationException) {
+        } catch (stopped: CancellationException) {
             withContext(NonCancellable) {
                 messages.moveAction(id, ActionState.RUNNING, ActionState.FAILED, context.getString(R.string.chat_stopped))
             }
+            recorder.step(StepKind.ACTION, title, result = "stopped")
             throw stopped
         }
         messages.moveAction(id, ActionState.RUNNING, outcome.state, outcome.line, captureId = outcome.captureId)
         step("tool.completed", title, outcome.line)
+        recorder.step(StepKind.ACTION, title, outcome.line, if (outcome.done) "done" else "failed")
         // A capture shows in the browser while it runs; the conversation goes on in the chat. A site opened for the
         // user to browse stays on the screen.
         if (action is AgentAction.WebCapture || action is AgentAction.CapturePage) navigator.show(Tab.CHAT)
-        return HermesSession.AppToolResult(if (outcome.done) "done" else "failed", outcome.result)
+        return id to HermesSession.AppToolResult(if (outcome.done) "done" else "failed", outcome.result)
     }
 
     /** Hermes' own tools by what they do, in the chat's words; others by their name. */
