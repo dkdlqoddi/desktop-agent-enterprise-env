@@ -60,5 +60,7 @@ class AgentSectionTest {
         compose.onNodeWithContentDescription("허용 취소: $command").performScrollTo().performClick()
         compose.onNodeWithText(command).assertDoesNotExist()
         assertFalse(command in graph.grants.allowed.value)
+        // What is closed to the agent is said, and has no switch.
+        compose.onNodeWithText("끌 수 없습니다.", substring = true).assertExists()
     }
 }

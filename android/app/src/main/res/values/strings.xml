@@ -318,6 +318,8 @@
     <string name="agent_session_none">없습니다.</string>
     <string name="agent_session_count">명령 종류 %1$d가지를 이 대화에서 묻지 않습니다. 대화를 지우거나 앱을 닫으면 다시 묻습니다.</string>
     <string name="agent_session_forget">다시 묻기</string>
+    <string name="agent_protected_title">보호 구역</string>
+    <string name="agent_protected_body">에이전트의 도구는 이 앱의 데이터에 손대지 못합니다: 대화와 기록의 데이터베이스, 설정과 API Key, 브라우저의 쿠키와 사이트 데이터. 끌 수 없습니다.</string>
     <string name="settings_about">정보</string>
     <string name="settings_about_body">대화와 기록은 이 기기에만 저장됩니다. 설정한 LLM에는 채팅 내용과 에이전트가 쓴 도구의 결과(기록한 광고·상품의 제목·가격·검색어, 웹 검색 결과, 에이전트의 메모리와 기술)를 보냅니다. 내장 Hermes의 웹 검색어는 DuckDuckGo로 갑니다. 앱은 광고를 대신 누르지 않고, 로봇 확인을 우회하지 않습니다.</string>
     <string name="settings_version">버전 %1$s</string>

@@ -1,10 +1,13 @@
 package dev.privateagent.android
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.util.Base64
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.privateagent.android.agent.AgentGrants
 import dev.privateagent.android.agent.AppActions
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
+import dev.privateagent.android.agent.ProtectedZones
 import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.data.ActionState
 import dev.privateagent.android.data.AppDatabase
@@ -41,13 +44,15 @@ import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.util.Collections
 
 /**
  * One real chat turn on the bundled Hermes worker, with a stand-in model answering its inference frames (as the
  * desktop's test_hermes.py live test): Hermes calls the app's list_records itself, the app checks and runs it and
  * shows its card, and Hermes answers with what it found. Also a clarify question answered in the chat, a subagent
- * whose result comes back within the turn, and a stop. What a turn did is kept with its answer.
+ * whose result comes back within the turn, and a stop. What a turn did is kept with its answer, and the app's own
+ * data is closed to the tools that take a path.
  */
 @RunWith(AndroidJUnit4::class)
 class HermesChatTest {
@@ -204,6 +209,46 @@ class HermesChatTest {
         // The question and how it ended are among what the turn did.
         val step = messages.all().last { it.role == MessageRole.ASSISTANT }.activity!!.steps.single { it.kind == StepKind.QUESTION }
         assertEquals("어느 사이트에서 찾을까요?" to "submitted", step.text to step.result)
+    }
+
+    /**
+     * The app's own data is closed to Hermes' tools that take a path (worker.py guard_files): an image in the app's
+     * cache is refused to vision_analyze, and one in the agent's own home is not.
+     */
+    @Test
+    fun theAppsOwnDataIsClosedToTheAgentsTools() = runBlocking {
+        val png = Base64.decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            Base64.DEFAULT,
+        )
+        val closed = File(context.cacheDir, "protected-probe.png").apply { writeBytes(png) }
+        val open = File(runtime.home, "open-probe.png").apply {
+            parentFile!!.mkdirs()
+            writeBytes(png)
+        }
+        val guarded = HermesChat(
+            context, messages, actions, Navigator(), { graph.sites }, graph.texts, session,
+            AgentGrants(AgentGrants.MemoryStore()),
+        ) { ProtectedZones.ofApp(listOf(context.dataDir), runtime.home) }
+        try {
+            for ((file, refused) in listOf(closed to true, open to false)) {
+                val model = Model { request ->
+                    when {
+                        "vision_analyze" in names(request) && toolResult(request) == null ->
+                            call("vision_analyze", JSONObject().put("image_url", file.path).put("question", "무엇이 보이나요?"))
+                        toolResult(request) != null -> words("확인했습니다.")
+                        else -> words("그림입니다.")
+                    }
+                }
+                withTimeout(300_000) { guarded.converse(model, "stand-in", "이 그림을 봐 줘", emptyList()) }
+                assertTrue("vision_analyze is offered", model.requests.any { "vision_analyze" in names(it) })
+                val result = toolResult(model.requests.first { toolResult(it) != null }).orEmpty()
+                assertEquals(result.take(600), refused, result.contains("protected in Private Agent"))
+            }
+        } finally {
+            closed.delete()
+            open.delete()
+        }
     }
 
     /**

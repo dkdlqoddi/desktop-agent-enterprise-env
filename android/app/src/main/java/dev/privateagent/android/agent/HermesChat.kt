@@ -41,8 +41,9 @@ import java.util.UUID
  *
  * The decision on a command is one of four ([ApprovalRules]). "once" runs it this time; "session" lets the same kind
  * of command run for the rest of this conversation and "always" lets that very command run from now on ([grants]
- * keeps both, and every turn is handed them); "deny" refuses it. What a turn did, the tools it ran, the app's actions,
- * the commands asked about and how each was decided, is kept with the message that ended it ([Activity]) and shown
+ * keeps both, and every turn is handed them); "deny" refuses it. What the agent may not touch at all, the app's own
+ * data, is handed to every turn too ([protectedPaths]). What a turn did, the tools it ran, the app's actions, the
+ * commands asked about and how each was decided, is kept with the message that ended it ([Activity]) and shown
  * under it.
  */
 class HermesChat(
@@ -54,6 +55,7 @@ class HermesChat(
     private val texts: Texts,
     private val session: HermesSession,
     private val grants: AgentGrants = AgentGrants(AgentGrants.MemoryStore()),
+    private val protectedPaths: () -> List<String> = { emptyList() },
 ) {
     /** What the chat shows while a turn runs: the steps Hermes took, its draft, and a question for the user. */
     data class TurnView(
@@ -95,7 +97,7 @@ class HermesChat(
         try {
             val limits = withContext(Dispatchers.IO) {
                 introduce(session.home)
-                HermesSession.Limits(grants.allowed.value, grants.session.value)
+                HermesSession.Limits(grants.allowed.value, grants.session.value, protectedPaths())
             }
             val turn = HermesSession.Turn(
                 system = system(sites(), ZonedDateTime.now()),
@@ -369,6 +371,8 @@ class HermesChat(
                 - schedule_capture {site, query, time, days}: at that time the phone shows a notification; when the user taps it, the app records that search.
 
                 The app only reads shopping pages; it never clicks ads or links. Ads the user clicks themselves are recorded with their landing page. If a site asks for a robot check (CAPTCHA), the user solves it in the browser; never try to bypass it. If a request is ambiguous (which site? what to search?), use the clarify tool to ask.
+
+                The app's own data is closed to you: its database, its settings and the browser's profile. When a tool says a path is protected, do not look for another way to it; say so. The web records are read with list_records, never through the app's files.
 
                 Now: ${now.toLocalDate()} ${now.toLocalTime().withNano(0)}, time zone ${now.zone.id}.
             """.trimIndent()

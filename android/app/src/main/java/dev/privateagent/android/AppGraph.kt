@@ -5,6 +5,7 @@ import dev.privateagent.android.agent.AgentGrants
 import dev.privateagent.android.agent.AppActions
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
+import dev.privateagent.android.agent.ProtectedZones
 import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.AppDatabase
 import dev.privateagent.android.data.MessageStore
@@ -44,7 +45,15 @@ class AppGraph(app: Application) {
 
     /** What the agent runs without asking: the commands allowed for good, and the kinds allowed for this conversation. */
     val grants = AgentGrants(AgentGrants.PrefsStore(app))
-    val hermes = HermesChat(app, messages, actions, navigator, { sites }, texts, hermesSession, grants)
+
+    /**
+     * What the agent may not touch: the app's own data, in the user's storage and in the device's, around the agent's
+     * home. Worked out for each turn, as the folders are made as the app is used.
+     */
+    private val appFolders = listOf(app.dataDir, app.createDeviceProtectedStorageContext().dataDir)
+    val hermes = HermesChat(app, messages, actions, navigator, { sites }, texts, hermesSession, grants) {
+        ProtectedZones.ofApp(appFolders, hermesRuntime.home)
+    }
 
     val agent = ChatAgent(
         context = app,

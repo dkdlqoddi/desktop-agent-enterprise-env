@@ -20,8 +20,9 @@ import dev.privateagent.android.R
 
 /**
  * 설정 → 채팅 에이전트, as the desktop's 관리 → 채팅 에이전트: the commands the agent runs without asking (each can only
- * be taken off the list here; the one way onto it is the answer "always" to a command it asked about) and the kinds
- * of command allowed for this conversation.
+ * be taken off the list here; the one way onto it is the answer "always" to a command it asked about), the kinds of
+ * command allowed for this conversation, and what is closed to it. A phone's agent has no terminal and no file tools,
+ * so there are no folders to add and no command patterns to refuse.
  */
 @Composable
 internal fun AgentSection(graph: AppGraph) {
@@ -65,6 +66,9 @@ internal fun AgentSection(graph: AppGraph) {
                 TextButton(onClick = graph.grants::forgetSession) { Text(stringResource(R.string.agent_session_forget)) }
             }
         }
+
+        Heading(stringResource(R.string.agent_protected_title))
+        Text(stringResource(R.string.agent_protected_body), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
