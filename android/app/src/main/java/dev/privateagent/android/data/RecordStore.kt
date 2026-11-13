@@ -6,17 +6,14 @@ import dev.privateagent.android.agent.RecordKindFilter
 import dev.privateagent.android.web.CaptureCounts
 import dev.privateagent.android.web.CaptureResult
 import dev.privateagent.android.web.ItemKind
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** The captures (pages the app read) and their items (ads, products, results), with the user's clicks. */
 class RecordStore(private val db: AppDatabase) {
 
     /** Saves a capture with its items in one transaction; returns the capture's id. */
-    suspend fun saveCapture(capture: NewCapture, result: CaptureResult): Long = withContext(Dispatchers.IO) {
+    suspend fun saveCapture(capture: NewCapture, result: CaptureResult): Long = withDatabase {
         val database = db.writableDatabase
-        database.beginTransaction()
-        val id = try {
+        val id = database.inTransaction {
             val counts = result.counts
             val captureId = database.insertOrThrow(
                 "captures",
@@ -52,16 +49,13 @@ class RecordStore(private val db: AppDatabase) {
                     },
                 )
             }
-            database.setTransactionSuccessful()
             captureId
-        } finally {
-            database.endTransaction()
         }
         db.changed()
         id
     }
 
-    suspend fun captureIdForToken(token: String): Long? = withContext(Dispatchers.IO) {
+    suspend fun captureIdForToken(token: String): Long? = withDatabase {
         db.readableDatabase.rawQuery("SELECT id FROM captures WHERE token = ?", arrayOf(token)).use { cursor ->
             if (cursor.moveToFirst()) cursor.getLong(0) else null
         }
@@ -69,12 +63,12 @@ class RecordStore(private val db: AppDatabase) {
 
     /** Records the user's click on an item; returns the item's id, or null when the capture has no such item. */
     suspend fun markClicked(captureId: Long, ref: Int, clickedAt: Long, href: String): Long? =
-        withContext(Dispatchers.IO) {
+        withDatabase {
             val database = db.writableDatabase
             val itemId = database.rawQuery(
                 "SELECT id FROM items WHERE capture_id = ? AND ref = ?",
                 arrayOf(captureId.toString(), ref.toString()),
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null } ?: return@withContext null
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null } ?: return@withDatabase null
             database.update(
                 "items",
                 ContentValues().apply {
@@ -90,7 +84,7 @@ class RecordStore(private val db: AppDatabase) {
             itemId
         }
 
-    suspend fun setLanding(itemId: Long, url: String, title: String) = withContext(Dispatchers.IO) {
+    suspend fun setLanding(itemId: Long, url: String, title: String) = withDatabase {
         db.writableDatabase.update(
             "items",
             ContentValues().apply {
@@ -104,7 +98,7 @@ class RecordStore(private val db: AppDatabase) {
     }
 
     /** Items, newest capture first (newest click first for clicked ads). */
-    suspend fun items(filter: ItemFilter, limit: Int = 500): List<ItemRow> = withContext(Dispatchers.IO) {
+    suspend fun items(filter: ItemFilter, limit: Int = 500): List<ItemRow> = withDatabase {
         val (where, args) = where(filter)
         db.readableDatabase.rawQuery(
             "$ITEMS WHERE $where ORDER BY ${order(filter)} LIMIT ${limit.coerceIn(1, 5000)}",
@@ -116,7 +110,7 @@ class RecordStore(private val db: AppDatabase) {
      * Every item the filter finds, in the order of [items], handed to [each] one at a time: an export is of all of
      * them, which may be more than memory should hold at once. Returns how many there were.
      */
-    suspend fun eachItem(filter: ItemFilter, each: (ItemRow) -> Unit): Int = withContext(Dispatchers.IO) {
+    suspend fun eachItem(filter: ItemFilter, each: (ItemRow) -> Unit): Int = withDatabase {
         val (where, args) = where(filter)
         db.readableDatabase.rawQuery("$ITEMS WHERE $where ORDER BY ${order(filter)}", args).use { cursor ->
             var count = 0
@@ -135,7 +129,7 @@ class RecordStore(private val db: AppDatabase) {
     }
 
     /** How many items of each kind the filter finds, without a limit. */
-    suspend fun counts(filter: ItemFilter): CaptureCounts = withContext(Dispatchers.IO) {
+    suspend fun counts(filter: ItemFilter): CaptureCounts = withDatabase {
         val (where, args) = where(filter)
         var counts = CaptureCounts()
         db.readableDatabase.rawQuery(
@@ -155,30 +149,30 @@ class RecordStore(private val db: AppDatabase) {
         counts
     }
 
-    suspend fun item(id: Long): ItemRow? = withContext(Dispatchers.IO) {
+    suspend fun item(id: Long): ItemRow? = withDatabase {
         db.readableDatabase.rawQuery("$ITEMS WHERE i.id = ?", arrayOf(id.toString()))
             .use { cursor -> cursor.items().firstOrNull() }
     }
 
-    suspend fun captures(limit: Int = 300): List<CaptureRow> = withContext(Dispatchers.IO) {
+    suspend fun captures(limit: Int = 300): List<CaptureRow> = withDatabase {
         db.readableDatabase.rawQuery(
             "SELECT * FROM captures ORDER BY captured_at DESC, id DESC LIMIT ${limit.coerceIn(1, 5000)}",
             null,
         ).use { cursor -> cursor.captures() }
     }
 
-    suspend fun capture(id: Long): CaptureRow? = withContext(Dispatchers.IO) {
+    suspend fun capture(id: Long): CaptureRow? = withDatabase {
         db.readableDatabase.rawQuery("SELECT * FROM captures WHERE id = ?", arrayOf(id.toString()))
             .use { cursor -> cursor.captures().firstOrNull() }
     }
 
-    suspend fun clear() = withContext(Dispatchers.IO) {
+    suspend fun clear() = withDatabase {
         db.writableDatabase.delete("captures", null, null)
         db.changed()
     }
 
     /** Deletes one capture and its items. */
-    suspend fun deleteCapture(id: Long) = withContext(Dispatchers.IO) {
+    suspend fun deleteCapture(id: Long) = withDatabase {
         db.writableDatabase.delete("captures", "id = ?", arrayOf(id.toString()))
         db.changed()
     }

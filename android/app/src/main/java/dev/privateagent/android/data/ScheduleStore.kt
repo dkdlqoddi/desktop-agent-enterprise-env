@@ -3,12 +3,10 @@ package dev.privateagent.android.data
 import android.content.ContentValues
 import android.database.Cursor
 import dev.privateagent.android.agent.ScheduleDays
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class ScheduleStore(private val db: AppDatabase) {
 
-    suspend fun add(site: String, query: String, time: String, days: ScheduleDays): Long = withContext(Dispatchers.IO) {
+    suspend fun add(site: String, query: String, time: String, days: ScheduleDays): Long = withDatabase {
         val id = db.writableDatabase.insertOrThrow(
             "schedules",
             null,
@@ -25,12 +23,12 @@ class ScheduleStore(private val db: AppDatabase) {
         id
     }
 
-    suspend fun all(): List<ScheduleRow> = withContext(Dispatchers.IO) {
+    suspend fun all(): List<ScheduleRow> = withDatabase {
         db.readableDatabase.rawQuery("SELECT * FROM schedules ORDER BY time ASC, id ASC", null)
             .use { cursor -> cursor.schedules() }
     }
 
-    suspend fun get(id: Long): ScheduleRow? = withContext(Dispatchers.IO) {
+    suspend fun get(id: Long): ScheduleRow? = withDatabase {
         db.readableDatabase.rawQuery("SELECT * FROM schedules WHERE id = ?", arrayOf(id.toString()))
             .use { cursor -> cursor.schedules().firstOrNull() }
     }
@@ -41,12 +39,12 @@ class ScheduleStore(private val db: AppDatabase) {
         if (at == null) putNull("next_run_at") else put("next_run_at", at)
     }
 
-    suspend fun delete(id: Long) = withContext(Dispatchers.IO) {
+    suspend fun delete(id: Long) = withDatabase {
         db.writableDatabase.delete("schedules", "id = ?", arrayOf(id.toString()))
         db.changed()
     }
 
-    private suspend fun update(id: Long, values: ContentValues.() -> Unit) = withContext(Dispatchers.IO) {
+    private suspend fun update(id: Long, values: ContentValues.() -> Unit) = withDatabase {
         db.writableDatabase.update("schedules", ContentValues().apply(values), "id = ?", arrayOf(id.toString()))
         db.changed()
     }

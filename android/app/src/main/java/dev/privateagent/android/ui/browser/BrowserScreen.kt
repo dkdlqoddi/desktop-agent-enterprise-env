@@ -271,6 +271,7 @@ private fun NoticeBanner(notice: Notice, graph: AppGraph, onDismiss: () -> Unit)
             if (notice.ad) R.string.browser_click_recorded else R.string.browser_click_recorded_item,
         )
         is Notice.Captured -> graph.texts.outcome(notice.outcome)
+        is Notice.NotSaved -> graph.texts.storage(notice.problem)
     }
     Banner(text) {
         when (notice) {

@@ -9,6 +9,7 @@ import dev.privateagent.android.data.MessageRole
 import dev.privateagent.android.data.MessageStore
 import dev.privateagent.android.data.NoticeKind
 import dev.privateagent.android.data.ScheduleStore
+import dev.privateagent.android.data.StoreException
 import dev.privateagent.android.hermes.HermesModel
 import dev.privateagent.android.hermes.HermesRuntime
 import dev.privateagent.android.hermes.LlmHermesModel
@@ -25,6 +26,7 @@ import dev.privateagent.android.ui.Navigator
 import dev.privateagent.android.ui.Tab
 import dev.privateagent.android.web.Sites
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,7 +63,15 @@ class ChatAgent(
     /** Which planner the next message uses: the bundled Hermes agent, or the LLM's own tool calls (no runtime). */
     enum class Engine { HERMES, DIRECT }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * A database error in the chat's own work (a card the user answered, a scheduled capture, the start) is said on the
+     * screen; the app goes on. Any other failure still ends it, as a bug should.
+     */
+    private val storeProblems = CoroutineExceptionHandler { _, failure ->
+        if (failure !is StoreException) throw failure
+        navigator.say(texts.storage(failure.problem))
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + storeProblems)
     private val busyState = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = busyState
     private var job: Job? = null
@@ -81,22 +91,33 @@ class ChatAgent(
             try {
                 converse(message)
             } catch (stopped: CancellationException) {
-                // What the turn did before it was stopped is kept with this notice.
-                withContext(NonCancellable) {
-                    val notice = messages.addNotice(NoticeKind.INFO, context.getString(R.string.chat_stopped))
-                    hermes?.claimActivity(notice)
-                }
+                withContext(NonCancellable) { tell(NoticeKind.INFO, context.getString(R.string.chat_stopped)) }
                 throw stopped
-            } catch (_: Exception) {
-                // Never a stack trace on the screen; the message says the request did not finish.
-                withContext(NonCancellable) {
-                    val notice = messages.addNotice(NoticeKind.ERROR, context.getString(R.string.llm_error_unexpected))
-                    hermes?.claimActivity(notice)
+            } catch (failure: Exception) {
+                // Never a stack trace on the screen; the message says the request did not finish, and why when the
+                // database could not take it.
+                val text = when (failure) {
+                    is StoreException -> texts.storage(failure.problem)
+                    else -> context.getString(R.string.llm_error_unexpected)
                 }
+                withContext(NonCancellable) { tell(NoticeKind.ERROR, text) }
             } finally {
                 busyState.value = false
                 job = null
             }
+        }
+    }
+
+    /**
+     * A notice that ends a request, with what the turn did before it (kept with the notice). When the database cannot
+     * take the notice either, the screen says why for a moment.
+     */
+    private suspend fun tell(kind: NoticeKind, text: String) {
+        try {
+            val notice = messages.addNotice(kind, text)
+            hermes?.claimActivity(notice)
+        } catch (failure: StoreException) {
+            navigator.say(texts.storage(failure.problem))
         }
     }
 

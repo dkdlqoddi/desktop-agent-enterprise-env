@@ -126,6 +126,8 @@
     <string name="result_script">페이지 내용을 읽지 못했습니다. 페이지가 다 열린 뒤 다시 시도해 주세요.</string>
     <string name="result_no_browser">브라우저를 준비하지 못했습니다. 앱을 다시 열어 주세요.</string>
     <string name="result_interrupted">앱이 다시 시작되어 실행이 중단되었습니다.</string>
+    <string name="storage_full">휴대폰의 저장 공간이 부족해 저장하지 못했습니다. 저장 공간을 비운 뒤 다시 시도해 주세요.</string>
+    <string name="storage_failed">앱의 데이터베이스를 읽거나 쓰지 못했습니다. 저장 공간을 확인하고 앱을 다시 시작해 주세요.</string>
     <string name="result_opened">%1$s 페이지를 열었습니다. 직접 누른 광고는 도착 페이지와 함께 기록됩니다.</string>
     <string name="result_schedule_created">예약을 만들었습니다. 다음 알림: %1$s</string>
     <string name="result_schedule_no_notifications">알림 권한이 없어 알림이 오지 않습니다. 설정 탭에서 알림을 허용해 주세요.</string>

@@ -6,6 +6,7 @@ import dev.privateagent.android.data.ActionState
 import dev.privateagent.android.data.CaptureSource
 import dev.privateagent.android.data.ItemFilter
 import dev.privateagent.android.data.RecordStore
+import dev.privateagent.android.data.StoreException
 import dev.privateagent.android.llm.Endpoint
 import dev.privateagent.android.schedule.Notifications
 import dev.privateagent.android.schedule.ScheduleManager
@@ -82,6 +83,8 @@ class AppActions(
         }
     } catch (cancelled: CancellationException) {
         throw cancelled
+    } catch (failure: StoreException) {
+        failed(texts.storage(failure.problem))
     } catch (_: Exception) {
         failed(context.getString(R.string.llm_error_unexpected))
     }
@@ -132,6 +135,8 @@ class AppActions(
         block()
     } catch (cancelled: CancellationException) {
         throw cancelled
+    } catch (failure: StoreException) {
+        CaptureOutcome.NotSaved(failure.problem)
     } catch (_: Exception) {
         null
     }

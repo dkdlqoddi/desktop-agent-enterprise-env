@@ -67,8 +67,10 @@ import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.CaptureRow
 import dev.privateagent.android.data.ItemFilter
 import dev.privateagent.android.data.ItemRow
+import dev.privateagent.android.data.StoreException
 import dev.privateagent.android.export.CsvExporter
 import dev.privateagent.android.ui.RecordsView
+import dev.privateagent.android.ui.orSay
 import dev.privateagent.android.web.BrowserController
 import dev.privateagent.android.web.CaptureCounts
 import dev.privateagent.android.web.ItemKind
@@ -87,11 +89,13 @@ fun RecordsScreen(graph: AppGraph) {
     var captures by remember { mutableStateOf<List<CaptureRow>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(filter, changes) {
-        items = graph.records.items(filter)
-        counts = graph.records.counts(filter)
-        loaded = true
+        graph.orSay(Unit) {
+            items = graph.records.items(filter)
+            counts = graph.records.counts(filter)
+            loaded = true
+        }
     }
-    LaunchedEffect(changes) { captures = graph.records.captures() }
+    LaunchedEffect(changes) { captures = graph.orSay(captures) { graph.records.captures() } }
     var detail by remember { mutableStateOf<ItemRow?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -112,6 +116,8 @@ fun RecordsScreen(graph: AppGraph) {
                             if (file == null) navigator.say(exportEmpty) else CsvExporter.share(context, file)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
+                        } catch (failure: StoreException) {
+                            navigator.say(graph.texts.storage(failure.problem))
                         } catch (_: Exception) {
                             navigator.say(exportFailed)
                         }

@@ -84,6 +84,7 @@ import dev.privateagent.android.data.ItemFilter
 import dev.privateagent.android.data.MessageRole
 import dev.privateagent.android.data.NoticeKind
 import dev.privateagent.android.ui.Tab
+import dev.privateagent.android.ui.orSay
 import dev.privateagent.android.util.text
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,7 +100,7 @@ fun ChatScreen(graph: AppGraph) {
     val agent = graph.agent
     val changes by graph.database.changes.collectAsStateWithLifecycle()
     var messages by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
-    LaunchedEffect(changes) { messages = graph.messages.all() }
+    LaunchedEffect(changes) { messages = graph.orSay(messages) { graph.messages.all() } }
     val busy by agent.busy.collectAsStateWithLifecycle()
     val hermes = agent.hermes
     val turn by (hermes?.view ?: NO_TURN).collectAsStateWithLifecycle()

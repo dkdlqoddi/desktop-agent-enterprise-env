@@ -69,6 +69,7 @@ import dev.privateagent.android.data.ScheduleRow
 import dev.privateagent.android.llm.ApiFormat
 import dev.privateagent.android.llm.Endpoint
 import dev.privateagent.android.llm.LlmException
+import dev.privateagent.android.ui.orSay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -288,7 +289,7 @@ private fun LlmSection(graph: AppGraph) {
 private fun ScheduleSection(graph: AppGraph) {
     val changes by graph.database.changes.collectAsStateWithLifecycle()
     var schedules by remember { mutableStateOf<List<ScheduleRow>>(emptyList()) }
-    LaunchedEffect(changes) { schedules = graph.schedules.all() }
+    LaunchedEffect(changes) { schedules = graph.orSay(schedules) { graph.schedules.all() } }
     var deleting by remember { mutableStateOf<ScheduleRow?>(null) }
     var canNotify by remember { mutableStateOf(graph.notifications.canPost()) }
     var asked by remember { mutableIntStateOf(0) }
@@ -348,7 +349,9 @@ private fun ScheduleSection(graph: AppGraph) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(
                             checked = row.enabled,
-                            onCheckedChange = { enabled -> scope.launch { graph.scheduler.setEnabled(row.id, enabled) } },
+                            onCheckedChange = { enabled ->
+                                scope.launch { graph.orSay(Unit) { graph.scheduler.setEnabled(row.id, enabled) } }
+                            },
                             modifier = Modifier.semantics { contentDescription = toggleLabel },
                         )
                         IconButton(onClick = { deleting = row }) {
@@ -366,7 +369,7 @@ private fun ScheduleSection(graph: AppGraph) {
             confirm = stringResource(R.string.schedule_delete_confirm),
             onConfirm = {
                 deleting = null
-                scope.launch { graph.scheduler.delete(row.id) }
+                scope.launch { graph.orSay(Unit) { graph.scheduler.delete(row.id) } }
             },
             onDismiss = { deleting = null },
         )
@@ -427,10 +430,12 @@ private fun DataSection(graph: AppGraph) {
             onConfirm = {
                 confirm = null
                 scope.launch {
-                    graph.messages.clear()
-                    // What was allowed for this conversation ends with it.
-                    graph.grants.forgetSession()
-                    graph.navigator.say(cleared)
+                    graph.orSay(Unit) {
+                        graph.messages.clear()
+                        // What was allowed for this conversation ends with it.
+                        graph.grants.forgetSession()
+                        graph.navigator.say(cleared)
+                    }
                 }
             },
             onDismiss = { confirm = null },
@@ -442,8 +447,10 @@ private fun DataSection(graph: AppGraph) {
             onConfirm = {
                 confirm = null
                 scope.launch {
-                    graph.records.clear()
-                    graph.navigator.say(cleared)
+                    graph.orSay(Unit) {
+                        graph.records.clear()
+                        graph.navigator.say(cleared)
+                    }
                 }
             },
             onDismiss = { confirm = null },

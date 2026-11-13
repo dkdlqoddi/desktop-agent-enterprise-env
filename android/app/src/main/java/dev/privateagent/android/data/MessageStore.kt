@@ -2,16 +2,14 @@ package dev.privateagent.android.data
 
 import android.content.ContentValues
 import android.database.Cursor
-import android.database.SQLException
+import android.database.sqlite.SQLiteConstraintException
 import android.database.sqlite.SQLiteDatabase
 import dev.privateagent.android.agent.Activity
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /** The one conversation of the chat screen. */
 class MessageStore(private val db: AppDatabase) {
 
-    suspend fun all(limit: Int = 500): List<ChatMessage> = withContext(Dispatchers.IO) {
+    suspend fun all(limit: Int = 500): List<ChatMessage> = withDatabase {
         // The latest [limit] messages, oldest first, each with what its turn did.
         db.readableDatabase.rawQuery(
             "SELECT m.*, $ACTIVITY FROM (SELECT * FROM messages ORDER BY id DESC LIMIT $limit) m $JOIN ORDER BY m.id ASC",
@@ -19,7 +17,7 @@ class MessageStore(private val db: AppDatabase) {
         ).use { cursor -> cursor.messages() }
     }
 
-    suspend fun get(id: Long): ChatMessage? = withContext(Dispatchers.IO) {
+    suspend fun get(id: Long): ChatMessage? = withDatabase {
         db.readableDatabase.rawQuery("SELECT m.*, $ACTIVITY FROM messages m $JOIN WHERE m.id = ?", arrayOf(id.toString()))
             .use { cursor -> cursor.messages().firstOrNull() }
     }
@@ -28,7 +26,7 @@ class MessageStore(private val db: AppDatabase) {
      * Keeps what the turn the message [messageId] ended did on the way. It is shown under the message and goes with
      * it; a message that is gone meanwhile (the conversation was cleared) takes none.
      */
-    suspend fun setActivity(messageId: Long, activity: Activity) = withContext(Dispatchers.IO) {
+    suspend fun setActivity(messageId: Long, activity: Activity) = withDatabase {
         val values = ContentValues().apply {
             put("message_id", messageId)
             put("steps", activity.stepsJson())
@@ -36,7 +34,8 @@ class MessageStore(private val db: AppDatabase) {
         }
         val kept = try {
             db.writableDatabase.insertWithOnConflict("activity", null, values, SQLiteDatabase.CONFLICT_REPLACE) != -1L
-        } catch (_: SQLException) {
+        } catch (_: SQLiteConstraintException) {
+            // The message is gone (its foreign key). Any other database error is the caller's to tell of.
             false
         }
         if (kept) db.changed()
@@ -74,7 +73,7 @@ class MessageStore(private val db: AppDatabase) {
         state: ActionState,
         result: String? = null,
         captureId: Long? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withDatabase {
         val values = ContentValues().apply {
             put("state", state.key)
             if (result != null) put("result", result)
@@ -91,7 +90,7 @@ class MessageStore(private val db: AppDatabase) {
     }
 
     /** Actions that were running when the app stopped can no longer finish: they end as failed. */
-    suspend fun failInterrupted(result: String) = withContext(Dispatchers.IO) {
+    suspend fun failInterrupted(result: String) = withDatabase {
         val values = ContentValues().apply {
             put("state", ActionState.FAILED.key)
             put("result", result)
@@ -105,13 +104,13 @@ class MessageStore(private val db: AppDatabase) {
         if (count > 0) db.changed()
     }
 
-    suspend fun clear() = withContext(Dispatchers.IO) {
+    suspend fun clear() = withDatabase {
         db.writableDatabase.delete("messages", null, null)
         db.changed()
     }
 
     private suspend fun insert(role: MessageRole, text: String, extra: ContentValues.() -> Unit = {}): Long =
-        withContext(Dispatchers.IO) {
+        withDatabase {
             val values = ContentValues().apply {
                 put("role", role.key)
                 put("text", text)

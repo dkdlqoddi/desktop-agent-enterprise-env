@@ -11,6 +11,7 @@ import dev.privateagent.android.PrivateAgentApp
 import dev.privateagent.android.agent.ScheduleDays
 import dev.privateagent.android.data.ScheduleRow
 import dev.privateagent.android.data.ScheduleStore
+import dev.privateagent.android.data.StoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -106,10 +107,19 @@ class CaptureReminderWorker(context: Context, params: WorkerParameters) : Corout
     override suspend fun doWork(): Result {
         val graph = (applicationContext as PrivateAgentApp).graph
         val id = inputData.getLong(ScheduleManager.KEY_SCHEDULE_ID, -1)
-        val row = graph.schedules.get(id) ?: return Result.success()
+        val row = try {
+            graph.schedules.get(id)
+        } catch (_: StoreException) {
+            // The schedule cannot be read now (no space left): WorkManager tries again later, and the chain goes on.
+            return Result.retry()
+        } ?: return Result.success()
         if (!row.enabled) return Result.success()
         graph.notifications.showScheduled(row)
-        graph.scheduler.enqueueNext(row)
+        try {
+            graph.scheduler.enqueueNext(row)
+        } catch (_: StoreException) {
+            // The next run is queued before its time is stored: only the time the settings show is out of date.
+        }
         return Result.success()
     }
 }

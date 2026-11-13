@@ -3,6 +3,7 @@ package dev.privateagent.android.agent
 import android.content.Context
 import dev.privateagent.android.R
 import dev.privateagent.android.data.CaptureSource
+import dev.privateagent.android.data.StoreProblem
 import dev.privateagent.android.llm.LlmException
 import dev.privateagent.android.web.BrowserController
 import dev.privateagent.android.web.BrowserFailure
@@ -45,6 +46,13 @@ class Texts(private val context: Context, private val sites: () -> Sites) {
         is CaptureOutcome.Saved -> counts(outcome.counts)
         CaptureOutcome.Blocked -> s(R.string.result_blocked)
         is CaptureOutcome.Failed -> failure(outcome.failure)
+        is CaptureOutcome.NotSaved -> storage(outcome.problem)
+    }
+
+    /** Why the app's database could not be read or written (a StoreException). */
+    fun storage(problem: StoreProblem): String = when (problem) {
+        StoreProblem.FULL -> s(R.string.storage_full)
+        StoreProblem.FAILED -> s(R.string.storage_failed)
     }
 
     fun failure(failure: BrowserFailure): String = when (failure) {

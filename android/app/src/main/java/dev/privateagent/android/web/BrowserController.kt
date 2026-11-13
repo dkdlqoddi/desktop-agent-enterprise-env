@@ -23,6 +23,8 @@ import androidx.annotation.MainThread
 import dev.privateagent.android.data.CaptureSource
 import dev.privateagent.android.data.NewCapture
 import dev.privateagent.android.data.RecordStore
+import dev.privateagent.android.data.StoreException
+import dev.privateagent.android.data.StoreProblem
 import dev.privateagent.android.security.SettingsStore
 import dev.privateagent.android.util.cleanText
 import kotlinx.coroutines.CompletableDeferred
@@ -53,6 +55,9 @@ sealed interface CaptureOutcome {
     data object Blocked : CaptureOutcome
 
     data class Failed(val failure: BrowserFailure) : CaptureOutcome
+
+    /** The page was read, but the database could not take what was found (the phone's storage is full). */
+    data class NotSaved(val problem: StoreProblem) : CaptureOutcome
 }
 
 /**
@@ -94,6 +99,9 @@ class BrowserController(
 
         /** The result of a capture the user started with the browser's button. */
         data class Captured(val outcome: CaptureOutcome) : Notice
+
+        /** The user's click, or the page it opened, could not be saved. */
+        data class NotSaved(val problem: StoreProblem) : Notice
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -345,6 +353,8 @@ class BrowserController(
         savingDone = done
         val id = try {
             records.saveCapture(NewCapture(siteKey, words, source, token), result).also { done.complete(it) }
+        } catch (failure: StoreException) {
+            return CaptureOutcome.NotSaved(failure.problem)
         } finally {
             done.complete(null)
             savingToken = null
@@ -423,7 +433,12 @@ class BrowserController(
             // Set before the page the click opens can finish: that page is posted to the main thread after this.
             val pending = PendingLanding(SystemClock.elapsedRealtime(), webViewState.value?.url.orEmpty())
             pendingLanding = pending
-            clickMutex.withLock { recordClick(report, pending) }
+            try {
+                clickMutex.withLock { recordClick(report, pending) }
+            } catch (failure: StoreException) {
+                if (pendingLanding === pending) pendingLanding = null
+                noticeState.value = Notice.NotSaved(failure.problem)
+            }
         }
     }
 
@@ -479,7 +494,13 @@ class BrowserController(
         // Without the item yet, recordClick saves the landing page once it has found it.
         val itemId = pending.itemId ?: return
         val title = pending.landingTitle
-        scope.launch { records.setLanding(itemId, url, title) }
+        scope.launch {
+            try {
+                records.setLanding(itemId, url, title)
+            } catch (failure: StoreException) {
+                noticeState.value = Notice.NotSaved(failure.problem)
+            }
+        }
     }
 
     /**
