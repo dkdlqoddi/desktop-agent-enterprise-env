@@ -11,11 +11,14 @@ from datetime import datetime, timedelta, timezone
 
 from . import pageindex, search
 from .llm import (
+    CUT_ERRORS,
+    CUT_NOTES,
     DECODER,
     TRUNCATED_JSON,
     TRUNCATED_NOTE,
     Cancel,
     Cancelled,
+    LLMFormatError,
     UserError,
     answer as without_thinking,
     cancellable,
@@ -700,7 +703,8 @@ class Assistant:
     def _answer(self, payload, request):
         """The LLM's answer to the question in `payload`, as (answer, the citation numbers it listed, outcome). The
         outcome is None for an answer that ended by itself; 'cancelled' (the user stopped it) and 'truncated' (the LLM
-        stopped at its output limit) keep what had come of the answer, with a note that says so."""
+        stopped at its output limit, or its stream stopped coming before it was whole) keep what had come of the
+        answer, with a note that says so."""
         messages = [{"role": "system", "content": ANSWER}, {"role": "user", "content": payload}]
         try:
             reply = self.llm.complete(messages, temperature=0.1, stream=request.update if request.stream else None)
@@ -713,7 +717,19 @@ class Assistant:
                 raise UserError(TRUNCATED_JSON)
             request.truncated = True
             return noted(answer, TRUNCATED_NOTE), set(), "truncated"
-        result = json_object(reply)
+        cut = getattr(reply, "cut", None)
+        try:
+            result = json_object(reply)
+        except LLMFormatError:
+            if not cut:
+                raise
+            # A stream that stopped before the JSON answer was whole (llm.CUT_NOTES): what came of it is kept, as for
+            # an answer cut at the output limit. One whose object came whole is whole, whatever stopped the stream.
+            answer = partial_answer(reply)
+            if not answer.strip():
+                raise UserError(CUT_ERRORS[cut]) from None
+            request.truncated = True
+            return noted(answer, CUT_NOTES[cut]), set(), "truncated"
         answer = result.get("answer")
         if not isinstance(answer, str) or not answer.strip():
             raise UserError("LLM이 답변을 돌려주지 않았습니다. 다시 질문해 주세요.")

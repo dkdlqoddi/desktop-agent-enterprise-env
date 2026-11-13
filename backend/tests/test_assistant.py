@@ -827,6 +827,26 @@ def test_an_answer_cut_short_keeps_its_text_with_a_note(service, emitted):
     assert len(call(service, "assistant.conversations")) == 1
 
 
+def test_an_answer_whose_stream_stopped_before_it_was_whole_keeps_its_text_with_a_note(service, emitted):
+    doc = document(service)
+    service.llm.responses = [llm.reply('{"answer": "캐시를 도입했고 [1] 이후', cut="time")]
+    result = call(service, "assistant.ask", question="결정은?", document_ids=[doc["id"]], stream=True)
+    message = result["messages"][-1]
+    assert result["truncated"] and message["content"] == f"캐시를 도입했고 [1] 이후\n\n{llm.CUT_NOTES['time']}"
+    assert [c["number"] for c in message["citations"]] == [1] and message["trace"]["outcome"] == "truncated"
+    assert emitted[-1][1]["truncated"] is True
+    # An answer whose JSON came whole is whole, whatever stopped the stream after it.
+    service.llm.responses = [llm.reply('{"answer": "도입했습니다. [1]", "citations": [1]}', cut="time")]
+    result = call(
+        service, "assistant.ask", question="또?", conversation_id=result["conversation_id"], document_ids=[doc["id"]]
+    )
+    assert not result["truncated"] and result["messages"][-1]["content"] == "도입했습니다. [1]"
+    # Stopped before the answer began, there is nothing to keep.
+    service.llm.responses = [llm.reply('{"citations": [1], "ans', cut="time")]
+    with pytest.raises(UserError, match="제한 시간을 초과"):
+        call(service, "assistant.ask", question="다시?", document_ids=[doc["id"]])
+
+
 def test_the_context_window_scales_the_evidence_and_the_history(service):
     content = "서론입니다. " * 1500 + "꼬리키워드: 최종 담당자는 개발팀입니다."
     doc = document(service, content)

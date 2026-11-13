@@ -225,6 +225,17 @@ TRUNCATED_THINKING = (
     "LLM이 답을 쓰기 전에 최대 출력 길이에 닿았습니다(추론만 있음). 관리 → LLM 연결에서 최대 출력 토큰을 "
     "늘려 다시 시도해 주세요."
 )
+TIMED_OUT = "LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요."
+# A streamed answer that stopped coming before it was whole (Reply.cut), by why: the response time limit, which bounds
+# the whole answer as it does one that is not streamed, ended its read ("time"). What came of it is kept with the note
+# after it (assistant.py); a JSON answer of which nothing usable came is the error.
+CUT_NOTES = {
+    "time": (
+        "(답변이 LLM 응답 제한 시간 안에 끝나지 않아 여기까지 받았습니다. 관리 → LLM 연결에서 응답 제한 시간을 "
+        "늘리거나 다시 질문해 주세요.)"
+    ),
+}
+CUT_ERRORS = {"time": TIMED_OUT}
 RETRY_TOKENS = 16_000  # The cap a JSON answer cut short is asked again with when its request named none...
 MAX_RETRY_TOKENS = 64_000  # ...and otherwise twice the cap it named, up to this.
 
@@ -522,42 +533,57 @@ def sse_data(chunks):
 END = object()  # The end of what a reader thread hands over (apart).
 
 
-def apart(lines, cancel):
-    """The items of `lines`, read in a thread of their own, so that the caller hears of a cancel at once even while a
-    read waits for the server: a socket shut down from another thread does not wake a read on every system. The reader
-    stops at its next item once it sees the cancel, and the response the caller closes ends a read still waiting."""
-    found = queue.Queue()
+class Late(Exception):
+    """The time a streamed answer had to come in ended while it was read (apart)."""
+
+
+def apart(lines, cancel, ends):
+    """The items of `lines`, read in a thread of their own, so that the caller hears at once of a cancel (`cancel`, a
+    Cancel or None) even while a read waits for the server: a socket shut down from another thread does not wake a read
+    on every system. They end with Late at `ends` (a time.monotonic() value), also from a server that keeps sending:
+    what came after then does not count, what came before does. The reader stops at its next item once the caller has
+    left or cancelled, and the response the caller closes ends a read still waiting."""
+    found, left = queue.Queue(), threading.Event()
 
     def read():
         try:
             for line in lines:
-                found.put((line, None))
-                if cancel.is_set():
+                found.put((line, None, time.monotonic()))
+                if left.is_set() or (cancel is not None and cancel.is_set()):
                     break
         except Exception as error:  # The caller raises it.
-            found.put((END, error))
+            found.put((END, error, time.monotonic()))
         else:
-            found.put((END, None))
+            found.put((END, None, time.monotonic()))
 
     threading.Thread(target=read, name="llm-stream", daemon=True).start()
-    while True:
-        try:
-            line, error = found.get(timeout=POLL)
-        except queue.Empty:
-            if cancel.is_set():
-                raise Cancelled() from None
-            continue
-        if line is END:
-            if error is not None:
-                raise error
-            return
-        yield line
+    try:
+        while True:
+            try:
+                line, error, came = found.get(timeout=POLL)
+            except queue.Empty:
+                if cancel is not None and cancel.is_set():
+                    raise Cancelled() from None
+                if time.monotonic() >= ends:
+                    raise Late() from None
+                continue
+            if came >= ends:
+                raise Late()
+            if line is END:
+                if error is not None:
+                    raise error
+                return
+            yield line
+    finally:
+        left.set()
 
 
-def read_stream(response, api_format, on_text, cancel):
-    """(text, finish) of a streamed answer, calling `on_text` with all of the text so far each time it grows. A server
-    that answered at once despite the stream (JSON) is read as a whole answer. Raises Cancelled, with the text so far,
-    once `cancel` is set: a stream the user may stop is read apart, so the cancel never waits for the server."""
+def read_stream(response, api_format, on_text, cancel, ends):
+    """(text, finish, cut) of a streamed answer, calling `on_text` with all of the text so far each time it grows. A
+    server that answered at once despite the stream (JSON) is read as a whole answer. The stream is read apart, so that
+    a cancel (`cancel`) never waits for the server: Cancelled is raised with the text so far. The answer has until
+    `ends` (a time.monotonic() value), the end of its request's time limit, to come whole: one still coming then is
+    what had come of it, cut for "time" (CUT_NOTES), or a time-out when nothing had."""
     if "text/event-stream" not in (response.headers.get("Content-Type") or "").lower():
         try:
             data = response.json()
@@ -565,11 +591,11 @@ def read_stream(response, api_format, on_text, cancel):
             data = None
         text, finish = reply_text(api_format, data)
         on_text(text)
-        return text, finish
-    text, finish = "", None
+        return text, finish, None
+    text, finish, cut = "", None, None
     lines = sse_data(response.iter_content(chunk_size=None))
     try:
-        for data in lines if cancel is None else apart(lines, cancel):
+        for data in apart(lines, cancel, ends):
             if cancel is not None and cancel.is_set():
                 raise Cancelled(text)
             if data == "[DONE]":
@@ -589,6 +615,13 @@ def read_stream(response, api_format, on_text, cancel):
         raise Cancelled(text) from None
     except StreamFailure:
         raise
+    except Late:
+        interrupt(response)  # Its reader may be waiting for the server.
+        # An answer whose reason to end came before the time did is whole.
+        if finish is None:
+            if not text:
+                raise requests.exceptions.ReadTimeout() from None
+            cut = "time"
     except Exception as error:
         # A read that Cancel.set() interrupted fails as the socket was shut down under it.
         if cancel is not None and cancel.is_set():
@@ -603,7 +636,7 @@ def read_stream(response, api_format, on_text, cancel):
         raise Cancelled(text)
     if finish == "refusal" or (finish == "content_filter" and not text.strip()):
         raise UserError(REFUSED)
-    return text, finish
+    return text, finish, cut
 
 
 def retry_after(headers):
@@ -673,20 +706,26 @@ def interrupt(response):
 
 
 class Reply(str):
-    """An answer's text, and whether the LLM stopped at its output limit (truncated), so it may end mid-sentence."""
+    """An answer's text, and whether the LLM stopped at its output limit (truncated), so it may end mid-sentence; for a
+    streamed answer that stopped coming before it was whole, why (cut: a key of CUT_NOTES)."""
 
     truncated = False
+    cut = None
 
 
-def reply(text, truncated=False):
+def reply(text, truncated=False, cut=None):
     value = Reply(text)
-    value.truncated = truncated
+    value.truncated, value.cut = truncated, cut
     return value
 
 
 def shown(text):
-    """A text answer as a screen shows it: one the LLM stopped at its output limit ends with a note saying so."""
-    return f"{text}\n\n{TRUNCATED_NOTE}" if getattr(text, "truncated", False) else text
+    """A text answer as a screen shows it: one the LLM stopped at its output limit, or one cut before it was whole,
+    ends with a note saying so."""
+    if getattr(text, "truncated", False):
+        return f"{text}\n\n{TRUNCATED_NOTE}"
+    cut = getattr(text, "cut", None)
+    return f"{text}\n\n{CUT_NOTES[cut]}" if cut else text
 
 
 class Cancel:
@@ -784,13 +823,15 @@ class Slots:
 
 
 class Outcome:
-    """What one request brought: its HTTP status; for a 200, the answer's text, why it ended (finish) and whether the
-    stream callback had it as it came (streamed); for another status, the wait its Retry-After asks for."""
+    """What one request brought: its HTTP status; for a 200, the answer's text, why it ended (finish), whether the
+    stream callback had it as it came (streamed) and why a streamed answer stopped coming before it was whole (cut);
+    for another status, the wait its Retry-After asks for."""
 
-    __slots__ = ("status", "text", "finish", "streamed", "wait")
+    __slots__ = ("status", "text", "finish", "streamed", "wait", "cut")
 
-    def __init__(self, status, text="", finish=None, streamed=False, wait=None):
+    def __init__(self, status, text="", finish=None, streamed=False, wait=None, cut=None):
         self.status, self.text, self.finish, self.streamed, self.wait = status, text, finish, streamed, wait
+        self.cut = cut
 
 
 def new_session():
@@ -942,6 +983,8 @@ class LLM:
         a connection that failed, dropped or timed out) is sent again only while the limit leaves room (_attempts).
         `stream`, a callable, has the answer streamed and is called with all of the answer so far each time it grows
         (with '' when a failed attempt starts over); a server that does not stream gives it the whole answer at once.
+        The time limit bounds a streamed answer as a whole, as it does one the server writes before sending: one still
+        coming at its end is what had come of it, marked as cut (Reply.cut).
         `max_tokens` overrides the settings' cap. The request waits for a slot (Slots) at its PRIORITY, at most
         `timeout` seconds when given. `cancel`, or the CANCEL of the context, stops it: Cancelled is raised with what
         had come. The DEADLINE of the context bounds the wait for a slot and the call as well; a request it leaves
@@ -1021,9 +1064,7 @@ class LLM:
                     "사설·자체 서명 인증서를 쓰는 서버라면 고급 설정에서 CA 인증서 PEM 경로를 지정해 주세요."
                 ) from None
             except requests.exceptions.Timeout:
-                raise LLMRequestError(
-                    "LLM 응답 제한 시간을 초과했습니다. 잠시 후 다시 시도해 주세요.", transient=True
-                ) from None
+                raise LLMRequestError(TIMED_OUT, transient=True) from None
             except UnicodeEncodeError:
                 raise LLMRequestError(
                     "요청에 HTTP로 보낼 수 없는 글자가 있습니다. API 엔드포인트, API Key와 헤더를 확인해 주세요."
@@ -1058,9 +1099,13 @@ class LLM:
         if not text:
             if truncated:
                 raise LLMTruncatedError(TRUNCATED_THINKING)
+            if outcome.cut:
+                raise LLMRequestError(CUT_ERRORS[outcome.cut], transient=True)
             # All thinking: a reply cut short before the answer, or a model that only thought aloud.
             raise LLMFormatError("LLM이 답을 쓰기 전에 응답이 끝났습니다(추론만 있음). 다시 시도해 주세요.")
-        return reply(text, truncated)
+        if outcome.cut:
+            LOG.info("LLM answer cut off before its end · host %s · %s", hostname(target["base_url"]), outcome.cut)
+        return reply(text, truncated, outcome.cut)
 
     def _attempts(self, target, config, body, deadline, stream, cancel):
         """The Outcome of `body`, sent again after a failure that may pass by itself (RETRY_STATUS; a connection that
@@ -1117,7 +1162,10 @@ class LLM:
         raise AssertionError("unreachable")  # The last attempt always returns or raises.
 
     def _send(self, target, config, body, seconds, stream, cancel):
-        """One request, with `seconds` to answer: its Outcome. `stream` has the answer read as the server sends it."""
+        """One request, with `seconds` to answer: its Outcome. `stream` has the answer read as the server sends it, the
+        whole of it within those seconds; an answer not streamed has them for each read, and comes whole when the
+        server has written it."""
+        ends = time.monotonic() + seconds
         with self.lock:
             if not self.sending and time.monotonic() - self.used > IDLE_SECONDS:
                 self.session.close()  # Its connections; the session opens new ones as it needs them.
@@ -1143,7 +1191,8 @@ class LLM:
                         data = None
                     return Outcome(200, *reply_text(target["format"], data))
                 with cancel.reading(response) if cancel is not None else contextlib.nullcontext():
-                    return Outcome(200, *read_stream(response, target["format"], stream, cancel), streamed=True)
+                    text, finish, cut = read_stream(response, target["format"], stream, cancel, ends)
+                    return Outcome(200, text, finish, streamed=True, cut=cut)
         finally:
             with self.lock:
                 self.sending -= 1

@@ -927,7 +927,8 @@ export type Conversation = { id: string; title: string; updated_at: string };
 export type ConversationPage = { conversations: Conversation[]; next_cursor: string | null };
 // An answer from the search box; an automatic search also lists every document it found. Asked with
 // { stream: true, request_id }, the same answer also reaches onAssistantDelta while the LLM writes it. An answer the
-// user stopped (assistant.cancel) or the LLM's output limit cut short keeps what came, with a note at its end.
+// user stopped (assistant.cancel), or one cut short (truncated: the LLM's output limit, or a stream that stopped coming
+// before the answer was whole), keeps what came, with a note at its end that says why.
 export type Answer = {
   conversation_id: string;
   messages: ChatMessage[];
@@ -952,7 +953,8 @@ export type AssistantStreamEvent =
       request_id: string;
       conversation_id: string;
       status: 'completed' | 'cancelled' | 'error';
-      // The LLM stopped at its output limit (max_tokens): the answer ends with a note saying so.
+      // The answer was cut short: the LLM stopped at its output limit (max_tokens), or its stream stopped coming
+      // before it was whole. The saved answer ends with a note saying which.
       truncated: boolean;
       error?: string;
     };

@@ -1035,3 +1035,59 @@ def test_a_streamed_answer_the_user_stops_ends_at_once(monkeypatch):
             release.set()
     assert time.monotonic() - started < 10 and stopped.value.partial == "앞부분"
     assert llm.slots.running == {INTERACTIVE: 0, BATCH: 0}
+
+
+def endless(release, part):
+    """A server that streams for as long as the test lets it, writing `part(number)` every tenth of a second, which
+    each read of the answer gets well within its time limit."""
+
+    def respond(handler, body):
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.send_header("Transfer-Encoding", "chunked")
+        handler.end_headers()
+        number = 0
+        with contextlib.suppress(OSError):  # The client hangs up at its time limit.
+            while not release.wait(0.1):
+                data = part(number)
+                handler.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
+                handler.wfile.flush()
+                number += 1
+
+    return respond
+
+
+def test_the_time_limit_bounds_a_streamed_answer_as_a_whole(monkeypatch):
+    """Each read gets its part long before the time limit, which ends the answer all the same: what came is kept,
+    marked as cut, and an answer of which nothing came is a time-out."""
+    release = threading.Event()
+    words = endless(release, lambda number: b"data: " + json.dumps(openai_delta(f"{number} ")).encode() + b"\n\n")
+    try:
+        with local_llm(monkeypatch, words) as (server, url):
+            seen, started = [], time.monotonic()
+            reply = general(base_url=url).complete(HELLO, stream=seen.append, timeout=1.5)
+            assert 1.4 < time.monotonic() - started < 5 and reply.cut == "time" and not reply.truncated
+            assert reply.startswith("0 1 2 ") and seen[-1].strip() == reply
+            assert module.shown(reply) == f"{reply}\n\n{module.CUT_NOTES['time']}"
+        # Keep-alive comments only, no part of an answer: a time-out, after the one request the time allowed.
+        with local_llm(monkeypatch, endless(release, lambda number: b": keep-alive\n\n")) as (server, url):
+            started = time.monotonic()
+            with pytest.raises(LLMRequestError, match="제한 시간을 초과") as error:
+                general(base_url=url).complete(HELLO, stream=lambda text: None, timeout=1.5)
+            assert time.monotonic() - started < 5 and error.value.transient and len(server.requests) == 1
+    finally:
+        release.set()
+
+
+def test_an_answer_that_came_whole_before_the_time_ran_out_is_not_cut(monkeypatch, clock):
+    # The reason the answer ended came, but the stream stayed open past the time limit.
+    def chunks(chunk_size=None):
+        yield b"data: " + json.dumps(openai_delta("다 왔습니다", finish="stop")).encode() + b"\n\n"
+        clock.now += 301
+        yield b": keep-alive\n\n"
+
+    response = Response(headers={"Content-Type": "text/event-stream"})
+    response.iter_content = chunks
+    answer(monkeypatch, response)
+    reply = general().complete(HELLO, stream=lambda text: None)
+    assert reply == "다 왔습니다" and reply.cut is None

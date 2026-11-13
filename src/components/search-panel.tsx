@@ -592,7 +592,8 @@ export default function SearchPanel() {
 
 // What an answer that did not end by itself says about it, as the backend words it: the user stopped it, or the LLM's
 // output limit cut it short (backend/agent/assistant.py STOPPED, backend/agent/llm.py TRUNCATED_NOTE). The saved answer
-// carries the backend's own words; these show while the answer is being saved.
+// carries the backend's own words, also for an answer whose stream stopped coming before it was whole (llm.py
+// CUT_NOTES, shown as cut short too); these show while the answer is being saved.
 const STOPPED_NOTE = '답변을 중지했습니다.';
 const TRUNCATED_NOTE =
   '답변이 LLM의 최대 출력 길이에서 잘렸습니다. 관리 → LLM 연결에서 최대 출력 토큰을 늘리거나 요청을 줄여 다시 시도해 주세요.';
