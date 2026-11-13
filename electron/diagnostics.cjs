@@ -135,6 +135,12 @@ class Diagnostics {
     return this.queue;
   }
 
+  // Resolves once every entry recorded so far is written, or could not be: what a quitting app waits for, since an
+  // exit ends the process with its writes still pending.
+  flush() {
+    return this.queue;
+  }
+
   // An entry only PRIVATE_AGENT_LOG_LEVEL=debug keeps: what helps while developing, never request parameters.
   debug(text) {
     return this.debugging ? this.record(text) : this.queue;

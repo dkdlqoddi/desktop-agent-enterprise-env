@@ -235,3 +235,13 @@ test('debug entries are kept only at PRIVATE_AGENT_LOG_LEVEL=debug, and the term
   );
   assert.equal(written.join(''), await fs.readFile(path.join(loud.directory, 'app.log'), 'utf8'));
 });
+
+test('flush waits for every entry recorded so far, which a quitting app needs before it exits', async (t) => {
+  const { directory, diagnostics } = await logs(t);
+  // Not awaited, as the app records a problem and goes on to quit.
+  void diagnostics.record('first');
+  void diagnostics.record('second');
+  await diagnostics.flush();
+  const logged = await fs.readFile(path.join(directory, 'app.log'), 'utf8');
+  assert.match(logged, /first\n.*second\n$/s);
+});

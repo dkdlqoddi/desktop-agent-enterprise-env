@@ -2005,6 +2005,12 @@ app.on('before-quit', (event) => {
       ]);
     } finally {
       await stopBackend();
+      // What was recorded last is written before the process ends: why an unattended demo ends is often recorded a
+      // moment before a quit with nothing else to wait for, which would otherwise end with the entry still pending.
+      await Promise.race([
+        diagnostics?.flush(),
+        new Promise((resolve) => setTimeout(resolve, 3_000)),
+      ]);
       // Electron ends a quit with 0 whatever process.exitCode says.
       if (exitCode) app.exit(exitCode);
       else app.quit();
