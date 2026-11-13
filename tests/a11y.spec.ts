@@ -75,6 +75,12 @@ async function visit(page: Page, theme: string, found: Finding[]) {
   await page.getByRole('button', { name: '위젯 편집' }).click();
   await expect(page.getByRole('region', { name: '추가할 수 있는 위젯' })).toBeVisible();
   await audit(page, screen('홈 · 위젯 편집'), found);
+  // The widgets are inert while they are edited, the greeting's heading among them: the page keeps one of its own.
+  const headings = await new AxeBuilder({ page })
+    .setLegacyMode(true)
+    .withRules(['page-has-heading-one'])
+    .analyze();
+  expect(headings.violations.map((violation) => violation.id)).toEqual([]);
   await page.getByRole('button', { name: '편집 완료' }).click();
 
   await nav(page, '할 일').click();

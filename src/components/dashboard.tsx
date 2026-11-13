@@ -138,7 +138,11 @@ export default function Dashboard() {
   };
   return (
     <div ref={root} className={`dashboard${editing ? ' editing' : ''}`}>
-      {!layout.some((item) => item.type === 'welcome') && <h1 className="sr-only">홈</h1>}
+      {/* The page's heading where no greeting gives one, and while the widgets are edited: they are inert then, the
+          greeting's heading among them. */}
+      {(editing || !layout.some((item) => item.type === 'welcome')) && (
+        <h1 className="sr-only">{editing ? '홈 · 대시보드 편집' : '홈'}</h1>
+      )}
       <div className="dashboard-head">
         <p className="dashboard-caption">
           <LayoutDashboard size={15} aria-hidden="true" />
