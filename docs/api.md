@@ -1713,7 +1713,7 @@ Run an automatic routine once now, in the background; it waits behind a run alre
 
 문서 저장 · 범위 `write` · 메서드 `wiki.save`
 
-Create a Markdown document in the wiki, or replace the title and text of one by id. Changing the text clears its AI analysis; analyze_documents can redo it. When replacing, pass expected_revision so a document the user changed meanwhile is not overwritten.
+Create a Markdown document in the wiki, or replace the title and text of one by id. Changing the text clears its AI analysis; analyze_documents can redo it. When replacing, pass expected_revision so a document the user changed meanwhile is not overwritten. If the save is refused for that, query_api wiki.compare with the id, base_revision (the revision you read), base (the text you read) and content (your text) shows what changed on each side; when the two changed different lines, its merged is your text with the other changes, to save with the revision of the document it returns.
 
 - `id` (string) Document id to replace; omit to create.
 - `title` (string, 필수) Title (max 200 characters).
