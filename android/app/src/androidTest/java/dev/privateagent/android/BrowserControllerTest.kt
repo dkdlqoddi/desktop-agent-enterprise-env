@@ -26,8 +26,9 @@ import kotlin.math.roundToInt
 /**
  * The app's own browser from end to end, on the local fixture page: MainActivity's visible WebView, the browser's
  * "record this page" capture (settle, scroll, click watcher, capture.js, database), and a real tap on a recorded ad
- * (PaBridge, the clicked item, its landing page). The fixture's links point to an example host that does not resolve,
- * so the tap's navigation reaches no server.
+ * (PaBridge, the clicked item, its landing page), while a report the page's own script sends without a tap is not
+ * recorded. The fixture's links point to an example host that does not resolve, so the tap's navigation reaches no
+ * server.
  */
 @RunWith(AndroidJUnit4::class)
 class BrowserControllerTest {
@@ -91,6 +92,18 @@ class BrowserControllerTest {
                 assertTrue(titles[index], titles[index].contains(name))
             }
             assertTrue(items.all { it.kind == ItemKind.AD && it.clickedAt == null })
+
+            // The page's own script reports a click on a recorded ad, with the right token, and nobody touched the
+            // screen: it is not recorded.
+            evaluate(
+                webView,
+                "(() => { const card = document.querySelector('[data-pa-kind=\"ad\"]'); " +
+                    "PaBridge.reportClick(JSON.stringify({ token: card.getAttribute('data-pa-capture-id'), " +
+                    "ref: Number(card.getAttribute('data-pa-capture')), kind: 'ad', " +
+                    "href: 'https://shop.example.com/script', at: new Date().toISOString() })); })()",
+            )
+            delay(3_000)
+            assertTrue(graph.records.items(ItemFilter(captureId = saved.captureId)).all { it.clickedAt == null })
 
             // A real tap, through the input system, on the first recorded ad.
             instrumentation.waitForIdleSync()

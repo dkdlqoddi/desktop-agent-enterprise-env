@@ -1,12 +1,17 @@
 package dev.privateagent.android.web
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.Bundle
 import android.os.Parcel
 import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -124,6 +129,9 @@ class BrowserController(
     private var host: Activity? = null
     private val mutex = Mutex()
     private val clickMutex = Mutex()
+
+    /** The user's own input on the page, which a click report must follow. */
+    private val userInput = UserInputGate()
 
     /** Counts main-frame page loads that finished; a load waits for it to move past the value it started at. */
     private val finishCount = MutableStateFlow(0)
@@ -397,7 +405,8 @@ class BrowserController(
         }
 
     private fun create(activity: Activity): WebView {
-        val view = WebView(activity)
+        val view = PageView(activity)
+        view.onInput = userInput::record
         WebViewSetup.configure(view)
         view.addJavascriptInterface(PaBridge(::onBridgeClick), PaBridge.NAME)
         view.webViewClient = Client()
@@ -428,13 +437,14 @@ class BrowserController(
     private fun onBridgeClick(json: String) {
         // Off with the setting: a click is recorded neither on a page the user browses nor on a recorded one.
         if (!settings.recordClicks.value) return
+        val arrived = SystemClock.uptimeMillis()
         val report = ClickReportParser.parse(json) ?: return
         scope.launch {
             // Set before the page the click opens can finish: that page is posted to the main thread after this.
             val pending = PendingLanding(SystemClock.elapsedRealtime(), webViewState.value?.url.orEmpty())
             pendingLanding = pending
             try {
-                clickMutex.withLock { recordClick(report, pending) }
+                clickMutex.withLock { recordClick(report, pending, arrived) }
             } catch (failure: StoreException) {
                 if (pendingLanding === pending) pendingLanding = null
                 noticeState.value = Notice.NotSaved(failure.problem)
@@ -442,9 +452,9 @@ class BrowserController(
         }
     }
 
-    private suspend fun recordClick(report: ClickReport, pending: PendingLanding) {
+    private suspend fun recordClick(report: ClickReport, pending: PendingLanding, arrived: Long) {
         val clickedAt = System.currentTimeMillis()
-        val itemId = clickedItem(report, clickedAt)
+        val itemId = clickedItem(report, clickedAt, arrived)
         if (itemId == null) {
             if (pendingLanding === pending) pendingLanding = null
             return
@@ -454,8 +464,12 @@ class BrowserController(
         noticeState.value = Notice.ClickRecorded(ad = report.kind == ItemKind.AD)
     }
 
-    /** Marks the clicked item of a capture the app knows by the report's token; its id, or null. */
-    private suspend fun clickedItem(report: ClickReport, clickedAt: Long): Long? {
+    /**
+     * Marks the clicked item of a capture the app knows by the report's token; its id, or null. The report must follow
+     * an input of the user's ([arrived] is when it came): one about a capture the app does not know does not use
+     * the input up, so a frame that cannot read the page's marks cannot take a real tap's place either.
+     */
+    private suspend fun clickedItem(report: ClickReport, clickedAt: Long, arrived: Long): Long? {
         var captureId = records.captureIdForToken(report.token)
         if (captureId == null && report.token == savingToken) captureId = savingDone?.await()
         // The capture may have been saved while the first look was under way.
@@ -464,12 +478,14 @@ class BrowserController(
             // A page the user browsed: its ads were only marked. A click on one of them saves the page with it.
             val browsed = browsedPages[report.token] ?: return null
             val item = browsed.result.items.firstOrNull { it.ref == report.ref } ?: return null
-            if (item.kind != ItemKind.AD) return null
+            if (item.kind != ItemKind.AD || !userInput.take(arrived)) return null
             captureId = records.saveCapture(
                 NewCapture(browsed.site, browsed.query, CaptureSource.CLICK, report.token, clickedAt),
                 browsed.result,
             )
             browsedPages.remove(report.token)
+        } else if (!userInput.take(arrived)) {
+            return null
         }
         return records.markClicked(captureId, report.ref, clickedAt, report.href)
     }
@@ -613,8 +629,79 @@ class BrowserController(
         override fun onConsoleMessage(message: ConsoleMessage): Boolean = true
     }
 
+    /**
+     * The browser's WebView. It tells [onInput] of the user's own input on the page: a touch lifted, a click key, a
+     * mouse button let go, an accessibility service's click (a screen reader's double tap). It only listens: every
+     * input goes on to the WebView as before.
+     */
+    private class PageView(context: Context) : WebView(context) {
+        var onInput: (Long) -> Unit = {}
+        private var own: AccessibilityNodeProvider? = null
+        private var listening: AccessibilityNodeProvider? = null
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_UP) onInput(event.eventTime)
+            return super.dispatchTouchEvent(event)
+        }
+
+        override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) onInput(event.eventTime)
+            return super.dispatchGenericMotionEvent(event)
+        }
+
+        override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            // On the press: a link's click comes with Enter going down, a button's with the key let go.
+            val pressed = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+            if (pressed && event.keyCode in CLICK_KEYS) onInput(event.eventTime)
+            return super.dispatchKeyEvent(event)
+        }
+
+        override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider? {
+            val provider = super.getAccessibilityNodeProvider() ?: return null
+            if (provider !== own) {
+                own = provider
+                listening = ClickListeningProvider(provider) { onInput(SystemClock.uptimeMillis()) }
+            }
+            return listening
+        }
+    }
+
+    /** The WebView's own accessibility provider, unchanged but for telling of the clicks it is asked for. */
+    private class ClickListeningProvider(
+        private val provider: AccessibilityNodeProvider,
+        private val onClick: () -> Unit,
+    ) : AccessibilityNodeProvider() {
+        override fun createAccessibilityNodeInfo(virtualViewId: Int): AccessibilityNodeInfo? =
+            provider.createAccessibilityNodeInfo(virtualViewId)
+
+        override fun addExtraDataToAccessibilityNodeInfo(
+            virtualViewId: Int,
+            info: AccessibilityNodeInfo,
+            extraDataKey: String,
+            arguments: Bundle?,
+        ) = provider.addExtraDataToAccessibilityNodeInfo(virtualViewId, info, extraDataKey, arguments)
+
+        override fun findAccessibilityNodeInfosByText(text: String, virtualViewId: Int): MutableList<AccessibilityNodeInfo>? =
+            provider.findAccessibilityNodeInfosByText(text, virtualViewId)
+
+        override fun findFocus(focus: Int): AccessibilityNodeInfo? = provider.findFocus(focus)
+
+        override fun performAction(virtualViewId: Int, action: Int, arguments: Bundle?): Boolean {
+            if (action == AccessibilityNodeInfo.ACTION_CLICK) onClick()
+            return provider.performAction(virtualViewId, action, arguments)
+        }
+    }
+
     companion object {
         const val GENERIC = "generic"
+
+        /** The keys that click what has the focus. */
+        private val CLICK_KEYS = setOf(
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_SPACE,
+        )
         private const val LOAD_TIMEOUT_MS = 30_000L
         private const val SETTLE_MS = 1_500L
         private const val SCROLL_STEPS = 4
