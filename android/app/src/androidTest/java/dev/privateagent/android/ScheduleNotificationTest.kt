@@ -80,7 +80,7 @@ class ScheduleNotificationTest {
             assertTrue(notifications.activeNotifications.none { it.id == Notifications.id(id) })
         } finally {
             shell("cmd connectivity airplane-mode disable")
-            graph.schedules.delete(id)
+            graph.forgetSchedule(id)
             context.getSystemService(NotificationManager::class.java).cancel(Notifications.id(id))
             device.pressHome()
         }

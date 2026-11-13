@@ -15,6 +15,7 @@ import androidx.test.uiautomator.Until
 import dev.privateagent.android.data.CaptureSource
 import dev.privateagent.android.data.ItemFilter
 import dev.privateagent.android.data.NewCapture
+import dev.privateagent.android.data.TrashKind
 import dev.privateagent.android.ui.RecordsView
 import dev.privateagent.android.ui.records.RecordsScreen
 import dev.privateagent.android.ui.theme.PrivateAgentTheme
@@ -35,9 +36,10 @@ import java.util.UUID
 import java.util.regex.Pattern
 
 /**
- * 기록 → 기록한 페이지: one recorded page goes, with its items, once the user confirms, and a question the user
- * cancels deletes nothing. 기록 → CSV 내보내기 opens the system's share sheet with the file of the items the filter
- * finds. The app's own database on the test device is used; the test's pages go either way.
+ * 기록 → 기록한 페이지: one recorded page goes to the trash, with its items, once the user confirms, and comes back from
+ * there; a question the user cancels deletes nothing. 기록 → CSV 내보내기 opens the system's share sheet with the file
+ * of the items the filter finds. The app's own database on the test device is used; the test's pages go for good
+ * either way.
  */
 @RunWith(AndroidJUnit4::class)
 class RecordsScreenTest {
@@ -85,7 +87,7 @@ class RecordsScreenTest {
 
             compose.onNodeWithContentDescription(delete).performClick()
             compose.onNodeWithText("이 기록을 지울까요?").assertIsDisplayed()
-            compose.onNodeWithText("항목 1건을 지웁니다", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("항목 1건을 휴지통으로 옮깁니다", substring = true).assertIsDisplayed()
             compose.onNodeWithText("취소").performClick()
             compose.waitForIdle()
             assertNotNull(graph.records.capture(id))
@@ -97,8 +99,17 @@ class RecordsScreenTest {
             }
             assertNull(graph.records.capture(id))
             assertTrue(graph.records.items(ItemFilter(captureId = id)).isEmpty())
+
+            // In the trash with its item, from where it comes back to the list.
+            val entry = graph.trash.page(TrashKind.CAPTURE).entries.first { it.capture?.id == id }
+            assertEquals(query, entry.title)
+            assertEquals(1, graph.restore(listOf(entry.id)).count)
+            assertEquals("테스트 광고", graph.records.items(ItemFilter(captureId = id)).single().title)
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithContentDescription(delete).fetchSemanticsNodes().isNotEmpty()
+            }
         } finally {
-            graph.records.deleteCapture(id)
+            graph.forgetCapture(id)
             graph.navigator.recordsView.value = RecordsView.ITEMS
         }
     }
@@ -136,7 +147,7 @@ class RecordsScreenTest {
             device.pressBack()
             assertTrue("the share sheet closes", device.wait(Until.gone(sheet), 10_000))
         } finally {
-            graph.records.deleteCapture(id)
+            graph.forgetCapture(id)
             graph.navigator.recordsFilter.value = ItemFilter()
         }
     }

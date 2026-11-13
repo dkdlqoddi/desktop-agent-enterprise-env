@@ -39,9 +39,14 @@ class ScheduleStore(private val db: AppDatabase) {
         if (at == null) putNull("next_run_at") else put("next_run_at", at)
     }
 
-    suspend fun delete(id: Long) = withDatabase {
-        db.writableDatabase.delete("schedules", "id = ?", arrayOf(id.toString()))
-        db.changed()
+    /** Moves the schedule to the trash: the entry made, or null when it is gone already. */
+    suspend fun delete(id: Long): Long? = withDatabase {
+        val database = db.writableDatabase
+        val entry = database.inTransaction {
+            database.discard(TrashKind.SCHEDULE, listOf(id), System.currentTimeMillis()).firstOrNull()
+        }
+        if (entry != null) db.changed()
+        entry
     }
 
     private suspend fun update(id: Long, values: ContentValues.() -> Unit) = withDatabase {

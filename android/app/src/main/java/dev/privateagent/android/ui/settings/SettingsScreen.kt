@@ -78,6 +78,13 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(graph: AppGraph) {
+    // 데이터 → 휴지통 opens over the settings; the settings are where they were scrolled to when it closes.
+    var trash by rememberSaveable { mutableStateOf(false) }
+    val scroll = rememberScrollState()
+    if (trash) {
+        TrashScreen(graph, onBack = { trash = false })
+        return
+    }
     Column(
         Modifier
             .fillMaxSize()
@@ -87,7 +94,7 @@ fun SettingsScreen(graph: AppGraph) {
         Column(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(bottom = 24.dp),
         ) {
             LlmSection(graph)
@@ -102,7 +109,7 @@ fun SettingsScreen(graph: AppGraph) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             BrowserSection(graph)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            DataSection(graph)
+            DataSection(graph, openTrash = { trash = true })
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Section(stringResource(R.string.settings_about)) {
                 Text(stringResource(R.string.settings_about_body), style = MaterialTheme.typography.bodyMedium)
@@ -362,14 +369,23 @@ private fun ScheduleSection(graph: AppGraph) {
             )
         }
     }
+    val moved = stringResource(R.string.trash_moved_schedule)
     deleting?.let { row ->
         Confirm(
             title = stringResource(R.string.schedule_delete_title),
-            body = stringResource(R.string.schedule_row, graph.texts.days(row.days), row.time, graph.texts.siteName(row.site), row.query),
+            body = stringResource(
+                R.string.schedule_delete_body,
+                stringResource(R.string.schedule_row, graph.texts.days(row.days), row.time, graph.texts.siteName(row.site), row.query),
+            ),
             confirm = stringResource(R.string.schedule_delete_confirm),
             onConfirm = {
                 deleting = null
-                scope.launch { graph.orSay(Unit) { graph.scheduler.delete(row.id) } }
+                scope.launch {
+                    graph.orSay(Unit) {
+                        // To the trash, from where 되돌리기 (or 휴지통) brings it back to remind from its next time on.
+                        graph.sayMoved(moved, listOfNotNull(graph.scheduler.delete(row.id)))
+                    }
+                }
             },
             onDismiss = { deleting = null },
         )
@@ -411,15 +427,34 @@ private fun BrowserSection(graph: AppGraph) {
     }
 }
 
+/**
+ * What the app keeps: the conversation and the records go to the trash when they are cleared, and the trash, where they
+ * wait 30 days, opens from here ([openTrash]).
+ */
 @Composable
-private fun DataSection(graph: AppGraph) {
+private fun DataSection(graph: AppGraph, openTrash: () -> Unit) {
     var confirm by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val cleared = stringResource(R.string.settings_cleared)
+    val changes by graph.database.changes.collectAsStateWithLifecycle()
+    var inTrash by remember { mutableIntStateOf(0) }
+    LaunchedEffect(changes) { inTrash = graph.orSay(inTrash) { graph.trash.counts().values.sum() } }
+    val resources = LocalResources.current
     Section(stringResource(R.string.settings_data)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { confirm = CHAT }) { Text(stringResource(R.string.settings_clear_chat)) }
             OutlinedButton(onClick = { confirm = RECORDS }) { Text(stringResource(R.string.settings_clear_records)) }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.trash_title), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.settings_trash_help, inTrash),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.size(8.dp))
+            OutlinedButton(onClick = openTrash) { Text(stringResource(R.string.settings_trash_open)) }
         }
     }
     when (confirm) {
@@ -431,10 +466,13 @@ private fun DataSection(graph: AppGraph) {
                 confirm = null
                 scope.launch {
                     graph.orSay(Unit) {
-                        graph.messages.clear()
-                        // What was allowed for this conversation ends with it.
-                        graph.grants.forgetSession()
-                        graph.navigator.say(cleared)
+                        // To the trash, whole; what was allowed for the conversation ends with it, restored or not.
+                        val entry = graph.agent.clear()
+                        if (entry == null) {
+                            graph.navigator.say(resources.getString(R.string.trash_nothing_chat))
+                        } else {
+                            graph.sayMoved(resources.getString(R.string.trash_moved_chat), listOf(entry))
+                        }
                     }
                 }
             },
@@ -448,8 +486,14 @@ private fun DataSection(graph: AppGraph) {
                 confirm = null
                 scope.launch {
                     graph.orSay(Unit) {
-                        graph.records.clear()
-                        graph.navigator.say(cleared)
+                        val entries = graph.records.clear()
+                        // The items of a page that is gone are no longer a filter.
+                        graph.navigator.recordsFilter.value = graph.navigator.recordsFilter.value.copy(captureId = null)
+                        if (entries.isEmpty()) {
+                            graph.navigator.say(resources.getString(R.string.trash_nothing_records))
+                        } else {
+                            graph.sayMoved(resources.getString(R.string.trash_moved_records, entries.size), entries)
+                        }
                     }
                 }
             },

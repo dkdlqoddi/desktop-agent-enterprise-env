@@ -68,7 +68,7 @@ class ScheduleTimeZoneTest {
             shell("cmd alarm set-timezone $original")
             // Back in the device's zone before the schedule goes, so no re-timing comes after it.
             runCatching { nextRunAtNineIn(ZoneId.of(original), row.id) }
-            graph.scheduler.delete(row.id)
+            graph.forgetSchedule(row.id)
         }
         assertEquals(original, shell("getprop persist.sys.timezone"))
     }

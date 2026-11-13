@@ -13,8 +13,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,7 +46,7 @@ fun AppRoot(graph: AppGraph) {
     val tab by graph.navigator.tab.collectAsStateWithLifecycle()
     val work by graph.browser.work.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(graph) { graph.navigator.snackbar.collect { snackbar.showSnackbar(it) } }
+    ShowNotices(graph, snackbar)
     val saved = rememberSaveableStateHolder()
 
     Scaffold(
@@ -95,6 +97,28 @@ fun AppRoot(graph: AppGraph) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Shows the navigator's short messages one after another in [snackbar]. One that can take back what it tells of (a
+ * delete that went to the trash) has 되돌리기, and stays longer.
+ */
+@Composable
+fun ShowNotices(graph: AppGraph, snackbar: SnackbarHostState) {
+    val undo = stringResource(R.string.undo)
+    LaunchedEffect(graph) {
+        graph.navigator.notices.collect { notice ->
+            val undoing = notice.undo
+            if (undoing == null) {
+                snackbar.showSnackbar(notice.text)
+            } else if (
+                snackbar.showSnackbar(notice.text, actionLabel = undo, duration = SnackbarDuration.Long) ==
+                SnackbarResult.ActionPerformed
+            ) {
+                graph.orSay(Unit) { undoing() }
             }
         }
     }

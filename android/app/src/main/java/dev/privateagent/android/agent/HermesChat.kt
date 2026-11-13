@@ -181,6 +181,9 @@ class HermesChat(
         messages.setActivity(messageId, activity)
     }
 
+    /** The conversation was cleared: every kind of command allowed for it is asked about again. */
+    fun forgetSession() = grants.forgetSession()
+
     /**
      * Hermes' identity file (SOUL.md) for a phone. The worker writes the desktop's only where there is none, so this
      * one, written first, stays; the user's own edits to it stay too.

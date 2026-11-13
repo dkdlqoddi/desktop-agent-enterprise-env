@@ -166,15 +166,31 @@ class RecordStore(private val db: AppDatabase) {
             .use { cursor -> cursor.captures().firstOrNull() }
     }
 
-    suspend fun clear() = withDatabase {
-        db.writableDatabase.delete("captures", null, null)
-        db.changed()
+    /** 기록 모두 지우기: every recorded page goes to the trash with its items, each an entry of its own. The entries made. */
+    suspend fun clear(): List<Long> = withDatabase {
+        val database = db.writableDatabase
+        val made = database.inTransaction {
+            val ids = database.rawQuery("SELECT id FROM captures ORDER BY captured_at, id", null).use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.getLong(0)) }
+            }
+            database.discard(TrashKind.CAPTURE, ids, System.currentTimeMillis())
+        }
+        if (made.isNotEmpty()) db.changed()
+        made
     }
 
-    /** Deletes one capture and its items. */
-    suspend fun deleteCapture(id: Long) = withDatabase {
-        db.writableDatabase.delete("captures", "id = ?", arrayOf(id.toString()))
-        db.changed()
+    /** Moves one recorded page to the trash with its items: the entry made, or null when the page is gone already. */
+    suspend fun deleteCapture(id: Long): Long? = deleteCaptures(listOf(id)).firstOrNull()
+
+    /**
+     * Moves the recorded pages [ids] to the trash at once, each with its items to an entry of its own; a page gone
+     * meanwhile is passed over. The entries made.
+     */
+    suspend fun deleteCaptures(ids: Collection<Long>): List<Long> = withDatabase {
+        val database = db.writableDatabase
+        val made = database.inTransaction { database.discard(TrashKind.CAPTURE, ids, System.currentTimeMillis()) }
+        if (made.isNotEmpty()) db.changed()
+        made
     }
 
     private fun where(filter: ItemFilter): Pair<String, Array<String>> {

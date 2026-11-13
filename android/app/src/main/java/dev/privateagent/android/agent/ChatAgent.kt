@@ -121,6 +121,18 @@ class ChatAgent(
         }
     }
 
+    /**
+     * 대화 지우기: the conversation goes to the trash as one entry, every message with what its turn did, and each kind
+     * of command allowed for it is asked about again. The entry made, or null when there was no message. A restore
+     * brings back the messages alone: what was allowed ends here, and each Hermes turn is a session of its own, so
+     * nothing else of the conversation lives on to come back.
+     */
+    suspend fun clear(): Long? {
+        val entry = messages.clear()
+        hermes?.forgetSession()
+        return entry
+    }
+
     /** The stop button: ends the request (Hermes' worker is stopped too); nothing of it is shown. */
     fun stop() {
         job?.cancel()

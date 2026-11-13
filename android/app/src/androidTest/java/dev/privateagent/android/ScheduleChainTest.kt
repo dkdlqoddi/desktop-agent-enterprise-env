@@ -75,7 +75,7 @@ class ScheduleChainTest {
             val off = abs(queued.nextScheduleTimeMillis - tomorrow)
             assertTrue("${queued.nextScheduleTimeMillis} != $tomorrow", off < 60_000)
         } finally {
-            graph.scheduler.delete(row.id)
+            graph.forgetSchedule(row.id)
             notifications.cancel(Notifications.id(row.id))
         }
     }

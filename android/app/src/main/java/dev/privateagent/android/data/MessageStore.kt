@@ -104,9 +104,15 @@ class MessageStore(private val db: AppDatabase) {
         if (count > 0) db.changed()
     }
 
-    suspend fun clear() = withDatabase {
-        db.writableDatabase.delete("messages", null, null)
-        db.changed()
+    /**
+     * 대화 지우기: the conversation goes to the trash as one entry, every message with what its turn did, to wait
+     * TrashStore.DAYS days there. The entry made, or null when there was no message.
+     */
+    suspend fun clear(): Long? = withDatabase {
+        val database = db.writableDatabase
+        val entry = database.inTransaction { database.discardChat(System.currentTimeMillis()) }
+        if (entry != null) db.changed()
+        entry
     }
 
     private suspend fun insert(role: MessageRole, text: String, extra: ContentValues.() -> Unit = {}): Long =

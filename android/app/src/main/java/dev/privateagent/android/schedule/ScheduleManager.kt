@@ -46,12 +46,19 @@ class ScheduleManager(private val context: Context, private val store: ScheduleS
         }
     }
 
-    suspend fun delete(id: Long) {
+    /**
+     * Moves the schedule to the trash, its reminder cancelled: the entry made, or null when it is gone already. A
+     * schedule restored from the trash is queued again by [restoreAll].
+     */
+    suspend fun delete(id: Long): Long? {
         work.cancelUniqueWork(name(id))
-        store.delete(id)
+        return store.delete(id)
     }
 
-    /** At app start: queues each enabled schedule that has no pending job (one that is pending keeps its time). */
+    /**
+     * At app start, and after a restore from the trash: queues each enabled schedule that has no pending job (one that
+     * is pending keeps its time), for its next time from now on.
+     */
     suspend fun restoreAll() {
         for (row in store.all()) {
             if (!row.enabled) continue

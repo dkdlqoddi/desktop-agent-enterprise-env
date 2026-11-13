@@ -11,12 +11,16 @@ import dev.privateagent.android.agent.Texts
 import dev.privateagent.android.data.AppDatabase
 import dev.privateagent.android.data.MessageStore
 import dev.privateagent.android.data.RecordStore
+import dev.privateagent.android.data.Restored
 import dev.privateagent.android.data.ScheduleStore
+import dev.privateagent.android.data.TrashKind
+import dev.privateagent.android.data.TrashStore
 import dev.privateagent.android.hermes.HermesRuntime
 import dev.privateagent.android.hermes.HermesSession
 import dev.privateagent.android.llm.LlmService
 import dev.privateagent.android.schedule.Notifications
 import dev.privateagent.android.schedule.ScheduleManager
+import dev.privateagent.android.schedule.Upkeep
 import dev.privateagent.android.security.SettingsStore
 import dev.privateagent.android.ui.Navigator
 import dev.privateagent.android.web.BrowserController
@@ -24,11 +28,12 @@ import dev.privateagent.android.web.Sites
 import dev.privateagent.android.web.WebScripts
 
 /** The app's parts, made once per process. */
-class AppGraph(app: Application) {
+class AppGraph(private val app: Application) {
     val database = AppDatabase(app)
     val messages = MessageStore(database)
     val records = RecordStore(database)
     val schedules = ScheduleStore(database)
+    val trash = TrashStore(database)
     val settings = SettingsStore(app)
     val sites: Sites by lazy { Sites.parse(WebScripts.read(app.assets, "sites.json")) }
     val scripts: WebScripts by lazy { WebScripts.load(app.assets) }
@@ -37,6 +42,7 @@ class AppGraph(app: Application) {
     val llm = LlmService()
     val notifications = Notifications(app, settings) { sites }
     val scheduler = ScheduleManager(app, schedules)
+    val upkeep = Upkeep(app, trash)
     val browser = BrowserController(records, settings, { sites }, { scripts })
     val actions = AppActions(app, records, browser, scheduler, notifications, navigator, { sites }, texts)
 
@@ -72,4 +78,25 @@ class AppGraph(app: Application) {
 
     /** What the agent remembers, for the user to read and change; nothing of it changes while a turn runs. */
     val memory = AgentMemory(hermesRuntime.home) { agent.busy.value }
+
+    /**
+     * Brings the trash's entries [ids] back (TrashStore.restore). A schedule among them is queued again, for its next
+     * time from now on.
+     */
+    suspend fun restore(ids: Collection<Long>): Restored {
+        val restored = trash.restore(ids)
+        if (TrashKind.SCHEDULE in restored.kinds) scheduler.restoreAll()
+        return restored
+    }
+
+    /**
+     * Says [text] of what went to the trash as [entries], with 되돌리기, which brings them back; it says so when they
+     * are no longer there to bring back.
+     */
+    fun sayMoved(text: String, entries: List<Long>) {
+        if (entries.isEmpty()) return navigator.say(text)
+        navigator.say(text) {
+            if (restore(entries).count == 0) navigator.say(app.getString(R.string.trash_gone))
+        }
+    }
 }

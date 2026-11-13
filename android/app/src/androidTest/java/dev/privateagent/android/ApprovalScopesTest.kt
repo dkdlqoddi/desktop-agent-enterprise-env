@@ -4,15 +4,19 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.privateagent.android.agent.AgentGrants
 import dev.privateagent.android.agent.AppActions
+import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.data.AppDatabase
 import dev.privateagent.android.data.MessageRole
 import dev.privateagent.android.data.MessageStore
 import dev.privateagent.android.data.RecordStore
+import dev.privateagent.android.data.ScheduleStore
+import dev.privateagent.android.data.TrashStore
 import dev.privateagent.android.hermes.HermesModel
 import dev.privateagent.android.hermes.HermesProcess
 import dev.privateagent.android.hermes.HermesSession
+import dev.privateagent.android.llm.LlmService
 import dev.privateagent.android.ui.Navigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -42,7 +46,8 @@ import kotlin.concurrent.thread
  * The scopes of an answer to a command, through the chat as the app runs it, against a worker of the test's own (a
  * phone's Hermes has no terminal, so the real worker never asks): "always" keeps the very command and hands it to the
  * later turns, "session" keeps the kinds the worker tells, a scope the question did not offer or a command that holds
- * a secret is one run only, and each question is kept with how it was decided among what the turn did.
+ * a secret is one run only, and each question is kept with how it was decided among what the turn did. A conversation
+ * cleared and restored from the trash comes back without what was allowed for it.
  */
 @RunWith(AndroidJUnit4::class)
 class ApprovalScopesTest {
@@ -164,6 +169,40 @@ class ApprovalScopesTest {
         turn(question("ls"), "once")
         assertEquals(emptyList<String>(), strings(turns.last().getJSONArray("session_allowed")))
         assertEquals(listOf("git push origin main"), strings(turns.last().getJSONArray("allowed")))
+    }
+
+    @Test
+    fun aClearedConversationComesBackFromTheTrashWithoutWhatWasAllowedForIt() {
+        assertEquals("session", turn(question("rm -rf build"), "session").getString("decision"))
+        assertEquals(listOf("recursive delete"), grants.session.value)
+        val before = runBlocking { messages.all() }
+
+        // 대화 지우기, as the settings ask the chat for it: the conversation goes to the trash, and what was allowed
+        // for it is asked about again.
+        val agent = ChatAgent(
+            context = context,
+            messages = messages,
+            schedules = ScheduleStore(database),
+            settings = graph.settings,
+            llm = LlmService(),
+            actions = actions,
+            navigator = Navigator(),
+            sites = { graph.sites },
+            texts = graph.texts,
+            hermes = chat,
+        )
+        val entry = runBlocking { agent.clear() }!!
+        assertTrue(runBlocking { messages.all() }.isEmpty())
+        assertTrue(grants.session.value.isEmpty())
+
+        // Restored: the messages come back with what each turn did, the answer "session" among it, and what it
+        // allowed does not: the next turn is handed none of it.
+        assertEquals(1, runBlocking { TrashStore(database).restore(listOf(entry)) }.count)
+        assertEquals(before, runBlocking { messages.all() })
+        assertEquals("session", lastApproval().result)
+        assertTrue(grants.session.value.isEmpty())
+        turn(question("ls -la"), "once")
+        assertEquals(emptyList<String>(), strings(turns.last().getJSONArray("session_allowed")))
     }
 
     /** The worker's end of the pipes: frames the session wrote, and frames to send it. */

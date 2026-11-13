@@ -104,7 +104,7 @@ fun RecordsScreen(graph: AppGraph) {
     val context = LocalContext.current
     val exportEmpty = stringResource(R.string.records_export_empty)
     val exportFailed = stringResource(R.string.records_export_failed)
-    val deleted = stringResource(R.string.records_deleted)
+    val moved = stringResource(R.string.trash_moved_record)
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -203,11 +203,12 @@ fun RecordsScreen(graph: AppGraph) {
                 deleting = null
                 scope.launch {
                     graph.orSay(Unit) {
-                        graph.records.deleteCapture(capture.id)
+                        // To the trash with its items, from where 되돌리기 (or 설정 → 휴지통) brings it back.
+                        val entry = graph.records.deleteCapture(capture.id)
                         // The items of a page that is gone are no longer a filter.
                         val filter = navigator.recordsFilter.value
                         if (filter.captureId == capture.id) navigator.recordsFilter.value = filter.copy(captureId = null)
-                        navigator.say(deleted)
+                        graph.sayMoved(moved, listOfNotNull(entry))
                     }
                 }
             },

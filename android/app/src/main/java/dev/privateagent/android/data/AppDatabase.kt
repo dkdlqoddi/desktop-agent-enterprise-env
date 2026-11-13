@@ -32,6 +32,8 @@ class AppDatabase(context: Context, name: String? = NAME) :
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Version 2: what a turn did on the way, kept with the message that ended it.
         if (oldVersion < 2) db.execSQL(ACTIVITY)
+        // Version 3: the trash, where what the user deletes waits before it is gone for good.
+        if (oldVersion < 3) for (statement in TRASH) db.execSQL(statement)
     }
 
     fun changed() {
@@ -40,7 +42,7 @@ class AppDatabase(context: Context, name: String? = NAME) :
 
     companion object {
         const val NAME = "private-agent.db"
-        const val VERSION = 2
+        const val VERSION = 3
 
         /**
          * What the turn a message ended did on the way (agent/TurnActivity.kt): the tools it ran, the app's actions,
@@ -54,6 +56,37 @@ class AppDatabase(context: Context, name: String? = NAME) :
                 more INTEGER NOT NULL DEFAULT 0
             )
             """
+
+        /**
+         * What the user deleted, kept TrashStore.DAYS days for them to restore (TrashStore.kt): what it was (kind), what
+         * the list calls it (title), the row itself as JSON by column name (payload; the cleared conversation's is a
+         * summary), and whether the retention policy of the recorded pages moved it rather than the user (retired). The
+         * rows that went with it (a page's items, the conversation's messages and what each turn did) are kept one by
+         * one in trash_rows, by the table they came from (source) and their number there (row_id), and go with it.
+         */
+        private val TRASH = listOf(
+            """
+            CREATE TABLE trash (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                payload TEXT NOT NULL DEFAULT '{}',
+                retired INTEGER NOT NULL DEFAULT 0,
+                deleted_at INTEGER NOT NULL
+            )
+            """,
+            "CREATE INDEX trash_time ON trash (deleted_at, id)",
+            "CREATE INDEX trash_kind ON trash (kind, deleted_at, id)",
+            """
+            CREATE TABLE trash_rows (
+                entry_id INTEGER NOT NULL REFERENCES trash (id) ON DELETE CASCADE,
+                source TEXT NOT NULL,
+                row_id INTEGER NOT NULL,
+                data TEXT NOT NULL,
+                PRIMARY KEY (entry_id, source, row_id)
+            )
+            """,
+        )
 
         private val SCHEMA = listOf(
             """
@@ -121,6 +154,6 @@ class AppDatabase(context: Context, name: String? = NAME) :
             )
             """,
             ACTIVITY,
-        )
+        ) + TRASH
     }
 }
