@@ -197,6 +197,10 @@
     <string name="records_export_empty">내보낼 항목이 없습니다.</string>
     <string name="records_export_failed">CSV 파일을 만들지 못했습니다.</string>
     <string name="records_export_chooser">CSV 공유</string>
+    <string name="records_delete_one">기록 지우기: %1$s</string>
+    <string name="records_delete_title">이 기록을 지울까요?</string>
+    <string name="records_delete_body">%1$s · %2$s\n기록한 페이지와 항목 %3$d건을 지웁니다. 누른 광고와 도착 페이지도 함께 지워지고, 되돌릴 수 없습니다.</string>
+    <string name="records_deleted">기록을 지웠습니다.</string>
     <string name="filter_all_sites">모든 사이트</string>
     <string name="site_generic">기타</string>
     <string name="kind_all">전체</string>

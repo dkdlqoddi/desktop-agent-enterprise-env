@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -71,6 +72,7 @@ import dev.privateagent.android.data.StoreException
 import dev.privateagent.android.export.CsvExporter
 import dev.privateagent.android.ui.RecordsView
 import dev.privateagent.android.ui.orSay
+import dev.privateagent.android.ui.settings.Confirm
 import dev.privateagent.android.web.BrowserController
 import dev.privateagent.android.web.CaptureCounts
 import dev.privateagent.android.web.ItemKind
@@ -97,10 +99,12 @@ fun RecordsScreen(graph: AppGraph) {
     }
     LaunchedEffect(changes) { captures = graph.orSay(captures) { graph.records.captures() } }
     var detail by remember { mutableStateOf<ItemRow?>(null) }
+    var deleting by remember { mutableStateOf<CaptureRow?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val exportEmpty = stringResource(R.string.records_export_empty)
     val exportFailed = stringResource(R.string.records_export_failed)
+    val deleted = stringResource(R.string.records_deleted)
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -172,7 +176,12 @@ fun RecordsScreen(graph: AppGraph) {
             } else {
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                     items(captures, key = { it.id }) { capture ->
-                        CaptureListRow(capture, graph.texts, onClick = { navigator.showCapture(capture.id) })
+                        CaptureListRow(
+                            capture,
+                            graph.texts,
+                            onClick = { navigator.showCapture(capture.id) },
+                            onDelete = { deleting = capture },
+                        )
                         HorizontalDivider()
                     }
                 }
@@ -180,7 +189,37 @@ fun RecordsScreen(graph: AppGraph) {
         }
     }
     detail?.let { item -> ItemDetail(item, graph.texts, onDismiss = { detail = null }) }
+    deleting?.let { capture ->
+        Confirm(
+            title = stringResource(R.string.records_delete_title),
+            body = stringResource(
+                R.string.records_delete_body,
+                captureLabel(capture, graph.texts),
+                graph.texts.time(capture.capturedAt),
+                capture.adCount + capture.productCount + capture.resultCount,
+            ),
+            confirm = stringResource(R.string.confirm_clear),
+            onConfirm = {
+                deleting = null
+                scope.launch {
+                    graph.orSay(Unit) {
+                        graph.records.deleteCapture(capture.id)
+                        // The items of a page that is gone are no longer a filter.
+                        val filter = navigator.recordsFilter.value
+                        if (filter.captureId == capture.id) navigator.recordsFilter.value = filter.copy(captureId = null)
+                        navigator.say(deleted)
+                    }
+                }
+            },
+            onDismiss = { deleting = null },
+        )
+    }
 }
+
+/** A recorded page as its row names it: the site and, when there is one, the search words. */
+private fun captureLabel(capture: CaptureRow, texts: Texts): String =
+    listOf(texts.siteName(capture.site), capture.query.takeIf { it.isNotEmpty() }?.let { "'$it'" })
+        .filterNotNull().joinToString(" ")
 
 @Composable
 private fun Filters(filter: ItemFilter, graph: AppGraph, onChange: (ItemFilter) -> Unit) {
@@ -322,20 +361,19 @@ private fun KindBadge(kind: ItemKind, texts: Texts) {
 }
 
 @Composable
-private fun CaptureListRow(capture: CaptureRow, texts: Texts, onClick: () -> Unit) {
+private fun CaptureListRow(capture: CaptureRow, texts: Texts, onClick: () -> Unit, onDelete: () -> Unit) {
+    val label = captureLabel(capture, texts)
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
         overlineContent = { Text(texts.time(capture.capturedAt) + " · " + texts.source(capture.source)) },
-        headlineContent = {
-            Text(
-                listOf(texts.siteName(capture.site), capture.query.takeIf { it.isNotEmpty() }?.let { "'$it'" })
-                    .filterNotNull().joinToString(" "),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
+        headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Text(stringResource(R.string.records_counts, capture.adCount, capture.productCount, capture.resultCount))
+        },
+        trailingContent = {
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.records_delete_one, label))
+            }
         },
     )
 }
