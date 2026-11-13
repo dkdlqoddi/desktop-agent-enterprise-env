@@ -111,7 +111,8 @@ def test_pictures_of_a_published_page_are_found_by_shape_name(tmp_path):
                 "</v:shape><![endif]-->"
                 '<![if !vml]><img width=30 height=20 src="page.files/image002.png" v:shapes="그림_x0020_1"><![endif]>'
                 "<img src='page.files/image003.png' v:shapes='Group_x0020_5 _x0000_s1027 _x0000_s1028'>"
-                '<img src="../../outside.png" v:shapes="Escape"><img src="http://intranet/a.png" v:shapes="Remote">'
+                '<img src="../../outside.png" v:shapes="Escape">'
+                '<img src="http://images.example.test/a.png" v:shapes="Remote">'
                 "</body></html>"
             ).encode("cp949")
         )
