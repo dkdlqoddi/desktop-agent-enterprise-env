@@ -746,6 +746,112 @@ def test_notes_with_marks_of_their_own_keep_the_mark_and_their_text():
     assert "별표 각주" in index_markdown(html)
 
 
+def notes_part(kind, count):
+    """A footnotes or endnotes part (`kind`) with the notes 1 to `count`, each saying which it is."""
+    tag = kind[:-1]
+    notes = "".join(
+        f'<w:{tag} w:id="{ident}"><w:p><w:r><w:t>{tag} {ident}</w:t></w:r></w:p></w:{tag}>'
+        for ident in range(1, count + 1)
+    )
+    return part(f"/word/{kind}.xml", f"<w:{kind}>{notes}</w:{kind}>")
+
+
+def note_marks(body):
+    """The marks of the note references in the text, in order, as (kind, mark)."""
+    return re.findall(r'id="(footnote|endnote)-ref-\d+">([^<]*)</a>', body)
+
+
+def test_notes_are_numbered_in_the_format_and_from_the_number_the_document_gives():
+    references = "".join(f'<w:r><w:footnoteReference w:id="{ident}"/></w:r>' for ident in (1, 2))
+    references += "".join(f'<w:r><w:endnoteReference w:id="{ident}"/></w:r>' for ident in range(1, 6))
+    html = word_xml_to_html(
+        package(
+            f"<w:p><w:r><w:t>본문</w:t></w:r>{references}</w:p>",
+            rels=[
+                ("rId7", "settings", "settings.xml", False),
+                ("rId8", "footnotes", "footnotes.xml", False),
+                ("rId9", "endnotes", "endnotes.xml", False),
+            ],
+            parts=part(
+                "/word/settings.xml",
+                '<w:settings><w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/>'
+                '<w:numFmt w:val="lowerLetter"/><w:numStart w:val="3"/></w:footnotePr>'
+                '<w:endnotePr><w:numFmt w:val="chicago"/></w:endnotePr></w:settings>',
+            )
+            + notes_part("footnotes", 2)
+            + notes_part("endnotes", 5),
+        ),
+        "각주",
+    )
+    body = body_of(html)
+    # The document's settings: footnotes a, b, c… from c on, endnotes in Word's symbols, doubled after the fourth.
+    assert note_marks(body) == [
+        ("footnote", "c"),
+        ("footnote", "d"),
+        ("endnote", "*"),
+        ("endnote", "†"),
+        ("endnote", "‡"),
+        ("endnote", "§"),
+        ("endnote", "**"),
+    ]
+    # The lists at the end show the same marks: an HTML list's own letters from c, Word's symbols as text.
+    assert '<ol type="a"><li id="footnote-1" value="3"><p>footnote 1</p></li><li id="footnote-2" value="4">' in body
+    assert '<ol><li id="endnote-1" style="list-style-type:&quot;* &quot;"><p>endnote 1</p></li>' in body
+    assert '<li id="endnote-5" style="list-style-type:&quot;** &quot;"><p>endnote 5</p></li></ol>' in body
+
+
+def test_a_section_that_restarts_its_notes_numbers_them_anew_as_it_says():
+    def section(notes=""):
+        return f'<w:sectPr>{notes}<w:pgSz w:w="11906" w:h="16838"/></w:sectPr>'
+
+    def paragraph(text, ids, ends=""):
+        references = "".join(f'<w:r><w:footnoteReference w:id="{ident}"/></w:r>' for ident in ids)
+        return f"<w:p>{f'<w:pPr>{ends}</w:pPr>' if ends else ''}<w:r><w:t>{text}</w:t></w:r>{references}</w:p>"
+
+    restarted = (
+        '<w:footnotePr><w:numFmt w:val="upperRoman"/><w:numStart w:val="5"/><w:numRestart w:val="eachSect"/>'
+        "</w:footnotePr>"
+    )
+    html = word_xml_to_html(
+        package(
+            paragraph("첫 절", (1, 2), section())
+            + paragraph("둘째 절", (3, 4), section(restarted))
+            + paragraph("셋째 절", (5,))
+            + '<w:p><w:r><w:t>미주</w:t></w:r><w:r><w:endnoteReference w:id="1"/></w:r></w:p>',
+            # The last section asks for a format this app does not write and for numbers that start again on each
+            # page, which the HTML page does not have.
+            section=section('<w:footnotePr><w:numFmt w:val="hebrew1"/><w:numRestart w:val="eachPage"/></w:footnotePr>'),
+            rels=[("rId8", "footnotes", "footnotes.xml", False), ("rId9", "endnotes", "endnotes.xml", False)],
+            parts=part(
+                "/word/settings.xml",
+                '<w:settings><w:endnotePr><w:numFmt w:val="decimal"/><w:numStart w:val="99999999"/></w:endnotePr>'
+                "</w:settings>",
+            )
+            + notes_part("footnotes", 5)
+            + notes_part("endnotes", 1),
+        ),
+        "절",
+    )
+    body = body_of(html)
+    # The first section has Word's defaults; the second starts again at V in its own format; the last goes on in the
+    # default format (1, 2, 3). An endnote starts at the highest number Word lets notes start at.
+    assert note_marks(body) == [
+        ("footnote", "1"),
+        ("footnote", "2"),
+        ("footnote", "V"),
+        ("footnote", "VI"),
+        ("footnote", "7"),
+        ("endnote", "32767"),
+    ]
+    assert (
+        '<ol><li id="footnote-1"><p>footnote 1</p></li><li id="footnote-2"><p>footnote 2</p></li>'
+        '<li id="footnote-3" style="list-style-type:&quot;V &quot;"><p>footnote 3</p></li>'
+        '<li id="footnote-4" style="list-style-type:&quot;VI &quot;"><p>footnote 4</p></li>'
+        '<li id="footnote-5" value="7"><p>footnote 5</p></li></ol>'
+    ) in body
+    assert '<ol><li id="endnote-1" value="32767"><p>endnote 1</p></li></ol>' in body
+
+
 def test_links_hold_no_other_link_of_bookmarks_notes_or_comments():
     notes = "".join(
         f'<w:footnote w:id="{ident}"><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:footnote>'

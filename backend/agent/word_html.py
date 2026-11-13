@@ -7,7 +7,9 @@ from the package's own media parts (TIFF and metafiles as PNG). Shapes, groups, 
 and the VML shapes of older documents are painted as SVG pictures (drawing.py, vml.py); the floating
 drawings of a paragraph are painted together where Word placed them, and a text box without a drawn
 outline keeps its text on the page. Charts become tables of their data and equations become MathML.
-Links, bookmarks, footnotes, endnotes, comments, and the headers and footers the package carries are kept.
+Links, bookmarks, footnotes, endnotes, comments, and the headers and footers the package carries are kept. Footnotes
+and endnotes are numbered as the document and its sections say: in their number format (NOTE_FORMATS, Word's symbols
+*, †, ‡, § among them), from their starting number, and again from it in each section that restarts them.
 
 Content controls, smart tags and tracked insertions are looked into; tracked deletions, the old place of
 moved text, hidden text and field codes are left out, and one branch of each mc:AlternateContent is
@@ -498,6 +500,102 @@ def list_number(value, kind):
     return str(value)
 
 
+# --- Numbers of footnotes and endnotes ------------------------------------------------------------
+
+# The number formats of footnotes and endnotes (w:numFmt of w:footnotePr and w:endnotePr) that are written as the
+# document says: those list_number writes and Word's symbols (chicago). A note of another format (hebrew1, thaiLetters,
+# cardinalText, …) takes its kind's default format (NOTE_DEFAULTS) rather than a guess at it, and so does one of the
+# format none, whose reference would leave nothing to click.
+NOTE_FORMATS = frozenset(
+    {
+        "decimal",
+        "decimalHalfWidth",
+        "upperRoman",
+        "lowerRoman",
+        "upperLetter",
+        "lowerLetter",
+        "chicago",
+        "decimalZero",
+        "ordinal",
+        "ganada",
+        "chosung",
+        "decimalEnclosedCircle",
+        "decimalEnclosedCircleChinese",
+        "decimalEnclosedParen",
+        "decimalEnclosedFullstop",
+        "decimalFullWidth",
+        "decimalFullWidth2",
+        "koreanDigital",
+        "koreanLegal",
+        "koreanCounting",
+        "koreanDigital2",
+        "chineseCounting",
+        "chineseCountingThousand",
+        "chineseLegalSimplified",
+        "ideographDigital",
+        "japaneseCounting",
+        "japaneseDigitalTenThousand",
+        "taiwaneseCounting",
+        "taiwaneseCountingThousand",
+        "ideographLegalTraditional",
+        "ideographTraditional",
+        "ideographZodiac",
+    }
+)
+# Word's own numbering of each kind: footnotes 1, 2, 3 from 1 on through the document, endnotes i, ii, iii.
+NOTE_DEFAULTS = {
+    "footnote": {"format": "decimal", "start": 1, "restart": "continuous"},
+    "endnote": {"format": "lowerRoman", "start": 1, "restart": "continuous"},
+}
+# The highest number Word's dialog lets notes start at; a larger one in the file is taken as this.
+MAX_NOTE_START = 32767
+# The marks of the format chicago: *, †, ‡ and §, then each of them doubled, then tripled, and so on.
+CHICAGO = "*†‡§"
+# The types of an HTML list whose numbers are a format's own, by the format.
+LIST_TYPES = {
+    "decimal": "",
+    "decimalHalfWidth": "",
+    "lowerRoman": "i",
+    "upperRoman": "I",
+    "lowerLetter": "a",
+    "upperLetter": "A",
+}
+
+
+def note_properties(element):
+    """What a w:footnotePr or w:endnotePr, of the document's settings or of a section, says of the numbers of its notes,
+    as far as it says: their format, the number they start at, and where they start again (numRestart: continuous,
+    eachSect or eachPage)."""
+    found = {}
+    if element is None:
+        return found
+    if value(element, "numFmt"):
+        found["format"] = value(element, "numFmt")
+    start = value(element, "numStart")
+    if start.isdigit():
+        found["start"] = min(max(int(start), 1), MAX_NOTE_START)
+    if value(element, "numRestart"):
+        found["restart"] = value(element, "numRestart")
+    return found
+
+
+def note_number(number, kind):
+    """The number of a footnote or endnote written in its format `kind` (one of NOTE_FORMATS)."""
+    if kind == "chicago" and number > 0:
+        return CHICAGO[(number - 1) % 4] * ((number - 1) // 4 + 1)
+    return list_number(number, kind)
+
+
+def list_type(number, kind):
+    """The type of an HTML list (<ol type>) that writes `number` as the format `kind` does, or None when no list does:
+    another format, roman numerals beyond what a list writes (3,999) and letters beyond z, which a list goes on with as
+    aa, ab where Word doubles them (aa, bb)."""
+    found = LIST_TYPES.get(kind)
+    if (found in ("a", "A") and number > 26) or (found in ("i", "I") and number > 3999):
+        return None
+    return found
+
+
 # --- The package ----------------------------------------------------------------------------------
 
 
@@ -827,9 +925,18 @@ class Reader:
         self.found = False
         self.fields = []
         self.notes = {"footnote": [], "endnote": [], "comment": []}
-        # What each footnote and endnote is called: Word's number, which a note with a mark of its own (a custom mark,
-        # such as *) does not take, or that mark.
-        self.marks, self.numbered = {"footnote": {}, "endnote": {}}, {"footnote": 0, "endnote": 0}
+        # What each footnote and endnote is called: Word's number and its format, which a note with a mark of its own
+        # (a custom mark, such as *) does not take, or that mark.
+        self.marks = {"footnote": {}, "endnote": {}}
+        # How notes are numbered (numbered_note): the document's properties (settings.xml), the sections' (sections(),
+        # their w:sectPr in order), the section being read, and each kind's last number with its section.
+        settings = package.xml(package.related("/word/document.xml", "settings") or "/word/settings.xml")
+        self.note_settings = {
+            kind: note_properties(None if settings is None else settings.find(f"{W}{kind}Pr"))
+            for kind in ("footnote", "endnote")
+        }
+        self.section_properties, self.section_ends, self.section = [None], {}, 0
+        self.counted = {"footnote": None, "endnote": None}
         self.custom = None  # The note whose custom mark the run being read writes.
         self.linking = 0  # Inside a link: a mark or bookmark there has no link of its own, as links do not nest.
         # Pictures and their uses (use_picture(), embedded()); `direct` while the text inside a painted picture is read,
@@ -1075,6 +1182,31 @@ class Reader:
             ]
         )
 
+    def sections(self, body):
+        """Note the sections of `body` before it is read: each ends with a paragraph whose properties hold its w:sectPr,
+        the last with the body's own, and the notes in each are numbered as its properties say (numbered_note)."""
+        ends = [paragraph.find(f"{W}pPr/{W}sectPr") for paragraph in body.iter(W + "p")]
+        ends = [section for section in ends if section is not None]
+        self.section_properties = [*ends, body.find(W + "sectPr")]
+        self.section_ends = {id(section): index for index, section in enumerate(ends)}
+
+    def numbered_note(self, kind):
+        """(number, format) of the next footnote or endnote (`kind`) without a mark of its own, as the properties of the
+        section being read say, else the document's (settings.xml), else Word's defaults. The number starts at numStart
+        with the document's first note and again with the first note of each section that restarts the numbering
+        (eachSect); numbering restarted on each page (eachPage) goes on through the document instead, as the HTML page
+        has no pages. A format that is not one of NOTE_FORMATS is the kind's default."""
+        section = self.section_properties[min(self.section, len(self.section_properties) - 1)]
+        own = note_properties(None if section is None else section.find(f"{W}{kind}Pr"))
+        found = {**NOTE_DEFAULTS[kind], **self.note_settings[kind], **own}
+        last = self.counted[kind]
+        if last is None or (found["restart"] == "eachSect" and last[0] != self.section):
+            number = found["start"]
+        else:
+            number = last[1] + 1
+        self.counted[kind] = (self.section, number)
+        return number, found["format"] if found["format"] in NOTE_FORMATS else NOTE_DEFAULTS[kind]["format"]
+
     def measure(self, body):
         """The page size and margins of the document's last section, in px."""
         section = body.find(W + "sectPr")
@@ -1139,6 +1271,11 @@ class Reader:
         deleted = mark_deleted(node)
         label = self.label(props, context) if "list" in props and not deleted else ""
         content = "".join(self.inline(item, context) for item in (*joined, node))
+        # A paragraph that ends a section: the notes after it are numbered as the next section says.
+        for item in (*joined, node):
+            ended = item.find(f"{W}pPr/{W}sectPr")
+            if ended is not None and id(ended) in self.section_ends:
+                self.section = self.section_ends[id(ended)] + 1
         # A field's code ends within its paragraph (only results, such as a table of contents, go on);
         # one left open would hide the rest of the document.
         while self.fields and not self.fields[-1]["result"]:
@@ -1651,11 +1788,9 @@ class Reader:
             self.custom = (kind, index, ident)
             return ""
         if ident not in marks:
-            # Word numbers the notes without a mark of their own.
-            self.numbered[kind] += 1
-            marks[ident] = self.numbered[kind]
-        number = marks[ident]
-        mark = (roman(number).lower() if kind == "endnote" else str(number)) if isinstance(number, int) else number
+            # Word numbers the notes without a mark of their own, in the format and from the number the document says.
+            marks[ident] = self.numbered_note(kind)
+        mark = note_number(*marks[ident]) if isinstance(marks[ident], tuple) else marks[ident]
         if self.in_link():
             return f'<sup><span id="{kind}-ref-{index}">{escape(mark)}</span></sup>'
         return f'<sup><a href="#{kind}-{index}" id="{kind}-ref-{index}">{escape(mark)}</a></sup>'
@@ -2215,6 +2350,11 @@ class Reader:
                 continue
             found = {item.get(W + "id"): item for item in root.findall(W + tag)}
             entries = []
+            marks = self.marks.get(kind, {})
+            # The list writes the numbers of its notes as the first numbered one has them, where an HTML list can; a
+            # note numbered otherwise shows its own mark.
+            numbered = next((mark for mark in marks.values() if isinstance(mark, tuple)), None)
+            listed = list_type(*numbered) if numbered else LIST_TYPES.get(NOTE_DEFAULTS.get(kind, {}).get("format"), "")
             # Notes can refer to more notes, which join the end of the list while it is read.
             index = 0
             while index < len(self.notes[kind]):
@@ -2229,11 +2369,9 @@ class Reader:
                         part for part in (item.get(W + "author", ""), (item.get(W + "date") or "")[:10]) if part
                     )
                     content = (f'<p class="caption">{escape(author)}</p>' if author else "") + content
-                entries.append(
-                    f'<li id="{kind}-{index}"{note_mark(self.marks.get(kind, {}).get(ident), index)}>{content}</li>'
-                )
+                entries.append(f'<li id="{kind}-{index}"{note_mark(marks.get(ident), index, listed)}>{content}</li>')
             if entries:
-                kind_attribute = ' type="i"' if kind == "endnote" else ""
+                kind_attribute = f' type="{listed}"' if listed else ""
                 html.append(
                     f'<div class="notes"><p class="caption">{title}</p><ol{kind_attribute}>{"".join(entries)}</ol>'
                     "</div>"
@@ -2273,11 +2411,16 @@ def empty_cells(span):
     return f'<td{f" colspan={chr(34)}{span}{chr(34)}" if span > 1 else ""} style="border:none;padding:0"></td>'
 
 
-def note_mark(mark, index):
-    """The attributes of the list item of the note that is `index`th in its list, showing the note's mark: Word's
-    number where it differs from the item's place, or the mark the note has of its own (such as *)."""
-    if isinstance(mark, int):
-        return f' value="{mark}"' if mark != index else ""
+def note_mark(mark, index, listed):
+    """The attributes of the list item of the note that is `index`th in its list, an HTML list of the type `listed`
+    (list_type), showing the note's mark: Word's number and its format (number, format) as the list writes it where it
+    can, with the number where it differs from the item's place, else as its text; or the mark the note has of its own
+    (such as *)."""
+    if isinstance(mark, tuple):
+        number, kind = mark
+        if listed is not None and list_type(number, kind) == listed:
+            return f' value="{number}"' if number != index else ""
+        mark = note_number(number, kind)
     if mark and re.fullmatch(r"[^\"'\\<>;{}\n]{1,16}", mark):
         return f' style="{attribute(f"list-style-type:{chr(34)}{mark} {chr(34)}")}"'
     return ""
@@ -2448,6 +2591,7 @@ def word_xml_to_html(xml, title):
         raise UserError("Word 문서에서 본문을 읽지 못했습니다.")
     reader = Reader(package)
     reader.measure(body)
+    reader.sections(body)
     content = reader.blocks(body)
     notes = reader.notes_html()
     header, footer = reader.headers_footers(body)
