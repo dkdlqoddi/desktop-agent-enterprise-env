@@ -4,7 +4,8 @@ One conversation, kept in agent_messages. A message goes to the agent with the r
 is Hermes (hermes.py), which a packaged app always carries: it acts at once with its own tools (terminal, files, code,
 web search, a browser, memory, skills) and with the app's actions below, which it calls as tools. Each call of an app
 action is checked here, its name and every argument (card), run (run), and kept with the answer as a card that says
-what it did or why it failed. A command Hermes' guard finds dangerous pauses the turn for the user's decision
+what it did or why it failed; one that changed tasks, documents or routines tells the window, which reads those lists
+again at once (the event agent.changed). A command Hermes' guard finds dangerous pauses the turn for the user's decision
 (agent.approve_command), and a question the agent asks waits for the user's answer (agent.answer_clarify). While a
 turn runs the chat reads its progress (agent.status) and, loaded meanwhile, finds the turn again (agent.active).
 
@@ -31,6 +32,7 @@ Nothing here clicks a site's page: the web records read pages, and ads count as 
 (web_capture.py).
 """
 
+import contextlib
 import json
 import re
 import sys
@@ -70,6 +72,15 @@ SAVE_TITLE, SAVE_CHARS = 200, 20000  # The title and the Markdown text save_docu
 GLANCE = 5  # Titles of each kind the overview of today names.
 MAX_SUGGESTIONS = 4
 WEEKDAYS = "월화수목금토일"  # Monday first, as Python and the routines count.
+# What each of the app's actions changes, by the names the screens reload their lists by (src/lib/query.ts, Tag). An
+# action done tells the window at once (the event agent.changed), so the lists other screens show follow it then and
+# not at their next refresh: an action of a chat turn, of a card the user approved, or of a messenger's conversation.
+CHANGES = {
+    "add_task": ("tasks",),
+    "complete_task": ("tasks",),
+    "save_document": ("documents",),
+    "schedule_capture": ("routines",),
+}
 # What the chat offers above its message box when the app keeps nothing to suggest a request about (agent.suggestions).
 EXAMPLES = (
     "쿠팡에서 노트북 광고 기록해 줘",
@@ -831,7 +842,7 @@ class AgentChat:
                     "text": f"자동 작업 '{name}'을 등록했습니다. AI 작업 → 자동 작업에서 바꿀 수 있습니다.",
                     "routine_id": saved.get("id"),
                 }
-            return {**card, "status": "done", "result": result}
+            done = {**card, "status": "done", "result": result}
         except UserError as error:
             return {**card, "status": "failed", "result": {"text": str(error)}}
         except Exception as error:
@@ -841,6 +852,16 @@ class AgentChat:
                 "status": "failed",
                 "result": {"text": "작업 중 문제가 생겼습니다. 진단 로그를 확인해 주세요."},
             }
+        self.changed(tool)
+        return done
+
+    def changed(self, tool):
+        """Tell the window which of its lists the action just done changed (CHANGES), for it to read them again. Only
+        the names of the lists go; a window that is not there (a test, the app closing) misses nothing it needs."""
+        tags = CHANGES.get(tool)
+        if tags:
+            with contextlib.suppress(Exception):
+                self.service.emit("agent.changed", {"tags": list(tags)})
 
     def captured(self, kept):
         counts = kept["counts"]

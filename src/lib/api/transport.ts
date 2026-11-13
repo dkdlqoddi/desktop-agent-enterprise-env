@@ -22,6 +22,8 @@ declare global {
         handler: (type: string, params: Record<string, unknown>) => Promise<unknown>,
       ) => () => void;
       onApiChange?: (callback: () => void) => () => void;
+      // An action of the chat agent changed these lists ('tasks', 'documents' or 'routines'), as it was done.
+      onAgentChange?: (callback: (tags: string[]) => void) => () => void;
       request: (
         method: string,
         params?: Record<string, unknown>,

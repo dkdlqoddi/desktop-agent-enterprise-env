@@ -73,5 +73,13 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('api:changed', listener);
       return () => ipcRenderer.removeListener('api:changed', listener);
     },
+    // An action of the chat agent (a chat turn, a card the user approved, a messenger's conversation) changed tasks,
+    // documents or routines: the names of those lists, which the screens read again.
+    onAgentChange: (callback) => {
+      const listener = (_event, tags) =>
+        callback(Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string') : []);
+      ipcRenderer.on('agent:changed', listener);
+      return () => ipcRenderer.removeListener('agent:changed', listener);
+    },
   }),
 );

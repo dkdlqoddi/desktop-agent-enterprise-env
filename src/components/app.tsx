@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Bell, ChevronRight, Info, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { api, type Preferences, type Settings, type StorageInfo } from '@/lib/api';
+import type { Tag } from '@/lib/query';
 import Admin, { type AdminSection } from './admin';
 import {
   changedForm,
@@ -196,6 +197,15 @@ function useMainProcess(stores: AppStores) {
       off?.();
     };
   }, [actions]);
+  // An action of the chat agent changed tasks, documents or routines (agent_chat.py, CHANGES): those lists load again
+  // as it is done, wherever the user is, and not at their next refresh. The main process passes no other name.
+  useEffect(
+    () =>
+      window.privateAgent?.onAgentChange?.((tags) => {
+        if (tags.length) void actions.invalidate(tags as Tag[]).catch(() => {});
+      }),
+    [actions],
+  );
   // One command at a time; what a command changes is on the screen before it answers (flushSync), as a click's change
   // is: otherwise React draws it in a later task, which the next command (say, a fill after a move to the admin page)
   // may come before.

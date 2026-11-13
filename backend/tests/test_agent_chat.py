@@ -582,6 +582,35 @@ def test_saving_a_document_waits_for_approval_and_makes_a_new_one(service):
     assert service.dispatch("wiki.get", {"id": saved["id"]})["content"] == "# 회의\n\n- 결정 사항"
 
 
+def test_an_action_that_changed_a_list_tells_the_window_at_once(service):
+    told = []
+    service.emit = lambda event, params: told.append((event, params))
+    # What only reads, and what failed, changes no list of the screens.
+    service.agent.call_tool("list_tasks", {})
+    service.agent.call_tool("save_document", {"title": "", "content": "본문"})
+    service.agent.call_tool("web_capture", {"site": "nowhere", "query": "노트북"})
+    assert told == []
+    # A card the user approves tells it as it is done, before its answer.
+    plan(service, "추가할게요.", ("add_task", {"title": "보고서"}))
+    sent = send(service, "보고서 할 일 추가해 줘")
+    assert told == []
+    service.dispatch("agent.approve", {"seq": sent["reply"]["seq"], "index": 0})
+    assert told == [("agent.changed", {"tags": ["tasks"]})]
+    # So does an action the agent (or a messenger's conversation) runs itself.
+    service.agent.call_tool("save_document", {"title": "회의 요약", "content": "본문"})
+    service.agent.call_tool(
+        "schedule_capture", {"site": "coupang", "query": "노트북", "time": "09:30", "days": "daily"}
+    )
+    assert told[1:] == [("agent.changed", {"tags": ["documents"]}), ("agent.changed", {"tags": ["routines"]})]
+
+    # A window that is not there to hear it does not fail the action.
+    def gone(event, params):
+        raise OSError("the window has gone")
+
+    service.emit = gone
+    assert service.agent.call_tool("add_task", {"title": "또 하나"})["status"] == "done"
+
+
 @pytest.mark.parametrize(
     "args",
     [

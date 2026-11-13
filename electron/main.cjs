@@ -185,10 +185,21 @@ const RESTARTING = 'Python 백엔드를 다시 시작하고 있습니다. 잠시
 
 // The events the backend sends of its own accord (lines without an id) that reach the window, by the type each has
 // there on 'assistant:delta': the parts of an answer as the LLM writes it, and its end, for a question asked with
-// stream (assistant.ask). Any other event is dropped.
+// stream (assistant.ask). Besides them only agent.changed is passed on; any other event is dropped.
 const BACKEND_EVENTS = { 'assistant.delta': 'delta', 'assistant.done': 'done' };
+// The lists an action of the chat agent may change (backend/agent/agent_chat.py, CHANGES), which the window reads
+// again on 'agent:changed' as soon as the action is done. Nothing but these names goes to it.
+const AGENT_CHANGES = new Set(['documents', 'tasks', 'routines']);
 
 function forwardEvent(name, params) {
+  if (name === 'agent.changed') {
+    const tags = Array.isArray(params?.tags)
+      ? [...new Set(params.tags.filter((tag) => AGENT_CHANGES.has(tag)))]
+      : [];
+    if (tags.length && window && !window.isDestroyed())
+      window.webContents.send('agent:changed', tags);
+    return;
+  }
   const type = Object.hasOwn(BACKEND_EVENTS, name) ? BACKEND_EVENTS[name] : null;
   if (!type || !params || typeof params !== 'object' || Array.isArray(params)) return;
   if (window && !window.isDestroyed())

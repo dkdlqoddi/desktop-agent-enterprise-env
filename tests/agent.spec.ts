@@ -364,3 +364,82 @@ test('agent chat: the tasks and the document the agent reads are drawn on its ca
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('agent chat: what the agent adds shows on the other screens as soon as it is added', async () => {
+  test.setTimeout(240_000);
+  const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-chat-'));
+  const ADDED = '할 일과 문서를 추가했습니다.';
+  const task = { title: '분기 보고서 제출' };
+  const minutes = { title: '주간 회의록', content: '# 주간 회의\n\n- 다음 회의는 금요일' };
+  // The answer is held back until the test has seen the lists change: they follow each action as it is done, not the
+  // end of the turn. A source run without the Hermes build proposes the two as cards the user approves.
+  let release!: (text: string) => void;
+  const held = new Promise<string>((resolve) => (release = resolve));
+  const llm = await llmServer(({ payload }) => {
+    if (!payload.tools?.length)
+      return {
+        message: ADDED,
+        actions: [
+          { tool: 'add_task', args: task },
+          { tool: 'save_document', args: minutes },
+        ],
+      };
+    const ran = payload.messages.filter((message) => message.role === 'tool').length;
+    if (ran === 0) return toolCalls(['add_task', task], ['save_document', minutes]);
+    return held;
+  });
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    await connectLlm(page, llm.endpoint);
+    const engine = (await request<{ engine: string }>(page, 'agent.engine')).engine;
+    const screens = page.getByRole('navigation', { name: '화면' });
+    // The counts beside the screens' names: the open tasks, and the documents.
+    const count = (name: string) =>
+      screens.getByRole('button', { name, exact: true }).locator('.nav-count');
+    await expect(count('할 일')).toHaveCount(0);
+    await expect(count('지식 보관함')).toHaveCount(0);
+
+    await openChat(page);
+    await chatBox(page).fill('분기 보고서 제출을 할 일로 추가하고 주간 회의록을 저장해 줘');
+    await chatBox(page).press('Enter');
+    const log = page.getByRole('log', { name: '대화' });
+    if (engine === 'hermes') {
+      // The agent runs both itself; the turn's progress tells each as it is done.
+      const progress = log.locator('.agent-progress');
+      await expect(progress).toContainText(`할 일 추가: ${task.title}`, { timeout: 120_000 });
+      await expect(progress).toContainText(`문서 저장: ${minutes.title}`, { timeout: 60_000 });
+    } else {
+      await expect(log).toContainText(ADDED, { timeout: 120_000 });
+      const approve = log.getByRole('button', { name: '확인 후 실행' });
+      await expect(approve).toHaveCount(2);
+      await approve.first().click();
+      await expect(approve).toHaveCount(1);
+      await approve.first().click();
+      await expect(approve).toHaveCount(0);
+    }
+    // The lists follow at once, well within their own refresh of every 30 seconds, while the answer is still held.
+    await expect(count('할 일')).toHaveText('1', { timeout: 5_000 });
+    await expect(count('지식 보관함')).toHaveText('1', { timeout: 5_000 });
+    await screens.getByRole('button', { name: '할 일', exact: true }).click();
+    await expect(page.locator('section[data-widget="tasks"]')).toContainText(task.title, {
+      timeout: 5_000,
+    });
+    release(ADDED);
+    await screens.getByRole('button', { name: '채팅', exact: true }).click();
+    await expect(log).toContainText(ADDED, { timeout: 60_000 });
+    await expect(
+      log.locator('.agent-card').filter({ hasText: `할 일 추가: ${task.title}` }),
+    ).toContainText('완료');
+    expect(errors).toEqual([]);
+  } finally {
+    release?.(ADDED);
+    await app?.close();
+    await llm.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
