@@ -53,6 +53,8 @@ MAX_ACTIVE = 30  # Routines on at once: each may sign in to a site on its own sc
 MAX_RUNS = 30  # Runs kept per routine.
 BUSY_WAIT = 30 * 60  # Seconds a run waits for an import of the user's (or another job) to end.
 POLL = 1.0  # Seconds between looks at a job a run started.
+WEB_POLL = 2.0  # Seconds between a scheduled web capture's looks at a browser busy with another web task.
+WEB_BUSY = "다른 웹 작업이 {limit} 안에 끝나지 않아 기록하지 못했습니다. 그 작업이 끝난 뒤 다시 실행해 주세요."
 # Runs at once. A run waiting for a busy importer (BUSY_WAIT) holds its worker too, so a third worker keeps a long site
 # run and such a wait from holding up the short runs.
 WORKERS = 3
@@ -1715,7 +1717,8 @@ class WebCaptureRun(Recipe):
     summary = "쇼핑·검색 사이트에서 정한 검색어의 결과 페이지를 열어 보이는 광고와 상품을 기록합니다."
     description = (
         "정한 시각에 브라우저 창을 열고 검색 결과의 광고·상품·검색 결과를 웹 기록에 남깁니다. "
-        "광고를 누르지 않으며, 로봇 확인이 나오면 기록하지 않고 알려 줍니다."
+        "광고를 누르지 않으며, 로봇 확인이 나오면 기록하지 않고 알려 줍니다. "
+        "다른 웹 작업이 진행 중이면 끝나기를 기다렸다가 새 탭에서 검색하므로, 창에서 보던 페이지는 그대로입니다."
     )
     group = "웹 기록"
     fields = (
@@ -1730,12 +1733,26 @@ class WebCaptureRun(Recipe):
         field("query", "검색어", "text", required=True, limit=100, placeholder="예) 노트북"),
     )
     schedule = {**Recipe.schedule, "frequency": "daily", "run_time": "09:00"}
-    timeout = 10 * 60  # One search page opened, scrolled and read; a browser start included.
+    # The browser does one web task at a time. A run waits this long for the others (the chat's, the user's) to end,
+    # and takes the browser only once it has been free a moment (web_capture.QUIET): the user's tasks never wait for it.
+    wait = 10 * 60
+    timeout = wait + 5 * 60  # That wait, then one search page opened, scrolled and read; a browser start included.
 
     def run(self, run):
-        run.check()
-        run.step("브라우저에서 검색 결과를 읽는 중")
-        kept = run.service.web.capture(run.config["site"], run.config["query"], source="schedule")
+        deadline = time.monotonic() + self.wait
+        while True:
+            run.check()
+            run.step("브라우저에서 검색 결과를 읽는 중")
+            try:
+                kept = run.service.web.capture(
+                    run.config["site"], run.config["query"], source="schedule", scheduled=True
+                )
+                break
+            except BusyError:
+                if time.monotonic() >= deadline:
+                    raise UserError(WEB_BUSY.format(limit=span(self.wait))) from None
+                run.step("다른 웹 작업이 끝나기를 기다리는 중")
+                run.sleep(WEB_POLL)
         counts = kept["counts"]
         summary = f"광고 {counts['ad']} · 상품 {counts['product']} · 검색 결과 {counts['result']}"
         items = [

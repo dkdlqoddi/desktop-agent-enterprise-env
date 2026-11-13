@@ -10,9 +10,11 @@ whether a robot is visiting (a CAPTCHA) stops the task and is left to the user i
 get past it.
 
 One browser (one Chromium profile, in Electron's userData: PRIVATE_AGENT_WEB_PROFILES) runs on a thread and event loop
-of its own while the backend runs, a tab per site. Chromium's renderer sandbox stays on and downloads are off, as for
-the importers' browsers (browser_import.py). The records live in wiki.db (web_captures, web_items) and the screenshots
-in the Wiki folder's web-captures folder; the CSV exports go to its exports folder.
+of its own while the backend runs, a tab per site, and does one web task at a time. A scheduled capture (routines.py)
+reads in a tab of its own and waits for the other tasks, so the user's tabs and tasks go on as they were. Chromium's
+renderer sandbox stays on and downloads are off, as for the importers' browsers (browser_import.py). The records live
+in wiki.db (web_captures, web_items) and the screenshots in the Wiki folder's web-captures folder; the CSV exports go to
+its exports folder.
 """
 
 import asyncio
@@ -56,6 +58,9 @@ SETTLE = 1.5  # Seconds a page has after it loaded before it is read.
 NAVIGATION_MS = 45_000
 LOAD_MS = 15_000
 TASK_SECONDS = 150  # A capture or a page to open, the browser's start included.
+# Seconds the browser stays free after a web task before a scheduled capture may take it: the user's (or the chat's)
+# next task in a row goes first.
+QUIET = 10
 LANDING_SECONDS = 60  # How long after a click a navigation still counts as the clicked item's landing page.
 WINDOW = {"width": 1280, "height": 900}
 STOPPED = "웹 작업을 중지했습니다."
@@ -156,9 +161,12 @@ class WebCapture:
         self.playwright = self.context = None
         self.tabs = {}  # site key -> the page of that site
         self.current = None  # The page a web task used last: what "이 페이지 기록" reads.
+        # site key -> (page, address): the tab the last scheduled capture of that site read in, and the page it left.
+        self.apart = {}
         self.tokens = {}  # A capture's token (in its page's marks) -> its ID, for the clicks of pages still open.
         self.pending = None  # After a click: {"item", "at", "page"}, until its landing page has loaded.
         self.busy = False
+        self.freed = float("-inf")  # When the last web task ended (time.monotonic()).
         self.methods = {
             "web.sites": self.sites_list,
             "web.status": self.status,
@@ -287,6 +295,7 @@ class WebCapture:
         playwright = self.playwright
         self.context = self.playwright = self.current = self.pending = None
         self.tabs.clear()
+        self.apart.clear()
         if playwright is not None:
             asyncio.ensure_future(playwright.stop())
 
@@ -301,6 +310,22 @@ class WebCapture:
         with contextlib.suppress(Exception):
             await page.bring_to_front()
         self.current = page
+        return page
+
+    async def _apart(self, site):
+        """The tab a scheduled capture of `site` reads in: never one the user browses, so the page they look at stays as
+        it is. The tab the last scheduled capture of the site read in is used again while it still shows that page
+        (nobody went on from it there); otherwise a new tab opens. It comes to the front as any web task's page does,
+        and it does not become the page "이 페이지 기록" reads (self.current)."""
+        context = await self._context()
+        page, left = self.apart.get(site, (None, ""))
+        if page is None or page.is_closed() or page.url != left:
+            taken = {*self.tabs.values(), self.current, *(kept for kept, _ in self.apart.values())}
+            blank = [p for p in context.pages if p.url == "about:blank" and p not in taken]
+            page = blank[0] if blank else await context.new_page()
+            self._watch(page)
+        with contextlib.suppress(Exception):
+            await page.bring_to_front()
         return page
 
     def _watch(self, page):
@@ -368,9 +393,12 @@ class WebCapture:
 
     # Web tasks.
 
-    def _task(self, coroutine, seconds=TASK_SECONDS):
+    def _task(self, coroutine, seconds=TASK_SECONDS, scheduled=False):
+        """Run a web task on the browser's loop, one at a time: while another runs it fails at once (BusyError), and
+        it is never queued. A scheduled one, which its routine tries again until the browser is free, also stays away
+        for QUIET seconds after a task ended: the user's tasks in a row go on before it and never wait for it."""
         with self.lock:
-            if self.busy:
+            if self.busy or (scheduled and time.monotonic() - self.freed < QUIET):
                 coroutine.close()
                 raise BusyError(BUSY)
             self.busy = True
@@ -379,6 +407,7 @@ class WebCapture:
         finally:
             with self.lock:
                 self.busy = False
+                self.freed = time.monotonic()
 
     async def _read(self, page, site):
         """Bring a loaded page's lazy items into view, then read it with the shared page script."""
@@ -399,11 +428,14 @@ class WebCapture:
                 shot = await page.screenshot(type="jpeg", quality=55, full_page=True, timeout=20_000)
         return token, result, shot
 
-    async def _search(self, site, query):
-        page = await self._tab(site)
+    async def _search(self, site, query, apart=False):
+        page = await (self._apart(site) if apart else self._tab(site))
         url = self.sites[site]["search"].replace("{query}", quote(query, safe=""))
         await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_MS)
-        return await self._read(page, site)
+        read = await self._read(page, site)
+        if apart:
+            self.apart[site] = (page, page.url)
+        return read
 
     async def _visit(self, site, url):
         page = await self._tab(site or "other")
@@ -416,10 +448,11 @@ class WebCapture:
             raise UserError("기록할 페이지가 없습니다. 먼저 사이트를 열어 주세요.")
         return page.url, await self._read(page, self.site_of(page.url))
 
-    def capture(self, site, query, source="chat"):
-        """Search a site in the visible browser and record what the result page shows."""
+    def capture(self, site, query, source="chat", scheduled=False):
+        """Search a site in the visible browser and record what the result page shows. A scheduled capture (the
+        routine's) reads in a tab of its own (_apart) and gives way to the other web tasks (_task)."""
         site, query = self.site_key(site), text(query, "검색어", QUERY_CHARS)
-        token, result, shot = self._task(self._search(site, query))
+        token, result, shot = self._task(self._search(site, query, apart=scheduled), scheduled=scheduled)
         return self._keep(site, query, source, token, result, shot)
 
     def capture_rpc(self, params):
@@ -453,6 +486,7 @@ class WebCapture:
             context, playwright = self.context, self.playwright
             self.context = self.playwright = self.current = self.pending = None
             self.tabs.clear()
+            self.apart.clear()
             if context is not None:
                 with contextlib.suppress(Exception):
                     await context.close()

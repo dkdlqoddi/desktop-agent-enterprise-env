@@ -535,6 +535,83 @@ def test_a_routine_job_gives_back_the_users_import_and_stops_with_it(service, mo
         run.job(stopped, stopped.start, "가짜")
 
 
+# --- The web records' routine -------------------------------------------------------------------------------------
+
+
+def searches(monkeypatch, web, release=None):
+    """The browser's part of a capture, without a browser: each search (query, whether in a tab of its own, when) is
+    listed, and one for "긴 작업" holds the browser until `release` is set."""
+    searched = []
+
+    async def search(site, query, apart=False):
+        searched.append((query, apart, time.monotonic()))
+        while query == "긴 작업" and not release.is_set():
+            await asyncio.sleep(0.02)
+        page = {"url": "https://shop.example.test/s", "items": [{"ref": 0, "kind": "ad", "title": f"{query} 광고"}]}
+        return f"token-{len(searched)}", page, b""
+
+    monkeypatch.setattr(web, "_search", search)
+    return searched
+
+
+def test_a_scheduled_web_capture_waits_for_the_web_task_before_it_and_lets_the_users_go_first(service, monkeypatch):
+    """The browser does one web task at a time. A scheduled capture that finds it busy waits, saying so, instead of
+    failing; it takes the browser only once it has been free web_capture.QUIET seconds, so the user's next task goes
+    on before it, and the user's tasks never wait in line behind it. It searches in a tab of its own."""
+    from agent import web_capture
+
+    monkeypatch.setattr(routines, "WEB_POLL", 0.05)
+    monkeypatch.setattr(web_capture, "QUIET", 1.0)
+    web, release = service.web, threading.Event()
+    searched = searches(monkeypatch, web, release)
+    user = threading.Thread(target=web.capture, args=("coupang", "긴 작업"))
+    user.start()
+    wait(lambda: web.busy)
+    routine = save(service, "web_capture", config={"site": "coupang", "query": "예약 검색"})
+    service.dispatch("routines.run", {"id": routine["id"], "logins": []})
+    waiting = "다른 웹 작업이 끝나기를 기다리는 중"
+    wait(lambda: service.dispatch("routines.get", {"id": routine["id"]})["step"] == waiting)
+    # Meanwhile the user's own task fails at once, as before: it does not queue behind the waiting one.
+    with pytest.raises(UserError, match="다른 웹 작업이 진행 중"):
+        web.capture("coupang", "또 다른 작업")
+    release.set()
+    user.join(10)
+    # The browser is free again but not quiet yet: the user's task right after goes first.
+    assert web.capture("coupang", "바로 다음 작업", source="manual")["counts"]["ad"] == 1
+    wait(lambda: not service.routines.pending(routine["id"]))
+    run = service.dispatch("routines.runs", {"id": routine["id"]})[0]
+    assert (run["status"], run["summary"]) == ("success", "광고 1 · 상품 0 · 검색 결과 0"), run
+    assert [(query, apart) for query, apart, _ in searched] == [
+        ("긴 작업", False),
+        ("바로 다음 작업", False),
+        ("예약 검색", True),
+    ]
+    assert searched[2][2] - searched[1][2] >= 1.0
+    sources = {item["query"]: item["source"] for item in web.captures({})["captures"]}
+    assert sources == {"긴 작업": "chat", "바로 다음 작업": "manual", "예약 검색": "schedule"}
+
+
+def test_a_scheduled_web_capture_that_waits_too_long_fails_saying_why(service, monkeypatch):
+    monkeypatch.setattr(routines, "WEB_POLL", 0.05)
+    monkeypatch.setattr(RECIPES["web_capture"], "wait", 0.3)
+    searched = searches(monkeypatch, service.web)
+    service.web.busy = True  # Another web task holds the browser all along.
+    routine = save(service, "web_capture", config={"site": "naver", "query": "캠핑의자"})
+    run = finish(service, routine["id"])
+    assert (run["status"], run["error"]) == ("error", routines.WEB_BUSY.format(limit="0.3초"))
+    assert run["error"].startswith("다른 웹 작업이 0.3초 안에 끝나지 않아 기록하지 못했습니다.")
+    # Stopped while it waits, it ends at once as stopped.
+    monkeypatch.setattr(RECIPES["web_capture"], "wait", 60)
+    service.dispatch("routines.run", {"id": routine["id"], "logins": []})
+    waiting = "다른 웹 작업이 끝나기를 기다리는 중"
+    wait(lambda: service.dispatch("routines.get", {"id": routine["id"]})["step"] == waiting)
+    service.dispatch("routines.cancel", {"id": routine["id"]})
+    wait(lambda: not service.routines.pending(routine["id"]), seconds=10)
+    assert service.dispatch("routines.runs", {"id": routine["id"]})[0]["status"] == "cancelled"
+    assert searched == [] and service.web.records({})["total"] == 0
+    service.web.busy = False
+
+
 # --- What changed in a page or ticket -----------------------------------------------------------------------------
 
 

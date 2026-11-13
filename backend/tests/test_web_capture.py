@@ -398,3 +398,30 @@ def test_real_browser_one_task_at_a_time(service):
     with pytest.raises(UserError, match="다른 웹 작업"):
         web.capture("coupang", "이어폰")
     web.busy = False
+
+
+def test_real_browser_a_scheduled_capture_reads_in_a_tab_of_its_own(service, site_server, monkeypatch):
+    """A scheduled capture never takes the tab the user browses: the page they went on to stays, and so does the page
+    "이 페이지 기록" reads. Its own tab is used again while it shows what the last scheduled capture left; once the user
+    went on from it there, the next one opens a new tab."""
+    monkeypatch.setattr(web_capture, "QUIET", 0)
+    web = service.web
+    web.capture("coupang", "이어폰")
+    users = web.current
+    web._call(users.goto(f"{site_server}/landing"), 30)  # The user goes on from the results in that tab.
+    scheduled = web.capture("coupang", "노트북", source="schedule", scheduled=True)
+    assert scheduled["url"].endswith("/coupang?q=%EB%85%B8%ED%8A%B8%EB%B6%81")
+    assert users.url == f"{site_server}/landing" and web.current is users
+    assert web.capture_page()["url"] == f"{site_server}/landing"
+    own = web.apart["coupang"][0]
+    assert own is not users and len(web.context.pages) == 2
+    # The next scheduled capture of the site reads in that tab again.
+    web.capture("coupang", "키보드", source="schedule", scheduled=True)
+    assert web.apart["coupang"][0] is own and len(web.context.pages) == 2
+    assert own.url.endswith("/coupang?q=%ED%82%A4%EB%B3%B4%EB%93%9C") and users.url == f"{site_server}/landing"
+    # The user went on from it: it is theirs now, and the next one opens a tab of its own again.
+    web._call(own.goto(f"{site_server}/home"), 30)
+    web.capture("coupang", "마우스", source="schedule", scheduled=True)
+    assert web.apart["coupang"][0] not in (own, users) and len(web.context.pages) == 3
+    assert own.url == f"{site_server}/home" and users.url == f"{site_server}/landing"
+    assert [item["source"] for item in web.captures({})["captures"]].count("schedule") == 3
