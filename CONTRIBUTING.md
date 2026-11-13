@@ -55,6 +55,7 @@ npm run test:e2e -- tests/search.spec.ts --grep "long documents"
 - E2E는 빌드한 화면(`npm run build:web`)과 빌드한 백엔드(`npm run build:python`)를 씁니다. `PRIVATE_AGENT_E2E_SOURCE_BACKEND=1`이면 백엔드를 빌드하지 않고 `backend/.venv`의 Python으로 실행합니다. `npm run setup:electron`도 필요합니다.
 - 브라우저 테스트(pytest 마커 `browser`)는 Chromium이 없으면 건너뜁니다. Office·Word·메모장을 실제로 쓰는 테스트는 Windows에서 아래 환경변수를 켤 때만 실행합니다.
 - 커버리지: `npm run test:main:coverage`, `npm run test:python:coverage`
+- 성능 측정은 `PRIVATE_AGENT_PERF=1`일 때만 실행합니다: 문서 10,000개의 검색(`npm run test:python -- backend/tests/test_search_perf.py -s`), 200만·800만 자 문서와 200만 자 HTML 문서의 열기·검색어 이동·목차 이동·편집기 열기(`npm run test:e2e -- tests/long-documents.spec.ts --grep measured`, 시간과 화면 프로세스의 메모리를 출력). `PRIVATE_AGENT_PERF_DOCS=md2,html2`와 `PRIVATE_AGENT_PERF_STEPS=search,outline`으로 문서와 단계를 고릅니다.
 
 ### Linux와 WSL
 
@@ -81,7 +82,7 @@ npm run test:e2e -- tests/search.spec.ts --grep "long documents"
 | `PRIVATE_AGENT_E2E_SHOW`             | `1`이면 Linux E2E를 가상 디스플레이 대신 실제 화면에 띄웁니다                                                      |
 | `PRIVATE_AGENT_E2E_EXECUTABLE`       | E2E가 실행할 패키징한 exe. `npm run build:exe`가 `release/win-unpacked`의 exe로 설정합니다                         |
 | `PRIVATE_AGENT_REQUIRE_BROWSER`      | `1`이면 Chromium이 없을 때 브라우저 테스트를 건너뛰지 않고 실패시킵니다(CI)                                        |
-| `PRIVATE_AGENT_PERF`                 | `1`이면 문서 10,000개 검색 성능 테스트를 실행합니다: `npm run test:python -- backend/tests/test_search_perf.py -s` |
+| `PRIVATE_AGENT_PERF`                 | `1`이면 성능 측정을 실행합니다: 검색(`backend/tests/test_search_perf.py`), 긴 문서(`tests/long-documents.spec.ts`) |
 | `PRIVATE_AGENT_OFFICE_TEST`          | `1`이면 Windows에서 데스크톱 Office를 쓰는 테스트를 실행합니다                                                     |
 | `PRIVATE_AGENT_WORD_TEST`            | `1`이면 Windows에서 Word로 RTF를 읽는 테스트를 실행합니다                                                          |
 | `PRIVATE_AGENT_NOTEPAD_TEST`         | `1`이면 Windows에서 메모장을 쓰는 테스트를 실행합니다                                                              |

@@ -1918,12 +1918,35 @@ dialog.drawer {
 .document-source .inline-error {
   margin: 4px 0 0;
 }
-/* After what is drawn of a long text: that more follows, and the button that draws all of it. */
+/* Before a long text: that only the part near the reader is drawn, and the button that draws all of it. */
 .long-document-more {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 18px 0 0;
+  margin: 0;
+}
+/* A piece of a long text (markdown.tsx LongMarkdown), drawn or an empty box that holds its place. A block formatting
+   context of its own keeps its children's margins inside it, so a drawn piece is as tall as the place it leaves. */
+.long-document-part {
+  display: flow-root;
+}
+.long-document-part > * + * {
+  margin-top: 12px;
+}
+.long-document-part > :first-child {
+  margin-top: 0;
+}
+.long-document-part > :last-child {
+  margin-bottom: 0;
+}
+.long-document-pending {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+/* A long text keeps what the reader sees in place itself while pieces above it are drawn; the browser's own scroll
+   anchoring would move it a second time. */
+.document-content:has(.long-markdown) {
+  overflow-anchor: none;
 }
 /* An imported file's HTML page: white paper with the page's own styles inside (a shadow root). Contained,
    so nothing in the page can be positioned or painted outside it. The paper and the text the page inherits stay

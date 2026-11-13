@@ -444,20 +444,21 @@ test('A long file is one document, and the documents an earlier version cut it i
     await page.screenshot({ path: 'test-results/document-whole.png' });
     await drawer(page).getByRole('button', { name: '닫기', exact: true }).click();
 
-    // A long Markdown document (a million characters) shows its beginning at once and is drawn on as it is read.
+    // A long Markdown document (a million characters) shows its beginning at once and is drawn where it is read: its
+    // end, scrolled to, without what lies between.
     await rows.filter({ hasText: '긴 Markdown 문서' }).click();
     const content = drawer(page).locator('.document-content .markdown');
     const headings = content.locator('h2');
     const more = content.locator('.long-document-more');
     await expect(headings.first()).toHaveText('절 0');
-    await expect(more).toContainText('아래로 내리면 이어서 표시합니다');
+    await expect(more).toContainText('긴 문서는 읽는 자리 근처만 표시합니다');
     const first = await headings.count();
     expect(first).toBeLessThan(200);
     await drawer(page)
       .locator('.document-content')
       .evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    await expect.poll(() => headings.count()).toBeGreaterThan(first);
-    expect(await headings.count()).toBeLessThan(1100);
+    await expect(headings.last()).toHaveText('절 1099');
+    expect(await headings.count()).toBeLessThan(400);
     // 전체 표시 draws the rest without waiting for the reader.
     await more.getByRole('button', { name: '전체 표시' }).click();
     await expect(headings).toHaveCount(1100, { timeout: 60_000 });

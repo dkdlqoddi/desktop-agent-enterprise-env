@@ -41,10 +41,10 @@ import { AnalysisLabel, analyzed } from './analysis';
 import { useActions, useConfigured, useJobs } from './state';
 import Confirm from './confirm';
 import ErrorBoundary, { RenderError } from './error-boundary';
-import { findAll, MatchNavigator, useMatches } from './highlight';
+import { findAll, MatchNavigator, reach, useMatches } from './highlight';
 import HtmlDocument from './html-document';
 import { activeJob, type ImportKind } from './import-jobs';
-import Markdown, { LongMarkdown } from './markdown';
+import Markdown, { LongMarkdown, type Found, type LongMarkdownHandle } from './markdown';
 import Modal, { type ModalHandle } from './modal';
 import { rove } from './roving';
 import { useDiscard } from './trashed';
@@ -137,23 +137,19 @@ function DocumentReader({
   const [error, setError] = useState('');
   const contentRef = useRef<HTMLDivElement>(null);
   const modal = useRef<ModalHandle>(null);
-  // How much of the text is drawn: a long one is drawn piece after piece as it is read (LongMarkdown), and on to
-  // its end while a section further down is waited for (`wanted`, which `hurry` says is there).
-  const [drawing, setDrawing] = useState({ drawn: true, shown: 0 });
-  const drawn = drawing.drawn;
-  const [hurry, setHurry] = useState(false);
-  const wanted = useRef<OutlineNode | null>(null);
-  // Another text is drawn as it is read again.
-  useEffect(() => {
-    setHurry(false);
-    wanted.current = null;
-  }, [doc?.id, doc?.revision]);
-  const matches = useMatches(
+  // A Markdown text is drawn where it is read (LongMarkdown), which counts the search words in the text and draws the
+  // part a search word or a section of the table of contents is in when asked for it; an HTML page is drawn whole,
+  // and its marks are counted where they are drawn.
+  const long = useRef<LongMarkdownHandle>(null);
+  const [found, setFound] = useState<Found>({ count: 0, current: -1 });
+  const paper = doc?.format === 'html' && doc.html ? doc.html : null;
+  const marked = useMatches(
     contentRef,
-    doc && mode === 'view'
-      ? `${doc.id}:${doc.revision}:${focus?.terms.join('\n') ?? ''}:${drawn}`
+    doc && paper && mode === 'view'
+      ? `${doc.id}:${doc.revision}:${focus?.terms.join('\n') ?? ''}`
       : '',
   );
+  const matches = paper ? marked : { ...found, go: (step: 1 | -1) => long.current?.step(step) };
   useEffect(() => {
     if (target.kind !== 'document') return;
     let live = true;
@@ -364,32 +360,19 @@ function DocumentReader({
     setMode('edit');
     notify('지금 문서를 기준으로 다시 열었습니다. 쓰던 내용은 그대로 두었습니다.');
   }
-  // Headings of the rendered document for its PageIndex table of contents.
-  function headingOf(node: OutlineNode) {
+  // A section of the PageIndex table of contents: its heading in the HTML page, or in the Markdown text, whose part
+  // is drawn for it.
+  function showSection(node: OutlineNode) {
+    if (!paper) return void long.current?.show(node);
     const headings = findAll(contentRef.current, 'h1, h2, h3, h4, h5, h6');
     const text = (element: Element) => element.textContent?.trim() ?? '';
     const direct = node.heading === null ? undefined : headings[node.heading];
-    return direct && text(direct).startsWith(node.title)
-      ? direct
-      : headings.find((element) => text(element) === node.title);
+    const heading =
+      direct && text(direct).startsWith(node.title)
+        ? direct
+        : headings.find((element) => text(element) === node.title);
+    if (heading) reach(contentRef.current, heading, 'start');
   }
-  function showSection(node: OutlineNode) {
-    const heading = headingOf(node);
-    if (heading) return heading.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    // In the part of a long text not drawn yet: the text is drawn on, and the section shown once it is there.
-    if (drawn) return;
-    wanted.current = node;
-    setHurry(true);
-  }
-  useEffect(() => {
-    const node = wanted.current;
-    if (!node) return;
-    const heading = headingOf(node);
-    if (!heading && !drawing.drawn) return;
-    wanted.current = null;
-    setHurry(false);
-    heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [drawing]);
   // Writing: in the editor, or choosing how to save what a refused save held (the conflict view).
   const editing = mode === 'edit' || mode === 'conflict';
   const title =
@@ -645,15 +628,10 @@ function DocumentReader({
             >
               {focus && <MatchNavigator matches={matches} terms={focus.terms} />}
               {doc.source && <DocumentSource doc={doc} jobs={jobs} />}
-              {doc.format === 'html' && doc.html ? (
-                <HtmlDocument html={doc.html} highlight={focus?.terms} />
+              {paper ? (
+                <HtmlDocument html={paper} highlight={focus?.terms} />
               ) : (
-                <LongMarkdown
-                  highlight={focus?.terms}
-                  // Search words are found and counted throughout the text.
-                  whole={hurry || !!focus?.terms.length}
-                  onDrawn={(drawn, shown) => setDrawing({ drawn, shown })}
-                >
+                <LongMarkdown ref={long} highlight={focus?.terms} onFound={setFound}>
                   {doc.content || ''}
                 </LongMarkdown>
               )}

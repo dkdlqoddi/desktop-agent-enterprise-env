@@ -85,6 +85,24 @@ export function findAll(container: HTMLElement | null, selector: string) {
   return [container, ...pages].flatMap((root) => [...root.querySelectorAll<HTMLElement>(selector)]);
 }
 
+// A jump further than this many heights of the view is made at once: a smooth scroll over a long text takes seconds,
+// and over the parts of one not drawn yet it would draw them on its way.
+const SMOOTH_VIEWS = 2;
+
+// Scrolls `target` into the view of `container`: smoothly when it is near, at once when it is far.
+export function reach(
+  container: HTMLElement | null,
+  target: Element,
+  block: ScrollLogicalPosition,
+) {
+  const view = container?.getBoundingClientRect();
+  const far =
+    !!container &&
+    !!view &&
+    Math.abs(target.getBoundingClientRect().top - view.top) > SMOOTH_VIEWS * container.clientHeight;
+  target.scrollIntoView({ block, behavior: far ? 'instant' : 'smooth' });
+}
+
 // Counts the marked search words inside `container` and moves between them. `content` identifies the
 // rendered text, so the count follows when it changes.
 export function useMatches(container: RefObject<HTMLElement | null>, content: unknown) {
@@ -104,7 +122,7 @@ export function useMatches(container: RefObject<HTMLElement | null>, content: un
           : marks.length - 1
         : (current + step + marks.length) % marks.length;
     marks.forEach((mark, i) => mark.classList.toggle('current', i === next));
-    marks[next].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    reach(container.current, marks[next], 'center');
     setCurrent(next);
   }
   return { count, current, go };
