@@ -122,6 +122,8 @@ class HermesSession(
     private suspend fun loop(turn: Turn, handler: Handler): String {
         val worker = ensureProcess()
         var finished = false
+        // Only this turn's frames are taken: what a thread of an earlier turn sent after its result is dropped.
+        worker.startTurn()
         try {
             send(worker, turnFrame(turn))
             var deadline = now() + (turn.budgetSeconds + GRACE_SECONDS) * 1000L
@@ -176,6 +178,8 @@ class HermesSession(
             // A turn that broke off leaves the worker waiting for a reply that will not come: start fresh next time.
             if (!finished) withContext(NonCancellable) { stop(worker) }
             throw failure
+        } finally {
+            worker.endTurn()
         }
     }
 

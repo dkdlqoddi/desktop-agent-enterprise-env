@@ -111,7 +111,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - `hermes/build_runtime.py`가 python.org의 CPython 3.14.0 Android 패키지, Hermes 소스(`build/hermes-source`), `runtime/hermes/requirements.txt`(데스크톱과 같은 핵심 의존성)와 `hermes/requirements-android.txt`(웹 검색용 ddgs)의 wheel, `runtime/hermes/worker.py`를 모아 `hermes/build/runtime/`(Git 제외)에 씁니다. Gradle은 이 폴더가 있으면 APK에 넣고, 없으면 Hermes 없이 빌드합니다. 넣으면 APK가 ABI 하나면 약 113 MB, 둘이면 약 134 MB 커지고, 처음 실행할 때 약 285 MB(파일 약 1만 7천 개)를 풉니다. 앱은 시작할 때 미리 풀어 둡니다.
 - PyPI에 Android wheel이 없는 cffi, cryptography, jiter, lxml, Pillow, primp, psutil, pydantic-core, ruamel.yaml.clib는 sdist에서 cibuildwheel로 컴파일하고, wheel의 SHA-256을 `hermes/wheels.lock.json`에 적습니다. psutil 7.2.2에는 Android를 인식하게 하는 상위 프로젝트의 수정을, lxml에는 교차 빌드용 수정(`hermes/patches/`)을 적용합니다. 모든 다운로드는 고정 버전과 SHA-256으로 확인합니다(`hermes/pins.json`, `toolchain.txt`, `build-requirements.txt`).
 - Android는 앱 데이터 폴더의 파일을 실행하지 못하게 합니다. 그래서 Python 실행 파일(`hermes/launcher/hermes_python.c`)을 `lib/<abi>/libhermes_python.so`로 넣고, 설치할 때 네이티브 라이브러리 폴더에 풀리게 합니다(`useLegacyPackaging`). Python 파일은 미리 컴파일한 바이트코드와 함께 처음 실행할 때 code cache 폴더에 한 번 풀고(앱을 업데이트하면 Android가 지움), Hermes의 데이터(`HERMES_HOME`)는 앱 파일 폴더의 `hermes/`에 둡니다.
-- 워커는 데스크톱처럼 별도 프로세스(`-I -B`)로 실행하고 stdin·stdout으로 JSON 줄을 주고받습니다(`HermesSession`이 데스크톱의 `hermes.py`처럼 처리). 중지하면 프로세스를 끝냅니다. 환경 변수는 데스크톱의 `child_environment`처럼 최소한만 넘깁니다.
+- 워커는 데스크톱처럼 별도 프로세스(`-I -B`)로 실행하고 stdin·stdout으로 JSON 줄을 주고받습니다(`HermesSession`이 데스크톱의 `hermes.py`처럼 처리). 턴이 결과를 받은 뒤에 워커가 보낸 프레임(앞 턴에서 늦게 온 요청이나 답)은 다음 턴에 넘기지 않고 버립니다. 중지하면 프로세스를 끝냅니다. 환경 변수는 데스크톱의 `child_environment`처럼 최소한만 넘깁니다.
 
 ```bash
 python3 android/hermes/build_runtime.py --setup-toolchain   # 처음 한 번: NDK·CMake·Rust를 설치하고 빌드

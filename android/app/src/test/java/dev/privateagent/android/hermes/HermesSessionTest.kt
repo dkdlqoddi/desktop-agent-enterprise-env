@@ -17,6 +17,7 @@ import java.io.OutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -89,15 +90,18 @@ class HermesSessionTest {
     }
 
     private var session: HermesSession? = null
+    private val started: MutableList<HermesProcess> = Collections.synchronizedList(mutableListOf())
 
     @After
     fun close() {
         session?.shutdown()
     }
 
-    private fun session(script: (Pipes) -> Unit): HermesSession =
-        HermesSession(File("."), { HermesProcess(ScriptedProcess(script)) }, { System.nanoTime() / 1_000_000 })
-            .also { session = it }
+    private fun session(script: (Pipes) -> Unit): HermesSession = HermesSession(
+        File("."),
+        { HermesProcess(ScriptedProcess(script)).also { started += it } },
+        { System.nanoTime() / 1_000_000 },
+    ).also { session = it }
 
     private fun turn(limits: HermesSession.Limits = HermesSession.Limits()) = HermesSession.Turn(
         system = "system",
@@ -114,9 +118,18 @@ class HermesSessionTest {
         val asked: MutableList<JSONObject> = Collections.synchronizedList(mutableListOf())
         val grants: MutableList<List<String>> = Collections.synchronizedList(mutableListOf())
 
-        override suspend fun complete(request: JSONObject): JSONObject = JSONObject()
+        /** Everything else the handler was handed, in order: model requests, app tools, progress and drafts. */
+        val heard: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
-        override suspend fun appTool(name: String, args: JSONObject) = HermesSession.AppToolResult("done", JSONObject())
+        override suspend fun complete(request: JSONObject): JSONObject {
+            heard += "complete"
+            return JSONObject()
+        }
+
+        override suspend fun appTool(name: String, args: JSONObject): HermesSession.AppToolResult {
+            heard += "app_tool $name"
+            return HermesSession.AppToolResult("done", JSONObject())
+        }
 
         override suspend fun ask(kind: HermesSession.InteractionKind, payload: JSONObject): JSONObject? {
             asked += payload
@@ -127,9 +140,13 @@ class HermesSessionTest {
             grants += keys
         }
 
-        override fun progress(event: String, tool: String, preview: String) = Unit
+        override fun progress(event: String, tool: String, preview: String) {
+            heard += "progress $tool"
+        }
 
-        override fun draft(text: String) = Unit
+        override fun draft(text: String) {
+            heard += "draft $text"
+        }
     }
 
     private fun strings(array: JSONArray) = (0 until array.length()).map { array.getString(it) }
@@ -183,6 +200,48 @@ class HermesSessionTest {
         assertEquals("session", seen[1].getString("decision"))
         // Only the names of kinds: anything else in the frame is left out.
         assertEquals(listOf(listOf("recursive delete")), handler.grants.toList())
+    }
+
+    @Test
+    fun framesSentAfterATurnsResultNeverReachTheNextTurn() = runBlocking {
+        val seen = Collections.synchronizedList(mutableListOf<JSONObject>())
+        val staleSent = CountDownLatch(1)
+        val running = session { pipes ->
+            seen += pipes.read()
+            pipes.write(JSONObject().put("type", "result").put("message", "첫 번째 답"))
+            // A thread of the first turn that ran on past its result: requests, progress and even a result.
+            pipes.write(
+                JSONObject().put("type", "app_tool").put("id", "s1").put("tool", "open_site")
+                    .put("args", JSONObject().put("site", "coupang")),
+            )
+            pipes.write(JSONObject().put("type", "inference").put("id", "s2").put("body", JSONObject()))
+            pipes.write(JSONObject().put("type", "approval").put("id", "s3").put("command", "rm -rf build"))
+            pipes.write(JSONObject().put("type", "clarify").put("id", "s4").put("questions", JSONArray()))
+            pipes.write(JSONObject().put("type", "progress").put("event", "tool.started").put("tool", "web_search"))
+            pipes.write(JSONObject().put("type", "draft").put("text", "늦은 초안"))
+            pipes.write(JSONObject().put("type", "grant").put("keys", JSONArray(listOf("recursive delete"))))
+            pipes.write(JSONObject().put("type", "result").put("message", "이전 턴의 답"))
+            staleSent.countDown()
+            seen += pipes.read()
+            pipes.write(JSONObject().put("type", "progress").put("event", "tool.started").put("tool", "memory"))
+            pipes.write(JSONObject().put("type", "result").put("message", "두 번째 답"))
+        }
+        val handler = Answers(JSONObject().put("decision", "once"))
+        assertEquals("첫 번째 답", withTimeout(20_000) { running.run(turn(), handler) })
+        assertTrue(staleSent.await(20, TimeUnit.SECONDS))
+        // All eight came while no turn was waiting: each is dropped, as it arrives or from the queue.
+        val worker = started.single()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        while (worker.discardedFrames < 8 && System.nanoTime() < deadline) Thread.sleep(10)
+        assertEquals(8, worker.discardedFrames)
+
+        assertEquals("두 번째 답", withTimeout(20_000) { running.run(turn(), handler) })
+        // The same worker served both turns, and nothing of the first reached the second: no model call, no app
+        // action, no question, no grant, and no reply went back to the worker for the requests it sent.
+        assertEquals(1, started.size)
+        assertEquals(listOf("turn", "turn"), seen.map { it.getString("type") })
+        assertEquals(listOf("progress memory"), handler.heard.toList())
+        assertTrue(handler.asked.isEmpty() && handler.grants.isEmpty())
     }
 
     @Test

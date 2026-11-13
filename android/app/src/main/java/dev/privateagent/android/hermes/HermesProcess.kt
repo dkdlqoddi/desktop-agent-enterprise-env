@@ -10,12 +10,16 @@ import java.io.OutputStreamWriter
 import java.io.Reader
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
  * A running Hermes Python process ([HermesRuntime.start]). Frames are JSON objects, one per line, on its stdin and
  * stdout (the worker protocol of runtime/hermes/worker.py). Its stderr is kept only as a short tail for diagnostics:
  * it is never logged, because it may contain conversation text.
+ *
+ * A chat turn takes the frames from its turn frame to its result ([startTurn], [endTurn]); a frame that arrives while
+ * no turn takes them is dropped.
  */
 class HermesProcess internal constructor(private val process: Process) : Closeable {
     private val writer = BufferedWriter(OutputStreamWriter(process.outputStream, Charsets.UTF_8), 1 shl 16)
@@ -24,6 +28,11 @@ class HermesProcess internal constructor(private val process: Process) : Closeab
 
     @Volatile
     private var stopped = false
+
+    /** Whether frames are queued: until the first [endTurn], and from each [startTurn] to its [endTurn]. */
+    private var taking = true
+    private val gate = Any()
+    private val discarded = AtomicInteger()
 
     init {
         thread(name = "hermes-stdout", isDaemon = true) { readFrames() }
@@ -58,6 +67,31 @@ class HermesProcess internal constructor(private val process: Process) : Closeab
         return item as JSONObject
     }
 
+    /**
+     * Starts taking the frames of a new turn, before its turn frame goes out. Anything still queued came after the
+     * earlier turn's last frame was taken: it is dropped.
+     */
+    fun startTurn() = synchronized(gate) {
+        dropQueued()
+        taking = true
+    }
+
+    /**
+     * Stops taking frames until the next [startTurn], once a turn has its result (or has failed). The worker sends
+     * nothing of its own accord: a frame that comes between turns was sent by a thread of an earlier turn that ran on
+     * past its result. It is dropped, the queued ones now and later ones as they arrive, so it is never read as a
+     * request or the answer of the next turn: an app action or a model call it asks for is not made, and a result it
+     * carries does not end the next turn. A request dropped this way leaves only the thread that sent it waiting,
+     * until a stop cancels it or the process ends.
+     */
+    fun endTurn() = synchronized(gate) {
+        taking = false
+        dropQueued()
+    }
+
+    /** How many frames came between turns and were dropped. */
+    internal val discardedFrames: Int get() = discarded.get()
+
     /** Kills the process at once (a stopped turn does not wait for Python to finish anything). */
     fun stop() {
         stopped = true
@@ -76,12 +110,25 @@ class HermesProcess internal constructor(private val process: Process) : Closeab
 
     private fun exitCode(): Int? = if (process.isAlive) null else process.exitValue()
 
+    /** Drops the queued frames; the end of the stream stays queued, so the next receive still learns of it. */
+    private fun dropQueued() {
+        var ended = false
+        while (true) {
+            val item = frames.poll() ?: break
+            if (item === END) ended = true else discarded.incrementAndGet()
+        }
+        if (ended) frames.put(END)
+    }
+
     private fun readFrames() {
         try {
             val reader = FrameReader(process.inputStream.reader(Charsets.UTF_8), MAX_FRAME)
             while (true) {
                 val line = reader.next() ?: break
-                frames.put(JSONObject(line))
+                val frame = JSONObject(line)
+                synchronized(gate) {
+                    if (taking) frames.put(frame) else discarded.incrementAndGet()
+                }
             }
         } catch (_: IOException) {
             // The pipe closed (the process ended or was stopped).
