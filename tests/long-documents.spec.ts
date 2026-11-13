@@ -199,6 +199,14 @@ async function clickUntil(page: Page, find: Find, until: Until, timeout: number)
   });
 }
 
+// The critical and serious findings of axe on the window, which tests/a11y.spec.ts keeps out of the app's screens.
+async function blocking(page: Page) {
+  const { violations } = await new AxeBuilder({ page }).setLegacyMode(true).analyze();
+  return violations
+    .filter((violation) => ['critical', 'serious'].includes(violation.impact ?? ''))
+    .map((violation) => violation.id);
+}
+
 // Waits until `until` holds.
 const waitUntil = (page: Page, until: Until, timeout: number) =>
   page.waitForFunction(lookUp, until, { timeout });
@@ -251,13 +259,8 @@ test('long documents: a search word or a section far down shows at once, and the
     await expect(waiting.last()).toHaveText(
       `긴 문서의 ${total}/${total}번째 부분입니다. 이 자리에 오면 표시합니다.`,
     );
-    // The window with its empty places reads as the rest of the app does (tests/a11y.spec.ts).
-    const { violations } = await new AxeBuilder({ page }).setLegacyMode(true).analyze();
-    expect(
-      violations
-        .filter((violation) => ['critical', 'serious'].includes(violation.impact ?? ''))
-        .map((violation) => violation.id),
-    ).toEqual([]);
+    // The window with its empty places reads as the rest of the app does.
+    expect(await blocking(page)).toEqual([]);
 
     // ↓ shows the first word, then the one in the middle, drawn for it; ↑ goes back, and around to the last.
     const current = view.locator('mark.search-hit.current');
@@ -320,6 +323,131 @@ test('long documents: a search word or a section far down shows at once, and the
     await expect(view.locator('.long-document-more')).toHaveCount(0);
     await expect(view.locator('h1')).toHaveCount(Number(chapter.match(/\d+/)![0]));
     await expect(view.locator('mark.search-hit')).toHaveCount(3);
+    expect(errors).toEqual([]);
+  } finally {
+    await app?.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+test('long documents: a long text is edited a part at a time and saved whole, as a change made elsewhere allows', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'long-documents-'));
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    type Saved = { id: string; content: string; revision: number };
+    const request = async <T>(method: string, params: Record<string, unknown>) => {
+      const response = await page.evaluate(
+        ([name, values]) => window.privateAgent!.request(name, values),
+        [method, params] as const,
+      );
+      expect(response.ok).toBe(true);
+      return response.result as T;
+    };
+    // About 200,000 characters in five parts: 400 sections, each with a line of its own.
+    const text = Array.from(
+      { length: 400 },
+      (_, i) => `## 절 ${i}\n\n줄 ${i}: ${'본문 '.repeat(160).trim()}`,
+    ).join('\n\n');
+    const { id } = await request<Saved>('wiki.save', { title: '긴 계획', content: text });
+    // Another window or an AI tool saves the document while its editor is open here.
+    const elsewhere = async (change: (content: string) => string) => {
+      const { content, revision } = await request<Saved>('wiki.get', { id });
+      await request('wiki.save', {
+        id,
+        title: '긴 계획',
+        content: change(content),
+        expected_revision: revision,
+      });
+    };
+    await page.reload();
+    await openDashboard(page);
+    await widget(page, 'documents').locator('.document-row').filter({ hasText: '긴 계획' }).click();
+    const panel = drawer(page);
+    const view = panel.locator('.document-content');
+    const editor = panel.locator('textarea.document-editor');
+    const pick = panel.getByLabel('고칠 부분');
+    const toast = (words: string) => page.locator('.toast').filter({ hasText: words });
+
+    // Read in the middle, then 수정: the editor holds the part being read, not the whole text.
+    await view.evaluate((element) => element.scrollTo(0, element.scrollHeight / 2));
+    // The first heading of the first drawn piece in the view, once one is drawn there.
+    const reading = () =>
+      view.evaluate((element) => {
+        const { top, bottom } = element.getBoundingClientRect();
+        const part = [...element.querySelectorAll('.long-document-part:not([data-pending])')].find(
+          (item) => {
+            const box = item.getBoundingClientRect();
+            return box.bottom > top && box.top < bottom;
+          },
+        );
+        return part?.querySelector('h2')?.textContent ?? '';
+      });
+    await expect.poll(reading).toMatch(/^절 \d+$/);
+    const read = await reading();
+    expect(read).not.toBe('절 0');
+    await panel.getByRole('button', { name: '수정', exact: true }).click();
+    const parts = await pick.locator('option').count();
+    expect(parts).toBe(5);
+    await expect(editor).toHaveValue(new RegExp(`## ${read}\\n`));
+    const shown = await editor.inputValue();
+    expect(shown.length).toBeLessThan(100_000);
+    // The size of a document holds for the whole text, whatever part is written.
+    await expect(editor).toHaveAttribute(
+      'maxlength',
+      String(8_000_000 - text.length + shown.length),
+    );
+    await expect(panel.getByText(`${text.length.toLocaleString()} / 8,000,000자`)).toBeVisible();
+    expect(await blocking(page)).toEqual([]);
+
+    // Changes in three parts: the first, the start of the second (the keyboard goes there with 다음 부분) and the last.
+    await pick.selectOption({ index: 0 });
+    await editor.fill((await editor.inputValue()).replace('줄 0:', '고친 줄 0:'));
+    await panel.getByRole('button', { name: '다음 부분' }).click();
+    await expect(pick).toHaveValue('1');
+    await expect(editor).toBeFocused();
+    const second = (await editor.inputValue()).slice(0, 40);
+    await page.keyboard.insertText('앞에 쓴 글\n\n');
+    await pick.selectOption({ index: parts - 1 });
+    await editor.fill((await editor.inputValue()).replace('줄 399:', '고친 줄 399:'));
+    // Each part keeps what was written in it.
+    await pick.selectOption({ index: 0 });
+    await expect(editor).toHaveValue(/^## 절 0\n\n고친 줄 0:/);
+    await pick.selectOption({ index: 1 });
+    await expect(editor).toHaveValue(new RegExp(`^앞에 쓴 글\\n\\n`));
+
+    // A change made elsewhere on another line meanwhile: the save merges the two, the whole text with it.
+    await elsewhere((content) => content.replace('줄 200:', '다른 곳의 줄 200:'));
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await expect(toast('다른 곳에서 바뀐 줄과 내 수정을 합쳐 저장했습니다.')).toBeVisible();
+    const merged = text
+      .replace('줄 0:', '고친 줄 0:')
+      .replace(second, `앞에 쓴 글\n\n${second}`)
+      .replace('줄 399:', '고친 줄 399:')
+      .replace('줄 200:', '다른 곳의 줄 200:');
+    expect((await request<Saved>('wiki.get', { id })).content).toBe(merged);
+    await expect(view).toContainText('고친 줄 0:');
+
+    // The same line changed on both sides: compared as before, and 내 수정 유지하고 다시 열기 goes on in the part that
+    // was shown, the writing kept.
+    await panel.getByRole('button', { name: '수정', exact: true }).click();
+    await pick.selectOption({ index: 3 });
+    const line = /줄 (\d+):/.exec(await editor.inputValue())![1];
+    await editor.fill((await editor.inputValue()).replace(`줄 ${line}:`, `내 줄 ${line}:`));
+    await elsewhere((content) => content.replace(`줄 ${line}:`, `남의 줄 ${line}:`));
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await expect(panel.getByRole('heading', { name: '수정 충돌' })).toBeVisible();
+    await panel.getByRole('button', { name: '내 수정 유지하고 다시 열기' }).click();
+    await expect(pick).toHaveValue('3');
+    await expect(editor).toHaveValue(new RegExp(`내 줄 ${line}:`));
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await expect(toast('문서를 저장했습니다.')).toBeVisible();
+    const saved = (await request<Saved>('wiki.get', { id })).content;
+    expect(saved).toBe(merged.replace(`줄 ${line}:`, `내 줄 ${line}:`));
     expect(errors).toEqual([]);
   } finally {
     await app?.close();
@@ -431,7 +559,7 @@ test('long documents: measured (PRIVATE_AGENT_PERF=1)', async () => {
           `${doc.id} last of ${sections.length} sections (${title}): ${jumped.value} ms, renderer ${jumped.peak} MB`,
         );
       }
-      // The editor.
+      // The editor, and a character typed at the end of what it holds (each one drawn before the next).
       if (steps.includes('edit')) {
         const { app, page } = await fresh();
         await openRow(page, doc);
@@ -444,7 +572,22 @@ test('long documents: measured (PRIVATE_AGENT_PERF=1)', async () => {
             10 * minute,
           ),
         );
-        note(`${doc.id} editor: ${edited.value} ms, renderer ${edited.peak} MB`);
+        const typed = await page.evaluate(async () => {
+          const box = document.querySelector<HTMLTextAreaElement>('textarea.document-editor')!;
+          box.focus();
+          box.setSelectionRange(box.value.length, box.value.length);
+          const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+          const started = performance.now();
+          for (let count = 0; count < 10; count++) {
+            document.execCommand('insertText', false, '가');
+            await frame();
+          }
+          await frame();
+          return Math.round((performance.now() - started) / 10);
+        });
+        note(
+          `${doc.id} editor: ${edited.value} ms, renderer ${edited.peak} MB; a character typed ${typed} ms`,
+        );
       }
     }
   } finally {

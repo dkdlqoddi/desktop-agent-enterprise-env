@@ -1,6 +1,7 @@
 // A long Markdown text of the document window, read from the text itself rather than from what is drawn of it: the
-// pieces it is drawn in, how often the search words occur in each, and its headings. A document holds up to 8,000,000
-// characters; drawing all of one takes minutes and gigabytes, reading its text takes milliseconds.
+// pieces it is drawn in, how often the search words occur in each, its headings, and the parts it is edited in. A
+// document holds up to 8,000,000 characters; drawing all of one takes minutes and gigabytes, reading its text takes
+// milliseconds.
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 // A link's address given apart from its text ([name]: address), which a piece without it would not find.
@@ -185,4 +186,74 @@ export function sectionHeading(
   return direct?.title === section.title
     ? direct
     : found.find((item) => item.title === section.title);
+}
+
+// A text up to EDIT_WHOLE_CHARS is edited whole, as every document was. A longer one is edited a part at a time: a
+// text box takes about a second to show 2 million characters and five to show 8 million, against a tenth of a second
+// for 100,000. Parts are of about EDIT_PART_CHARS, cut where the text is drawn in pieces, and none longer than
+// EDIT_MAX_CHARS.
+export const EDIT_WHOLE_CHARS = 100_000;
+export const EDIT_PART_CHARS = 40_000;
+export const EDIT_MAX_CHARS = 100_000;
+
+// The lengths of the parts a long text is edited in, which together are the text: each part ends with the line break
+// before the next, at a blank line where the text is drawn in pieces, else at the last line break before
+// EDIT_MAX_CHARS, else at EDIT_MAX_CHARS itself (never between the two halves of a character). Null for a text
+// edited whole.
+export function editParts(text: string): number[] | null {
+  if (text.length <= EDIT_WHOLE_CHARS) return null;
+  const { starts } = layout(text, 0, EDIT_PART_CHARS);
+  const lengths: number[] = [];
+  starts.forEach((start, index) => {
+    const end = starts[index + 1] ?? text.length;
+    let from = start;
+    while (end - from > EDIT_MAX_CHARS) {
+      const line = text.lastIndexOf('\n', from + EDIT_MAX_CHARS - 1);
+      let cut = line > from + EDIT_MAX_CHARS / 2 ? line + 1 : from + EDIT_MAX_CHARS;
+      const code = text.charCodeAt(cut - 1);
+      if (code >= 0xd800 && code <= 0xdbff) cut += 1;
+      lengths.push(cut - from);
+      from = cut;
+    }
+    lengths.push(end - from);
+  });
+  return lengths;
+}
+
+// Where each part begins, from their lengths.
+export function partStarts(lengths: readonly number[]) {
+  const starts: number[] = [];
+  let at = 0;
+  for (const length of lengths) {
+    starts.push(at);
+    at += length;
+  }
+  return starts;
+}
+
+// The name of each part in the editor's list: its number, and its first and last headings (the first line of a part
+// without one, or the heading it goes on with).
+export function partNames(text: string, lengths: readonly number[], found = headings(text)) {
+  const starts = partStarts(lengths);
+  const cut = (value: string) => ([...value].length > 40 ? `${first(value, 39)}…` : value);
+  // The first heading at or after the part's beginning, and the first after its end.
+  let from = 0;
+  return starts.map((start, index) => {
+    const end = start + lengths[index];
+    while (from < found.length && found[from].offset < start) from++;
+    let to = from;
+    while (to < found.length && found[to].offset < end) to++;
+    const before = found[from - 1];
+    const line = squash(
+      text
+        .slice(start, Math.min(end, start + 400))
+        .trimStart()
+        .split('\n')[0],
+    );
+    const opening = found[from]?.offset === start ? '' : before ? `${before.title} (이어서)` : line;
+    const names = [opening, ...found.slice(from, to).map((item) => item.title)].filter(Boolean);
+    const shown =
+      names.length > 1 ? `${cut(names[0])} ~ ${cut(names.at(-1)!)}` : cut(names[0] ?? '');
+    return `${index + 1}/${starts.length} · ${shown || '빈 부분'}`;
+  });
 }

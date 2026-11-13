@@ -1866,6 +1866,20 @@ dialog.drawer {
   font-size: 0.8125rem;
   line-height: 1.7;
 }
+/* The part of a long text the editor holds (reader.tsx), with the buttons to the parts before and after it. */
+.document-parts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.document-parts label {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.document-parts .drawer-note {
+  flex-basis: 100%;
+}
 .document-view {
   flex: 1;
   display: grid;

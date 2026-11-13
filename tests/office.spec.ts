@@ -464,17 +464,21 @@ test('A long file is one document, and the documents an earlier version cut it i
     await expect(headings).toHaveCount(1100, { timeout: 60_000 });
     await expect(more).toHaveCount(0);
     await expect(content).toHaveCount(1);
-    // It is edited and saved as the one text it is: more than a request of the screens carried before.
+    // It is edited a part at a time, here its last, and saved as the one text it is: more than a request of the
+    // screens carried before.
     await drawer(page).getByRole('button', { name: '수정', exact: true }).click();
     const editor = drawer(page).locator('textarea.document-editor');
-    await expect(editor).toHaveAttribute('maxlength', '8000000');
     await expect(drawer(page).getByText('/ 8,000,000자')).toBeVisible();
+    const pick = drawer(page).getByLabel('고칠 부분');
+    const parts = await pick.locator('option').count();
+    expect(parts).toBeGreaterThan(20);
+    await pick.selectOption({ index: parts - 1 });
     const length = await editor.evaluate((element: HTMLTextAreaElement) => {
       element.focus();
       element.setSelectionRange(element.value.length, element.value.length);
       return element.value.length;
     });
-    expect(length).toBeGreaterThan(1_000_000);
+    expect(length).toBeLessThan(100_000);
     await page.keyboard.insertText('\n\n## 맺음말\n\n끝까지 한 문서입니다.');
     await drawer(page).getByRole('button', { name: '문서 저장' }).click();
     await expect(page.locator('.toast').filter({ hasText: '문서를 저장했습니다.' })).toBeVisible({

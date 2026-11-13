@@ -4,6 +4,8 @@ import {
   AlertCircle,
   BookOpen,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   FileCode2,
   Hash,
@@ -37,6 +39,7 @@ import {
   type WritebackJob,
 } from '@/lib/api';
 import { readableSource } from '@/lib/html-document';
+import { editParts, partNames, partStarts, pieceAt } from '@/lib/long-text';
 import { AnalysisLabel, analyzed } from './analysis';
 import { useActions, useConfigured, useJobs } from './state';
 import Confirm from './confirm';
@@ -60,6 +63,20 @@ export type ReaderTarget =
 const MAX_DOCUMENT_CHARS = 8_000_000;
 // The document as the editor opened it.
 type Started = { revision: number; title: string; content: string };
+// The parts of a long text the editor shows one at a time (src/lib/long-text.ts editParts): the length of each, the one
+// shown, and their names in its list. Null while a text is edited whole.
+type Parts = { lengths: number[]; shown: number; names: string[] };
+// The parts `content` is edited in, the one that holds the character at `at` shown.
+function partsOf(content: string, at = 0): Parts | null {
+  const lengths = editParts(content);
+  return (
+    lengths && {
+      lengths,
+      shown: pieceAt(partStarts(lengths), at),
+      names: partNames(content, lengths),
+    }
+  );
+}
 
 export default function Reader({ target, onClose }: { target: ReaderTarget; onClose: () => void }) {
   return (
@@ -118,6 +135,47 @@ function DocumentReader({
     title: target.kind === 'new' ? (target.title ?? '') : '',
     content: target.kind === 'new' ? (target.content ?? '') : '',
   });
+  // A long text is edited a part at a time: the draft holds the whole text, which saving and comparing take as they
+  // take a text edited whole, and the editor the part shown.
+  const [parts, setParts] = useState(() =>
+    target.kind === 'new' ? partsOf(target.content ?? '') : null,
+  );
+  const partFrom = parts ? partStarts(parts.lengths)[parts.shown] : 0;
+  const written = parts
+    ? draft.content.slice(partFrom, partFrom + parts.lengths[parts.shown])
+    : draft.content;
+  // The editor's text changed: the part shown in the whole text, or the whole text.
+  function write(value: string) {
+    if (!parts) return setDraft({ ...draft, content: value });
+    const to = partFrom + parts.lengths[parts.shown];
+    setDraft({
+      ...draft,
+      content: draft.content.slice(0, partFrom) + value + draft.content.slice(to),
+    });
+    setParts({
+      ...parts,
+      lengths: parts.lengths.map((length, index) =>
+        index === parts.shown ? value.length : length,
+      ),
+    });
+  }
+  // Another part in the editor; its list names them again, as the one left may have changed its headings. From the
+  // buttons, the keyboard goes on in the part, at its beginning.
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const toPart = useRef(false);
+  function showPart(index: number, focus = false) {
+    if (!parts) return;
+    toPart.current = focus;
+    setParts({ ...parts, shown: index, names: partNames(draft.content, parts.lengths) });
+  }
+  useEffect(() => {
+    const box = editor.current;
+    if (!toPart.current || !box) return;
+    toPart.current = false;
+    box.setSelectionRange(0, 0);
+    box.focus();
+    box.scrollTop = 0;
+  }, [parts?.shown]);
   // The text and revision the editor opened: a save never overwrites text changed meanwhile elsewhere, and one refused
   // for it compares this text with the editor's and the document's (wiki.compare), as no earlier text is stored.
   const base = useRef<Started | null>(null);
@@ -347,10 +405,10 @@ function DocumentReader({
     const { compared, started } = conflict;
     const current = compared.document;
     const text = current.content ?? '';
-    setDraft({
-      title: draft.title === started.title ? current.title : draft.title,
-      content: draft.content === started.content ? text : draft.content,
-    });
+    const content = draft.content === started.content ? text : draft.content;
+    setDraft({ title: draft.title === started.title ? current.title : draft.title, content });
+    // A long text goes on in the part that was shown, as near as the text now has it.
+    setParts(partsOf(content, partFrom));
     base.current = { revision: current.revision, title: current.title, content: text };
     setElsewhere(compared.diffs.theirs.hunks.length ? compared.diffs.theirs : null);
     // The comparison carries the document without its page: the window reads it whole once the editing ends.
@@ -404,6 +462,8 @@ function DocumentReader({
           onClick={() => {
             const text = doc.content || '';
             setDraft({ title: doc.title, content: text });
+            // A long text opens at the part being read.
+            setParts(partsOf(text, long.current?.reading()));
             base.current = { revision: doc.revision, title: doc.title, content: text };
             setElsewhere(null);
             setAnalyzeOnSave(false);
@@ -539,19 +599,63 @@ function DocumentReader({
               <DiffLines diff={elsewhere} from="편집 전" to="지금 문서" />
             </details>
           )}
+          {parts && (
+            <div className="document-parts">
+              <label>
+                고칠 부분
+                <select
+                  value={parts.shown}
+                  onChange={(event) => showPart(Number(event.target.value))}
+                >
+                  {parts.names.map((name, index) => (
+                    <option key={index} value={index}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="button secondary small"
+                disabled={parts.shown === 0}
+                onClick={() => showPart(parts.shown - 1, true)}
+              >
+                <ChevronUp size={14} />
+                이전 부분
+              </button>
+              <button
+                type="button"
+                className="button secondary small"
+                disabled={parts.shown === parts.lengths.length - 1}
+                onClick={() => showPart(parts.shown + 1, true)}
+              >
+                <ChevronDown size={14} />
+                다음 부분
+              </button>
+              <p className="drawer-note">
+                긴 문서는 한 부분씩 고칩니다. 다른 부분으로 옮겨도 고친 내용은 남고, 문서 저장은
+                문서 전체를 저장합니다.
+              </p>
+            </div>
+          )}
           <label>
             내용
             <textarea
-              required
+              // A part of a long text in a box of its own, which begins at its top.
+              key={parts?.shown ?? -1}
+              ref={editor}
+              required={!parts}
               className="document-editor"
               rows={18}
-              maxLength={MAX_DOCUMENT_CHARS}
-              value={draft.content}
-              onChange={(e) => setDraft({ ...draft, content: e.target.value })}
+              // The whole text stays within a document's size, whatever part is written.
+              maxLength={MAX_DOCUMENT_CHARS - (draft.content.length - written.length)}
+              value={written}
+              onChange={(e) => write(e.target.value)}
               placeholder={'# 회의 메모\n\nMarkdown으로 작성할 수 있습니다.'}
             />
             <small>
               {draft.content.length.toLocaleString()} / {MAX_DOCUMENT_CHARS.toLocaleString()}자
+              {parts ? ` · 이 부분 ${written.length.toLocaleString()}자` : ''}
               {doc ? ' · 내용을 바꾸면 이전 AI 분석은 지워집니다.' : ''}
             </small>
           </label>

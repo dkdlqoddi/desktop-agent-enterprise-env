@@ -159,7 +159,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |
 | `lib/query.ts`, `lib/store.ts`                          | 태그로 무효화하는 요청 캐시와 나누어 받는 목록, 선택자로 읽는 작은 상태 저장소                 |
 | `components/windowing.ts`                               | 긴 목록에서 보이는 줄만 그리기(측정한 줄 높이)                                                 |
-| `components/markdown.tsx`, `lib/long-text.ts`           | 긴 문서는 읽는 자리 근처의 조각만 그리기, 검색어 수와 목차의 제목은 그리지 않은 글에서 찾기    |
+| `components/markdown.tsx`, `lib/long-text.ts`           | 긴 문서: 읽는 자리 근처만 그리기, 검색어 수와 목차 제목은 글에서 찾기, 부분마다 편집           |
 | `components/agent-chat.tsx`, `agent-turn.ts`            | 첫 화면인 채팅(진행·명령 확인·질문·작업 카드·한 일), 화면을 옮겨도 이어지는 진행 중인 턴       |
 | `components/admin/hermes*.tsx`                          | 채팅 에이전트 설정: 키·도구·게이트웨이, 묻지 않는 명령과 보호 구역, 에이전트의 기억            |
 | `components/web-records.tsx`                            | 웹 기록 표와 CSV 내보내기, 기록한 페이지(여러 개 지우기, 스크린샷, 보관 기간)                  |
