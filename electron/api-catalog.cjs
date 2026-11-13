@@ -149,7 +149,7 @@ const METHODS = {
   'wiki.save': method('write', '문서 만들기·고치기 (본문이 바뀌면 AI 분석 결과를 지움)'),
   'wiki.compare': method(
     'read',
-    'expected_revision이 맞지 않아 저장이 거절된 수정 비교: 편집을 시작한 본문(base)·고친 본문(content)·지금 문서',
+    'expected_revision이 맞지 않아 저장이 거절된 수정 비교: 편집을 시작한 본문(base)·고친 본문(content)·지금 문서. 바뀐 줄이 겹치지 않으면 둘을 합친 본문(merged)도 줌',
   ),
   'wiki.delete': method('write', '문서를 휴지통으로 (30일 보관, wiki.restore로 복원)'),
   'wiki.delete_many': method('write', '여러 문서를 휴지통으로 (모두 또는 전혀)'),

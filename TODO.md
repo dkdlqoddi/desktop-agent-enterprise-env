@@ -26,7 +26,7 @@
 
 ### LLM과 어시스턴트
 
-- [ ] 편집 충돌은 필드 단위 규칙만 있고 줄 단위 자동 병합이 없습니다. MCP `save_document` 설명에 `wiki.compare`를 안내하면 좋습니다.
+- [ ] MCP `save_document` 설명에 저장이 거절되면 `wiki.compare`로 비교하고 합친 본문(`merged`)을 쓸 수 있다고 안내하면 좋습니다.
 
 ### 채팅과 웹 기록
 

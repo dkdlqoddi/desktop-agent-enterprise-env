@@ -238,10 +238,13 @@ function DocumentReader({
       }
     });
   // The editor's text saved over revision `expected`: the one the editor opened, or the document's as the conflict view
-  // showed it (현재 문서 덮어쓰기). A save refused because the document changed meanwhile shows the conflict view.
+  // showed it (현재 문서 덮어쓰기). A save refused because the document changed meanwhile is saved merged with that
+  // change when the two changed different lines, and otherwise shows the conflict view. 현재 문서 덮어쓰기 that meets
+  // yet another change is not merged: the user chose their text over the document's.
   async function save(expected?: number) {
     const revision = expected ?? base.current?.revision ?? doc?.revision;
     let saved: WikiDocument;
+    let merged = false;
     try {
       saved = await api<WikiDocument>('wiki.save', {
         ...draft,
@@ -249,8 +252,12 @@ function DocumentReader({
         ...(doc ? { expected_revision: revision } : {}),
       });
     } catch (error) {
-      if (revision !== undefined && (await compare(revision))) return;
-      throw error;
+      const outcome =
+        revision === undefined ? false : await compare(revision, expected === undefined);
+      if (outcome === true) return;
+      if (!outcome) throw error;
+      saved = outcome;
+      merged = true;
     }
     behind.current = false;
     base.current = null;
@@ -261,13 +268,19 @@ function DocumentReader({
     setMode('view');
     await refresh();
     notify(
-      expected === undefined ? '문서를 저장했습니다.' : '현재 문서를 내 수정으로 덮어썼습니다.',
+      merged
+        ? '편집하는 동안 다른 곳에서 바뀐 줄과 내 수정을 합쳐 저장했습니다.'
+        : expected === undefined
+          ? '문서를 저장했습니다.'
+          : '현재 문서를 내 수정으로 덮어썼습니다.',
     );
     if (analyzeOnSave) await analyze(saved.id);
   }
-  // Whether a save refused at revision `expected` met a change made elsewhere since, which the conflict view then
-  // shows; any other failure (a document deleted meanwhile, a backend that went away) is told as it was.
-  async function compare(expected: number) {
+  // Whether a save refused at revision `expected` met a change made elsewhere since: with `merge`, the document saved
+  // with the two merged when they changed different lines (wiki.compare merged) and the title is no conflict either;
+  // otherwise true once the conflict view shows them. False for any other failure (a document deleted meanwhile, a
+  // backend that went away), which is told as it was.
+  async function compare(expected: number, merge: boolean): Promise<WikiDocument | boolean> {
     const started = base.current;
     if (!doc || !started) return false;
     let found: EditConflict;
@@ -282,6 +295,27 @@ function DocumentReader({
       return false;
     }
     if (!found.changed || found.document.revision === expected) return false;
+    const current = found.document;
+    // The title as 내 수정 유지하고 다시 열기 takes it: the side that changed it; changed on both, the user decides.
+    const title =
+      draft.title === started.title
+        ? current.title
+        : current.title === started.title || current.title === draft.title
+          ? draft.title
+          : null;
+    if (merge && found.merged !== null && title !== null) {
+      try {
+        return await api<WikiDocument>('wiki.save', {
+          id: doc.id,
+          title,
+          content: found.merged,
+          expected_revision: current.revision,
+        });
+      } catch {
+        // Changed once more meanwhile, or not saved: compared again, for the user to settle.
+        return compare(expected, false);
+      }
+    }
     setConflict({ compared: found, started });
     setMode('conflict');
     return true;

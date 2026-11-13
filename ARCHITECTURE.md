@@ -153,7 +153,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `app/`                                                  | Next.js 진입점(정적 내보내기)                                                                  |
 | `components/app.tsx`, `components/state.tsx`            | 시작 상태와 이벤트 연결, 따로 바뀌는 상태 조각과 선택자 훅(`useView`, `useQuery` 등)           |
 | `components/workspace.tsx`, `dashboard.tsx`, `widgets/` | 사이드바와 화면 전환, 위젯 대시보드                                                            |
-| `components/reader.tsx`, `search-panel.tsx`             | 문서·실행 기록 보기와 편집(충돌 비교 포함), 검색창과 AI 답변                                   |
+| `components/reader.tsx`, `search-panel.tsx`             | 문서·실행 기록 보기와 편집(충돌 비교와 줄 단위 병합 포함), 검색창과 AI 답변                    |
 | `components/admin.tsx`, `admin/`                        | 관리 화면: LLM 연결, 채팅 에이전트, 사이트 계정, 템플릿, AI 도구 연동, API 매뉴얼, 휴지통      |
 | `components/html-document.tsx`, `lib/html-document.ts`  | 가져온 HTML을 허용 목록으로 정제해 shadow DOM에 표시                                           |
 | `lib/api.ts`, `lib/api/`                                | 요청 함수(`transport.ts`), 응답 타입(`types.ts`), 표시 형식(`format.ts`), 생성된 `Method` 타입 |

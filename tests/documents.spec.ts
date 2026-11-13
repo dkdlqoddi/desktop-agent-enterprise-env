@@ -452,25 +452,37 @@ test('documents: an edit that meets a change made elsewhere is compared and save
     const lines = (kind: 'added' | 'removed') => panel.locator(`.change-lines li.${kind}`);
     const toast = (text: string) => page.locator('.toast').filter({ hasText: text });
 
-    // The save is refused: the window compares what changed elsewhere, what the user changed and what saving over the
-    // document would do, and keeps the writing meanwhile.
+    // The save is refused, and the change made elsewhere is on other lines than the user's: the two are saved merged.
     await panel.getByRole('button', { name: '수정', exact: true }).click();
     await editor.fill(`${plan}\n- 다음 주 점검`);
     await elsewhere('# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고');
+    await panel.getByRole('button', { name: '문서 저장' }).click();
+    await expect(toast('다른 곳에서 바뀐 줄과 내 수정을 합쳐 저장했습니다.')).toBeVisible();
+    await expect(view).toContainText('목요일 배포');
+    await expect(view).toContainText('다음 주 점검');
+    const merged = '# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고\n- 다음 주 점검';
+    expect((await request<Saved>(page, 'wiki.get', { id })).content).toBe(merged);
+
+    // Both changed the same line: the window compares what changed elsewhere, what the user changed and what saving
+    // over the document would do, and keeps the writing meanwhile.
+    const mine = merged.replace('금요일 회고', '금요일 회고와 정리');
+    await panel.getByRole('button', { name: '수정', exact: true }).click();
+    await editor.fill(mine);
+    await elsewhere(merged.replace('금요일 회고', '토요일 회고'));
     await panel.getByRole('button', { name: '문서 저장' }).click();
     await expect(panel.getByRole('heading', { name: '수정 충돌' })).toBeVisible();
     await expect(
       panel.getByRole('alert').filter({ hasText: '다른 곳에서 문서가 바뀌어' }),
     ).toBeVisible();
-    await expect(lines('removed')).toHaveText([/화요일 배포/]);
-    await expect(lines('added')).toHaveText([/목요일 배포/]);
+    await expect(lines('removed')).toHaveText([/금요일 회고/]);
+    await expect(lines('added')).toHaveText([/토요일 회고/]);
     await panel.getByRole('radio', { name: '내가 바꾼 내용' }).click();
-    await expect(lines('removed')).toHaveCount(0);
-    await expect(lines('added')).toHaveText([/다음 주 점검/]);
+    await expect(lines('removed')).toHaveText([/금요일 회고/]);
+    await expect(lines('added')).toHaveText([/금요일 회고와 정리/]);
     await panel.getByRole('radio', { name: '내가 바꾼 내용' }).press('ArrowRight');
     await expect(panel.getByRole('radio', { name: '덮어쓰면 바뀌는 내용' })).toBeChecked();
-    await expect(lines('removed')).toHaveText([/목요일 배포/]);
-    await expect(lines('added')).toHaveText([/화요일 배포/, /다음 주 점검/]);
+    await expect(lines('removed')).toHaveText([/토요일 회고/]);
+    await expect(lines('added')).toHaveText([/금요일 회고와 정리/]);
     await page.screenshot({ path: 'test-results/document-conflict.png' });
     const ask = panel.getByRole('group', { name: /저장하지 않은 내용이 있습니다/ });
     await page.keyboard.press('Escape');
@@ -480,13 +492,12 @@ test('documents: an edit that meets a change made elsewhere is compared and save
     // 내 수정 유지하고 다시 열기: the writing goes on from the document as it is now, what changed there beside it.
     await panel.getByRole('button', { name: '내 수정 유지하고 다시 열기' }).click();
     await expect(panel.getByRole('heading', { name: '문서 수정' })).toBeVisible();
-    await expect(editor).toHaveValue(`${plan}\n- 다음 주 점검`);
+    await expect(editor).toHaveValue(mine);
     await panel.getByText('다른 곳에서 바뀐 내용 보기').click();
-    await expect(lines('added')).toHaveText([/목요일 배포/]);
-    await editor.fill('# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고\n- 다음 주 점검');
+    await expect(lines('added')).toHaveText([/토요일 회고/]);
+    await editor.fill(merged.replace('금요일 회고', '토요일 회고와 정리'));
     await panel.getByRole('button', { name: '문서 저장' }).click();
-    await expect(view).toContainText('목요일 배포');
-    await expect(view).toContainText('다음 주 점검');
+    await expect(view).toContainText('토요일 회고와 정리');
     await expect(toast('문서를 저장했습니다.')).toBeVisible();
 
     // 새 문서로 저장: the writing becomes a document of its own, which the window links to.

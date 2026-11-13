@@ -262,7 +262,7 @@ Wiki 문서는 Markdown 본문(content)을 가지며, 가져온 파일은 HTML �
 
 #### `wiki.compare`
 
-expected_revision이 맞지 않아 저장이 거절된 수정 비교: 편집을 시작한 본문(base)·고친 본문(content)·지금 문서
+expected_revision이 맞지 않아 저장이 거절된 수정 비교: 편집을 시작한 본문(base)·고친 본문(content)·지금 문서. 바뀐 줄이 겹치지 않으면 둘을 합친 본문(merged)도 줌
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `query_api`

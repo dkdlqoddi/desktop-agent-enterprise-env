@@ -333,11 +333,14 @@ export type DiffHunk = { old_start: number; new_start: number; lines: DiffLine[]
 export type TextDiff = { added: number; removed: number; hunks: DiffHunk[]; more: number };
 // What an edit that wiki.save refused meets (wiki.compare): the document as it is now (without its HTML page), whether
 // it changed since the editor opened it, and the text the editor started from compared with the document's (theirs)
-// and the editor's (ours), and the document's with the editor's (overwrite: what saving over it would change).
+// and the editor's (ours), and the document's with the editor's (overwrite: what saving over it would change). When it
+// changed on other lines than the editor's, `merged` is the editor's text with those changes (a line-by-line three-way
+// merge); null when the two changed the same lines, or lines next to each other.
 export type EditConflict = {
   document: WikiDocument;
   changed: boolean;
   diffs: { theirs: TextDiff; ours: TextDiff; overwrite: TextDiff };
+  merged: string | null;
 };
 // The Wiki's backups in its backups folder (wiki.backups), the newest first: made once a day while the app runs (auto)
 // or when asked (manual), each kind keeping its newest `keep`, and the Wiki as it was before a restore

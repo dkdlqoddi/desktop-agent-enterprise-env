@@ -1,10 +1,11 @@
 """What changed in a page or ticket between two imports of it: the lines the newer text added and removed, for the
 automatic routines that watch Confluence pages and JIRA tickets (routines.py). Only an excerpt of the changed lines is
 kept, so a job's results stay small however long the documents are. The document window's edit conflict compares
-whole texts with the same line matching (diff)."""
+whole texts with the same line matching (diff), and merges two edits of a text whose changes do not meet (merge)."""
 
 import bisect
 import difflib
+import re
 from collections import Counter
 
 MAX_LINES = 60  # Changed lines kept for the screens and the LLM,
@@ -14,6 +15,8 @@ MAX_LINE = 400  # each cut to this many characters.
 BLOCK = 400
 CONTEXT = 3  # Unchanged lines shown around each change of a document comparison (diff),
 MAX_DIFF_LINES = 3000  # and the most lines one comparison carries to the screen.
+# A line with the break that ends it, whichever a text uses (\r\n, \n, \r); the last line of a text may have none.
+LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+")
 
 
 def increasing(pairs):
@@ -164,3 +167,53 @@ def diff(before, after, context=CONTEXT, limit=MAX_DIFF_LINES):
         "hunks": hunks,
         "more": len(changed) - told,
     }
+
+
+def merge(base, ours, theirs):
+    """Two edits of the text `base` merged line by line (three-way, as diff3 does), for an edit that meets a change
+    made elsewhere: `ours` the editor's text, `theirs` the document's. Where one side changed lines the other left as
+    they were, the changed side's lines go in, so neither side's change is lost; where both made the same change, it
+    goes in once. None when they changed the same lines, lines next to each other, or put different lines at the same
+    place: only the user can settle those.
+
+    Lines compare without their line breaks, so one side's \\r\\n against the other's \\n is no change; each line keeps
+    its own, and a last line without one gets a \\n when lines come after it in the merge. Whether the text ends with a
+    line break is merged as a line is: as the side that changed it has it. Lines that differ in anything else,
+    trailing spaces included (a Markdown line break), differ."""
+    old, mine, other = LINE.findall(base), LINE.findall(ours), LINE.findall(theirs)
+    keys = [[line.rstrip("\r\n") for line in lines] for lines in (old, mine, other)]
+    # Where each line of base stays on each side (matches: in order on both).
+    kept_mine, kept_other = (dict(matches(keys[0], side)) for side in keys[1:])
+    merged, i, j, k = [], 0, 0, 0  # The next line of base, ours and theirs.
+    while i < len(old) or j < len(mine) or k < len(other):
+        if i < len(old) and kept_mine.get(i) == j and kept_other.get(i) == k:
+            merged.append(mine[j])  # A line neither side changed.
+            i, j, k = i + 1, j + 1, k + 1
+            continue
+        # What each side made of base up to its next line that both kept (or to the ends).
+        end = i
+        while end < len(old) and not (end in kept_mine and end in kept_other):
+            end += 1
+        to_mine, to_other = (kept_mine[end], kept_other[end]) if end < len(old) else (len(mine), len(other))
+        was, made, met = keys[0][i:end], keys[1][j:to_mine], keys[2][k:to_other]
+        if made == was:
+            merged += other[k:to_other]
+        elif met == was or made == met:
+            merged += mine[j:to_mine]
+        else:
+            return None
+        i, j, k = end, to_mine, to_other
+    lines = [
+        line if place == len(merged) - 1 or line.endswith(("\n", "\r")) else line + "\n"
+        for place, line in enumerate(merged)
+    ]
+    ending = final_break(mine) if final_break(mine) != final_break(old) else final_break(other)
+    if lines and lines[-1].rstrip("\r\n"):
+        lines[-1] = lines[-1].rstrip("\r\n") + ending
+    return "".join(lines)
+
+
+def final_break(lines):
+    """The line break the last of `lines` ends with: '' for none."""
+    last = lines[-1] if lines else ""
+    return last[len(last.rstrip("\r\n")) :]

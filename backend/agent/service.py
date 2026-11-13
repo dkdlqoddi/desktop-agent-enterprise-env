@@ -912,8 +912,11 @@ class Service:
         no longer `base_revision`; without one, whether its text differs from `base`), and three comparisons
         (changes.diff) of the text the editor started from (`base`, which the window kept, as no earlier text is
         stored), the editor's text (`content`) and the document's: what changed elsewhere (theirs), what the user
-        changed (ours), and what saving the editor's text over the document would change in it (overwrite)."""
-        from .changes import diff
+        changed (ours), and what saving the editor's text over the document would change in it (overwrite). When it
+        changed and the two changed different lines, `merged` is the editor's text with the changes made elsewhere
+        (changes.merge), which the window saves at once; None when they changed the same lines, for the user to
+        settle."""
+        from .changes import diff, merge
 
         base = text(p.get("base", ""), "편집을 시작한 문서", MAX_DOCUMENT_CHARS, required=False)
         content = text(p.get("content", ""), "문서", MAX_DOCUMENT_CHARS, required=False)
@@ -922,10 +925,14 @@ class Service:
             raise UserError("문서 버전(base_revision)을 확인해 주세요.")
         doc = self.document(p.get("id"))
         current = doc["content"]
+        changed = doc["revision"] != revision if revision is not None else current != base
+        merged = merge(base, content, current) if changed else None
         return {
             "document": doc,
-            "changed": doc["revision"] != revision if revision is not None else current != base,
+            "changed": changed,
             "diffs": {"theirs": diff(base, current), "ours": diff(base, content), "overwrite": diff(current, content)},
+            # Both sides' additions together may outgrow what a document holds: then the user settles it too.
+            "merged": merged if merged is not None and len(merged.strip()) <= MAX_DOCUMENT_CHARS else None,
         }
 
     def wiki_delete(self, p):

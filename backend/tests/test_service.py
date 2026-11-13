@@ -416,6 +416,14 @@ def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(servic
         ("+", "- 화요일 배포"),
         ("+", "- 다음 주 점검"),
     ]
+    # The two changed different lines: the editor's text with the change made elsewhere, for the window to save.
+    assert conflict["merged"] == "# 배포 계획\n\n- 월요일 준비\n- 목요일 배포\n- 금요일 회고\n- 다음 주 점검"
+    # Changed the same line, the user settles it.
+    same = service.dispatch(
+        "wiki.compare",
+        {"id": doc["id"], "base_revision": doc["revision"], "base": base, "content": base.replace("화요일", "수요일")},
+    )
+    assert same["changed"] and same["merged"] is None
     # Only read: the document, its analysis state and its revision are as they were.
     assert service.wiki_get({"id": doc["id"]}) == stored
     # Saved over the revision the comparison showed, the user's text wins; compared again, nothing changed since.
@@ -426,7 +434,7 @@ def test_a_refused_edit_compares_the_text_it_started_from_with_both_sides(servic
     again = service.dispatch(
         "wiki.compare", {"id": doc["id"], "base_revision": saved["revision"], "base": mine, "content": mine}
     )
-    assert again["changed"] is False
+    assert again["changed"] is False and again["merged"] is None
     assert all(change == {"added": 0, "removed": 0, "hunks": [], "more": 0} for change in again["diffs"].values())
     # Without a revision, a text that differs from the one the editor started from is a change.
     assert service.dispatch("wiki.compare", {"id": doc["id"], "base": base, "content": mine})["changed"] is True
@@ -471,6 +479,107 @@ def test_a_comparison_shows_changes_among_a_few_unchanged_lines_and_stays_bounde
         {"op": " ", "text": "나"},
     ]
     assert diff("", "새 글")["hunks"] == [{"old_start": 1, "new_start": 1, "lines": [{"op": "+", "text": "새 글"}]}]
+
+
+def test_two_edits_of_different_lines_merge_and_edits_that_meet_are_left_to_the_user():
+    from agent.changes import merge
+
+    base = "# 배포 계획\n\n- 월요일 준비\n- 화요일 배포\n- 목요일 점검\n- 금요일 회고"
+
+    def edit(*pairs):
+        text = base
+        for old, new in pairs:
+            text = text.replace(old, new)
+        return text
+
+    # Different lines: each side's change goes in, whether it changed, added or removed lines.
+    assert merge(base, edit(("화요일 배포", "수요일 배포")), edit(("금요일 회고", "금요일 회고와 정리"))) == edit(
+        ("화요일 배포", "수요일 배포"), ("금요일 회고", "금요일 회고와 정리")
+    )
+    assert merge(base, edit(("- 월요일 준비\n", "")), edit(("- 금요일 회고", "- 금요일 회고\n- 다음 주 점검"))) == (
+        "# 배포 계획\n\n- 화요일 배포\n- 목요일 점검\n- 금요일 회고\n- 다음 주 점검"
+    )
+    assert merge(base, edit(("\n- 목요일 점검", "")), edit(("# 배포 계획", "# 배포 일정"))) == (
+        "# 배포 일정\n\n- 월요일 준비\n- 화요일 배포\n- 금요일 회고"
+    )
+    # The same change on both sides goes in once.
+    assert merge(base, edit(("화요일", "수요일")), edit(("화요일", "수요일"))) == edit(("화요일", "수요일"))
+    # The same line, lines next to each other, lines added at the same place, or a line one side removed and the other
+    # changed: only the user can settle those.
+    assert merge(base, edit(("화요일", "수요일")), edit(("화요일", "금요일"))) is None
+    assert merge(base, edit(("화요일 배포", "수요일 배포")), edit(("목요일 점검", "목요일 확인"))) is None
+    assert merge(base, base + "\n- 하나 더", base + "\n- 다른 하나") is None
+    added_here, added_there = edit(("준비", "준비\n- 화요일 리허설")), edit(("준비", "준비\n- 점검"))
+    assert merge(base, added_here, added_there) is None
+    assert merge(base, edit(("\n- 화요일 배포", "")), edit(("화요일 배포", "수요일 배포"))) is None
+    # Line breaks: the other side's \r\n against \n is no change, and each line keeps its own. A last line without one
+    # gets a \n when lines come after it, and the text ends with one as the side that changed that has it. Trailing
+    # spaces (a Markdown line break) are a change like any other.
+    crlf = "가\r\n나\r\n다\r\n라"
+    assert merge(crlf, "가\n나\n다\n라라", "가가\r\n나\r\n다\r\n라") == "가가\r\n나\n다\n라라"
+    assert merge("가\n나", "가\n나", "가\n나\n다") == "가\n나\n다"
+    assert merge("가\n나", "가\n나\n", "가\n나\n다") == "가\n나\n다\n"
+    assert merge("가\n나\n다", "가\n나", "가가\n나\n다") == "가가\n나"
+    assert merge("가\n나\n다\n", "가\n나\n다", "가가\n나\n다\n") == "가가\n나\n다"
+    assert merge("가\n나\n다", "가  \n나\n다", "가\n나\n다다") == "가  \n나\n다다"
+    assert merge("", "새 글", "") == "새 글" and merge("", "", "") == ""
+
+
+def test_a_merge_of_edits_apart_keeps_both_whichever_side_made_which():
+    """Random edits of a text with at least one line neither touches between them: the merge is both edits, and the
+    same whichever side made which."""
+    import random
+
+    from agent.changes import merge
+
+    rng = random.Random(7)
+    for round in range(300):
+        size = rng.randint(3, 30)
+        base = [f"줄 {n}" for n in range(size)]
+        # Replaced, removed or added lines: base[a:b] becomes the new lines, the second edit after a line both keep.
+        a = rng.randint(0, size - 2)
+        b = rng.randint(a, min(size - 2, a + 3))
+        c = rng.randint(b + 1, size - 1)
+        d = rng.randint(c, min(size, c + 3))
+        first = [f"내 줄 {round}.{n}" for n in range(rng.randint(0, 3))]
+        second = [f"다른 줄 {round}.{n}" for n in range(rng.randint(0, 3))]
+        mine, theirs = base[:a] + first + base[b:], base[:c] + second + base[d:]
+        both = "\n".join(base[:a] + first + base[b:c] + second + base[d:])
+        old = "\n".join(base)
+        assert merge(old, "\n".join(mine), "\n".join(theirs)) == both, (round, a, b, c, d)
+        assert merge(old, "\n".join(theirs), "\n".join(mine)) == both, (round, a, b, c, d)
+    # Text whose lines repeat, as Markdown's blank lines and list items do, edited anywhere: the merge is the same
+    # whichever side made which edit, a side that changed nothing takes the other's text whole, and two sides that made
+    # the same edit merge to it.
+    words = ["", "", "- 항목", "- 항목", "# 제목", "본문", "본문 끝"]
+
+    def edited(base):
+        lines = list(base)
+        for _ in range(rng.randint(0, 3)):
+            at = rng.randint(0, len(lines))
+            lines[at : at + rng.randint(0, 2)] = [rng.choice(words + ["새 줄"]) for _ in range(rng.randint(0, 2))]
+        return "\n".join(lines)
+
+    for round in range(300):
+        base = [rng.choice(words) for _ in range(rng.randint(0, 15))]
+        old, mine, theirs = "\n".join(base), edited(base), edited(base)
+        assert merge(old, mine, theirs) == merge(old, theirs, mine), round
+        assert merge(old, old, theirs) == theirs and merge(old, mine, old) == mine, round
+        assert merge(old, mine, mine) == mine, round
+
+
+def test_a_merge_that_would_outgrow_a_document_is_left_to_the_user(service, monkeypatch):
+    from agent import service as module
+
+    monkeypatch.setattr(module, "MAX_DOCUMENT_CHARS", 100)
+    base = "\n".join(f"줄 {n}" for n in range(10))
+    doc = document(service, "긴 문서", base)
+    service.wiki_save({"id": doc["id"], "title": "긴 문서", "content": base + "\n" + "다" * 40})
+    conflict = service.dispatch(
+        "wiki.compare",
+        {"id": doc["id"], "base_revision": doc["revision"], "base": base, "content": "가" * 40 + "\n" + base},
+    )
+    assert conflict["changed"] and conflict["merged"] is None
 
 
 def test_concurrent_edit_cannot_receive_old_analysis(service):
