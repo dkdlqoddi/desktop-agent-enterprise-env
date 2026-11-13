@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.db import Database
-from agent.hermes import Hermes, child_environment
+from agent.hermes import Hermes, child_environment, turn_limits
 from agent.hermes_llm import SelectedLLM, anthropic_messages, completion
 from agent.llm import LLM, UserError
 from agent.service import Service
@@ -628,3 +628,105 @@ def test_a_turn_waiting_for_the_user_stops_when_asked(tmp_path, model_server):
     finally:
         service.agent.shutdown()
         thread.join(30)
+
+
+# -- the limits of a turn ------------------------------------------------------------------------------------------
+
+DEFAULT_LIMITS = {"request_seconds": 120, "iterations": 24, "turn_minutes": 0, "answer_minutes": 5}
+
+
+def test_the_limits_of_a_turn_are_kept_within_their_bounds(tmp_path, model_server):
+    # The limits from before they could be set, for none given or none that reads.
+    assert turn_limits(None) == turn_limits({}) == turn_limits([]) == DEFAULT_LIMITS
+    assert turn_limits({"request_seconds": "300", "iterations": 24.0, "answer_minutes": True}) == DEFAULT_LIMITS
+    # Each within its bounds; the whole turn's 0 stays automatic.
+    assert turn_limits({"request_seconds": 5, "iterations": 1000, "turn_minutes": 1, "answer_minutes": 99}) == {
+        "request_seconds": 30,
+        "iterations": 200,
+        "turn_minutes": 2,
+        "answer_minutes": 30,
+    }
+    service = chat(tmp_path, connection(model_server))
+    assert service.agent.turn_limits == DEFAULT_LIMITS
+    service.dispatch("agent.configure", {"turn_limits": {"iterations": 60, "turn_minutes": 30}})
+    assert service.agent.turn_limits == {**DEFAULT_LIMITS, "iterations": 60, "turn_minutes": 30}
+    # Settings without them leave them as they are.
+    service.dispatch("agent.configure", {"computer_use": False})
+    assert service.agent.turn_limits["iterations"] == 60
+
+
+def test_a_model_request_has_the_time_the_turn_gives_it_or_the_connections_when_shorter(model_server):
+    llm = connection(model_server)
+    started = time.monotonic()
+    assert SelectedLLM(llm, threading.Event()).end - started == pytest.approx(120, abs=1)
+    assert SelectedLLM(llm, threading.Event(), seconds=240).end - started == pytest.approx(240, abs=1)
+    llm.update({"timeout": 60})
+    assert SelectedLLM(llm, threading.Event(), seconds=240).end - started == pytest.approx(60, abs=1)
+
+
+def test_a_turn_is_run_within_the_limits_the_user_set(tmp_path, model_server, monkeypatch):
+    # A worker of the test's own that answers with what its turn frame said of the limits.
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        "import json, sys\n"
+        "frame = json.loads(sys.stdin.readline())\n"
+        "said = {key: frame.get(key) for key in ('budget', 'max_iterations', 'answer_seconds')}\n"
+        "print(json.dumps({'type': 'result', 'message': json.dumps(said)}), flush=True)\n"
+        "sys.stdin.readline()\n",
+        encoding="utf-8",
+    )
+    service = chat(tmp_path, connection(model_server))
+    hermes = service.agent.hermes
+    monkeypatch.setattr(hermes, "launch_paths", lambda: (sys.executable, worker, tmp_path))
+
+    def turn(bounds):
+        try:
+            planned = hermes.plan(
+                "system",
+                "context",
+                request_id="r",
+                toolsets=[],
+                app_tools=[],
+                settings={},
+                on_app_tool=None,
+                on_interaction=None,
+                bounds=bounds,
+            )
+        finally:
+            hermes.shutdown()
+            hermes.closing = False
+        return json.loads(planned["message"])
+
+    # As before: four times the connection's response limit (300 seconds), at most 15 minutes; 24 iterations; a
+    # question waits 5 minutes.
+    assert turn(None) == {"budget": 900, "max_iterations": 24, "answer_seconds": 300}
+    limits = {"request_seconds": 60, "iterations": 60, "turn_minutes": 30, "answer_minutes": 10}
+    assert turn(limits) == {"budget": 1800, "max_iterations": 60, "answer_seconds": 600}
+
+
+def test_a_question_waits_as_long_as_the_user_set(tmp_path):
+    hermes = Hermes(SimpleNamespace(db=SimpleNamespace(path=str(tmp_path / "wiki.db"))))
+    asked = []
+    started = time.monotonic()
+    frame = {"type": "approval", "id": "a1", "command": "rm -r build"}
+    answer = hermes.ask("approval", frame, lambda kind, payload: asked.append(kind), 0.3)
+    # Nobody answered: refused once the wait ran out, and not before.
+    assert answer is None and 0.3 <= time.monotonic() - started < 5
+    assert asked == ["approval"] and hermes.interaction is None
+
+
+@bundled
+def test_the_agents_config_takes_the_iterations_and_the_wait_of_its_turn(tmp_path):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    read = "[config['agent']['max_iterations'], config['approvals']['timeout'], config['agent']['clarify_timeout']]"
+
+    def config(**limits):
+        given = {"model": "test-model", "settings": {}, **limits}
+        return in_worker(home, f"config = worker.prepare_home({given!r})", read)
+
+    assert config() == [24, 300, 600]
+    assert config(max_iterations=60, answer_seconds=600) == [60, 600, 1200]
+    # A value that does not read, or lies out of bounds, is the default.
+    assert config(max_iterations="60", answer_seconds=5) == [24, 300, 600]
+    assert config(max_iterations=10_000, answer_seconds=10_000) == [24, 300, 600]

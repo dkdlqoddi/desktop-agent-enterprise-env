@@ -1178,7 +1178,8 @@ export type AgentMemory = {
 // bot answers (`users`, IDs separated by commas, by messenger) and its bot tokens (the keys of the group 'gateway').
 // Also what it runs without asking and what it may not touch: the commands the user chose to always allow (`allowed`),
 // the protected folders (`protected`: the places credentials are kept, unless turned off, and the user's own folders;
-// the app's own folders are always protected) and the command patterns refused outright (`blocked`).
+// the app's own folders are always protected) and the command patterns refused outright (`blocked`). And how long and
+// how far a request of the chat (a turn of the agent) may go (`turn_limits`).
 export type HermesKey = {
   name: string;
   label: string;
@@ -1196,9 +1197,20 @@ export type HermesSettings = {
   allowed: { command: string; added_at: string }[];
   protected: { credentials: boolean; folders: string[] };
   blocked: string[];
+  turn_limits: HermesTurnLimits;
   secure_storage: boolean;
   stored: boolean;
   error: string;
+};
+
+// A turn's limits: a model request's seconds (the LLM connection's own limit when shorter), the agent's iterations, the
+// whole turn's minutes (0: automatic, four times the connection's response limit, 2 to 15 minutes) and the minutes a
+// command's approval or a question waits for the user.
+export type HermesTurnLimits = {
+  request_seconds: number;
+  iterations: number;
+  turn_minutes: number;
+  answer_minutes: number;
 };
 
 // Whether the messenger gateway runs (agent.gateway), in the backend's own words. `message`: why it is not running,

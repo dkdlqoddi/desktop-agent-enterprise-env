@@ -274,7 +274,8 @@ WORKER = textwrap.dedent(
     frame = json.loads(sys.stdin.readline())
     with open(os.environ["TEST_LOG"], "a", encoding="utf-8") as log:
         log.write(json.dumps({"users": frame["users"], "token": os.environ.get("TELEGRAM_BOT_TOKEN"),
-                              "key": os.environ.get("EXA_API_KEY"), "system": frame["system"][:40]}) + "\\n")
+                              "key": os.environ.get("EXA_API_KEY"), "system": frame["system"][:40],
+                              "limits": [frame.get("max_iterations"), frame.get("answer_seconds")]}) + "\\n")
     names = list(frame["users"])
     print(json.dumps({"type": "gateway", "state": "running",
                       "platforms": {name: {"state": "connected", "error": ""} for name in names}}), flush=True)
@@ -337,6 +338,7 @@ def test_the_gateway_runs_only_while_it_is_on_and_a_messenger_is_complete(stub):
             "token": TOKEN,
             "key": "exa-key",
             "system": "You are the agent of Private Agent, a de",
+            "limits": [24, 300],
         }
     ]
     first = stub.agent.gateway.child
@@ -383,3 +385,16 @@ def test_the_stand_in_address_of_the_bot_api_is_on_this_pc_or_nothing(tmp_path, 
         monkeypatch.setenv("PRIVATE_AGENT_TELEGRAM_API", address)
         service = Service(Database(tmp_path / f"{len(address)}.db"), Unconnected())
         assert service.agent.gateway.telegram_api == taken
+
+
+def test_the_gateway_goes_by_the_turn_limits_and_starts_again_when_they_change(stub):
+    turn_on(stub)
+    assert wait(lambda: status(stub)["state"] == "running", 20)
+    assert stub.starts()[0]["limits"] == [24, 300]
+    stub.dispatch("agent.configure", {"turn_limits": {"iterations": 60, "answer_minutes": 10}})
+    assert wait(lambda: len(stub.starts()) == 2 and status(stub)["state"] == "running", 20)
+    assert stub.starts()[1]["limits"] == [60, 600]
+    # A model request's own time is read as each is sent: it starts nothing again.
+    stub.dispatch("agent.configure", {"turn_limits": {"iterations": 60, "answer_minutes": 10, "request_seconds": 60}})
+    time.sleep(0.5)
+    assert len(stub.starts()) == 2

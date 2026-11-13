@@ -271,3 +271,51 @@ test('agent chat: a command is asked about with how far each answer reaches, and
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('agent settings: how long and how far a request may go is set within its bounds', async () => {
+  test.setTimeout(120_000);
+  const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-limits-'));
+  const before = { request_seconds: 120, iterations: 24, turn_minutes: 0, answer_minutes: 5 };
+  let app: ElectronApplication | undefined;
+  try {
+    app = await launch(directory);
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await chooseStorage(page, path.join(directory, 'wiki'));
+    await openAdmin(page, '채팅 에이전트');
+    const limits = page.getByRole('group', { name: '요청 한도' });
+    // The section is the user's alone, as the rest of the agent's settings.
+    await expect(limits.locator('xpath=ancestor::*[@data-user-only]')).toHaveCount(1);
+    const field = (name: string) =>
+      limits.getByRole('spinbutton', { name: new RegExp(`^${name}`) });
+    const saved = async () =>
+      (await request<{ turn_limits: typeof before }>(page, 'hermes.get')).turn_limits;
+    // The limits from before they could be set; the whole request's 0 is automatic.
+    await expect(field('반복 횟수')).toHaveValue('24');
+    await expect(field('요청 전체')).toHaveValue('0');
+    expect(await saved()).toEqual(before);
+
+    await field('반복 횟수').fill('60');
+    await field('요청 전체').fill('30');
+    await limits.getByRole('button', { name: '한도 저장' }).click();
+    await expect(
+      page.getByText('요청 한도를 저장했습니다. 다음 요청부터 적용됩니다.'),
+    ).toBeVisible();
+    expect(await saved()).toEqual({ ...before, iterations: 60, turn_minutes: 30 });
+    // Out of its bounds a value is refused with what is allowed, and nothing changes.
+    await field('요청 전체').fill('1');
+    await limits.getByRole('button', { name: '한도 저장' }).click();
+    await expect(page.getByText(/2~60분으로 정하거나/)).toBeVisible();
+    expect(await saved()).toEqual({ ...before, iterations: 60, turn_minutes: 30 });
+    await limits.getByRole('button', { name: '기본값으로' }).click();
+    await expect(page.getByText('요청 한도를 기본값으로 되돌렸습니다.')).toBeVisible();
+    await expect(field('반복 횟수')).toHaveValue('24');
+    await expect(field('요청 전체')).toHaveValue('0');
+    expect(await saved()).toEqual(before);
+    expect(errors).toEqual([]);
+  } finally {
+    await app?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

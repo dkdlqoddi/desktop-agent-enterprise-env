@@ -66,6 +66,10 @@ ASKED = threading.local()
 # The longest command "always" keeps to the letter, and how many commands and deny patterns a config takes.
 EXACT_COMMAND = 1000
 MAX_ALLOWED, MAX_DENIED = 200, 600
+# A turn's iterations and the seconds a command's approval waits for its answer, by default and at most, when a turn
+# (or the gateway) is not given its own (max_iterations, answer_seconds); a question waits twice that.
+ITERATIONS, MAX_ITERATIONS = 24, 200
+ANSWER_SECONDS, MAX_ANSWER_SECONDS = 300, 1800
 
 
 def emit(frame):
@@ -244,10 +248,17 @@ def allowed_commands(request):
     return sorted(commands)[:MAX_ALLOWED]
 
 
+def within(value, default, highest, lowest=1):
+    """A whole number the request gave, if it lies within lowest..highest, else `default`."""
+    return value if type(value) is int and lowest <= value <= highest else default
+
+
 def prepare_home(request):
     """The agent's home and app-owned config for this turn. It carries no secret (the API key never reaches here,
     and the MCP servers' own values stay in the environment: mcp_servers) and is regenerated for each selected
-    connection, while memories, skills and sessions stay."""
+    connection, while memories, skills and sessions stay. How far the turn goes and how long a command or a question
+    waits for its answer are the user's (max_iterations, answer_seconds); a question waits longer than the app does,
+    so that in the chat the app's own wait decides."""
     for name in ("memories", "skills", "sessions", "logs", "cron", "tmp", "cache", "config", "data"):
         (HOME / name).mkdir(exist_ok=True, mode=0o700)
     for name, content in {
@@ -269,14 +280,15 @@ def prepare_home(request):
     auxiliary = {task: {"provider": "custom", "model": model, "base_url": base} for task in aux_tasks}
     auxiliary["title_generation"] = {"enabled": False}
     chromium = request.get("chromium") or ""
+    answer = within(request.get("answer_seconds"), ANSWER_SECONDS, MAX_ANSWER_SECONDS, 60)
     config = {
         "model": {"default": model, "provider": "custom", "base_url": base, "context_length": 65536},
         "compression": {"enabled": True},
         "fallback_model": {}, "fallback_models": [], "fallback_providers": [],
         "memory": {"memory_enabled": True, "user_profile_enabled": True, "nudge_interval": 0},
-        "agent": {"max_iterations": request.get("max_iterations", 24), "api_max_retries": 1,
-                  "auto_recovery_cycles": 0, "clarify_timeout": 600},
-        "approvals": {"mode": "smart", "timeout": 300, "cron_mode": "deny", "unattended_mode": "deny",
+        "agent": {"max_iterations": within(request.get("max_iterations"), ITERATIONS, MAX_ITERATIONS),
+                  "api_max_retries": 1, "auto_recovery_cycles": 0, "clarify_timeout": answer * 2},
+        "approvals": {"mode": "smart", "timeout": answer, "cron_mode": "deny", "unattended_mode": "deny",
                       "deny": denied_commands(request)},
         "command_allowlist": allowed_commands(request),
         "security": {"allow_lazy_installs": False},

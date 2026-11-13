@@ -30,12 +30,37 @@ from .llm import UserError, answer
 COMMIT = "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19"
 MAX_FRAME = 2_000_000
 RUNTIMES = weakref.WeakSet()
-# A paused turn waits this long for the user to answer one approval or clarify before it fails closed (deny).
-INTERACTION_SECONDS = 300
-# The whole turn's compute budget (not counting time the user spends answering), bounded well under the RPC limit.
+# The most a turn's automatic budget gives the whole turn (turn_minutes 0): four times the connection's response
+# limit, at least two minutes and at most this.
 TURN_SECONDS = 900
+# What the user sets of a turn's limits (관리 → 채팅 에이전트, agent.configure "turn_limits"), each (default, lowest,
+# highest); the defaults are the limits from before they could be set. A model request's seconds (the connection's own
+# response limit still applies when it is shorter), the agent's iterations (a model request and the tools it calls),
+# the whole turn's minutes, not counting the time the user spends answering (0: automatic, TURN_SECONDS), and the
+# minutes a paused turn waits for the user to answer one approval or clarify before it fails closed (deny). The main
+# process checks them the same way (electron/hermes-settings.cjs, TURN_LIMITS).
+TURN_LIMITS = {
+    "request_seconds": (120, 30, 300),
+    "iterations": (24, 4, 200),
+    "turn_minutes": (0, 2, 60),
+    "answer_minutes": (5, 1, 30),
+}
 # The phases of a turn 중지 ends: while it starts, while the agent works, and while it waits for the user's answer.
 STOPPABLE = ("starting", "thinking", "waiting")
+
+
+def turn_limits(values):
+    """A turn's limits as they are used: each of TURN_LIMITS a whole number within its bounds (turn_minutes may be 0,
+    automatic), its default when it is missing or not a whole number. What the main process hands over was checked
+    there already; one out of bounds is brought within them here."""
+    values = values if isinstance(values, dict) else {}
+    kept = {}
+    for name, (default, lowest, highest) in TURN_LIMITS.items():
+        value = values.get(name, default)
+        if type(value) is not int:
+            value = default
+        kept[name] = 0 if name == "turn_minutes" and value == 0 else min(highest, max(lowest, value))
+    return kept
 
 
 def shutdown_all():
@@ -414,6 +439,7 @@ class Hermes:
         on_interaction,
         workspace="",
         limits=None,
+        bounds=None,
         on_event=None,
     ):
         """Run one chat turn on the worker. Model requests are answered with the app's LLM connection; app_tool
@@ -421,12 +447,15 @@ class Hermes:
         and the live Interaction. `workspace`: the folder the agent's terminal and file tools start in ('' for its own
         home in the Wiki folder). `limits`: what the turn runs without asking and what it may not touch, as the
         worker takes them: {"allowed": commands, "session_allowed": kinds of command, "protected": paths, "blocked":
-        command patterns}. `on_event(kind, data)` hears what the turn did, for the activity kept with its answer:
+        command patterns}. `bounds`: how long and how far the turn may go (TURN_LIMITS, as turn_limits takes them;
+        the defaults without). `on_event(kind, data)` hears what the turn did, for the activity kept with its answer:
         "tool" {tool, preview}, "approval" {command, description, decision}, "clarify" {questions, outcome} and
         "grant" {keys} (the kinds of command a "this conversation" answer covers). A question nobody answered has
         the decision or outcome "timeout", or "stopped" when the turn was stopped meanwhile. Returns {"message",
         "cancelled"}; the executed cards are gathered by the caller through on_app_tool."""
         limits = limits or {}
+        bounds = turn_limits(bounds)
+        answer_seconds = bounds["answer_minutes"] * 60
         told = on_event or (lambda kind, data: None)
         with self.lock:
             if self.closing:
@@ -443,6 +472,7 @@ class Hermes:
             cancelled,
             lambda value: self.on_text(value, cancelled),
             lambda watch: self.on_watch(watch, cancelled),
+            seconds=bounds["request_seconds"],
         )
         executable, worker, root = self.launch_paths()
         self.ensure_child(executable, worker)
@@ -453,7 +483,8 @@ class Hermes:
             frames = self.frames
             self.phase = "thinking"
 
-        budget = min(TURN_SECONDS, max(120, int(float(selected.config["timeout"]) * 4)))
+        automatic = min(TURN_SECONDS, max(120, int(float(selected.config["timeout"]) * 4)))
+        budget = bounds["turn_minutes"] * 60 or automatic
         self.send(
             {
                 "type": "turn",
@@ -466,6 +497,8 @@ class Hermes:
                 "settings": settings,
                 "chromium": chromium,
                 "budget": budget,
+                "max_iterations": bounds["iterations"],
+                "answer_seconds": answer_seconds,
                 "workspace": workspace,
                 **{
                     name: [value for value in limits.get(name) or () if isinstance(value, str)]
@@ -510,7 +543,7 @@ class Hermes:
                     )
                 elif kind in ("approval", "clarify"):
                     waited = time.monotonic()
-                    answered = self.ask(kind, frame, on_interaction)
+                    answered = self.ask(kind, frame, on_interaction, answer_seconds)
                     deadline += time.monotonic() - waited  # The user's thinking time is not the turn's compute time.
                     unanswered = "stopped" if self.cancelled.is_set() else "timeout"
                     if kind == "approval":
@@ -592,8 +625,8 @@ class Hermes:
                     stale.stdin.close()
                     stale.stdout.close()
 
-    def ask(self, kind, frame, on_interaction):
-        """Hold an approval or clarify for the user, and wait (bounded) for the answer the chat sends back."""
+    def ask(self, kind, frame, on_interaction, seconds):
+        """Hold an approval or clarify for the user, and wait `seconds` at most for the answer the chat sends back."""
         payload = {key: value for key, value in frame.items() if key not in ("type", "id")}
         payload["interaction_id"] = uuid.uuid4().hex
         interaction = Interaction(kind, payload)
@@ -603,7 +636,7 @@ class Hermes:
             self.interaction = interaction
             self.phase = "waiting"
             on_interaction(kind, payload)
-        answer = interaction.wait(time.monotonic() + INTERACTION_SECONDS)
+        answer = interaction.wait(time.monotonic() + seconds)
         with self.lock:
             self.interaction = None
             if not self.cancelled.is_set():

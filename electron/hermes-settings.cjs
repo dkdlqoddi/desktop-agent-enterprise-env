@@ -16,7 +16,8 @@ const { readJsonFile, writeFileSafely } = require('./files.cjs');
 // PC and not in the Wiki folder (which may be copied, synced or restored from elsewhere): the commands the user chose
 // to always allow (allowed: each to the letter, added only by an answer to the agent's own question — allow — and
 // taken back on the settings screen), the folders the user protected (folders), whether the places credentials are
-// kept are protected (credentials, on unless turned off) and the command patterns the user refuses (blocked).
+// kept are protected (credentials, on unless turned off) and the command patterns the user refuses (blocked). So are
+// how long and how far a chat turn may go (turn_limits).
 
 const VERSION = 1;
 // The keys the settings screen lists, by what each is for; any other name the user adds goes the same way (a skill's
@@ -102,6 +103,27 @@ const MAX_COMMAND = 1000;
 const MAX_FOLDERS = 50;
 const MAX_BLOCKED = 50;
 const MAX_PATTERN = 200;
+// A chat turn's limits, each [default, lowest, highest], and why a value sent is refused. The defaults are the limits
+// from before they could be set. A model request's seconds (the LLM connection's own response limit still applies
+// when it is shorter), the agent's iterations, the whole turn's minutes, not counting the time the user spends
+// answering (0: automatic, four times the connection's response limit, 2 to 15 minutes), and the minutes a command's
+// approval or a question waits for the user's answer. The backend takes them the same way (backend/agent/hermes.py,
+// TURN_LIMITS); the messenger gateway's conversations go by them too.
+const TURN_LIMITS = {
+  request_seconds: [120, 30, 300],
+  iterations: [24, 4, 200],
+  turn_minutes: [0, 2, 60],
+  answer_minutes: [5, 1, 30],
+};
+const TURN_LIMIT_ERRORS = {
+  request_seconds: '모델 요청 하나의 제한 시간은 30~300초로 정해 주세요.',
+  iterations: '반복 횟수는 4~200번으로 정해 주세요.',
+  turn_minutes: '요청 전체의 제한 시간은 2~60분으로 정하거나, 자동(0)으로 두세요.',
+  answer_minutes: '확인과 질문을 기다리는 시간은 1~30분으로 정해 주세요.',
+};
+const DEFAULT_TURN_LIMITS = Object.fromEntries(
+  Object.entries(TURN_LIMITS).map(([name, [fallback]]) => [name, fallback]),
+);
 // Reject control characters in the short single-line fields (names, values, paths, account IDs).
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f]/;
@@ -222,6 +244,28 @@ function blockedList(value, strict = true) {
   return kept;
 }
 
+/** A chat turn's limits: `value`'s fields over `base`, each a whole number within its bounds (TURN_LIMITS;
+ *  turn_minutes may be 0, automatic). A value sent out of bounds is refused; one stored is read leniently (strict:
+ *  false), its default in its place. */
+function turnLimits(value, base = DEFAULT_TURN_LIMITS, strict = true) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (strict) throw new HermesSettingsError('요청 한도를 확인해 주세요.');
+    return { ...base };
+  }
+  const kept = { ...base };
+  for (const [name, [fallback, lowest, highest]] of Object.entries(TURN_LIMITS)) {
+    if (!Object.hasOwn(value, name)) continue;
+    const number = value[name];
+    const valid =
+      Number.isInteger(number) &&
+      ((number >= lowest && number <= highest) || (name === 'turn_minutes' && number === 0));
+    if (valid) kept[name] = number;
+    else if (strict) throw new HermesSettingsError(TURN_LIMIT_ERRORS[name]);
+    else kept[name] = fallback;
+  }
+  return kept;
+}
+
 /** The MCP servers as Hermes' config.yaml mcp_servers takes them, from the JSON the user wrote: {} when empty. */
 function mcpServers(text) {
   if (typeof text !== 'string' || text.length > MAX_MCP)
@@ -303,6 +347,7 @@ class HermesSettings {
       credentials: true,
       folders: /** @type {string[]} */ ([]),
       blocked: /** @type {string[]} */ ([]),
+      turn_limits: { ...DEFAULT_TURN_LIMITS },
     };
     // {env: {NAME: value}, mcp: '<the JSON the user wrote>'}: never written in plain text.
     this.secrets = { env: {}, mcp: '' };
@@ -338,6 +383,7 @@ class HermesSettings {
       credentials: record.credentials !== false,
       folders: folderList(record.folders, false),
       blocked: blockedList(record.blocked, false),
+      turn_limits: turnLimits(record.turn_limits ?? {}, DEFAULT_TURN_LIMITS, false),
     };
     if (typeof record.encrypted === 'string' && record.encrypted)
       try {
@@ -386,6 +432,7 @@ class HermesSettings {
       allowed: this.values.allowed.map((entry) => ({ ...entry })),
       protected: { credentials: this.values.credentials, folders: [...this.values.folders] },
       blocked: [...this.values.blocked],
+      turn_limits: { ...this.values.turn_limits },
       secure_storage: this.canEncrypt(),
       stored: this.stored,
       error: this.unavailable,
@@ -415,8 +462,8 @@ class HermesSettings {
    *  chat worker's environment (env), and the messenger gateway: whether it is on, the accounts each bot answers and,
    *  only while it is on, the bot tokens, apart from env so that the chat's worker is never given them. With them go
    *  the commands that run without asking (allowed), what the agent may not touch (protected: the app's own folders,
-   *  whether the places credentials are kept count, the user's folders) and the command patterns refused (blocked).
-   *  Only the main process ever calls this. */
+   *  whether the places credentials are kept count, the user's folders), the command patterns refused (blocked) and
+   *  how long and how far a turn may go (turn_limits). Only the main process ever calls this. */
   agent() {
     const backend = this.backend();
     const [env, tokens] = [{}, {}];
@@ -435,6 +482,7 @@ class HermesSettings {
         folders: [...this.values.folders],
       },
       blocked: [...this.values.blocked],
+      turn_limits: { ...this.values.turn_limits },
       env,
       gateway: {
         enabled: backend.gateway,
@@ -479,7 +527,8 @@ class HermesSettings {
 
   /** Saves what was sent: {workspace?, gateway?, computer_use?, users?: {platform: ids}, keys?: {NAME: value, or ''
    *  to clear}, mcp?: '<JSON>', disallow?: [commands to ask about again], protected?: {credentials?, folders?},
-   *  blocked?: [command patterns]}. A value nobody typed again stays as it was. */
+   *  blocked?: [command patterns], turn_limits?: {request_seconds?, iterations?, turn_minutes?, answer_minutes?}}.
+   *  A value nobody typed again stays as it was. */
   update(params) {
     return this.change(async () => {
       const values = { ...this.values, users: { ...this.values.users } };
@@ -523,6 +572,8 @@ class HermesSettings {
         if (Object.hasOwn(given, 'folders')) values.folders = folderList(given.folders);
       }
       if (Object.hasOwn(params, 'blocked')) values.blocked = blockedList(params.blocked);
+      if (Object.hasOwn(params, 'turn_limits'))
+        values.turn_limits = turnLimits(params.turn_limits, values.turn_limits);
       // A folder the agent itself works in cannot be closed to it: its work folder, and the Wiki folder with its home.
       const open = [values.workspace, ...this.reachable()].filter(
         (folder) => typeof folder === 'string' && folder,
@@ -589,6 +640,7 @@ module.exports = {
   KNOWN_KEYS,
   GATEWAY_KEYS,
   PLATFORMS,
+  TURN_LIMITS,
   refusedName,
   mcpServers,
   users,

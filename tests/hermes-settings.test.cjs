@@ -147,6 +147,7 @@ test("the chat is run with the folder, the tools and the service keys; the bot t
     allowed: [],
     protected: { app: [], credentials: true, folders: [] },
     blocked: [],
+    turn_limits: { request_seconds: 120, iterations: 24, turn_minutes: 0, answer_minutes: 5 },
   };
   assert.deepEqual(settings.agent(), {
     workspace: '',
@@ -401,4 +402,51 @@ test('protected folders and refused commands are saved, and what the agent works
     folders: [path.join(directory, 'projects')],
   });
   assert.deepEqual(again.get().blocked, ['git push --force*', '*shutdown*']);
+});
+
+test("a chat turn's limits start as they were before, are saved within their bounds and reach the backend", async (t) => {
+  const { file, make } = await setup(t);
+  const settings = make();
+  await settings.load();
+  const before = { request_seconds: 120, iterations: 24, turn_minutes: 0, answer_minutes: 5 };
+  assert.deepEqual(settings.get().turn_limits, before);
+  assert.deepEqual(settings.agent().turn_limits, before);
+
+  // What was sent changes; what was not stays.
+  const shown = await settings.update({ turn_limits: { iterations: 60, turn_minutes: 30 } });
+  const changed = { ...before, iterations: 60, turn_minutes: 30 };
+  assert.deepEqual(shown.turn_limits, changed);
+  await settings.update({ turn_limits: { request_seconds: 300, answer_minutes: 30 } });
+  const most = { ...changed, request_seconds: 300, answer_minutes: 30 };
+  assert.deepEqual(settings.agent().turn_limits, most);
+  // Back to automatic for the whole turn.
+  await settings.update({ turn_limits: { turn_minutes: 0 } });
+  assert.equal(settings.get().turn_limits.turn_minutes, 0);
+
+  // Out of bounds, not a whole number, or not a set of limits at all: refused with what is allowed, nothing changes.
+  for (const [refused, words] of [
+    [{ request_seconds: 29 }, /30~300초/],
+    [{ request_seconds: 301 }, /30~300초/],
+    [{ iterations: 3 }, /4~200번/],
+    [{ iterations: 24.5 }, /4~200번/],
+    [{ turn_minutes: 1 }, /2~60분/],
+    [{ turn_minutes: 61 }, /2~60분/],
+    [{ answer_minutes: 0 }, /1~30분/],
+    [{ answer_minutes: '5' }, /1~30분/],
+  ])
+    await assert.rejects(settings.update({ turn_limits: refused }), words);
+  for (const refused of [[], 'fast', null])
+    await assert.rejects(settings.update({ turn_limits: refused }), /요청 한도/);
+  assert.deepEqual(settings.get().turn_limits, { ...most, turn_minutes: 0 });
+
+  // A new start reads them back; a value the file holds out of bounds goes back to its default.
+  const again = make();
+  await again.load();
+  assert.deepEqual(again.get().turn_limits, { ...most, turn_minutes: 0 });
+  const record = JSON.parse(await fs.readFile(file, 'utf8'));
+  record.turn_limits = { request_seconds: 5000, iterations: 'many', turn_minutes: 45 };
+  await fs.writeFile(file, JSON.stringify(record));
+  const damaged = make();
+  await damaged.load();
+  assert.deepEqual(damaged.get().turn_limits, { ...before, turn_minutes: 45 });
 });

@@ -142,6 +142,10 @@ class Gateway:
                     "users": accounts,
                     "workspace": self.chat.folder(),
                     "telegram_api": self.telegram_api,
+                    # How far a conversation's turn goes and how long a command waits there for its approval, as the
+                    # chat's turns (agent_chat.py, turn_limits); a model request's own time is read as it is sent.
+                    "max_iterations": self.chat.turn_limits["iterations"],
+                    "answer_seconds": self.chat.turn_limits["answer_minutes"] * 60,
                     # What runs unasked and what may not be touched, as in the chat; a messenger's own "always" counts
                     # for its conversation only (runtime/hermes/worker.py, tell_grants).
                     **self.chat.limits(conversation=False),
@@ -286,7 +290,7 @@ class Gateway:
                 raise UserError(GENERIC)
             if not (llm and llm.public().get("configured")):
                 raise UserError(NOT_CONNECTED)
-            reply["body"] = SelectedLLM(llm, stopped).complete(body)
+            reply["body"] = SelectedLLM(llm, stopped, seconds=self.chat.turn_limits["request_seconds"]).complete(body)
         except UserError as error:
             reply["error"] = str(error)
         except Exception as error:

@@ -42,7 +42,7 @@ from pathlib import Path
 
 from . import agent_guard, diagnostics
 from .agent_memory import Memory
-from .hermes import Hermes
+from .hermes import Hermes, turn_limits
 from .hermes_gateway import Gateway
 from .llm import BusyError, UserError
 from .service import LIVE, now, text
@@ -295,6 +295,10 @@ class AgentChat:
         # are kept are closed too, the folders the user added, and the command patterns the user refuses outright.
         self.protection = {"app": [], "credentials": True, "folders": []}
         self.blocked = []
+        # How long and how far a turn may go, as the user set them (hermes.py, TURN_LIMITS): a model request's seconds,
+        # the agent's iterations, the whole turn's minutes (0: automatic) and the minutes a question waits for the user.
+        # The messenger gateway's conversations go by them too.
+        self.turn_limits = turn_limits({})
         # The messenger gateway's options as last set: it is started again when what runs unasked changes.
         self.gateway_options = None
         self.gateway = Gateway(self)
@@ -361,6 +365,8 @@ class AgentChat:
             self.allowed = agent_guard.lines(params["allowed"], agent_guard.MAX_ALLOWED, agent_guard.COMMAND_CHARS)
         if "blocked" in params:
             self.blocked = agent_guard.lines(params["blocked"], agent_guard.MAX_BLOCKED, 200)
+        if isinstance(params.get("turn_limits"), dict):
+            self.turn_limits = turn_limits(params["turn_limits"])
         if isinstance(params.get("protected"), dict):
             given = params["protected"]
             self.protection = {
@@ -1293,6 +1299,7 @@ class AgentChat:
                 on_interaction=lambda kind, payload: None,
                 workspace=self.folder(),
                 limits=self.limits(),
+                bounds=self.turn_limits,
                 on_event=on_event,
             )
         except UserError as error:

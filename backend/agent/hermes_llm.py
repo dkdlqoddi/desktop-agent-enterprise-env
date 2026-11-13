@@ -18,7 +18,8 @@ from . import llm
 
 MAX_RESPONSE = 2_000_000
 # One model request of a turn (SelectedLLM.renew sets both anew before each): the times it is sent, counting the one
-# sent again without a temperature, and its time, or the connection's own limit when that is shorter.
+# sent again without a temperature, and its time (the turn's own, which the user may set: hermes.py, TURN_LIMITS), or
+# the connection's own limit when that is shorter.
 MAX_CALLS = 4
 RUN_SECONDS = 120
 STOPPED = "채팅 요청을 중지했습니다."
@@ -163,7 +164,9 @@ class Watch:
 
 
 class SelectedLLM:
-    def __init__(self, connection, cancelled, on_text=lambda value: None, on_watch=lambda value: None):
+    def __init__(
+        self, connection, cancelled, on_text=lambda value: None, on_watch=lambda value: None, seconds=RUN_SECONDS
+    ):
         with connection.lock:
             self.config = copy.deepcopy(connection.config)
             plain = set(connection.plain_models)
@@ -173,12 +176,13 @@ class SelectedLLM:
         self.connection = connection
         self.plain = (self.target["base_url"], self.target["model_name"]) in plain
         self.cancelled, self.on_text, self.on_watch = cancelled, on_text, on_watch
+        self.seconds = seconds
         self.renew()
 
     def renew(self):
         """Fresh per-call budget: one chat turn makes many model calls (one per agent iteration), so the time and
         call limits are per request, reset before each, not shared across the whole turn as a single plan was."""
-        self.end = time.monotonic() + min(RUN_SECONDS, float(self.config["timeout"]))
+        self.end = time.monotonic() + min(self.seconds, float(self.config["timeout"]))
         self.calls = 0
 
     def read(self, response, streaming):

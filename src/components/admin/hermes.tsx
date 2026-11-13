@@ -14,6 +14,7 @@ import { api, type HermesGateway, type HermesKey, type HermesSettings } from '@/
 import { useActions } from '../state';
 import SecretInput from '../secret-input';
 import HermesGuard from './hermes-guard';
+import HermesLimits from './hermes-limits';
 import HermesMemory from './hermes-memory';
 
 // The key groups listed as plain keys. The messenger gateway's bot tokens (group 'gateway') are set with the gateway,
@@ -57,7 +58,8 @@ const GATEWAY_STATES: Record<HermesGateway['state'], string> = {
 // The chat agent's own settings: the folder its terminal and file tools start in, the service keys it reads from its
 // environment (only whether each is set ever reaches this screen), the MCP servers, the computer-use toggle, what it
 // runs without asking and may not touch (hermes-guard.tsx), what it remembers (hermes-memory.tsx) and the messenger
-// gateway. Model calls always go through 관리 → LLM 연결, so model-provider keys are refused here. All of
+// gateway, and how long and how far a request may go (hermes-limits.tsx). Model calls always go through 관리 → LLM
+// 연결, so model-provider keys are refused here. All of
 // it is the user's alone (data-user-only): an AI tool's screen control cannot type or press here at any access level.
 export default function HermesSection() {
   const { notify } = useActions();
@@ -346,6 +348,8 @@ export default function HermesSection() {
         )}
       </fieldset>
 
+      <HermesLimits state={state} busy={busy} update={update} />
+
       <HermesGuard state={state} busy={busy} update={update} notify={notify} />
 
       <HermesMemory notify={notify} />
@@ -357,8 +361,9 @@ export default function HermesSection() {
         <p className="admin-hint">
           텔레그램·디스코드·슬랙의 내 봇에 글을 보내 이 PC의 에이전트에 일을 시킵니다. 앱이 켜져
           있는 동안만 동작하고, 아래에 적은 계정에만 답합니다. 그 계정은 채팅과 같은 도구(터미널,
-          파일, 브라우저)로 일을 시킬 수 있고, 위험한 명령은 그 메신저에서 확인을 받습니다(5분 안에
-          답이 없으면 실행하지 않습니다). 주고받는 글은 그 메신저 회사의 서버를 거칩니다.
+          파일, 브라우저)로 일을 시킬 수 있고, 위험한 명령은 그 메신저에서 확인을 받습니다(위 ‘요청
+          한도’의 대기 시간 안에 답이 없으면 실행하지 않습니다). 주고받는 글은 그 메신저 회사의
+          서버를 거칩니다.
         </p>
         <label className="admin-toggle">
           <input
