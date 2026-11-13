@@ -133,6 +133,9 @@ class BrowserController(
     /** The user's own input on the page, which a click report must follow. */
     private val userInput = UserInputGate()
 
+    /** Which page is the landing page of the user's last click on a marked link. */
+    private val landing = LandingWatch(SystemClock::elapsedRealtime)
+
     /** Counts main-frame page loads that finished; a load waits for it to move past the value it started at. */
     private val finishCount = MutableStateFlow(0)
     private var mainFrameFailed = false
@@ -150,19 +153,6 @@ class BrowserController(
     private class BrowsedPage(val site: String, val query: String, val result: CaptureResult)
 
     /**
-     * A click whose landing page is awaited. The page may finish loading before the click's item is found in the
-     * database, so the landing waits here for [itemId] when it comes first.
-     */
-    private class PendingLanding(val clickedAt: Long, val fromUrl: String) {
-        var itemId: Long? = null
-        var landedAt = 0L
-        var landingUrl: String? = null
-        var landingTitle = ""
-    }
-
-    private var pendingLanding: PendingLanding? = null
-
-    /**
      * Makes the browser's WebView for [activity]. [saved] is what [saveState] kept for the screen the system ended (its
      * process, in the background): its page and history open again.
      */
@@ -171,6 +161,7 @@ class BrowserController(
         if (host === activity && webViewState.value != null) return
         webViewState.value?.let(::destroy)
         host = activity
+        landing.leave()
         val view = create(activity)
         webViewState.value = view
         pageState.value = PageState()
@@ -231,7 +222,11 @@ class BrowserController(
     @MainThread
     fun load(url: String) {
         when (val check = BrowserUrls.normalize(url)) {
-            is BrowserUrls.Check.Ok -> webViewState.value?.loadUrl(check.url)
+            is BrowserUrls.Check.Ok -> {
+                // A page the app opens is no landing page of a click.
+                landing.leave()
+                webViewState.value?.loadUrl(check.url)
+            }
             is BrowserUrls.Check.Insecure -> noticeState.value = Notice.Insecure(check.url)
             BrowserUrls.Check.Invalid -> noticeState.value = Notice.BadAddress
         }
@@ -246,23 +241,30 @@ class BrowserController(
             load(input)
         } else {
             val site = sites.byKey("google") ?: sites.all.firstOrNull() ?: return
+            landing.leave()
             webViewState.value?.loadUrl(sites.searchUrl(site, input))
         }
     }
 
+    // Going back or forward, loading again or stopping: what a click opened ends there, recorded only if it loaded.
+
     fun back() {
+        landing.leave()
         webViewState.value?.takeIf { it.canGoBack() }?.goBack()
     }
 
     fun forward() {
+        landing.leave()
         webViewState.value?.takeIf { it.canGoForward() }?.goForward()
     }
 
     fun reload() {
+        landing.leave()
         webViewState.value?.reload()
     }
 
     fun stopLoading() {
+        landing.leave()
         webViewState.value?.stopLoading()
     }
 
@@ -276,6 +278,7 @@ class BrowserController(
 
     /** Forgets cookies, storage, cache and history of the in-app browser. */
     fun clearData() {
+        landing.leave()
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
         WebStorage.getInstance().deleteAllData()
@@ -380,6 +383,7 @@ class BrowserController(
         val view = webViewState.value ?: return Load.NO_BROWSER
         val before = finishCount.value
         mainFrameFailed = false
+        landing.leave()
         view.loadUrl(url)
         withTimeoutOrNull(LOAD_TIMEOUT_MS) {
             finishCount.first { it > before }
@@ -438,29 +442,37 @@ class BrowserController(
         // Off with the setting: a click is recorded neither on a page the user browses nor on a recorded one.
         if (!settings.recordClicks.value) return
         val arrived = SystemClock.uptimeMillis()
+        // Before the click's navigation starts, which may still reach the main thread before the report does.
+        val reported = SystemClock.elapsedRealtime()
         val report = ClickReportParser.parse(json) ?: return
+        if (report.follow) {
+            // No click of its own: the address the site's script gave the clicked link, where its page loads from.
+            scope.launch { landing.follow(report.token, report.ref, report.href) }
+            return
+        }
         scope.launch {
-            // Set before the page the click opens can finish: that page is posted to the main thread after this.
-            val pending = PendingLanding(SystemClock.elapsedRealtime(), webViewState.value?.url.orEmpty())
-            pendingLanding = pending
+            val from = webViewState.value?.url.orEmpty()
+            val click = landing.clicked(report.token, report.ref, report.href, from, reported)
             try {
-                clickMutex.withLock { recordClick(report, pending, arrived) }
+                clickMutex.withLock { recordClick(report, click, arrived) }
             } catch (failure: StoreException) {
-                if (pendingLanding === pending) pendingLanding = null
+                click?.let(landing::drop)
                 noticeState.value = Notice.NotSaved(failure.problem)
             }
         }
     }
 
-    private suspend fun recordClick(report: ClickReport, pending: PendingLanding, arrived: Long) {
+    private suspend fun recordClick(report: ClickReport, click: LandingWatch.Click?, arrived: Long) {
         val clickedAt = System.currentTimeMillis()
         val itemId = clickedItem(report, clickedAt, arrived)
         if (itemId == null) {
-            if (pendingLanding === pending) pendingLanding = null
+            click?.let(landing::drop)
             return
         }
-        pending.itemId = itemId
-        pending.landingUrl?.let { records.setLanding(itemId, it, pending.landingTitle) }
+        if (click != null) {
+            click.itemId = itemId
+            click.landingUrl?.let { records.setLanding(itemId, it, click.landingTitle) }
+        }
         noticeState.value = Notice.ClickRecorded(ad = report.kind == ItemKind.AD)
     }
 
@@ -491,25 +503,16 @@ class BrowserController(
     }
 
     /**
-     * The landing page of a clicked item: the first page that finishes after the click (within LANDING_WINDOW_MS),
-     * and the pages a redirect chain moves on to right after it.
+     * The landing page of a clicked item, once the page its click opened finished loading ([LandingWatch] decides),
+     * and again when that page moves on by itself right after.
      */
     private fun recordLanding(view: WebView, url: String) {
-        val pending = pendingLanding ?: return
-        val now = SystemClock.elapsedRealtime()
-        val first = pending.landedAt == 0L
-        val inWindow = if (first) now - pending.clickedAt <= LANDING_WINDOW_MS else now - pending.landedAt <= REDIRECT_WINDOW_MS
-        if (!inWindow) {
-            pendingLanding = null
-            return
-        }
-        if ((first && url == pending.fromUrl) || !url.startsWith("https://")) return
-        pending.landedAt = now
-        pending.landingUrl = url
-        pending.landingTitle = cleanText(view.title.orEmpty(), 200)
+        val click = landing.finished(url) ?: return
+        click.landingUrl = url
+        click.landingTitle = cleanText(view.title.orEmpty(), 200)
         // Without the item yet, recordClick saves the landing page once it has found it.
-        val itemId = pending.itemId ?: return
-        val title = pending.landingTitle
+        val itemId = click.itemId ?: return
+        val title = click.landingTitle
         scope.launch {
             try {
                 records.setLanding(itemId, url, title)
@@ -549,9 +552,13 @@ class BrowserController(
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url.toString()
             if (!request.isForMainFrame) return !NavigationPolicy.allowsSubframe(url)
-            return when (val decision = NavigationPolicy.decide(url)) {
+            val decision = NavigationPolicy.decide(url)
+            landing.navigation(url, request.isRedirect, request.hasGesture(), decision == NavigationDecision.Allow)
+            return when (decision) {
                 NavigationDecision.Allow -> false
                 is NavigationDecision.OpenInstead -> {
+                    // The app opens the intent's own web page in its place: no landing page of a click.
+                    landing.leave()
                     view.loadUrl(decision.url)
                     true
                 }
@@ -569,6 +576,7 @@ class BrowserController(
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             mainFrameFailed = false
             markedAdsState.value = 0
+            landing.committed(url.orEmpty())
             update(view, loading = true)
         }
 
@@ -586,7 +594,10 @@ class BrowserController(
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame) mainFrameFailed = true
+            if (request.isForMainFrame) {
+                mainFrameFailed = true
+                landing.failed(request.url.toString())
+            }
         }
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
@@ -598,6 +609,7 @@ class BrowserController(
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             val activity = host ?: return true
             if (webViewState.value === view) {
+                landing.leave()
                 destroy(view)
                 webViewState.value = create(activity)
                 pageState.value = PageState()
@@ -709,8 +721,6 @@ class BrowserController(
         private const val SCROLL_SETTLE_MS = 800L
         private const val SCRIPT_TIMEOUT_MS = 10_000L
         private const val CAPTURE_TIMEOUT_MS = 20_000L
-        private const val LANDING_WINDOW_MS = 30_000L
-        private const val REDIRECT_WINDOW_MS = 3_000L
 
         private const val KEY_HISTORY = "browser.history"
         private const val KEY_URL = "browser.url"

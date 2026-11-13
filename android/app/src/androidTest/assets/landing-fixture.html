@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>테스트 상점 - 도착 페이지 시험</title>
+    <style>
+      body { margin: 0; padding-top: 24px; font-family: sans-serif; background: #fff; }
+      .card { margin: 0 12px 12px; padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; }
+      .card a { display: block; padding: 10px 0; color: #111; text-decoration: none; }
+      .wish { display: block; width: 100%; height: 44px; }
+    </style>
+  </head>
+  <body>
+    <!-- Ad cards for the instrumented tests of the landing page. Their links lead to the reserved example domain, which
+         the test serves for the pages that load (the others do not resolve), or to another app. The wish-list button
+         is a part of a card that is not its link. -->
+    <div class="card" id="loads">
+      <span>광고</span>
+      <a href="https://shop.example.com/landing/loads">열리는 광고 상품</a>
+      <button class="wish" type="button">찜</button>
+    </div>
+    <div class="card" id="fails">
+      <span>광고</span>
+      <a href="https://shop.example.com/vp/products/301">열리지 않는 광고 상품</a>
+    </div>
+    <div class="card" id="moves">
+      <span>광고</span>
+      <a href="https://shop.example.com/landing/moves">스스로 넘어가는 광고 상품</a>
+    </div>
+    <div class="card" id="app">
+      <span>광고</span>
+      <a href="intent://open#Intent;scheme=privateagenttest;end">앱으로 여는 광고 상품</a>
+    </div>
+    <script>
+      // Which element the last click reached, so the test sees where its tap landed.
+      document.addEventListener('click', (event) => { window.tapped = event.target.className || event.target.tagName; }, true);
+    </script>
+  </body>
+</html>

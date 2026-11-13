@@ -107,8 +107,18 @@ object CaptureResultParser {
     }
 }
 
-/** A click the page's click watcher (click-watch.js) reported through PaBridge.reportClick. */
-data class ClickReport(val token: String, val ref: Int, val kind: ItemKind?, val href: String)
+/**
+ * A click the page's click watcher (click-watch.js) reported through PaBridge.reportClick, on a link of a marked item.
+ * A [follow] report is no click of its own: it names the address ([href]) the site's script gave the clicked link as
+ * the click went, where the link's page loads from.
+ */
+data class ClickReport(
+    val token: String,
+    val ref: Int,
+    val kind: ItemKind?,
+    val href: String,
+    val follow: Boolean = false,
+)
 
 object ClickReportParser {
     private val TOKEN = Regex("^[A-Za-z0-9-]{8,64}$")
@@ -124,9 +134,8 @@ object ClickReportParser {
         }
         val token = root.text("token")
         if (!TOKEN.matches(token)) return null
-        // Not a click: the address a site's script gave the clicked link as the click went, after the click's report.
-        if (root.flag("follow")) return null
         val ref = root.wholeOrNull("ref")?.takeIf { it in 0..9_999 }?.toInt() ?: return null
-        return ClickReport(token, ref, ItemKind.of(root.text("kind")), CaptureResultParser.webUrl(root.text("href")))
+        val href = CaptureResultParser.webUrl(root.text("href"))
+        return ClickReport(token, ref, ItemKind.of(root.text("kind")), href, root.flag("follow"))
     }
 }
