@@ -10,6 +10,9 @@ const INK_DEEP = '#121826';
 const MARK = '#f6e94b';
 const KEYFRAMES = 2000; // A fragment of the MP4 is written at each key frame.
 const SLICE = 1000;
+// Frames of the window waiting to be passed on while one is fitted (steady): with the browser's default of one, the
+// frames that came meanwhile were dropped, even of the first size.
+const WAITING_FRAMES = 30;
 
 // Chunks reach the main process in the order the recorder made them: a file put together out of order cannot be
 // decoded.
@@ -31,6 +34,56 @@ function recordInto(stream, job) {
   media.onerror = (event) =>
     recorder.failed(`영상을 기록하지 못했습니다: ${event.error?.message || '알 수 없는 오류'}`);
   return media;
+}
+
+// The window's frames, every one at the size of the first. The encoder starts over when the frames change size, and
+// the MP4 keeps the first size's parameters only, so a recording whose window was resized partway (or taken out of
+// full screen) stopped every player there with a decoding error and made no video (2026-11-14). A frame of the first
+// size passes as it is; one of another size is drawn into a frame of the first size, scaled with its proportions kept
+// and centered on the cards' ink, at its own time.
+function steady(stream) {
+  const [track] = stream.getVideoTracks();
+  const processor = new MediaStreamTrackProcessor({ track, maxBufferSize: WAITING_FRAMES });
+  const generator = new MediaStreamTrackGenerator({ kind: 'video' });
+  let size = null;
+  let context = null;
+  const fit = new TransformStream({
+    transform(frame, controller) {
+      const width = frame.displayWidth;
+      const height = frame.displayHeight;
+      size ??= { width, height };
+      if (width === size.width && height === size.height) {
+        controller.enqueue(frame);
+        return;
+      }
+      context ??= new OffscreenCanvas(size.width, size.height).getContext('2d', { alpha: false });
+      const scale = Math.min(size.width / width, size.height / height);
+      const drawnWidth = Math.round(width * scale);
+      const drawnHeight = Math.round(height * scale);
+      context.fillStyle = INK;
+      context.fillRect(0, 0, size.width, size.height);
+      context.drawImage(
+        frame,
+        Math.floor((size.width - drawnWidth) / 2),
+        Math.floor((size.height - drawnHeight) / 2),
+        drawnWidth,
+        drawnHeight,
+      );
+      const fitted = new VideoFrame(context.canvas, { timestamp: frame.timestamp });
+      frame.close();
+      controller.enqueue(fitted);
+    },
+  });
+  // A frame that could not be passed on while the window is recorded ends the recording as a failure, rather than
+  // leaving it without pictures; once the window's track has ended, the frames ending with it are no failure.
+  processor.readable
+    .pipeThrough(fit)
+    .pipeTo(generator.writable)
+    .catch((error) => {
+      if (track.readyState === 'live')
+        recorder.failed(`앱 화면을 녹화하지 못했습니다: ${error.message}`);
+    });
+  return new MediaStream([generator]);
 }
 
 const clock = (ms) => {
@@ -60,7 +113,7 @@ async function capture(job) {
   const [track] = stream.getVideoTracks();
   let media;
   try {
-    media = recordInto(stream, job);
+    media = recordInto(steady(stream), job);
   } catch (error) {
     recorder.failed(error.message);
     return;

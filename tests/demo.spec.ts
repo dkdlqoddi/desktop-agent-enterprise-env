@@ -144,11 +144,32 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
       'mdat',
     ]);
 
-    // A second recording starts from an emptied Wiki, and the panel's stop button still makes its video.
+    // A second recording starts from an emptied Wiki, and the panel's stop button still makes its video. Partway, its
+    // window leaves full screen and is drawn at another size: the recording keeps its first size, and the video is
+    // still made (frames of another size used to stop the player, and with it the video).
     app = await launch(userData, env, ['--demo', list]);
     finished = ended(app, 180_000);
     const second = await panel(app);
     await expect(second.locator('#step')).toContainText('2/3', { timeout: 120_000 });
+    const drawn = await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((item) =>
+        item.webContents.getURL().startsWith('agent://'),
+      )!;
+      const size = async () => (await win.webContents.capturePage()).getSize();
+      const before = await size();
+      win.setFullScreen(false);
+      for (let tries = 0; tries < 50; tries++) {
+        if (!win.isFullScreen()) win.setContentSize(1100, 760);
+        const after = await size();
+        if (after.width !== before.width || after.height !== before.height)
+          return { before, after };
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return { before, after: before };
+    });
+    expect(drawn.after).not.toEqual(drawn.before);
+    // Frames at the new size reach the recording before it stops.
+    await new Promise((resolve) => setTimeout(resolve, 3000));
     await second.getByRole('button', { name: '중지' }).click();
     await finished;
     const runs = (await readdir(output)).sort();
@@ -156,6 +177,9 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
     const stopped = path.join(output, runs[1]);
     const secondReport = await readFile(path.join(stopped, FILES.report), 'utf8');
     expect(secondReport).toContain('중지 버튼으로 녹화를 중지했습니다.');
+    expect(secondReport).not.toContain('영상을 만들지 못했습니다');
+    const resizedRaw = await inspect(path.join(stopped, FILES.raw));
+    expect([resizedRaw.width, resizedRaw.height]).toEqual([raw.width, raw.height]);
     expect(secondReport).toMatch(
       /회의록\.md — Markdown 파일\r\n {4}Markdown 문서를 Wiki에 저장했습니다\./,
     );

@@ -414,11 +414,12 @@ class DemoRun {
     await this.settleFullScreen(win);
   }
 
-  // The recording starts once the screen is drawn at full-screen size, since a recording whose frames change size
-  // partway cannot be made into a video: its player stops at the change with a decoding error, and the demo ends without
-  // one. The window calls itself full screen as soon as it is asked, while an X11 window manager resizes it later, and a
-  // busy PC draws the first frames at the new size seconds after that (WSL, 2026-10-10). So the size is read off a frame
-  // of the screen itself, twice in a row. A screen that does not get there in time is recorded as it is.
+  // The recording starts once the screen is drawn at full-screen size: its first frame sets the video's size, and the
+  // recorder fits every later frame of another size into it (electron/recorder/page.js), so a recording started early
+  // would show the full screen shrunk within its first, smaller size. The window calls itself full screen as soon as it
+  // is asked, while an X11 window manager resizes it later, and a busy PC draws the first frames at the new size seconds
+  // after that (WSL, 2026-10-10). So the size is read off a frame of the screen itself, twice in a row. A screen that
+  // does not get there in time is recorded as it is.
   async settleFullScreen(win) {
     if (!this.display) return;
     const end = this.now() + FULL_SCREEN_LIMIT;
