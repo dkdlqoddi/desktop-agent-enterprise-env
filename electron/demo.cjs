@@ -63,7 +63,9 @@ class Interrupted extends Error {
 // `--demo <list>` records a demo; `--demo-render <folder or list>` makes its video again from the recording and its
 // captions as they are now. A relative path stays as given, for the app to refuse: the launcher exe starts the app in
 // its build folder, so the list, the demo's Wiki and its videos would go there, and the next build deletes that folder.
+// `--unattended` beside either is a run no one watches (a scheduled task, a test): no dialog waits for an answer.
 function demoLaunch(argv) {
+  const unattended = argv.includes('--unattended');
   for (let index = 0; index < argv.length; index++) {
     for (const [flag, kind] of [
       ['--demo', 'record'],
@@ -78,9 +80,9 @@ function demoLaunch(argv) {
             : null;
       if (value && !value.startsWith('--')) {
         const given = value.replace(/^"(.*)"$/, '$1');
-        return { kind, path: path.isAbsolute(given) ? path.resolve(given) : given };
+        return { kind, path: path.isAbsolute(given) ? path.resolve(given) : given, unattended };
       }
-      if (arg === flag) return { kind, path: '' };
+      if (arg === flag) return { kind, path: '', unattended };
     }
   }
   return null;

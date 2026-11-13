@@ -12,6 +12,12 @@ rem
 rem The app is looked for beside this script (Private-Agent-*.exe, or Private Agent.exe), then in
 rem win-unpacked of a build, then where the exe unpacked it (%LOCALAPPDATA%\Private Agent).
 rem Set PRIVATE_AGENT_EXE to use another one.
+rem
+rem For a run no one watches, such as a scheduled task, start the app itself instead (this script waits for a key):
+rem   "Private Agent.exe" --demo "D:\demo\demo-list.txt" --unattended
+rem No dialog then waits for an answer: what kept the demo from its end goes to the app's log (logs\app.log in its
+rem settings folder) and to its error output, and the app ends with exit code 1. --unattended goes with --demo-render
+rem too.
 
 set "HERE=%~dp0"
 set "MODE=record"

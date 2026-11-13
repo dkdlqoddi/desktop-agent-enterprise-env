@@ -50,7 +50,7 @@ const { McpServer } = require('./mcp.cjs');
 const apiManual = require('./api-manual.cjs');
 const { AppControl } = require('./app-control.cjs');
 const { createApiMethods, createPathCheck } = require('./api-methods.cjs');
-const { Diagnostics } = require('./diagnostics.cjs');
+const { Diagnostics, redact } = require('./diagnostics.cjs');
 const { Restarts } = require('./restarts.cjs');
 const { Recorder, PRIVILEGES: RECORDER_SCHEME } = require('./recorder.cjs');
 const { DemoRun, demoLaunch, renderAgain } = require('./demo.cjs');
@@ -66,8 +66,10 @@ if (app.isPackaged)
 const ROOT = path.join(__dirname, '..');
 const DEV_URL = !app.isPackaged ? process.env.PRIVATE_AGENT_DEV_URL : undefined;
 // A demo recording (record-demo.cmd): `--demo <list>` records the app working through a list, `--demo-render
-// <folder>` makes a recording's video again.
+// <folder>` makes a recording's video again; with `--unattended` no dialog waits for an answer (unattendedProblem).
 const LAUNCH = demoLaunch(process.argv);
+// The exit code of a demo run no one watches (--unattended), 1 once it met a problem (unattendedProblem).
+let exitCode = 0;
 if (process.env.PRIVATE_AGENT_USER_DATA)
   app.setPath('userData', process.env.PRIVATE_AGENT_USER_DATA);
 protocol.registerSchemesAsPrivileged([AGENT_SCHEME, RECORDER_SCHEME]);
@@ -1047,6 +1049,14 @@ async function loadDemo(file) {
     await fs.access(file);
   } catch {
     await demoPlan.writeTemplate(file);
+    // The list is left to fill in for a later run.
+    if (
+      unattendedProblem(
+        'Private Agent 시연 녹화',
+        `녹화 목록 파일이 없어 새로 만들었습니다: ${file}. 가져올 자료를 적은 뒤 다시 실행해 주세요.`,
+      )
+    )
+      return null;
     await shell.openPath(file);
     await dialog.showMessageBox({
       type: 'info',
@@ -1075,23 +1085,27 @@ async function loadDemo(file) {
 }
 
 // After the demo: the video in Explorer, or why there is none; then the app ends, unless the list keeps it open on
-// the demo's Wiki.
+// the demo's Wiki. An unattended run writes down a problem instead of asking, also when the app is already closing
+// (its window was closed), and always ends.
 async function finishDemo(outcome) {
-  if (stopping) return;
   const report = outcome.folder ? path.join(outcome.folder, demoPlan.FILES.report) : '';
+  const problem = outcome.failure || outcome.renderError;
+  const message = outcome.video
+    ? '시연이 중간에 멈췄습니다. 멈추기 전까지 녹화한 영상을 만들었습니다.'
+    : '시연 영상을 만들지 못했습니다.';
+  const detail = problem ? `${problem.message}${report ? `\n\n진행 기록: ${report}` : ''}` : '';
+  const written = !!problem && unattendedProblem('Private Agent 시연 녹화', `${message} ${detail}`);
+  if (stopping) return;
   if (outcome.video) revealFile(outcome.video);
   else if (report) revealFile(report);
-  const problem = outcome.failure || outcome.renderError;
-  if (problem)
+  if (problem && !written)
     await dialog.showMessageBox({
       type: outcome.video ? 'warning' : 'error',
       title: 'Private Agent 시연 녹화',
-      message: outcome.video
-        ? '시연이 중간에 멈췄습니다. 멈추기 전까지 녹화한 영상을 만들었습니다.'
-        : '시연 영상을 만들지 못했습니다.',
-      detail: `${problem.message}${report ? `\n\n진행 기록: ${report}` : ''}`,
+      message,
+      detail,
     });
-  if (demo.plan.quit || !window || window.isDestroyed()) app.quit();
+  if (LAUNCH?.unattended || demo.plan.quit || !window || window.isDestroyed()) app.quit();
   else {
     window.setFullScreen(false);
     window.show();
@@ -1112,10 +1126,26 @@ async function renderOnly(target) {
     });
     revealFile(await renderAgain(folder, { recorder: new Recorder(), readText }));
   } catch (error) {
-    if (error.name !== 'Stopped')
+    // A stop is the user's own; an unattended run made no video all the same.
+    if (
+      !unattendedProblem('Private Agent 시연 영상 만들기', error.message) &&
+      error.name !== 'Stopped'
+    )
       dialog.showErrorBox('Private Agent 시연 영상 만들기', error.message);
   }
   app.quit();
+}
+
+// A problem a dialog would show, in a demo run no one watches (--unattended): no dialog waits for an answer there, so
+// the problem goes to the app's log, redacted as every entry, and to the error output its caller reads, and the app
+// ends with exit code 1 (before-quit). Whether it was written down; every other run shows its dialog.
+function unattendedProblem(title, message) {
+  if (!LAUNCH?.unattended) return false;
+  exitCode = 1;
+  const text = `${title}: ${message}`;
+  void diagnostics?.record(text);
+  process.stderr.write(`${redact(text)}\n`);
+  return true;
 }
 
 // --- Local API for AI tools ----------------------------------------------------------------------------------------
@@ -1560,10 +1590,10 @@ function createWindow() {
     restarted: () => void diagnostics.record('앱 화면을 다시 불러왔습니다.'),
     gaveUp: () => {
       void diagnostics.record('앱 화면이 계속 종료되어 더 다시 불러오지 않았습니다.');
-      dialog.showErrorBox(
-        'Private Agent 화면 오류',
-        '앱 화면이 계속 종료되어 다시 불러오지 않았습니다. 앱을 다시 실행해 주세요. 계속되면 앱 설정 폴더의 logs\\app.log를 알려 주세요.',
-      );
+      const message =
+        '앱 화면이 계속 종료되어 다시 불러오지 않았습니다. 앱을 다시 실행해 주세요. 계속되면 앱 설정 폴더의 logs\\app.log를 알려 주세요.';
+      if (!unattendedProblem('Private Agent 화면 오류', message))
+        dialog.showErrorBox('Private Agent 화면 오류', message);
     },
     failed: (error) =>
       void diagnostics.record(`앱 화면을 다시 불러오지 못했습니다: ${error.message}`),
@@ -1621,8 +1651,17 @@ const hasLock =
     ? (app.setPath('userData', path.join(app.getPath('temp'), 'private-agent-render')), false)
     : app.requestSingleInstanceLock({ execPath: process.execPath, args: process.argv.slice(1) });
 if (LAUNCH?.kind === 'render') void app.whenReady().then(() => renderOnly(LAUNCH.path));
-else if (!hasLock) app.quit();
-else {
+else if (!hasLock) {
+  if (
+    LAUNCH &&
+    unattendedProblem(
+      'Private Agent 시연 녹화',
+      'Private Agent가 이미 열려 있어 시연을 시작하지 못했습니다. 앱을 닫은 뒤 다시 실행해 주세요.',
+    )
+  )
+    app.exit(exitCode);
+  else app.quit();
+} else {
   app.on('second-instance', (_event, argv, _directory, started) => {
     // A demo runs in an app of its own, on its own Wiki.
     if (demoLaunch(argv)?.kind === 'record')
@@ -1648,19 +1687,20 @@ else {
     .then(async () => {
       if (process.platform === 'win32') app.setAppUserModelId('com.privateagent.desktop');
       await fs.mkdir(app.getPath('userData'), { recursive: true });
+      diagnostics = new Diagnostics({ directory: path.join(app.getPath('userData'), 'logs') });
       let plan = null;
       if (LAUNCH?.kind === 'record') {
         try {
           plan = await loadDemo(LAUNCH.path);
         } catch (error) {
-          dialog.showErrorBox('Private Agent 시연 녹화', error.message);
+          if (!unattendedProblem('Private Agent 시연 녹화', error.message))
+            dialog.showErrorBox('Private Agent 시연 녹화', error.message);
         }
         if (!plan) {
           app.quit();
           return;
         }
       }
-      diagnostics = new Diagnostics({ directory: path.join(app.getPath('userData'), 'logs') });
       // Ctrl+= / Ctrl+- / Ctrl+0 and Ctrl+wheel zoom the screen, which opens at the last zoom again; a demo records at
       // 100% and leaves the user's zoom as it is. Read now, so the window opens at it.
       zoom = new ScreenZoom({
@@ -1685,10 +1725,9 @@ else {
         // With why its last start failed, if it did: a program antivirus quarantined, say.
         gaveUp: (error) => {
           void diagnostics.record('백엔드가 계속 종료되어 더 다시 시작하지 않았습니다.');
-          dialog.showErrorBox(
-            '백엔드 종료',
-            `Python 백엔드가 계속 종료되어 다시 시작하지 않았습니다. ${error ? `마지막 시작 오류: ${error.message}` : '앱을 다시 실행해 주세요.'} 관리 → 저장 위치·정보의 ‘진단 정보 복사’로 원인을 알려 주실 수 있습니다.`,
-          );
+          const message = `Python 백엔드가 계속 종료되어 다시 시작하지 않았습니다. ${error ? `마지막 시작 오류: ${error.message}` : '앱을 다시 실행해 주세요.'} 관리 → 저장 위치·정보의 ‘진단 정보 복사’로 원인을 알려 주실 수 있습니다.`;
+          if (!unattendedProblem('백엔드 종료', message))
+            dialog.showErrorBox('백엔드 종료', message);
         },
         failed: (error) =>
           void diagnostics.record(`백엔드를 다시 시작하지 못했습니다: ${error.message}`),
@@ -1895,7 +1934,8 @@ else {
     })
     .catch(async (error) => {
       await diagnostics?.record(`앱을 시작하지 못했습니다: ${error.stack || error.message}`);
-      dialog.showErrorBox('Private Agent 시작 오류', error.message);
+      if (!unattendedProblem('Private Agent 시작 오류', error.message))
+        dialog.showErrorBox('Private Agent 시작 오류', error.message);
       app.quit();
     });
 }
@@ -1934,7 +1974,9 @@ app.on('before-quit', (event) => {
       ]);
     } finally {
       await stopBackend();
-      app.quit();
+      // Electron ends a quit with 0 whatever process.exitCode says.
+      if (exitCode) app.exit(exitCode);
+      else app.quit();
     }
   })();
 });

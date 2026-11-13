@@ -1,7 +1,10 @@
 import { test, expect, type ElectronApplication } from '@playwright/test';
+import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+// Outside Electron, its package is the path of the binary Playwright starts too.
+import electronBinary from 'electron';
 import { inspect } from '../electron/mp4.cjs';
 import { launch } from './helpers';
 
@@ -17,8 +20,10 @@ const FILES = {
 };
 const svg = (color: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="${color}"/></svg>`;
-// Holds shortened, the app's own report of the result kept from opening Explorer.
+// Holds shortened, the app's own report of the result kept from opening Explorer. The runs are unattended, as a test
+// is: a problem ends the app at once with its message, rather than waiting on a dialog until the test gives up.
 const env = { PRIVATE_AGENT_DEMO_PACE: '0.25', PRIVATE_AGENT_DEMO_REVEAL: '0' };
+const UNATTENDED = '--unattended';
 
 // The app closes by itself once the video is made. Under Playwright's inspector a process that ends waits for the
 // debugger to leave and says so: that line, or the exit, is the end.
@@ -86,7 +91,7 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
   const output = path.join(directory, '시연 영상');
   const wiki = path.join(directory, '시연 Wiki');
   try {
-    let app = await launch(userData, env, ['--demo', list]);
+    let app = await launch(userData, env, ['--demo', list, UNATTENDED]);
     let finished = ended(app, 240_000);
     const page = await app.firstWindow();
     // The demo fills in the storage screen itself, then works the import box.
@@ -134,7 +139,11 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
       path.join(folder, FILES.captions),
       captions.replace('시연에 쓸 Wiki 저장소를 비우고 새로 만듭니다', '고친 자막입니다'),
     );
-    app = await launch(path.join(directory, 'render-data'), env, ['--demo-render', folder]);
+    app = await launch(path.join(directory, 'render-data'), env, [
+      '--demo-render',
+      folder,
+      UNATTENDED,
+    ]);
     await ended(app, 180_000);
     expect((await stat(path.join(folder, FILES.video))).mtimeMs).toBeGreaterThan(before);
     expect((await readdir(folder)).sort()).toEqual(Object.values(FILES).sort());
@@ -147,7 +156,7 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
     // A second recording starts from an emptied Wiki, and the panel's stop button still makes its video. Partway, its
     // window leaves full screen and is drawn at another size: the recording keeps its first size, and the video is
     // still made (frames of another size used to stop the player, and with it the video).
-    app = await launch(userData, env, ['--demo', list]);
+    app = await launch(userData, env, ['--demo', list, UNATTENDED]);
     finished = ended(app, 180_000);
     const second = await panel(app);
     await expect(second.locator('#step')).toContainText('2/3', { timeout: 120_000 });
@@ -194,7 +203,7 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
 
     // Closing the app's window ends a third recording at once: the app closes, keeping what was recorded with its
     // captions and report.
-    app = await launch(userData, env, ['--demo', list]);
+    app = await launch(userData, env, ['--demo', list, UNATTENDED]);
     finished = ended(app, 120_000);
     const third = await panel(app);
     await expect(third.locator('#step')).toContainText('2단계', { timeout: 120_000 });
@@ -212,6 +221,65 @@ test('demo recording: own Wiki, the list imported through the screens, video wit
       '멈춘 이유: 앱 창이 닫혀 시연을 멈췄습니다.',
     );
     expect((await inspect(path.join(closed, FILES.raw))).layout).toEqual(['ftyp', 'moov', 'mdat']);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// The app as a scheduled task or a script runs it, with no one to answer a dialog: what its caller sees of it is its
+// exit code and its error output.
+async function unattended(userData: string, args: string[]) {
+  const executable = process.env.PRIVATE_AGENT_E2E_EXECUTABLE;
+  const child = spawn(
+    executable || (electronBinary as unknown as string),
+    [...(executable ? ['--no-sandbox'] : ['--no-sandbox', '.']), ...args, UNATTENDED],
+    {
+      env: { ...process.env, ...env, PRIVATE_AGENT_USER_DATA: userData, PRIVATE_AGENT_DEV_URL: '' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  );
+  let errors = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => (errors += chunk));
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('앱이 60초 안에 끝나지 않았습니다.'));
+    }, 60_000);
+    child.once('exit', (exit) => {
+      clearTimeout(timer);
+      resolve(exit);
+    });
+  });
+  return { code, errors };
+}
+
+test('an unattended demo that cannot go on says why in its log and error output, and ends with exit code 1', async () => {
+  test.setTimeout(240_000);
+  const directory = await mkdtemp(path.join(tmpdir(), 'demo-unattended-'));
+  const userData = path.join(directory, 'user-data');
+  try {
+    // A list not given by its whole path.
+    let run = await unattended(userData, ['--demo', 'demo-list.txt']);
+    expect(run.code).toBe(1);
+    expect(run.errors).toContain(
+      'Private Agent 시연 녹화: 녹화할 목록 파일을 전체 경로로 지정해 주세요.',
+    );
+    expect(await readFile(path.join(userData, 'logs', 'app.log'), 'utf8')).toContain(
+      '녹화할 목록 파일을 전체 경로로 지정해 주세요.',
+    );
+    // A list that does not exist yet is written to fill in; nothing opens it.
+    const list = path.join(directory, 'demo-list.txt');
+    run = await unattended(userData, ['--demo', list]);
+    expect(run.code).toBe(1);
+    expect(run.errors).toContain(`녹화 목록 파일이 없어 새로 만들었습니다: ${list}`);
+    expect(await readFile(list, 'utf8')).toContain('Private Agent 시연 녹화 목록');
+    // A folder that holds no recording to make the video of again.
+    run = await unattended(userData, ['--demo-render', directory]);
+    expect(run.code).toBe(1);
+    expect(run.errors).toContain(
+      'Private Agent 시연 영상 만들기: 다시 만들 녹화(원본 녹화.mp4)를 찾지 못했습니다',
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

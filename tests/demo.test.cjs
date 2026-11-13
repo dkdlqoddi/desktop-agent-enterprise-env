@@ -23,30 +23,48 @@ test('the demo is started by its own arguments, anywhere among those Chromium ad
   assert.deepEqual(demoLaunch(['app.exe', '--inspect=0', '--demo', list]), {
     kind: 'record',
     path: list,
+    unattended: false,
   });
   assert.deepEqual(demoLaunch(['app.exe', `--demo-render=${list}`]), {
     kind: 'render',
     path: list,
+    unattended: false,
   });
   assert.deepEqual(demoLaunch(['app.exe', '--demo', '"' + list + '"']), {
     kind: 'record',
     path: list,
+    unattended: false,
   });
   // A second instance's arguments may come with the flag alone.
   assert.deepEqual(demoLaunch(['app.exe', '--demo', '--allow-file-access']), {
     kind: 'record',
     path: '',
+    unattended: false,
   });
   assert.equal(demoLaunch(['app.exe', '.']), null);
   // A relative path stays as given, for the app to refuse: the launcher starts the app in its build folder.
   assert.deepEqual(demoLaunch(['app.exe', '--demo', 'demo-list.txt']), {
     kind: 'record',
     path: 'demo-list.txt',
+    unattended: false,
   });
   assert.deepEqual(demoLaunch(['app.exe', '--demo-render=시연 영상']), {
     kind: 'render',
     path: '시연 영상',
+    unattended: false,
   });
+  // A run nobody watches, before or after the list; the flag alone starts nothing.
+  assert.deepEqual(demoLaunch(['app.exe', '--unattended', '--demo', list]), {
+    kind: 'record',
+    path: list,
+    unattended: true,
+  });
+  assert.deepEqual(demoLaunch(['app.exe', '--demo-render', list, '--unattended']), {
+    kind: 'render',
+    path: list,
+    unattended: true,
+  });
+  assert.equal(demoLaunch(['app.exe', '.', '--unattended']), null);
 });
 
 test('the video is at most 1920 wide with even sides, and keeps only the speed-ups it can play', () => {
