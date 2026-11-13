@@ -31,7 +31,7 @@ def steps(monkeypatch, *functions):
 def test_a_new_wiki_and_one_from_before_versions_are_at_the_newest_version(tmp_path):
     fresh = tmp_path / "new" / "wiki.db"
     Database(fresh)
-    assert user_version(fresh) == migrations.SCHEMA_VERSION == 3
+    assert user_version(fresh) == migrations.SCHEMA_VERSION == 4
     # A Wiki of an earlier version: the block's compatibility steps bring it to version 1, the migrations the rest.
     old = tmp_path / "old.db"
     with contextlib.closing(sqlite3.connect(old)) as db:
@@ -318,10 +318,211 @@ def test_version_3_lets_the_trigram_index_find_two_characters_and_the_sections(t
     assert found(service, "캐시", "auto") == []
 
     Database(path)
-    assert user_version(path) == migrations.SCHEMA_VERSION == 3 and index_whole(service)
+    assert user_version(path) == migrations.SCHEMA_VERSION == 4 and index_whole(service)
     with service.db.connect() as db:
         row = db.execute("SELECT title,summary,content FROM document_search WHERE doc_id=?", (sectioned,)).fetchone()
     assert tuple(row) == ("설계서" + END, "\n레디스 캐시 전략" + END, "긴 문서" + END)
     assert sorted(found(service, "캐시", "auto")) == sorted([titled, ended, sectioned])
     # The word search leaves the AI's summaries out, those of the sections too.
     assert sorted(found(service, "캐시")) == sorted([titled, ended])
+
+
+# -- Version 4: the imported text last in the source tables ------------------------------------------------------------
+
+FILE = ["source_size INTEGER", "source_mtime INTEGER"]
+# The source tables as version 3 made them: its own columns, the imported text, imported_at, part, parts, title, then
+# the columns versions added after the title (ALTER TABLE). As (columns, unique key, identity, added columns).
+VERSION_3 = {
+    "rtf_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash", "source_path", FILE),
+    "office_sources": (
+        "source_path TEXT NOT NULL, source_hash TEXT NOT NULL, application TEXT NOT NULL",
+        "source_hash",
+        "source_path",
+        ["written TEXT NOT NULL DEFAULT ''", *FILE],
+    ),
+    "image_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash", "source_path", FILE),
+    "text_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash", "source_path", FILE),
+    "markdown_sources": ("source_path TEXT NOT NULL, source_hash TEXT NOT NULL", "source_hash", "source_path", FILE),
+    "confluence_sources": (
+        "source_url TEXT NOT NULL, page_id TEXT NOT NULL, source_hash TEXT NOT NULL",
+        "source_url, source_hash",
+        "source_url",
+        ["version TEXT NOT NULL DEFAULT ''", "read_at TEXT NOT NULL DEFAULT ''"],
+    ),
+    "jira_sources": (
+        "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL",
+        "source_url, source_hash",
+        "source_url",
+        ["updated TEXT NOT NULL DEFAULT ''", "read_at TEXT NOT NULL DEFAULT ''"],
+    ),
+}
+# A text of a few hundred thousand characters, which overflows many pages of the table.
+LONG = "가져온 긴 글의 한 줄입니다.\n" * 20000
+# A row of every kind of source, each with values of its own in every column.
+SOURCES = {
+    "rtf_sources": {
+        "source_path": "C:\\문서\\보고서.rtf",
+        "source_hash": "h1",
+        "source_size": 10,
+        "source_mtime": None,
+    },
+    "office_sources": {
+        "source_path": "C:\\문서\\계획.docx",
+        "source_hash": "h2",
+        "application": "Word",
+        "written": '["원본에 쓴 글"]',
+        "source_size": 20,
+        "source_mtime": 1_700_000_000_000_000_000,
+    },
+    "image_sources": {"source_path": "/사진/화면.png", "source_hash": "h3", "source_size": 30, "source_mtime": 5},
+    "text_sources": {"source_path": "/글/메모.txt", "source_hash": "h4", "source_size": None, "source_mtime": None},
+    "markdown_sources": {"source_path": "/글/노트.md", "source_hash": "h5", "source_size": 50, "source_mtime": 6},
+    "confluence_sources": {
+        "source_url": "https://wiki.example.com/x/1",
+        "page_id": "1",
+        "source_hash": "h6",
+        "version": "7",
+        "read_at": "2026-11-02T00:00:00+00:00",
+    },
+    "jira_sources": {
+        "source_url": "https://jira.example.com/browse/A-1",
+        "issue_key": "A-1",
+        "source_hash": "h7",
+        "updated": "2026-11-03T00:00:00+00:00",
+        "read_at": "2026-11-04T00:00:00+00:00",
+    },
+}
+
+
+def as_version_3(path):
+    """The Wiki at `path`, new, as version 3 made it: each source table with the imported text before imported_at and
+    the columns added later after the title, with its indexes, a document and its source row of every kind, and the
+    version number 3. The office document's text is long, and the text one the user changed."""
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        for number, (name, (columns, key, identity, added)) in enumerate(VERSION_3.items()):
+            db.execute(f"DROP TABLE {name}")
+            db.execute(
+                f"CREATE TABLE {name} (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, {columns}, "
+                "markdown TEXT NOT NULL, imported_at TEXT NOT NULL, part INTEGER NOT NULL DEFAULT 1, "
+                f"parts INTEGER NOT NULL DEFAULT 1, title TEXT NOT NULL DEFAULT '', UNIQUE({key}, part))"
+            )
+            for column in added:
+                db.execute(f"ALTER TABLE {name} ADD COLUMN {column}")
+            db.execute(f"CREATE INDEX idx_{name}_identity ON {name}({identity})")
+            db.execute(f"CREATE INDEX idx_{name}_parted ON {name}(doc_id) WHERE parts>1")
+            ident, text = f"doc-{name}", LONG if name == "office_sources" else f"{name}의 글"
+            content = "사용자가 고친 글" if name == "text_sources" else text
+            db.execute(
+                "INSERT INTO documents(id,title,content,format,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (
+                    ident,
+                    f"제목 {number}",
+                    content,
+                    "markdown",
+                    "2026-11-01T00:00:00+00:00",
+                    "2026-11-01T00:00:00+00:00",
+                ),
+            )
+            row = {
+                "doc_id": ident,
+                **SOURCES[name],
+                "markdown": text,
+                "imported_at": f"2026-11-01T00:00:0{number}+00:00",
+                "part": 1,
+                "parts": 1,
+                "title": f"제목 {number}",
+            }
+            db.execute(f"INSERT INTO {name}({','.join(row)}) VALUES({','.join('?' * len(row))})", list(row.values()))
+        db.execute("PRAGMA user_version=3")
+
+
+def source_rows(path):
+    """Every row of every source table, by column name."""
+    with contextlib.closing(sqlite3.connect(path)) as db:
+        db.row_factory = sqlite3.Row
+        return {name: [dict(row) for row in db.execute(f"SELECT * FROM {name} ORDER BY doc_id")] for name in VERSION_3}
+
+
+def layout(path):
+    """Each source table's columns in order (PRAGMA table_info), its indexes (name, unique, origin, partial) and its
+    foreign keys."""
+    with contextlib.closing(sqlite3.connect(path)) as db:
+        return {
+            name: (
+                [tuple(row) for row in db.execute(f"PRAGMA table_info({name})")],
+                sorted(tuple(row)[1:] for row in db.execute(f"PRAGMA index_list({name})")),
+                [tuple(row) for row in db.execute(f"PRAGMA foreign_key_list({name})")],
+            )
+            for name in VERSION_3
+        }
+
+
+def test_version_4_puts_the_imported_text_last_and_keeps_every_source(tmp_path):
+    path = tmp_path / "wiki.db"
+    Database(path)
+    as_version_3(path)
+    before = source_rows(path)
+    assert [column[1] for column in layout(path)["office_sources"][0]][4:6] == ["markdown", "imported_at"]
+
+    service = Service(Database(path), None)
+    assert user_version(path) == migrations.SCHEMA_VERSION == 4
+    # Every row with every value, the long text whole; the text is each table's last column.
+    assert source_rows(path) == before
+    upgraded = layout(path)
+    for name, (columns, indexes, keys) in upgraded.items():
+        names = [column[1] for column in columns]
+        assert names[-1] == "markdown" and set(names) == set(before[name][0]), name
+        assert ("idx_" + name + "_identity", 0, "c", 0) in indexes and ("idx_" + name + "_parted", 0, "c", 1) in indexes
+        assert [key[2:4] for key in keys] == [("documents", "doc_id")], name
+    # A new Wiki makes the same tables: columns, indexes and keys alike.
+    fresh = tmp_path / "new.db"
+    Database(fresh)
+    assert layout(fresh) == upgraded
+    # The list shows the documents' sources, and a document what the user changed apart from the text imported.
+    listed = {doc["id"]: doc["source"] for doc in service.wiki_list({})}
+    assert listed["doc-office_sources"] == {
+        "kind": "office",
+        "source_path": "C:\\문서\\계획.docx",
+        "application": "Word",
+        "imported_at": "2026-11-01T00:00:01+00:00",
+    }
+    assert listed["doc-jira_sources"]["issue_key"] == "A-1" and len(listed) == len(VERSION_3)
+    assert service.wiki_get({"id": "doc-office_sources"})["source"]["edited"] is False
+    assert service.wiki_get({"id": "doc-text_sources"})["source"]["edited"] is True
+    assert service.wiki_source_markdown({"id": "doc-office_sources"})["markdown"] == LONG
+    # The keys hold as before: a document purged takes its source, and the same content is not saved twice.
+    service.wiki_delete({"id": "doc-rtf_sources"})
+    service.wiki_purge({"ids": ["doc-rtf_sources"]})
+    with service.db.connect() as db:
+        assert db.execute("SELECT count(*) FROM rtf_sources").fetchone()[0] == 0
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "INSERT INTO jira_sources(doc_id,source_url,issue_key,source_hash,markdown,imported_at) "
+                "VALUES ('doc-text_sources','https://jira.example.com/browse/A-1','A-1','h7','글','t')"
+            )
+
+
+def test_a_version_4_that_fails_leaves_the_sources_of_version_3(tmp_path):
+    path = tmp_path / "wiki.db"
+    Database(path)
+    as_version_3(path)
+    # A column version 4 does not know, in the last table it rebuilds: the migration stops rather than drop it.
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        db.execute("ALTER TABLE jira_sources ADD COLUMN extra TEXT")
+    before, shape = source_rows(path), layout(path)
+    with pytest.raises(RuntimeError, match="jira_sources has columns version 4 does not know: extra"):
+        Database(path)
+    # The tables it had made anew are as version 3 had them again, with every row.
+    assert user_version(path) == 3 and layout(path) == shape and source_rows(path) == before
+    # The next start, without that column, brings the Wiki to version 4.
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
+        db.execute("ALTER TABLE jira_sources DROP COLUMN extra")
+    Database(path)
+    assert user_version(path) == 4
+    assert [column[1] for column in layout(path)["rtf_sources"][0]][-1] == "markdown"
+    rows = source_rows(path)
+    assert (
+        rows["office_sources"] == before["office_sources"]
+        and rows["jira_sources"][0]["updated"] == SOURCES["jira_sources"]["updated"]
+    )

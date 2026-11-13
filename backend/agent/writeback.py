@@ -451,7 +451,10 @@ class Writeback:
             if not db.execute("SELECT 1 FROM documents WHERE id=? AND deleted_at IS NULL", (ident,)).fetchone():
                 raise UserError("문서를 찾을 수 없습니다.")
             table, kind = "office_sources", "office"
-            row = db.execute(f"SELECT * FROM {table} WHERE doc_id=?", (ident,)).fetchone()
+            # By name, without the imported text: the parts below carry it.
+            row = db.execute(
+                f"SELECT doc_id, source_path, source_hash, application FROM {table} WHERE doc_id=?", (ident,)
+            ).fetchone()
             if not row:
                 raise UserError(UNSUPPORTED)
             columns = sources.key(table)

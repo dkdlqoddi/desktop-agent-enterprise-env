@@ -155,12 +155,43 @@ SOURCE_TABLES = {
 }
 
 
-def source_table(name, columns, key):
-    # title: the title the import gave the document, which tells a title the user changed apart ('' before it was kept).
+# The columns of the source tables after the title, which versions added one by one (Database adds those an earlier
+# Wiki lacks):
+# - written: what write-backs put into an Office file since the import, as a JSON list of texts (writeback.remember);
+#   an import again leaves it '' as it saves the row anew.
+# - source_size, source_mtime: a file's size and modification time (ns) as the import read it: a file with both
+#   unchanged is taken as unchanged without reading it again (sources.stored_hash). NULL before they were kept, or when
+#   the file had changed too recently for its time to tell a later change apart (sources.file_stat).
+# - version, updated, read_at: a page's version number (Confluence) and a ticket's updated time (JIRA) as the site gave
+#   them with the text imported, and when the source was last read in full: a routine's import compares them before it
+#   reads a page again (sources.fresh).
+FILE_COLUMNS = [("source_size", "INTEGER"), ("source_mtime", "INTEGER")]
+REMOTE = "TEXT NOT NULL DEFAULT ''"
+SOURCE_ADDED = {
+    "rtf_sources": FILE_COLUMNS,
+    "office_sources": [("written", "TEXT NOT NULL DEFAULT ''"), *FILE_COLUMNS],
+    "image_sources": FILE_COLUMNS,
+    "text_sources": FILE_COLUMNS,
+    "markdown_sources": FILE_COLUMNS,
+    "confluence_sources": [("version", REMOTE), ("read_at", REMOTE)],
+    "jira_sources": [("updated", REMOTE), ("read_at", REMOTE)],
+}
+
+
+def source_table(name, columns, key, created=None):
+    """The source table `name` as a new Wiki has it, made under the name `created` when that is given (a table made
+    anew). title: the title the import gave the document, which tells a title the user changed apart ('' before it was
+    kept). The imported text (markdown) comes last: SQLite reads a row's columns in their order, and a column after a
+    long text only through the pages the text overflows to, which a list of documents of millions of characters would
+    read whole (migrations.sources_text_last). A column added to a source table from version 4 on therefore goes in by a
+    migration that makes the table anew with the text last, not by ALTER TABLE ADD COLUMN, which puts it after the
+    text."""
+    added = "".join(f"{column} {definition}, " for column, definition in SOURCE_ADDED[name])
     return (
-        f"CREATE TABLE IF NOT EXISTS {name} (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
-        f"{columns}, markdown TEXT NOT NULL, imported_at TEXT NOT NULL, part INTEGER NOT NULL DEFAULT 1, "
-        f"parts INTEGER NOT NULL DEFAULT 1, title TEXT NOT NULL DEFAULT '', UNIQUE({key}, part))"
+        f"CREATE TABLE IF NOT EXISTS {created or name} "
+        "(doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
+        f"{columns}, imported_at TEXT NOT NULL, part INTEGER NOT NULL DEFAULT 1, parts INTEGER NOT NULL DEFAULT 1, "
+        f"title TEXT NOT NULL DEFAULT '', {added}markdown TEXT NOT NULL, UNIQUE({key}, part))"
     )
 
 
@@ -403,28 +434,11 @@ class Database:
                 # An import finds the earlier one of the same file or page by it.
                 db.execute(f"CREATE INDEX IF NOT EXISTS idx_{name}_identity ON {name}({identity(name)})")
                 # The rows of the long imports that earlier versions saved in parts: none once each is one document
-                # (parts.merge). Asking for them by this index never reads the table, whose rows hold the imported
-                # text before `parts` (parts.parted, sources.whole).
+                # (parts.merge). Asking for them by this index never reads the table (parts.parted, sources.whole),
+                # whose rows held the imported text before `parts` until version 4.
                 db.execute(f"CREATE INDEX IF NOT EXISTS idx_{name}_parted ON {name}(doc_id) WHERE parts>1")
-            # What write-backs put into the file since the import, as a JSON list of texts (writeback.remember); an
-            # import again leaves it '' as it saves the row anew.
-            if "written" not in {r[1] for r in db.execute("PRAGMA table_info(office_sources)")}:
-                db.execute("ALTER TABLE office_sources ADD COLUMN written TEXT NOT NULL DEFAULT ''")
-            # A file's size and modification time (ns) as the import read it: a file with both unchanged is taken as
-            # unchanged without reading it again (sources.stored_hash). NULL before they were kept, or when the file
-            # had changed too recently for its time to tell a later change apart (sources.file_stat).
-            # A page's version number (Confluence) and a ticket's updated time (JIRA) as the site gave them with the
-            # text imported, and when the source was last read in full (read_at): a routine's import compares them
-            # before it reads a page again (sources.fresh).
-            added = {
-                name: [("source_size", "INTEGER"), ("source_mtime", "INTEGER")]
-                for name in SOURCE_TABLES
-                if identity(name) == "source_path"
-            }
-            remote = "TEXT NOT NULL DEFAULT ''"
-            added["confluence_sources"] = [("version", remote), ("read_at", remote)]
-            added["jira_sources"] = [("updated", remote), ("read_at", remote)]
-            for name, columns in added.items():
+            # The columns an earlier Wiki lacks go after its text, until migrations.sources_text_last puts that last.
+            for name, columns in SOURCE_ADDED.items():
                 existing = {r[1] for r in db.execute(f"PRAGMA table_info({name})")}
                 for column, definition in columns:
                     if column not in existing:
@@ -659,7 +673,7 @@ class Database:
             if "part" in existing:
                 continue
             listed = ",".join(existing)
-            db.execute(source_table(f"{name}_parts", columns, key))
+            db.execute(source_table(name, columns, key, f"{name}_parts"))
             db.execute(f"INSERT INTO {name}_parts ({listed}) SELECT {listed} FROM {name}")
             db.execute(f"DROP TABLE {name}")
             db.execute(f"ALTER TABLE {name}_parts RENAME TO {name}")

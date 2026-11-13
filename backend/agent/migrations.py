@@ -51,10 +51,73 @@ def search_text_ended(db):
     drop_search_text(db)
 
 
+def sources_text_last(db):
+    """Version 4: the text an import saved (markdown) is the last column of each source table. SQLite reads a row's
+    columns in their order, and one after a long text only through the pages the text overflows to: version 3 had
+    imported_at, part, parts, title and the columns added later after it, so a document list that showed the sources
+    of documents of millions of characters read all of their texts. Each table is made anew in the order of version 4
+    (SQLite cannot reorder the columns of a table), with every row, and with the indexes and triggers it had.
+
+    The columns of each table are those version 3 has, the block having added what an earlier Wiki lacked; a table
+    with a column this migration does not know is not rebuilt without it but stops the migration, which leaves the
+    Wiki at version 3."""
+    common = (
+        "imported_at TEXT NOT NULL, part INTEGER NOT NULL DEFAULT 1, parts INTEGER NOT NULL DEFAULT 1, "
+        "title TEXT NOT NULL DEFAULT ''"
+    )
+    file = f"source_path TEXT NOT NULL, source_hash TEXT NOT NULL, {common}, source_size INTEGER, source_mtime INTEGER"
+    tables = {
+        "rtf_sources": (file, "source_hash"),
+        "office_sources": (
+            "source_path TEXT NOT NULL, source_hash TEXT NOT NULL, application TEXT NOT NULL, "
+            f"{common}, written TEXT NOT NULL DEFAULT '', source_size INTEGER, source_mtime INTEGER",
+            "source_hash",
+        ),
+        "image_sources": (file, "source_hash"),
+        "text_sources": (file, "source_hash"),
+        "markdown_sources": (file, "source_hash"),
+        "confluence_sources": (
+            "source_url TEXT NOT NULL, page_id TEXT NOT NULL, source_hash TEXT NOT NULL, "
+            f"{common}, version TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT ''",
+            "source_url, source_hash",
+        ),
+        "jira_sources": (
+            "source_url TEXT NOT NULL, issue_key TEXT NOT NULL, source_hash TEXT NOT NULL, "
+            f"{common}, updated TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT ''",
+            "source_url, source_hash",
+        ),
+    }
+    for name, (columns, key) in tables.items():
+        # Its indexes and triggers go with it when it is dropped: what made them makes them again.
+        kept = [
+            row[0]
+            for row in db.execute(
+                "SELECT sql FROM sqlite_master WHERE tbl_name=? AND type IN ('index','trigger') AND sql IS NOT NULL "
+                "ORDER BY type, name",
+                (name,),
+            )
+        ]
+        db.execute(
+            f"CREATE TABLE {name}_4 (doc_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE, "
+            f"{columns}, markdown TEXT NOT NULL, UNIQUE({key}, part))"
+        )
+        before = [row[1] for row in db.execute(f"PRAGMA table_info({name})")]
+        after = [row[1] for row in db.execute(f"PRAGMA table_info({name}_4)")]
+        unknown = sorted(set(before) - set(after))
+        if unknown:
+            raise RuntimeError(f"{name} has columns version 4 does not know: {', '.join(unknown)}")
+        listed = ",".join(column for column in after if column in before)
+        db.execute(f"INSERT INTO {name}_4 ({listed}) SELECT {listed} FROM {name}")
+        db.execute(f"DROP TABLE {name}")
+        db.execute(f"ALTER TABLE {name}_4 RENAME TO {name}")
+        for sql in kept:
+            db.execute(sql)
+
+
 # The migrations in order: the first takes a Wiki from version 1 to 2, the next from 2 to 3, and so on. Each is a
 # function of the connection that must neither commit nor roll back. It writes its changes in SQL of its own, for the
 # tables as its version has them, not through code that a later version may change.
-MIGRATIONS = (search_text_anew, search_text_ended)
+MIGRATIONS = (search_text_anew, search_text_ended, sources_text_last)
 # The version this code writes and the newest it opens.
 SCHEMA_VERSION = 1 + len(MIGRATIONS)
 
