@@ -113,6 +113,12 @@ class HermesSession(
         scope.launch { turns.withLock { close(graceful = true) } }
     }
 
+    /** Stops the worker and returns once it has ended: what it holds open in its home can then be deleted. */
+    suspend fun stopWorker() {
+        idle?.cancel()
+        withContext(Dispatchers.IO) { turns.withLock { close(graceful = true) } }
+    }
+
     private suspend fun loop(turn: Turn, handler: Handler): String {
         val worker = ensureProcess()
         var finished = false

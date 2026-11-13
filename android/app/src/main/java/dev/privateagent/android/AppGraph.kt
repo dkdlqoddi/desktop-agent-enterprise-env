@@ -2,6 +2,7 @@ package dev.privateagent.android
 
 import android.app.Application
 import dev.privateagent.android.agent.AgentGrants
+import dev.privateagent.android.agent.AgentMemory
 import dev.privateagent.android.agent.AppActions
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
@@ -68,4 +69,7 @@ class AppGraph(app: Application) {
         runtime = hermesRuntime,
         hermes = hermes,
     )
+
+    /** What the agent remembers, for the user to read and change; nothing of it changes while a turn runs. */
+    val memory = AgentMemory(hermesRuntime.home) { agent.busy.value }
 }

@@ -213,7 +213,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 5. 위험한 명령은 온 메신저에서 묻고, 적은 계정의 답(`/approve`·`/deny`나 버튼)을 5분까지 기다립니다.
 6. 상태는 `gateway` 프레임으로 올라오고 화면이 `agent.gateway`로 읽습니다. Hermes의 오류 문장은 넘기지 않고 상태와 오류 코드만 넘깁니다(문장에 봇 토큰이 들어갈 수 있음). 설정이 바뀌면 다시 띄우고, 스스로 끝나면 간격을 늘려 가며 다섯 번까지 다시 띄웁니다. 앱을 닫으면 함께 끝납니다.
 
-Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다. 내장 Hermes 실행 환경을 넣은 빌드에서는 같은 `worker.py`를 휴대폰에서 실행하고(터미널·파일·코드·브라우저 자동화·컴퓨터 사용은 끔), 넣지 않은 빌드에서는 설정한 LLM의 도구 호출로 계획해 카드를 확인받습니다. 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
+Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다. 내장 Hermes 실행 환경을 넣은 빌드에서는 같은 `worker.py`를 휴대폰에서 실행하고(터미널·파일·코드·브라우저 자동화·컴퓨터 사용은 끔), 넣지 않은 빌드에서는 설정한 LLM의 도구 호출로 계획해 카드를 확인받습니다. 채팅의 통제(명령 확인의 범위, 턴이 한 일, 보호 구역, 기억 관리)는 데스크톱의 `agent_chat.py`·`agent_guard.py`·`agent_memory.py`를 Kotlin으로 옮긴 `agent/`의 `ApprovalRules`·`AgentGrants`·`TurnActivity`·`ProtectedZones`·`AgentMemory`가 맡고, 워커에는 데스크톱과 같은 턴 프레임 필드(`allowed`·`session_allowed`·`protected`)로 넘깁니다. 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
 
 `npm run build:hermes`를 하지 않은 소스 실행에는 도구가 없습니다. 연결한 LLM이 JSON으로 계획하고(`engine: direct`), 읽기만 하는 작업은 바로, 나머지는 사용자가 카드의 **확인 후 실행**(`agent.approve`)을 눌러야 실행하며, 화면의 배지가 이를 알립니다. 배포 앱은 항상 내장 Hermes를 씁니다.
 
