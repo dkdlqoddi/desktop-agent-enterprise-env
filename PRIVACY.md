@@ -114,7 +114,7 @@ LLM 연결 화면은 엔드포인트가 비어 있으면 고른 API 형식의 �
 
 - `app.log`에는 실패한 것과 오류만 남고, 요청의 매개변수, 문서 본문, 자격 증명은 남기지 않습니다. `PRIVATE_AGENT_LOG_LEVEL=debug`이면 요청마다 메서드 이름과 처리 시간을 더 남깁니다.
 - `backend.log`에는 예외와 경고가 남으며, 메시지에 파일 이름이 들어갈 수 있습니다. LLM 요청의 실패는 호스트, 실패 종류, 시간, 시도 횟수만 남기고 키·헤더·본문은 남기지 않습니다.
-- 두 로그와 진단 복사본은 `sk-…`·`pa_…` 형식의 키와 토큰, `password`·`api_key`·`authorization`·`token`·`secret`·`cookie` 같은 이름 뒤의 값, `Bearer` 토큰을 `[REDACTED]`로 바꿉니다. 이 형식에 맞지 않는 값(예: 이름이 다른 사용자 지정 헤더)은 가려지지 않을 수 있습니다.
+- 두 로그와 진단 복사본은 `password`·`api_key`·`authorization`·`token`·`secret`·`cookie` 같은 이름 뒤의 값, `Bearer` 토큰, 그리고 이름 없이 적혀도 형식으로 알 수 있는 키와 토큰(`sk-…`·`pa_…`, GitHub·Slack·텔레그램·디스코드·Google·Hugging Face·Firecrawl·Tavily·fal·AWS의 키와 토큰, JWT)을 `[REDACTED]`로 바꿉니다. 이 형식에 맞지 않는 값(예: 이름이 다른 사용자 지정 헤더)은 가려지지 않을 수 있습니다.
 - 진단 복사본은 클립보드에만 복사하며, 사용자 폴더 이름을 `<user>`로 바꿉니다. 보내기 전에 내용을 확인하세요. 자세한 내용은 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#로그와-진단-정보)에 있습니다.
 
 ## Android 앱

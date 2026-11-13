@@ -29,12 +29,14 @@ BACKUPS = 1
 MAX_TRACE = 20_000
 # The ID a logged failure's message ends with, as report() and worker_failure() write it.
 LOG_ID = re.compile(r"\s*\(오류 ID [0-9a-f]{8}\)")
-# Secrets as they could appear in an exception's message (a URL, a header, a JSON body): the app's own API tokens
-# (pa_…), OpenAI-style keys, bearer tokens and anything named as a password, key, token or cookie. Written down as
-# [REDACTED] (electron/diagnostics.cjs does the same for the app's log and the copied report).
+# Secrets as they could appear in an exception's message (a URL, a header, a JSON body): anything named as a password,
+# key, token, secret or cookie, bearer tokens, and the tokens whose form gives them away wherever they stand: the app's
+# own API tokens (pa_…), OpenAI- and Anthropic-style keys, and those of the services and messengers the chat agent may
+# be given (GitHub, Slack, Telegram, Discord, Google, Hugging Face, Firecrawl, Tavily, fal, AWS) and JSON Web Tokens.
+# Written down as [REDACTED] (electron/diagnostics.cjs does the same for the app's log and the copied report). The
+# named and header rules come first: a value they take goes whole, where a token rule before them would have left a
+# part of its [REDACTED] for them to cut ("api_key=[REDACTED]]").
 SECRETS = (
-    (re.compile(r"\bpa_[A-Za-z0-9_-]{6,}"), "pa_[REDACTED]"),
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "sk-[REDACTED]"),
     # A header whose whole value is secret, to the end of its line: "Authorization: Bearer <token>" keeps nothing of
     # the token, and a cookie header hides every cookie, not the first alone.
     (
@@ -56,6 +58,21 @@ SECRETS = (
         r"\1\2[REDACTED]",
     ),
     (re.compile(r"\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}", re.I), r"\1 [REDACTED]"),
+    (re.compile(r"\bpa_[A-Za-z0-9_-]{6,}"), "pa_[REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"), "sk-[REDACTED]"),
+    (re.compile(r"\bsk_[A-Za-z0-9_]{20,}"), "sk_[REDACTED]"),
+    (re.compile(r"\b(gh[pousr])_[A-Za-z0-9]{20,}"), r"\1_[REDACTED]"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "github_pat_[REDACTED]"),
+    (re.compile(r"\b(xox[abeoprs]|xapp)-[A-Za-z0-9-]{10,}"), r"\1-[REDACTED]"),
+    # A Telegram bot token, also inside the Bot API's addresses (https://api.telegram.org/bot<token>/getMe).
+    (re.compile(r"\b(bot)?(\d{6,12}):[A-Za-z0-9_-]{30,}"), r"\1\2:[REDACTED]"),
+    (re.compile(r"\b[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}"), "[REDACTED]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "[REDACTED]"),
+    (re.compile(r"\bAIza[A-Za-z0-9_-]{30,}"), "AIza[REDACTED]"),
+    (re.compile(r"\bhf_[A-Za-z0-9]{30,}"), "hf_[REDACTED]"),
+    (re.compile(r"\b(fc|tvly)-[A-Za-z0-9-]{16,}"), r"\1-[REDACTED]"),
+    (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{32}\b"), "[REDACTED]"),
+    (re.compile(r"\b(AKIA|ASIA)[0-9A-Z]{16}\b"), r"\1[REDACTED]"),
 )
 
 DISK_FULL = "디스크 공간이 부족해 저장하지 못했습니다. 공간을 확보한 뒤 다시 시도해 주세요."

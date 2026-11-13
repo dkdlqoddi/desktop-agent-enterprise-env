@@ -10,13 +10,15 @@ const MAX_BYTES = 1_000_000;
 const STDERR_BYTES = 32_000;
 // How much of each log goes into the diagnostics the user copies.
 const TAIL_BYTES = 32_000;
-// Secrets as they could appear in what is logged (an error's message quoting a URL, a header or a JSON body): the
-// app's own API tokens (pa_…), OpenAI-style keys, bearer tokens and anything named as a password, key, token or
-// cookie. Written down as [REDACTED]; backend/agent/diagnostics.py does the same for the backend's log.
+// Secrets as they could appear in what is logged (an error's message quoting a URL, a header or a JSON body):
+// anything named as a password, key, token, secret or cookie, bearer tokens, and the tokens whose form gives them away
+// wherever they stand: the app's own API tokens (pa_…), OpenAI- and Anthropic-style keys, and those of the services and
+// messengers the chat agent may be given (GitHub, Slack, Telegram, Discord, Google, Hugging Face, Firecrawl, Tavily,
+// fal, AWS) and JSON Web Tokens. Written down as [REDACTED]; backend/agent/diagnostics.py does the same for the
+// backend's log, with the same rules in the same order. The named and header rules come first: a value they take goes
+// whole, where a token rule before them would have left a part of its [REDACTED] for them to cut.
 /** @type {[RegExp, string][]} */
 const SECRETS = [
-  [/\bpa_[A-Za-z0-9_-]{6,}/g, 'pa_[REDACTED]'],
-  [/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[REDACTED]'],
   // A header whose whole value is secret, to the end of its line: "Authorization: Bearer <token>" keeps nothing of
   // the token, and a cookie header hides every cookie, not the first alone.
   [
@@ -31,6 +33,21 @@ const SECRETS = [
     '$1$2[REDACTED]',
   ],
   [/\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}/gi, '$1 [REDACTED]'],
+  [/\bpa_[A-Za-z0-9_-]{6,}/g, 'pa_[REDACTED]'],
+  [/\bsk-[A-Za-z0-9_-]{6,}/g, 'sk-[REDACTED]'],
+  [/\bsk_[A-Za-z0-9_]{20,}/g, 'sk_[REDACTED]'],
+  [/\b(gh[pousr])_[A-Za-z0-9]{20,}/g, '$1_[REDACTED]'],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, 'github_pat_[REDACTED]'],
+  [/\b(xox[abeoprs]|xapp)-[A-Za-z0-9-]{10,}/g, '$1-[REDACTED]'],
+  // A Telegram bot token, also inside the Bot API's addresses (https://api.telegram.org/bot<token>/getMe).
+  [/\b(bot)?(\d{6,12}):[A-Za-z0-9_-]{30,}/g, '$1$2:[REDACTED]'],
+  [/\b[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}/g, '[REDACTED]'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[REDACTED]'],
+  [/\bAIza[A-Za-z0-9_-]{30,}/g, 'AIza[REDACTED]'],
+  [/\bhf_[A-Za-z0-9]{30,}/g, 'hf_[REDACTED]'],
+  [/\b(fc|tvly)-[A-Za-z0-9-]{16,}/g, '$1-[REDACTED]'],
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{32}\b/g, '[REDACTED]'],
+  [/\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, '$1[REDACTED]'],
 ];
 // The user's name in the paths of their profile folder, which the copied report leaves out.
 // A Windows path is found as it is written, and as Python quotes it in an error's message (C:\\Users\\name, with

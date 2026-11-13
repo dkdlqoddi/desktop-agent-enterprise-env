@@ -31,6 +31,43 @@ async function logs(t, options = {}) {
   };
 }
 
+// The tokens of the services and messengers the chat agent may be given, as an error may quote them bare; the same
+// table is in backend/tests/test_diagnostics.py, as the backend's log redacts alike.
+const TOKENS = [
+  ['failed with ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8', 'failed with ghp_[REDACTED]'],
+  ['pat github_pat_' + '11ABCDEFG0123456789_abcdefghijklmnop', 'pat github_pat_[REDACTED]'],
+  ['slack xoxb-' + '1234567890-0987654321-AbCdEfGhIjKl', 'slack xoxb-[REDACTED]'],
+  ['socket xapp-' + '1-A0123456789-0123456789-abcdef', 'socket xapp-[REDACTED]'],
+  [
+    'GET https://api.telegram.org/bot123456789:' +
+      'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw' +
+      '/getMe failed',
+    'GET https://api.telegram.org/bot123456789:[REDACTED]/getMe failed',
+  ],
+  ['token 123456789:' + 'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw', 'token 123456789:[REDACTED]'],
+  [
+    'discord ' + 'MTA0NjAxNDQyNTk3MzQyNjE4Mg' + '.GhIjKl.' + 'abcdefghijklmnopqrstuvwxyz01234',
+    'discord [REDACTED]',
+  ],
+  [
+    'jwt ' + 'eyJhbGciOiJIUzI1NiJ9' + '.eyJzdWIiOiIxMjM0In0' + '.abcdefghijklmnop',
+    'jwt [REDACTED]',
+  ],
+  ['google AIza' + 'SyA1234567890abcdefghijklmnopqrstu', 'google AIza[REDACTED]'],
+  ['hf hf_' + 'abcdefghijklmnopqrstuvwxyz012345', 'hf hf_[REDACTED]'],
+  ['firecrawl fc-' + '0123456789abcdef0123456789abcdef', 'firecrawl fc-[REDACTED]'],
+  ['tavily tvly-' + 'dev-0123456789abcdefABCDEF', 'tavily tvly-[REDACTED]'],
+  ['elevenlabs sk_' + '0123456789abcdef0123456789abcdef', 'elevenlabs sk_[REDACTED]'],
+  [
+    'fal 01234567-89ab-cdef-0123-456789abcdef:' + '0123456789abcdef0123456789abcdef',
+    'fal [REDACTED]',
+  ],
+  ['aws AKIA' + 'IOSFODNN7EXAMPLE', 'aws AKIA[REDACTED]'],
+  // Ordinary text with those letters stays: a time, a version, a module path, a word.
+  ['at 12:30:45 on v1.2.3 in agent.llm.request', 'at 12:30:45 on v1.2.3 in agent.llm.request'],
+  ['task_queue skipped, bot 12 replied', 'task_queue skipped, bot 12 replied'],
+];
+
 test('records what failed in the app log, and starts a new file past its size', async (t) => {
   const { directory, diagnostics } = await logs(t);
   await diagnostics.record('요청 wiki.search이(가) 960초 안에 끝나지 않았습니다.\n');
@@ -135,6 +172,10 @@ test('secrets quoted by what is logged are redacted, and the report leaves the u
     ['max_tokens=4096, prompt_tokens: 12', 'max_tokens=4096, prompt_tokens: 12'],
   ])
     assert.equal(redact(written), kept);
+  // A key after its name goes whole, with nothing of the token rules' own [REDACTED] left behind.
+  assert.equal(redact('api_key=sk-abcdef123456 next'), 'api_key=[REDACTED] next');
+  // Tokens whose form gives them away, where no name says what they are (the same table as the backend's test).
+  for (const [written, kept] of TOKENS) assert.equal(redact(written), kept, written);
   // A path as Python quotes it in an error's message, with every backslash doubled, and in lower case.
   assert.equal(
     anonymize("No such file: 'C:\\\\Users\\\\gildong\\\\Documents\\\\a.docx'"),
