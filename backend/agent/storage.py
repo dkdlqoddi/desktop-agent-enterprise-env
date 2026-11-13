@@ -142,18 +142,21 @@ def migrate_database(source, destination, progress=lambda: None):
 # --- Check -----------------------------------------------------------------------------------------------------------
 
 
-def inspect(path, budget=None):
+def inspect(path, budget=None, known=None):
     """What the database at `path` holds, read through a read-only connection, which never writes to it (not even the
     checkpoint a last connection makes as it closes): {"state", "detail", "version", "tables"}. state is "ok",
     "damaged" (quick_check found a fault, or SQLite could not read the file as a database) or "unchecked" (quick_check
-    did not end within `budget` seconds, whatever it had found by then). Raises sqlite3.OperationalError when the file
-    cannot be read at all (locked, missing, no permission), which says nothing of damage."""
+    did not end within `budget` seconds, whatever it had found by then). `known(version, tables)` hears the version and
+    the tables as soon as they are read, before the check. Raises sqlite3.OperationalError when the file cannot be read
+    at all (locked, missing, no permission), which says nothing of damage."""
     connection = sqlite3.connect(read_only_uri(Path(path).resolve()), uri=True)
     found = {"state": "ok", "detail": "", "version": 0, "tables": []}
     timer = None
     try:
         found["version"] = connection.execute("PRAGMA user_version").fetchone()[0]
         found["tables"] = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        if known is not None:
+            known(found["version"], found["tables"])
         if budget is not None:
             deadline = time.monotonic() + budget
             connection.set_progress_handler(lambda: time.monotonic() > deadline, CHECK_STEPS)
@@ -187,16 +190,25 @@ def inspect(path, budget=None):
     return found
 
 
-def prepare(path, defer_restore=False):
+def prepare(path, defer_restore=False, upgrading=None):
     """Ready the Wiki at `path` for db.Database before anything writes to it: a restore asked for in the last run takes
     its place (apply_restore; `defer_restore` leaves one that waits for a start of the app), then a Wiki that is
     damaged, or newer than this version of the app, is refused (Refused) and left as it is. Returns whether the Wiki is
-    new: no file yet, or one without tables."""
+    new: no file yet, or one without tables.
+
+    A Wiki of an earlier version, which this start's migrations bring up to date, is told to `upgrading(version,
+    newest)` as soon as its version is read, before the check: a migration may copy much of the Wiki, and whoever waits
+    for the start (Electron, through main.py) then waits longer."""
     path = Path(path)
     apply_restore(path, defer=defer_restore)
     if not path.exists():
         return True
-    found = inspect(path, budget=CHECK_BUDGET)
+
+    def known(version, tables):
+        if upgrading is not None and tables and version < migrations.SCHEMA_VERSION:
+            upgrading(version, migrations.SCHEMA_VERSION)
+
+    found = inspect(path, budget=CHECK_BUDGET, known=known)
     if found["state"] == "damaged":
         diagnostics.LOG.error("quick_check of %s failed; the Wiki was not opened:\n%s", path, found["detail"])
         raise Refused(damaged(path))

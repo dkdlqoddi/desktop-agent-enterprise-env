@@ -212,6 +212,53 @@ def test_the_backend_answers_every_request_with_why_the_wiki_did_not_open(tmp_pa
     assert (folder / "wiki.db").read_bytes() == b"no database" * 1000
 
 
+def test_the_backend_says_first_that_it_brings_a_wiki_of_an_earlier_version_up_to_date(tmp_path):
+    """Electron's start waits a minute for the first answer, and longer once the backend says that the migrations of a
+    Wiki of an earlier version run first (wiki.upgrading): the word comes before they run, and only for such a Wiki."""
+    folder = tmp_path / "Wiki"
+    path = folder / "wiki.db"
+    Database(path)
+    told = []
+
+    def upgrading(version, newest):
+        with contextlib.closing(sqlite3.connect(path)) as db:
+            told.append((version, newest, db.execute("PRAGMA user_version").fetchone()[0]))
+
+    # A new Wiki, and one at the newest version: no word.
+    Database(tmp_path / "new" / "wiki.db", upgrading=upgrading)
+    Database(path, upgrading=upgrading)
+    assert told == []
+    # One of an earlier version: told while it still has that version, before its migrations.
+    with contextlib.closing(sqlite3.connect(path)) as db:
+        db.execute("PRAGMA user_version=3")
+    Database(path, upgrading=upgrading)
+    assert told == [(3, migrations.SCHEMA_VERSION, 3)]
+
+    # The backend writes the word as an event line, before its first answer.
+    with contextlib.closing(sqlite3.connect(path)) as db:
+        db.execute("PRAGMA user_version=3")
+    environment = {**os.environ, "PRIVATE_AGENT_DATA_DIR": str(folder), "PYTHONPATH": "", "PYTHONUTF8": "1"}
+    environment.pop("PRIVATE_AGENT_LOG_DIR", None)
+
+    def start():
+        result = subprocess.run(
+            [sys.executable, str(BACKEND / "main.py")],
+            input=json.dumps({"id": "first", "method": "health", "params": {}}) + "\n",
+            cwd=BACKEND,
+            capture_output=True,
+            encoding="utf-8",
+            env=environment,
+            timeout=120,
+        )
+        return [json.loads(line) for line in result.stdout.splitlines()]
+
+    lines = start()
+    assert lines[0] == {"event": "wiki.upgrading", "params": {"from": 3, "to": migrations.SCHEMA_VERSION}}
+    assert lines[1:] == [{"id": "first", "result": {"ok": True}}]
+    # Started again at the newest version: only the answer.
+    assert start() == [{"id": "first", "result": {"ok": True}}]
+
+
 def test_backups_are_checked_single_files_and_each_kind_keeps_its_newest(tmp_path):
     service = filled(tmp_path / "wiki.db", documents=3)
     folder = tmp_path / "backups"

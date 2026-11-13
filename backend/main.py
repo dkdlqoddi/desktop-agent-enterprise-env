@@ -180,8 +180,21 @@ def main():
     # Electron sets this when it starts the backend again after it ended on its own, not for a start of the app: a
     # restore that waits for the next start of the app is then left as it is (storage.apply_restore).
     defer_restore = os.environ.get("PRIVATE_AGENT_DEFER_RESTORE") == "1"
+    write_lock = threading.Lock()
+
+    def write(message):
+        with write_lock:
+            print(json.dumps(message, ensure_ascii=False), flush=True)
+
+    def upgrading(version, newest):
+        """The Wiki is of an earlier version, which the migrations bring up to date before the first request is read:
+        Electron, told so, waits for this start as long as a large Wiki's migration takes, instead of a minute
+        (electron/backend-process.cjs started)."""
+        diagnostics.LOG.info("upgrading the Wiki from schema version %d to %d", version, newest)
+        write({"event": "wiki.upgrading", "params": {"from": version, "to": newest}})
+
     try:
-        wiki = Database(database, defer_restore=defer_restore)
+        wiki = Database(database, defer_restore=defer_restore, upgrading=upgrading)
     except Refused as refused:  # Damaged, or changed by a later version: left as it is, and the user told what to do.
         diagnostics.LOG.error("the Wiki was not opened: %s", refused)
         return refuse(str(refused))
@@ -195,12 +208,7 @@ def main():
             )
         )
     service = Service(wiki, LLM())
-    write_lock = threading.Lock()
     lanes = {True: threading.BoundedSemaphore(SLOW_SLOTS), False: threading.BoundedSemaphore(QUICK_SLOTS)}
-
-    def write(message):
-        with write_lock:
-            print(json.dumps(message, ensure_ascii=False), flush=True)
 
     def emit(event, params):
         """An event of the backend's own (an answer as the LLM writes it): a line without an id, which Electron passes

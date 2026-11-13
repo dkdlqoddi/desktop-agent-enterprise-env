@@ -23,7 +23,7 @@ Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 에이전트: 자�
 | Electron 메인 | 창, IPC 허용 목록, 설정 파일과 비밀 값(운영체제 보안 저장소), 사이트 계정과 로그인 계획, 로컬 API·MCP 서버, 알림·자동 작업의 시각 확인, 로그·진단, 백엔드 시작·재시작 | 렌더러의 요청은 보낸 프레임과 `ALLOWED`로, AI 도구의 요청은 토큰과 허용 범위로 거릅니다                                                                                      |
 | Python 백엔드 | `wiki.db`, 검색, LLM 호출, 가져오기(Office COM 워커, Playwright Chromium), 원본 반영, 자동 작업 실행, 백업, 채팅 작업 실행과 웹 기록(보이는 Chromium 창)              | 포트를 열지 않고 메인 프로세스와 표준 입출력으로만 통신합니다. LLM 설정(API Key 포함)은 시작할 때 받아 메모리에만 두고, 사이트 비밀번호는 로그인이 필요한 요청에 담겨 옵니다 |
 
-메인 프로세스는 앱이 시작할 때 저장된 Wiki 폴더로 백엔드를 띄우고(`electron/storage.cjs`), 처음 실행이면 화면이 폴더를 고르게 합니다. 백엔드가 예기치 않게 끝나면 1초, 5초, 15초 뒤에 다시 시작합니다. 2분 안에 세 번 다시 시작하고도 또 끝나면 더 시작하지 않고 사용자에게 알립니다(`electron/restarts.cjs`). 이렇게 다시 시작한 백엔드는 예약된 백업 복원을 앱의 다음 시작까지 그대로 둡니다(환경 변수 `PRIVATE_AGENT_DEFER_RESTORE`, `agent/storage.py`의 `apply_restore`).
+메인 프로세스는 앱이 시작할 때 저장된 Wiki 폴더로 백엔드를 띄우고(`electron/storage.cjs`), 처음 실행이면 화면이 폴더를 고르게 합니다. 백엔드는 Wiki를 연 뒤에야 요청을 읽으므로 메인 프로세스는 첫 응답(`health`)을 60초까지 기다립니다. 이전 버전의 Wiki면 백엔드가 마이그레이션 전에 이벤트 `wiki.upgrading`(이전·새 스키마 버전)을 보내고, 메인 프로세스는 그때부터 30분까지 기다리며 `app.log`에 남기고 화면에 알립니다(`electron/backend-process.cjs`의 `started`). 시작을 중간에 포기하면 마이그레이션이 되돌려져 다음 시작도 같은 자리에서 실패하기 때문입니다. 백엔드가 예기치 않게 끝나면 1초, 5초, 15초 뒤에 다시 시작합니다. 2분 안에 세 번 다시 시작하고도 또 끝나면 더 시작하지 않고 사용자에게 알립니다(`electron/restarts.cjs`). 이렇게 다시 시작한 백엔드는 예약된 백업 복원을 앱의 다음 시작까지 그대로 둡니다(환경 변수 `PRIVATE_AGENT_DEFER_RESTORE`, `agent/storage.py`의 `apply_restore`).
 
 ## 요청 경로
 
@@ -40,7 +40,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 
 ## 이벤트
 
-- 백엔드가 스스로 보내는 이벤트는 `id` 없는 줄 `{"event", "params"}`입니다. 메인 프로세스는 `BACKEND_EVENTS`에 있는 `assistant.delta`(LLM이 쓰는 답변의 조각)와 `assistant.done`(끝)을 창의 `assistant:delta` 채널로, `agent.changed`(채팅 에이전트의 앱 작업이 바꾼 목록의 태그: `tasks`·`documents`·`routines`만)를 `agent:changed` 채널로 넘기고, 나머지는 버립니다. 화면은 `agent:changed`의 태그를 바로 무효로 합니다.
+- 백엔드가 스스로 보내는 이벤트는 `id` 없는 줄 `{"event", "params"}`입니다. 메인 프로세스는 `BACKEND_EVENTS`에 있는 `assistant.delta`(LLM이 쓰는 답변의 조각)와 `assistant.done`(끝)을 창의 `assistant:delta` 채널로, `agent.changed`(채팅 에이전트의 앱 작업이 바꾼 목록의 태그: `tasks`·`documents`·`routines`만)를 `agent:changed` 채널로 넘깁니다. 화면은 `agent:changed`의 태그를 바로 무효로 합니다. 시작할 때의 `wiki.upgrading`은 시작을 기다리는 시간을 늘리고, 화면이 알림을 받을 수 있게 되면(`control:ready`) 그 알림(`import:notice`)으로 Wiki를 한 번 업데이트한다고 알리는 데 씁니다. 나머지는 버립니다.
 - 화면은 `stream`과 자기 `request_id`를 붙여 물은 답변의 이벤트만 상태 조각 하나(`src/components/answers.ts`)에 모읍니다. 검색창은 그 글을 쓰는 대로(150ms마다) 그리고, 최근 대화 목록은 답변 중인 대화와 아직 저장되지 않은 새 대화를 보여 줍니다. ‘답변 중지’는 `assistant.cancel {request_id}`를 보냅니다. 답변 중에 검색창에 적은 질문은 그 답변의 대기열(같은 상태 조각의 `queue`)에 들어가고, 답변이 스스로 끝나면 화면이 같은 대화의 다음 질문으로 보냅니다. 백엔드는 대기열을 모르고, 답변 중인 대화에 온 질문은 지금처럼 거절합니다(로컬 API로 묻는 AI 도구도 같음).
 - 메인 프로세스가 보내는 이벤트: `job:progress`(가져오기·AI 분석·자동 작업의 진행, `electron/job-progress.cjs`가 따라가며 번호를 붙임), `schedule:event`, `routine:event`, `import:notice`, `assistant:open`, `api:changed`, `control:command`(로컬 API의 화면 명령, 화면은 `control:result`로 답함), `chat:focus`(빠른 호출의 바로 가기 키와 트레이의 ‘채팅 열기’: 채팅을 열고 입력란에 커서를 둠. 실어 보내는 내용 없음)
 - 화면은 백엔드의 응답을 메서드와 매개변수별로 캐시합니다(`src/lib/query.ts`). 변경, 끝난 작업, 메인 프로세스의 알림이 태그(`documents`, `prompts`, `runs`, `routines`, `tasks`, `conversations`)를 무효로 하면 그 태그를 가진 응답만 다시 읽습니다. 보관함의 문서 목록은 같은 캐시의 나누어 받는 목록(`QueryCache.list`, `useDocumentPages`)으로 100개씩 불러오고, 무효가 되면 보이던 만큼을 첫 쪽부터 다시 읽으며, 보이는 줄만 그립니다(`src/components/windowing.ts`).

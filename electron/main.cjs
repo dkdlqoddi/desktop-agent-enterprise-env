@@ -206,6 +206,20 @@ function forwardEvent(name, params) {
     window.webContents.send('assistant:delta', { ...params, type });
 }
 
+// The backend's start brings the Wiki up to date first (its event wiki.upgrading), which a new version does once and
+// which takes minutes for a large Wiki while the window shows the screens' preparing page. The screen is told so with
+// its notices (import:notice) once it listens (control:ready), once per screen loaded while the start lasts.
+const UPGRADE_NOTICE =
+  'Wiki를 새 버전에 맞게 한 번 업데이트합니다. Wiki가 크면 몇 분 걸릴 수 있으니 준비가 끝날 때까지 기다려 주세요. 도중에 앱을 닫으면 Wiki는 그대로 두고 다음에 열 때 다시 업데이트합니다.';
+let upgrading = false;
+let upgradeTold = false;
+
+function tellUpgrade() {
+  if (!upgrading || upgradeTold || !control?.ready || !window || window.isDestroyed()) return;
+  upgradeTold = true;
+  window.webContents.send('import:notice', UPGRADE_NOTICE);
+}
+
 // A request to the backend. While it starts (again) a request waits until it has its LLM settings, so that nothing
 // reaches a backend that would answer without them: the screens', an AI tool's, or a check of the schedules, routines
 // and reminders.
@@ -322,6 +336,7 @@ async function startBackend(dataDirectory, { restart = false } = {}) {
     throw error;
   } finally {
     if (opening === start) opening = undefined;
+    upgrading = false;
     open();
   }
 }
@@ -367,7 +382,11 @@ async function launchBackend(dataDirectory, restart = false) {
     limits: RPC_TIMEOUTS,
     // Only the backend in use speaks to the window.
     onEvent: (name, params) => {
-      if (backend === child) forwardEvent(name, params);
+      if (backend !== child) return;
+      if (name === 'wiki.upgrading') {
+        upgrading = true;
+        tellUpgrade();
+      } else forwardEvent(name, params);
     },
     // Not stopped by the app: what the backend last wrote to its error output says why. Once the Wiki is open it is
     // started again; a first start that fails is reported by the storage screen instead.
@@ -1579,8 +1598,12 @@ function createWindow() {
       current.close();
     });
   });
-  // A reload starts a new screen, which registers for the local API's commands again.
-  current.webContents.on('did-start-loading', () => control?.detach());
+  // A reload starts a new screen, which registers for the local API's commands again, and is told of an update of the
+  // Wiki still under way.
+  current.webContents.on('did-start-loading', () => {
+    control?.detach();
+    upgradeTold = false;
+  });
   // Electron shows no context menu of its own: cutting, copying and pasting in a field (a link, a password, a token),
   // and copying selected text, with the mouse.
   current.webContents.on('context-menu', (_event, params) => {
@@ -1840,7 +1863,9 @@ else if (!hasLock) {
       });
       // The screen answers the local API's commands once it has registered for them after each load.
       ipcMain.on('control:ready', (event) => {
-        if (trustedSender(event, ownScreen())) control.attach();
+        if (!trustedSender(event, ownScreen())) return;
+        control.attach();
+        tellUpgrade();
       });
       ipcMain.on('control:result', (event, reply) => {
         if (trustedSender(event, ownScreen())) control.settle(reply);

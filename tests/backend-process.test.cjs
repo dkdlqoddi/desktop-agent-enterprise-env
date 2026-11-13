@@ -6,7 +6,9 @@ const path = require('node:path');
 const { BackendProcess, ENDED } = require('../electron/backend-process.cjs');
 
 // A stand-in for the Python backend: JSON lines in, JSON lines out. SILENT=1 never answers; FAIL_AT_START=1 ends at
-// once, as a backend missing a DLL does.
+// once, as a backend missing a DLL does. UPGRADE=<ms> first says it brings the Wiki up to date (wiki.upgrading), as
+// main.py does before the migrations run, and answers health that much later; HOLD=<ms> answers health that much later
+// without a word; UPGRADE_ENDS=1 ends during the update, as a migration that crashed.
 const FAKE = `
 const readline = require('node:readline');
 const reply = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
@@ -14,10 +16,14 @@ if (process.env.FAIL_AT_START === '1') {
   process.stderr.write('ImportError: DLL load failed while importing _sqlite3\\n');
   process.exit(1);
 }
+const upgrade = Number(process.env.UPGRADE || 0);
+if (upgrade) reply({ event: 'wiki.upgrading', params: { from: 3, to: 4 } });
+if (process.env.UPGRADE_ENDS === '1') setTimeout(() => process.exit(2), 50);
+const hold = upgrade || Number(process.env.HOLD || 0);
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (process.env.SILENT === '1') return;
   const { id, method, params, limit_ms } = JSON.parse(line);
-  if (method === 'health') reply({ id, result: { ok: true } });
+  if (method === 'health') setTimeout(() => reply({ id, result: { ok: true } }), hold);
   else if (method === 'echo') reply({ id, result: params });
   else if (method.startsWith('limit')) reply({ id, result: limit_ms });
   else if (method === 'fail') reply({ id, error: '설정 값이 올바르지 않습니다.' });
@@ -188,6 +194,43 @@ test('a backend that never answers fails its start after the time limit, and the
     message: '백엔드를 시작하지 못했습니다.',
   });
   assert.deepEqual(records, ['백엔드가 0초 안에 응답하지 않았습니다.']);
+});
+
+test('a backend that brings the Wiki up to date first is waited for longer, and the log says why', async (t) => {
+  const { backend, records } = await setup(t, { env: { UPGRADE: '600' } });
+  await backend.started({ limit: 200, upgrade: 5000, message: '백엔드를 시작하지 못했습니다.' });
+  assert.equal(backend.running, true);
+  assert.deepEqual(records, [
+    '백엔드가 Wiki를 스키마 버전 3에서 4(으)로 올리고 있어 시작을 최대 5초 기다립니다.',
+  ]);
+  // The answer to health outlasted its own time limit too.
+  assert.deepEqual(await backend.request('echo', { a: 1 }), { a: 1 });
+  // Without that word, the same slow start fails at its limit, as before.
+  const { backend: silent, records: logged } = await setup(t, { env: { HOLD: '600' } });
+  await assert.rejects(
+    silent.started({ limit: 200, upgrade: 5000, message: '백엔드를 시작하지 못했습니다.' }),
+    { message: '백엔드를 시작하지 못했습니다.' },
+  );
+  assert.deepEqual(logged, ['백엔드가 0초 안에 응답하지 않았습니다.']);
+});
+
+test('a backend that brings the Wiki up to date still fails its start when that outlasts the longer limit, or ends', async (t) => {
+  const { backend, records } = await setup(t, { env: { UPGRADE: '5000' } });
+  await assert.rejects(
+    backend.started({ limit: 1000, upgrade: 300, message: '백엔드를 시작하지 못했습니다.' }),
+    { message: '백엔드를 시작하지 못했습니다.' },
+  );
+  assert.deepEqual(records, [
+    '백엔드가 Wiki를 스키마 버전 3에서 4(으)로 올리고 있어 시작을 최대 0초 기다립니다.',
+    'Wiki를 올리는 백엔드가 0초 안에 시작을 마치지 못했습니다.',
+  ]);
+  // One that ends during the update fails at once, not at the end of the longer limit.
+  const { backend: ended } = await setup(t, { env: { UPGRADE: '5000', UPGRADE_ENDS: '1' } });
+  const begun = Date.now();
+  await assert.rejects(ended.started({ limit: 100, upgrade: 60_000 }), {
+    message: 'Python 백엔드가 시작하는 중에 종료되었습니다(종료 코드 2). 앱을 다시 실행해 주세요.',
+  });
+  assert.ok(Date.now() - begun < 5000);
 });
 
 test('a backend that ends while it starts says so, with its exit code', async (t) => {

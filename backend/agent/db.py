@@ -201,15 +201,16 @@ def identity(name):
 
 
 class Database:
-    def __init__(self, path, *, defer_restore=False):
+    def __init__(self, path, *, defer_restore=False, upgrading=None):
         self.path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         # Before anything writes to the Wiki: a restore asked for in the last run takes its place (one that waits for a
         # start of the app is left when the app only started the backend again, defer_restore), and a Wiki that is
         # damaged or newer than this code is refused as it is (storage.prepare). A new one, without tables yet, is
         # numbered before the block makes them, so a first start stopped midway never leaves them to be taken for an
-        # earlier version's (migrations.py).
-        if storage.prepare(path, defer_restore):
+        # earlier version's (migrations.py). One of an earlier version is told to `upgrading(version, newest)` first,
+        # as its migrations may take minutes (main.py).
+        if storage.prepare(path, defer_restore, upgrading):
             with self.connect() as db:
                 migrations.stamp(db)
         with self.connect() as db:

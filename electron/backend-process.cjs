@@ -6,6 +6,15 @@ const path = require('node:path');
 const ENDED = 'Python 백엔드가 종료되었습니다. 앱을 다시 실행해 주세요.';
 // Requests without a limit of their own: one LLM call of up to 300 seconds (the settings' limit), plus a margin.
 const LIMIT = 330_000;
+// How long a start waits for a backend that says it brings the Wiki up to date first (wiki.upgrading) instead of the
+// minute a start has. A new version's migration may copy all of the Wiki's imported texts once (migrations.py), and
+// SQLite writes them a second time as it moves its log into the file after the commit: 10 GB at 30 MB/s, a slow disk
+// under antivirus scanning, take about 6 minutes each, some 12 minutes in all. Thirty minutes leave room for a disk
+// twice as slow; a backend that does not answer even then has stopped, and the start fails as any other.
+const UPGRADE_LIMIT = 30 * 60_000;
+
+// A time limit as the log says it: in minutes from a minute on, else in seconds.
+const span = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)}분` : `${Math.round(ms / 1000)}초`);
 
 // What the user is told when the backend's program could not be started at all, by the error Windows gave. A file that
 // antivirus quarantined is gone (ENOENT); one it blocks cannot be run (EACCES, EPERM, or an error Node does not name).
@@ -53,6 +62,9 @@ class BackendProcess {
     this.limit = limit;
     this.exited = exited;
     this.onEvent = onEvent;
+    // While started() waits: what extends its time limit when the backend says it brings the Wiki up to date.
+    /** @type {((params: any) => void) | null} */
+    this.upgrading = null;
     this.pending = new Map();
     // Why the program could not be started, once that is known.
     this.failure = '';
@@ -123,13 +135,16 @@ class BackendProcess {
   }
 
   // Resolves once the backend answers; fails with why it did not: it could not be started, it ended (its error output
-  // is in the log), or it gave no answer within `limit` ms (a cold start under antivirus scanning can take a while). The
-  // time limit ends with the start either way.
-  async started({ limit = 60_000, message = ENDED } = {}) {
+  // is in the log), or it gave no answer within `limit` ms (a cold start under antivirus scanning can take a while). A
+  // backend that says it brings the Wiki up to date first (wiki.upgrading, before its migrations run) is waited for
+  // `upgrade` ms from then on instead, with a note in the log: a start given up during a migration would roll it back,
+  // and every later start would end the same way. The time limit ends with the start either way.
+  async started({ limit = 60_000, message = ENDED, upgrade = UPGRADE_LIMIT } = {}) {
     let timer;
     try {
       await Promise.race([
-        this.spawned.then(() => this.request('health')),
+        // The answer's own time limit outlasts the start's, however late the backend's word came: the start decides.
+        this.spawned.then(() => this.request('health', {}, limit + upgrade)),
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             void this.diagnostics.record(
@@ -137,6 +152,20 @@ class BackendProcess {
             );
             reject(new Error(message));
           }, limit);
+          this.upgrading = (params) => {
+            this.upgrading = null;
+            const version = (value) => (Number.isInteger(value) ? value : '?');
+            void this.diagnostics.record(
+              `백엔드가 Wiki를 스키마 버전 ${version(params.from)}에서 ${version(params.to)}(으)로 올리고 있어 시작을 최대 ${span(upgrade)} 기다립니다.`,
+            );
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+              void this.diagnostics.record(
+                `Wiki를 올리는 백엔드가 ${span(upgrade)} 안에 시작을 마치지 못했습니다.`,
+              );
+              reject(new Error(message));
+            }, upgrade);
+          };
         }),
       ]);
     } catch (error) {
@@ -148,13 +177,14 @@ class BackendProcess {
       );
     } finally {
       clearTimeout(timer);
+      this.upgrading = null;
     }
   }
 
   // One request: the backend's answer, or the error it gave. A request it cannot take fails at once. The line carries
   // the time this process waits for the answer (limit_ms), so that work the backend bounds by it (an AI analysis) ends
-  // before then.
-  request(method, params = {}) {
+  // before then: the method's own limit, or `limit` when given.
+  request(method, params = {}, limit = this.limits[method] ?? this.limit) {
     if (!this.running) return Promise.reject(new Error(this.failure || ENDED));
     // Running: the process exists.
     const child = /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */ (
@@ -162,7 +192,6 @@ class BackendProcess {
     );
     return new Promise((resolve, reject) => {
       const id = randomUUID();
-      const limit = this.limits[method] ?? this.limit;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         void this.diagnostics.record(
@@ -190,6 +219,8 @@ class BackendProcess {
     }
     // A line without an id is no answer but an event of the backend's own; one its listener fails on stays its own.
     if (message && message.id === undefined && typeof message.event === 'string') {
+      // The start waits longer for a backend that brings the Wiki up to date (started).
+      if (message.event === 'wiki.upgrading') this.upgrading?.(message.params ?? {});
       try {
         this.onEvent(message.event, message.params ?? {});
       } catch (error) {
@@ -250,4 +281,4 @@ class BackendProcess {
   }
 }
 
-module.exports = { BackendProcess, spawnFailure, ENDED, LIMIT };
+module.exports = { BackendProcess, spawnFailure, ENDED, LIMIT, UPGRADE_LIMIT };
