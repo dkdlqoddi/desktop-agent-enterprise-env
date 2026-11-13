@@ -1,6 +1,7 @@
 package dev.privateagent.android
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -36,6 +37,13 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
         outState.putString(KEY_TAB, graph.navigator.tab.value.name)
         outState.putBundle(KEY_BROWSER, Bundle().also(graph.browser::saveState))
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // The screen stays when the dark theme is turned on or off: the system bars' icons are made to follow it here,
+        // or they would stay dark on the dark theme (or light on the light one) until the app is opened again.
+        enableEdgeToEdge()
     }
 
     override fun onNewIntent(intent: Intent) {
