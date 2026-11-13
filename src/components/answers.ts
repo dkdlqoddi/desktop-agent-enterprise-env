@@ -1,10 +1,18 @@
 import type { Answer, AssistantCancel, AssistantStreamEvent } from '@/lib/api';
 import type { Store } from '@/lib/store';
 
+// A question the user asked in a conversation while its answer was being written, to go as the conversation's next
+// question once that answer has ended (search-panel.tsx); `scope` is the one document it asks about, if any.
+export type QueuedQuestion = {
+  id: string;
+  question: string;
+  scope: { id: string; title: string } | null;
+};
+
 // An answer the screen asked for with stream (assistant.ask), from the question until the request answers: the text so
 // far as its parts come (assistant:delta), how the LLM ended it (done), and then the whole answer as its conversation
 // saved it (result). An answer that failed leaves nothing behind: the backend saved nothing of it, and the search box
-// shows the failure.
+// shows the failure. The questions asked meanwhile wait with it (queue), wherever the search box is, until it ends.
 export type LiveAnswer = {
   requestId: string;
   // The conversation it continues, or the new one's, which the first event names.
@@ -19,6 +27,7 @@ export type LiveAnswer = {
   stopping: boolean;
   result: Answer | null;
   startedAt: number;
+  queue: QueuedQuestion[];
 };
 export type AnswersState = Readonly<Record<string, LiveAnswer>>;
 
@@ -72,8 +81,14 @@ export class AnswerStream {
     return found;
   }
 
-  // A question was sent. Answers that ended long ago go now, so the slice keeps only what the screens may still show.
-  start(requestId: string, question: string, conversationId: string | null) {
+  // A question was sent, with the questions still waiting behind it (`queue`). Answers that ended long ago go now, so
+  // the slice keeps only what the screens may still show.
+  start(
+    requestId: string,
+    question: string,
+    conversationId: string | null,
+    queue: QueuedQuestion[] = [],
+  ) {
     const at = this.now();
     this.store.set((state) => {
       const kept: Record<string, LiveAnswer> = {};
@@ -90,9 +105,33 @@ export class AnswerStream {
         stopping: false,
         result: null,
         startedAt: at,
+        queue,
       };
       return kept;
     });
+  }
+
+  // A question asked while answer `requestId` is written waits for it to end; false when it has ended already.
+  enqueue(requestId: string, item: QueuedQuestion) {
+    const answer = this.get(requestId);
+    if (!answer || !pending(answer)) return false;
+    this.change(requestId, (current) => ({ ...current, queue: [...current.queue, item] }));
+    return true;
+  }
+
+  // The user took back a waiting question.
+  unqueue(requestId: string, id: string) {
+    this.change(requestId, (current) => ({
+      ...current,
+      queue: current.queue.filter((item) => item.id !== id),
+    }));
+  }
+
+  // The questions that waited for answer `requestId`, which has ended: they leave it, to be asked or held.
+  takeQueue(requestId: string) {
+    const queue = this.get(requestId)?.queue ?? [];
+    if (queue.length) this.change(requestId, (current) => ({ ...current, queue: [] }));
+    return queue;
   }
 
   // A part of an answer (delta: added to what came, or all of it again with reset) or its end (done).

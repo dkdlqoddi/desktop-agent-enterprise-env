@@ -277,6 +277,51 @@ mark.search-hit.current {
   align-items: flex-start;
   flex-wrap: wrap;
 }
+/* Questions asked while an answer is written, and those an answer that did not end by itself held back. */
+.waiting-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+.waiting-questions h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.waiting-questions p {
+  margin: 0;
+  color: var(--muted);
+}
+.waiting-questions ol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.waiting-questions li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.waiting-questions li > span {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.waiting-questions .text-button {
+  flex-shrink: 0;
+}
 .ask-error > span {
   flex: 1;
   min-width: 12em;

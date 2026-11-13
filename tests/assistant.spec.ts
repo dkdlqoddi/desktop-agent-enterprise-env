@@ -202,12 +202,13 @@ function gate() {
   return { open, opened };
 }
 
-test('streamed answers: the text as it is written, 답변 중지, the output limit, another conversation meanwhile and a refusal', async () => {
+test('streamed answers: the text as it is written, 답변 중지, the output limit, another conversation meanwhile, a refusal and questions waiting for an answer', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-stream-'));
   const steps = gate();
   const held = gate();
   const other = gate();
   const busy = gate();
+  const queued = gate();
   // Every question asks about one document, so each makes the answer request alone; the answers stream in parts, some
   // held back until the test lets them go on.
   const llm = await llmServer(({ system, content }) => {
@@ -229,6 +230,10 @@ test('streamed answers: the text as it is written, 답변 중지, the output lim
       ]);
     if (question.includes('바쁜'))
       return busy.opened.then(() => ({ answer: '바쁜 대화의 답변입니다.', citations: [] }));
+    if (question.includes('대기열'))
+      return streamed(['{"answer": "대기열 답변의 앞부분', queued.opened.then(() => ' 뒷부분"}')]);
+    if (question.includes('기다리는'))
+      return streamed(['{"answer": "기다린 질문에 ', '답했습니다."}']);
     return streamed(['{"answer": "이어서 ', '답했습니다."}']);
   });
   let app: ElectronApplication | undefined;
@@ -347,9 +352,49 @@ test('streamed answers: the text as it is written, 답변 중지, the output lim
     await expect(answers.last()).toContainText('이어서 답했습니다.');
     await expect(results(page).getByRole('alert')).toHaveCount(0);
     await expect(answers).toHaveCount(3);
+
+    // A question typed while an answer is written waits under it and goes, in the same conversation, once the answer
+    // has ended; one taken back first never goes.
+    const questions = () =>
+      llm.requests
+        .filter((r) => r.system.includes('Answer questions about'))
+        .map((r) => (JSON.parse(r.content) as { question: string }).question);
+    await ask('대기열이 있는 답변은?');
+    await expect(live).toContainText('대기열 답변의 앞부분');
+    await ask('기다리는 질문 하나');
+    await ask('기다리는 질문 둘');
+    await expect(searchBox(page)).toHaveValue('');
+    const queue = results(page).getByRole('region', { name: '답변이 끝나면 보낼 질문' });
+    await expect(queue.getByRole('listitem')).toHaveText([
+      '기다리는 질문 하나',
+      '기다리는 질문 둘',
+    ]);
+    await queue.getByRole('button', { name: '‘기다리는 질문 둘’ 보내지 않기' }).click();
+    await expect(queue.getByRole('listitem')).toHaveText(['기다리는 질문 하나']);
+    expect(questions().at(-1)).toBe('대기열이 있는 답변은?');
+    queued.open();
+    await expect(answers.last()).toContainText('기다린 질문에 답했습니다.');
+    await expect(answers).toHaveCount(5);
+    await expect(queue).toHaveCount(0);
+    expect(questions().slice(-2)).toEqual(['대기열이 있는 답변은?', '기다리는 질문 하나']);
+
+    // An answer the user stops keeps the questions waiting for it back: each goes when sent, or is dropped.
+    await ask('멈출 대기 답변은?');
+    await expect(live).toContainText('멈출 답변의 앞부분');
+    await ask('보류된 질문 하나');
+    await ask('보류된 질문 둘');
+    await results(page).getByRole('button', { name: '답변 중지' }).click();
+    const kept = results(page).getByRole('region', { name: '보내지 않은 질문' });
+    await expect(kept.getByRole('listitem')).toHaveCount(2);
+    await expect(answers.last()).toContainText('멈출 답변의 앞부분');
+    await kept.getByRole('button', { name: '‘보류된 질문 둘’ 지우기' }).click();
+    await kept.getByRole('button', { name: '‘보류된 질문 하나’ 보내기' }).click();
+    await expect(answers.last()).toContainText('이어서 답했습니다.');
+    await expect(kept).toHaveCount(0);
+    expect(questions().slice(-2)).toEqual(['멈출 대기 답변은?', '보류된 질문 하나']);
     expect(errors).toEqual([]);
   } finally {
-    for (const waiting of [steps, held, other, busy]) waiting.open();
+    for (const waiting of [steps, held, other, busy, queued]) waiting.open();
     await app?.close();
     await llm.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

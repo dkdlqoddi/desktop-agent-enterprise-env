@@ -11,6 +11,7 @@ import {
   ArrowUp,
   CircleAlert,
   CircleStop,
+  Clock3,
   CornerDownRight,
   FileText,
   ListTree,
@@ -30,7 +31,7 @@ import {
   type Conversation,
   type SearchResult,
 } from '@/lib/api';
-import { newRequestId, pending, type LiveAnswer } from './answers';
+import { newRequestId, pending, type LiveAnswer, type QueuedQuestion } from './answers';
 import {
   useActions,
   useConfigured,
@@ -62,12 +63,24 @@ type Session = {
   askError: string;
   // The question that failed, or that the backend refused while its conversation still answered another, to send again.
   failed: string;
+  // The questions that waited for an answer the user stopped, or that failed: they wait for the user to send or drop
+  // each. Those still waiting for the answer being written are its queue, in the answers slice.
+  held: QueuedQuestion[];
   // Follow-up questions continue the conversation until the chip in the search box is removed.
   followUp: boolean;
   // A question about one document answers from it alone, without searching.
   scope: Scope | null;
 };
 type Scope = { id: string; title: string };
+// A question asked of the assistant: in conversation `conversationId` (null starts one), about one document or all,
+// with the questions to ask after it (`queue`); `shown` when the search box shows the conversation.
+type Ask = (
+  question: string,
+  conversationId: string | null,
+  about: Scope | null,
+  queue?: QueuedQuestion[],
+  shown?: boolean,
+) => Promise<void>;
 
 // The session showing a conversation: its saved messages and the answer the answers slice holds for it, still being
 // written (shown as it comes) or saved since the messages were read (then its newer messages).
@@ -91,6 +104,7 @@ function conversationSession(
     requestId: waiting?.requestId ?? null,
     askError: '',
     failed: '',
+    held: [],
     followUp: true,
     scope: null,
   };
@@ -98,6 +112,9 @@ function conversationSession(
 
 // A question in a message, cut to a line.
 const clip = (text: string) => (text.length > 40 ? `${text.slice(0, 40)}…` : text);
+// What a notice adds about the questions that waited for an answer that did not come whole, when they cannot be shown.
+const unsent = (queue: QueuedQuestion[]) =>
+  queue.length ? ` 기다리던 질문 ${queue.length}개는 보내지 않았습니다.` : '';
 
 // One search box for everything: a local search answers at once, and with the LLM connected the
 // assistant searches with AI, answers from the documents it picked, and keeps the conversation.
@@ -162,11 +179,14 @@ export function useSearchSession({
     },
     [answers, update],
   );
-  const ask = useCallback(
-    async (question: string, conversationId: string | null, about: Scope | null) => {
+  // The latest ask, which an answer that ended calls for the question waiting behind it.
+  const asks = useRef<Ask | null>(null);
+  const ask = useCallback<Ask>(
+    async (question, conversationId, about, queue = [], shown = true) => {
       const requestId = newRequestId();
-      answers.start(requestId, question, conversationId);
-      update((s) => s && { ...s, asking: question, requestId, askError: '', failed: '' });
+      answers.start(requestId, question, conversationId, queue);
+      if (shown)
+        update((s) => s && { ...s, asking: question, requestId, askError: '', failed: '' });
       let answer: Answer;
       try {
         answer = await api<Answer>('assistant.ask', {
@@ -177,20 +197,37 @@ export function useSearchSession({
           request_id: requestId,
         });
       } catch (error) {
-        // Refused (the conversation still answers another question) or failed: nothing of it was saved.
+        // Refused (the conversation still answers another question) or failed: nothing of it was saved, and the
+        // questions that waited for it wait for the user.
+        const waited = answers.takeQueue(requestId);
         answers.fail(requestId);
         const message = (error as Error).message;
         if (latest.current?.requestId === requestId)
           update(
-            (s) => s && { ...s, asking: '', requestId: null, askError: message, failed: question },
+            (s) =>
+              s && {
+                ...s,
+                asking: '',
+                requestId: null,
+                askError: message,
+                failed: question,
+                held: [...s.held, ...waited],
+              },
           );
-        else notify(`‘${clip(question)}’ 질문에 답하지 못했습니다. ${message}`, true);
+        else
+          notify(`‘${clip(question)}’ 질문에 답하지 못했습니다. ${message}${unsent(waited)}`, true);
         return;
       }
       answers.finish(requestId, answer);
       setSaved((value) => value + 1);
+      // The question that waited next goes once the answer has ended by itself; after one the user stopped, the
+      // questions wait for the user.
+      const waited = answers.takeQueue(requestId);
+      const [next, ...rest] = answer.cancelled ? [] : waited;
+      const held = answer.cancelled ? waited : [];
+      const here = latest.current?.requestId === requestId;
       // The saved answer takes the place of the one being written in the same drawing, so it never shows twice.
-      if (latest.current?.requestId === requestId)
+      if (here)
         update(
           (s) =>
             s && {
@@ -200,6 +237,7 @@ export function useSearchSession({
               ai: answer.search,
               asking: '',
               requestId: null,
+              held: [...s.held, ...held],
               followUp: true,
             },
         );
@@ -208,7 +246,7 @@ export function useSearchSession({
         const title =
           answer.messages.find((message) => message.role === 'user')?.content.slice(0, 100) ??
           question;
-        undoable(`AI 답변을 마쳤습니다 · ${clip(question)}`, {
+        undoable(`AI 답변을 마쳤습니다 · ${clip(question)}${unsent(held)}`, {
           label: '보기',
           run: () =>
             open({ id: answer.conversation_id, title, updated_at: '' }).catch((e) =>
@@ -216,18 +254,28 @@ export function useSearchSession({
             ),
         });
       }
+      if (next) void asks.current?.(next.question, answer.conversation_id, next.scope, rest, here);
     },
     [answers, update, open, notify, undoable],
   );
-  // `everywhere`: a keyword searches all documents, whatever the next question is scoped to.
+  asks.current = ask;
+  // `everywhere`: a keyword searches all documents, whatever the next question is scoped to. Whether the question was
+  // taken: asked, or, typed while an answer is written, waiting for it to end to continue its conversation. Others
+  // (a keyword, the greeting's question) are not taken meanwhile.
   const submit = useCallback(
     (raw: string, followUp: boolean, everywhere = false) => {
       const query = raw.trim();
       const previous = latest.current;
-      if (!query || previous?.asking) return;
+      const about = everywhere ? null : scope;
+      if (!query) return false;
+      if (previous?.asking)
+        return (
+          followUp &&
+          !!previous.requestId &&
+          answers.enqueue(previous.requestId, { id: newRequestId(), question: query, scope: about })
+        );
       const id = ++generation.current;
       const conversationId = followUp && previous?.followUp ? previous.conversationId : null;
-      const about = everywhere ? null : scope;
       update({
         query,
         local: null,
@@ -240,12 +288,14 @@ export function useSearchSession({
         requestId: null,
         askError: '',
         failed: '',
+        // The questions held back stay while the search box goes on in the same conversation.
+        held: previous && previous.conversationId === conversationId ? previous.held : [],
         followUp: !!conversationId,
         scope: about,
       });
       if (about) {
         if (configured) void ask(query, conversationId, about);
-        return;
+        return true;
       }
       api<SearchResult>('wiki.search', { query, mode: 'auto' })
         .then((local) => {
@@ -257,13 +307,40 @@ export function useSearchSession({
         });
       // A conversation always continues with the AI; a new search asks when answers are automatic.
       if (configured && (aiAnswer || conversationId)) void ask(query, conversationId, null);
+      return true;
     },
-    [ask, configured, aiAnswer, scope, update],
+    [answers, ask, configured, aiAnswer, scope, update],
   );
   const askNow = useCallback(() => {
     const s = latest.current;
     if (s && !s.asking) void ask(s.query, s.followUp ? s.conversationId : null, s.scope);
   }, [ask]);
+  // A question held back goes now, or after the answer being written if there is one.
+  const sendHeld = useCallback(
+    (id: string) => {
+      const s = latest.current;
+      const item = s?.held.find((held) => held.id === id);
+      if (!s || !item) return;
+      if (s.asking && !(s.requestId && answers.enqueue(s.requestId, item))) return;
+      update(
+        (current) => current && { ...current, held: current.held.filter((held) => held !== item) },
+      );
+      if (!s.asking) void ask(item.question, s.followUp ? s.conversationId : null, item.scope);
+    },
+    [answers, ask, update],
+  );
+  const dropHeld = useCallback(
+    (id: string) => update((s) => s && { ...s, held: s.held.filter((held) => held.id !== id) }),
+    [update],
+  );
+  // 보내지 않기: a question waiting for the answer being written is taken back before it goes.
+  const unqueue = useCallback(
+    (id: string) => {
+      const requestId = latest.current?.requestId;
+      if (requestId) answers.unqueue(requestId, id);
+    },
+    [answers],
+  );
   // The question that failed or was refused, once more, in the conversation the search box continues.
   const resend = useCallback(() => {
     const s = latest.current;
@@ -304,6 +381,9 @@ export function useSearchSession({
       submit,
       askNow,
       resend,
+      sendHeld,
+      dropHeld,
+      unqueue,
       stop,
       open,
       follow,
@@ -318,6 +398,9 @@ export function useSearchSession({
       submit,
       askNow,
       resend,
+      sendHeld,
+      dropHeld,
+      unqueue,
       stop,
       open,
       follow,
@@ -337,16 +420,17 @@ export const Omnibox = forwardRef<HTMLInputElement, { onSubmit: () => void }>(fu
   const [value, setValue] = useState('');
   const state = search.state;
   const continuing = !!state?.followUp && !!state.conversationId;
+  // A question typed while an answer is written waits for it (useSearchSession submit).
+  const waits = !!state?.asking;
   return (
     <form
       className="omnibox"
       role="search"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!value.trim() || state?.asking) return;
+        if (!value.trim()) return;
         onSubmit();
-        search.submit(value, true);
-        setValue('');
+        if (search.submit(value, true)) setValue('');
       }}
     >
       <Search size={18} aria-hidden="true" />
@@ -382,11 +466,13 @@ export const Omnibox = forwardRef<HTMLInputElement, { onSubmit: () => void }>(fu
         value={value}
         maxLength={2000}
         placeholder={
-          search.scope
-            ? '이 문서에 대해 물어보세요'
-            : continuing
-              ? '이어서 물어보세요'
-              : '문서 검색 또는 AI에게 질문하기'
+          waits
+            ? '답변이 끝나면 이어서 물어볼 질문'
+            : search.scope
+              ? '이 문서에 대해 물어보세요'
+              : continuing
+                ? '이어서 물어보세요'
+                : '문서 검색 또는 AI에게 질문하기'
         }
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
@@ -396,7 +482,7 @@ export const Omnibox = forwardRef<HTMLInputElement, { onSubmit: () => void }>(fu
           else search.reset();
         }}
       />
-      {state?.asking ? (
+      {waits ? (
         <LoaderCircle className="spin" size={17} aria-label="답변을 기다리는 중" />
       ) : (
         <kbd>Ctrl K</kbd>
@@ -404,8 +490,9 @@ export const Omnibox = forwardRef<HTMLInputElement, { onSubmit: () => void }>(fu
       <button
         type="submit"
         className="omnibox-go"
-        aria-label="검색"
-        disabled={!value.trim() || !!state?.asking}
+        aria-label={waits ? '답변이 끝나면 보내기' : '검색'}
+        title={waits ? '답변이 끝나면 보내기' : undefined}
+        disabled={!value.trim()}
       >
         <ArrowUp size={17} />
       </button>
@@ -490,7 +577,11 @@ export default function SearchPanel() {
           {state.asking && (
             <>
               {asked(state.asking)}
-              <LiveAnswerView requestId={state.requestId} onStop={search.stop} />
+              <LiveAnswerView
+                requestId={state.requestId}
+                onStop={search.stop}
+                onTakeBack={search.unqueue}
+              />
             </>
           )}
           {state.askError && (
@@ -507,6 +598,9 @@ export default function SearchPanel() {
                 )}
               </div>
             </>
+          )}
+          {state.held.length > 0 && (
+            <HeldQuestions held={state.held} onSend={search.sendHeld} onDrop={search.dropHeld} />
           )}
           {!state.messages.length && !state.asking && !state.askError && (
             <div className="answer-empty">
@@ -672,8 +766,17 @@ function StreamedMarkdown({ text, running }: { text: string; running: boolean })
 }
 
 // The answer while the LLM writes it: its text as it comes, 답변 중지 until it ends, and how it ended (stopped, or cut at
-// the output limit) until the saved answer takes its place. Only this part draws again with every part of the answer.
-function LiveAnswerView({ requestId, onStop }: { requestId: string | null; onStop: () => void }) {
+// the output limit) until the saved answer takes its place, with the questions waiting for it. Only this part draws
+// again with every part of the answer.
+function LiveAnswerView({
+  requestId,
+  onStop,
+  onTakeBack,
+}: {
+  requestId: string | null;
+  onStop: () => void;
+  onTakeBack: (id: string) => void;
+}) {
   const answer = useLiveAnswer(requestId);
   const running = !answer || (pending(answer) && answer.status === 'streaming');
   const stop = (
@@ -687,30 +790,121 @@ function LiveAnswerView({ requestId, onStop }: { requestId: string | null; onSto
       {answer?.stopping ? '중지하는 중…' : '답변 중지'}
     </button>
   );
+  const waiting = !!answer?.queue.length && (
+    <WaitingQuestions queue={answer.queue} onTakeBack={onTakeBack} />
+  );
   // Before its first words the question is analyzed and the documents searched, which 중지 also ends.
   if (!answer || (running && !answer.text))
     return (
-      <div className="thinking">
-        <LoaderCircle className="spin" size={16} aria-hidden="true" />
-        <span>문서를 찾고 답변을 쓰고 있어요. LLM 응답에 시간이 걸릴 수 있습니다.</span>
-        {stop}
-      </div>
-    );
-  return (
-    <article className={`answer live${answer.status === 'cancelled' ? ' stopped' : ''}`}>
-      <StreamedMarkdown text={answer.text} running={running} />
-      {running ? (
-        <div className="answer-progress">
-          <LoaderCircle className="spin" size={14} aria-hidden="true" />
-          <span>답변을 쓰고 있어요</span>
+      <>
+        <div className="thinking">
+          <LoaderCircle className="spin" size={16} aria-hidden="true" />
+          <span>문서를 찾고 답변을 쓰고 있어요. LLM 응답에 시간이 걸릴 수 있습니다.</span>
           {stop}
         </div>
-      ) : answer.status === 'cancelled' ? (
-        <AnswerNote outcome="cancelled" text={STOPPED_NOTE} />
-      ) : answer.truncated ? (
-        <AnswerNote outcome="truncated" text={TRUNCATED_NOTE} />
-      ) : null}
-    </article>
+        {waiting}
+      </>
+    );
+  return (
+    <>
+      <article className={`answer live${answer.status === 'cancelled' ? ' stopped' : ''}`}>
+        <StreamedMarkdown text={answer.text} running={running} />
+        {running ? (
+          <div className="answer-progress">
+            <LoaderCircle className="spin" size={14} aria-hidden="true" />
+            <span>답변을 쓰고 있어요</span>
+            {stop}
+          </div>
+        ) : answer.status === 'cancelled' ? (
+          <AnswerNote outcome="cancelled" text={STOPPED_NOTE} />
+        ) : answer.truncated ? (
+          <AnswerNote outcome="truncated" text={TRUNCATED_NOTE} />
+        ) : null}
+      </article>
+      {waiting}
+    </>
+  );
+}
+
+// The questions asked while the answer above is written: each goes in turn, as the conversation's next question, once
+// the answer before it has ended by itself. 보내지 않기 takes one back before then.
+function WaitingQuestions({
+  queue,
+  onTakeBack,
+}: {
+  queue: QueuedQuestion[];
+  onTakeBack: (id: string) => void;
+}) {
+  return (
+    <section className="waiting-questions" aria-label="답변이 끝나면 보낼 질문">
+      <h3>
+        <Clock3 size={13} aria-hidden="true" />
+        답변이 끝나면 보낼 질문 {queue.length}개
+      </h3>
+      <ol>
+        {queue.map((item) => (
+          <li key={item.id}>
+            <span>{item.question}</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`‘${clip(item.question)}’ 보내지 않기`}
+              title="보내지 않기"
+              onClick={() => onTakeBack(item.id)}
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+// The questions that waited for an answer the user stopped, or that failed: they go only when the user sends them
+// (after the answer being written, if there is one), or are dropped.
+function HeldQuestions({
+  held,
+  onSend,
+  onDrop,
+}: {
+  held: QueuedQuestion[];
+  onSend: (id: string) => void;
+  onDrop: (id: string) => void;
+}) {
+  return (
+    <section className="waiting-questions held" aria-label="보내지 않은 질문">
+      <h3>
+        <Clock3 size={13} aria-hidden="true" />
+        보내지 않은 질문 {held.length}개
+      </h3>
+      <p>앞의 답변을 중지했거나 받지 못해, 기다리던 질문을 보내지 않았습니다.</p>
+      <ol>
+        {held.map((item) => (
+          <li key={item.id}>
+            <span>{item.question}</span>
+            <button
+              type="button"
+              className="text-button"
+              aria-label={`‘${clip(item.question)}’ 보내기`}
+              onClick={() => onSend(item.id)}
+            >
+              <ArrowUp size={13} aria-hidden="true" />
+              보내기
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`‘${clip(item.question)}’ 지우기`}
+              title="지우기"
+              onClick={() => onDrop(item.id)}
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

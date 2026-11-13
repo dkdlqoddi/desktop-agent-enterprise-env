@@ -105,6 +105,34 @@ test('a failed request leaves nothing, and a deleted conversation takes its answ
   assert.deepEqual(Object.keys(answers.store.get()), ['r3']);
 });
 
+test('questions asked while an answer is written wait with it until it ends, and can be taken back first', () => {
+  const { answers } = stream();
+  const item = (id, question) => ({ id, question, scope: null });
+  answers.start('r1', '질문', null);
+  assert.equal(answers.enqueue('r1', item('q1', '다음 질문')), true);
+  assert.equal(answers.enqueue('r1', item('q2', '그다음 질문')), true);
+  answers.unqueue('r1', 'q1');
+  assert.deepEqual(
+    answers.get('r1').queue.map((queued) => queued.question),
+    ['그다음 질문'],
+  );
+  // An answer that ended takes no more, and hands what waited over once.
+  answers.finish('r1', result());
+  assert.equal(answers.enqueue('r1', item('q3', '늦은 질문')), false);
+  assert.deepEqual(
+    answers.takeQueue('r1').map((queued) => queued.id),
+    ['q2'],
+  );
+  assert.deepEqual(answers.takeQueue('r1'), []);
+  // The question sent next carries those still waiting behind it.
+  answers.start('r2', '그다음 질문', 'c1', [item('q4', '마지막 질문')]);
+  assert.deepEqual(
+    answers.get('r2').queue.map((queued) => queued.id),
+    ['q4'],
+  );
+  assert.equal(answers.enqueue('r9', item('q5', '없는 답변')), false);
+});
+
 test('the newest answer of a conversation is the one shown when the conversation opens', () => {
   const { answers, clock } = stream();
   answers.start('r1', '첫 질문', 'c1');
