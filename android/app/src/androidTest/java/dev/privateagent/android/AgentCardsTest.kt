@@ -7,18 +7,68 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.privateagent.android.agent.Activity
 import dev.privateagent.android.agent.ActivityStep
+import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.agent.StepKind
+import dev.privateagent.android.hermes.HermesSession
 import dev.privateagent.android.ui.chat.ActivityNote
+import dev.privateagent.android.ui.chat.ApprovalPrompt
 import dev.privateagent.android.ui.theme.PrivateAgentTheme
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** The list of what a turn did, under the message that ended it. */
+/**
+ * The card that asks about a command, with the scopes the question offers, and the list of what a turn did under the
+ * message that ended it.
+ */
 @RunWith(AndroidJUnit4::class)
 class AgentCardsTest {
     @get:Rule
     val compose = createComposeRule()
+
+    private fun asked(session: Boolean, permanent: Boolean, refused: Boolean = false) = HermesChat.Interaction(
+        "question-1",
+        HermesSession.InteractionKind.APPROVAL,
+        JSONObject().put("command", "rm -rf build").put("description", "폴더를 지웁니다").put("allow_session", session)
+            .put("allow_permanent", permanent).put("smart_denied", refused),
+    )
+
+    @Test
+    fun everyScopeTheQuestionOffersHasItsAnswerAndSaysWhatItMeans() {
+        val decisions = mutableListOf<Pair<String, String>>()
+        compose.setContent {
+            PrivateAgentTheme { ApprovalPrompt(asked(session = true, permanent = true)) { id, decision -> decisions += id to decision } }
+        }
+        compose.onNodeWithText("rm -rf build").assertIsDisplayed()
+        compose.onNodeWithText("폴더를 지웁니다").assertIsDisplayed()
+        for (answer in listOf("이번만 실행", "이 대화에서 허용", "항상 허용", "거부")) compose.onNodeWithText(answer).assertIsDisplayed()
+        compose.onNodeWithText("이 대화에서 허용: 대화를 지우거나", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("항상 허용: 글자까지 같은 이 명령만", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("이 대화에서 허용").performClick()
+        compose.onNodeWithText("항상 허용").performClick()
+        compose.onNodeWithText("이번만 실행").performClick()
+        assertEquals(listOf("session", "always", "once"), decisions.map { it.second })
+        assertEquals(setOf("question-1"), decisions.map { it.first }.toSet())
+    }
+
+    @Test
+    fun aCommandTheSafetyCheckRefusedCanOnlyBeRunOnceOrRefused() {
+        val decisions = mutableListOf<String>()
+        compose.setContent {
+            PrivateAgentTheme {
+                ApprovalPrompt(asked(session = false, permanent = false, refused = true)) { _, decision -> decisions += decision }
+            }
+        }
+        compose.onNodeWithText("이번만 실행").assertIsDisplayed()
+        compose.onNodeWithText("이 대화에서 허용").assertDoesNotExist()
+        compose.onNodeWithText("항상 허용").assertDoesNotExist()
+        compose.onNodeWithText("이 대화에서 허용: 대화를 지우거나", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("안전 검사가 위험하다고 본 명령입니다. 실행하더라도 이번 한 번뿐입니다.").assertIsDisplayed()
+        compose.onNodeWithText("거부").performClick()
+        assertEquals(listOf("deny"), decisions)
+    }
 
     @Test
     fun whatATurnDidIsListedWhenAskedFor() {

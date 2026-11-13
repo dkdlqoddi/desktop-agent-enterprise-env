@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.privateagent.android.agent.Activity
 import dev.privateagent.android.agent.ActivityStep
+import dev.privateagent.android.agent.AgentGrants
 import dev.privateagent.android.agent.RecordKindFilter
 import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.agent.Texts
@@ -182,6 +183,23 @@ class StoresTest {
             upgraded.close()
             context.deleteDatabase(name)
         }
+    }
+
+    @Test
+    fun theCommandsAllowedForGoodAreKeptInTheAppsSettingsAndTheConversationsAreNot() {
+        val command = "echo private-agent-test-${System.nanoTime()}"
+        val grants = AgentGrants(AgentGrants.PrefsStore(context))
+        try {
+            assertTrue(grants.allow(command))
+            grants.grant(listOf("recursive delete"))
+            // The app started again: the command is still allowed, and nothing is allowed for the conversation.
+            val restarted = AgentGrants(AgentGrants.PrefsStore(context))
+            assertTrue(command in restarted.allowed.value)
+            assertTrue(restarted.session.value.isEmpty())
+        } finally {
+            grants.revoke(command)
+        }
+        assertFalse(command in AgentGrants(AgentGrants.PrefsStore(context)).allowed.value)
     }
 
     @Test

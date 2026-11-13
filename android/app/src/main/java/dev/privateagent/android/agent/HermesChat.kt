@@ -39,8 +39,11 @@ import java.util.UUID
  * did. A command Hermes' own guard escalates, and a question Hermes asks, wait in the chat for the user (bounded).
  * Every model request is answered with the user's LLM connection; the key never reaches the worker.
  *
- * What a turn did, the tools it ran, the app's actions, the commands asked about and how each was decided, is kept
- * with the message that ended it ([Activity]) and shown under it.
+ * The decision on a command is one of four ([ApprovalRules]). "once" runs it this time; "session" lets the same kind
+ * of command run for the rest of this conversation and "always" lets that very command run from now on ([grants]
+ * keeps both, and every turn is handed them); "deny" refuses it. What a turn did, the tools it ran, the app's actions,
+ * the commands asked about and how each was decided, is kept with the message that ended it ([Activity]) and shown
+ * under it.
  */
 class HermesChat(
     private val context: Context,
@@ -50,6 +53,7 @@ class HermesChat(
     private val sites: () -> Sites,
     private val texts: Texts,
     private val session: HermesSession,
+    private val grants: AgentGrants = AgentGrants(AgentGrants.MemoryStore()),
 ) {
     /** What the chat shows while a turn runs: the steps Hermes took, its draft, and a question for the user. */
     data class TurnView(
@@ -66,8 +70,11 @@ class HermesChat(
     private val viewState = MutableStateFlow<TurnView?>(null)
     val view: StateFlow<TurnView?> = viewState
 
+    /** The question the turn waits on, with what was asked: an answer is made of both ([decide]). */
+    private class Waiting(val id: String, val payload: JSONObject, val pending: CompletableDeferred<JSONObject>)
+
     @Volatile
-    private var waiting: Pair<String, CompletableDeferred<JSONObject>>? = null
+    private var waiting: Waiting? = null
 
     /** The activity of a turn that ended without a message of its own to keep it with ([claimActivity]). */
     @Volatile
@@ -86,7 +93,10 @@ class HermesChat(
         var last: Long? = null
         var stopped = false
         try {
-            withContext(Dispatchers.IO) { introduce(session.home) }
+            val limits = withContext(Dispatchers.IO) {
+                introduce(session.home)
+                HermesSession.Limits(grants.allowed.value, grants.session.value)
+            }
             val turn = HermesSession.Turn(
                 system = system(sites(), ZonedDateTime.now()),
                 context = context(history, message, ZonedDateTime.now()),
@@ -95,6 +105,7 @@ class HermesChat(
                 appTools = AgentTools.hermesSchemas(sites()),
                 settings = SETTINGS,
                 budgetSeconds = BUDGET_SECONDS,
+                limits = limits,
             )
             val answer = session.run(
                 turn,
@@ -113,6 +124,8 @@ class HermesChat(
 
                     override suspend fun ask(kind: HermesSession.InteractionKind, payload: JSONObject) =
                         askUser(kind, payload, recorder)
+
+                    override fun granted(keys: List<String>) = grants.grant(keys)
 
                     override fun progress(event: String, tool: String, preview: String) {
                         // The app's own tools show as cards in the chat, with the step below saying how they ended.
@@ -142,7 +155,7 @@ class HermesChat(
             stopped = true
             throw stop
         } finally {
-            waiting?.second?.cancel()
+            waiting?.pending?.cancel()
             waiting = null
             viewState.value = null
             val activity = recorder.snapshot()
@@ -177,20 +190,22 @@ class HermesChat(
         soul.writeText("You assist the user through Private Agent, an app on their own phone.\n")
     }
 
-    /** The user's decision on the command the turn waits on: once, session, always or deny. */
+    /**
+     * The user's decision on the command the turn waits on: once, session, always or deny, as it applies to what was
+     * asked ([ApprovalRules.settle]). It is given once: a second tap finds the question answered. "always" puts the
+     * command on the list of those that run unasked, which is the one way onto it.
+     */
     fun decide(interactionId: String, decision: String) {
-        if (decision !in HermesSession.DECISIONS) return
-        resolve(interactionId, JSONObject().put("decision", decision))
+        val asked = waiting?.takeIf { it.id == interactionId } ?: return
+        val applied = ApprovalRules.settle(decision, asked.payload)
+        if (!asked.pending.complete(JSONObject().put("decision", applied.decision))) return
+        if (applied.decision == "always") grants.allow(applied.command)
     }
 
     /** The user's answers ({qid: answer}) to the questions the turn waits on. */
     fun answer(interactionId: String, answers: JSONObject) {
-        resolve(interactionId, JSONObject().put("answers", answers).put("outcome", "submitted"))
-    }
-
-    private fun resolve(interactionId: String, answer: JSONObject) {
-        val (id, pending) = waiting ?: return
-        if (id == interactionId) pending.complete(answer)
+        val asked = waiting?.takeIf { it.id == interactionId } ?: return
+        asked.pending.complete(JSONObject().put("answers", answers).put("outcome", "submitted"))
     }
 
     private suspend fun askUser(
@@ -200,7 +215,7 @@ class HermesChat(
     ): JSONObject? {
         val id = UUID.randomUUID().toString()
         val pending = CompletableDeferred<JSONObject>()
-        waiting = id to pending
+        waiting = Waiting(id, payload, pending)
         viewState.update { it?.copy(interaction = Interaction(id, kind, payload)) }
         navigator.show(Tab.CHAT)
         var answer: JSONObject? = null
@@ -220,7 +235,7 @@ class HermesChat(
                     StepKind.APPROVAL,
                     payload.text("command"),
                     payload.text("description"),
-                    answer?.text("decision")?.takeIf { it in HermesSession.DECISIONS } ?: unanswered,
+                    answer?.text("decision")?.takeIf { it in ApprovalRules.DECISIONS } ?: unanswered,
                 )
                 HermesSession.InteractionKind.CLARIFY -> recorder.step(
                     StepKind.QUESTION,

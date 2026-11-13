@@ -40,6 +40,7 @@ import dev.privateagent.android.R
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.hermes.HermesSession
+import dev.privateagent.android.util.flag
 import dev.privateagent.android.util.strings
 import dev.privateagent.android.util.text
 import org.json.JSONArray
@@ -129,10 +130,17 @@ fun HermesPending(
     }
 }
 
-/** A command Hermes' guard escalated: the user allows it once or always, or refuses it, and the turn goes on. */
+/**
+ * A command Hermes' guard escalated: the user runs it once or refuses it, and the turn goes on. Where the question
+ * offers it, the same kind of command may be allowed for this conversation, or this very command for good; what each
+ * means is said under the buttons. An override of the guard's own refusal is one run only.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ApprovalPrompt(interaction: HermesChat.Interaction, onDecide: (String, String) -> Unit) {
+fun ApprovalPrompt(interaction: HermesChat.Interaction, onDecide: (String, String) -> Unit) {
     val payload = interaction.payload
+    val session = payload.flag("allow_session")
+    val permanent = payload.flag("allow_permanent")
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(stringResource(R.string.approval_title), style = MaterialTheme.typography.titleSmall)
@@ -145,20 +153,36 @@ private fun ApprovalPrompt(interaction: HermesChat.Interaction, onDecide: (Strin
             payload.text("description").takeIf { it.isNotEmpty() }?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall)
             }
-            if (payload.optBoolean("smart_denied")) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = { onDecide(interaction.id, "once") }) { Text(stringResource(R.string.approval_once)) }
+                if (session) {
+                    OutlinedButton(onClick = { onDecide(interaction.id, "session") }) {
+                        Text(stringResource(R.string.approval_session))
+                    }
+                }
+                if (permanent) {
+                    OutlinedButton(onClick = { onDecide(interaction.id, "always") }) {
+                        Text(stringResource(R.string.approval_always))
+                    }
+                }
+                TextButton(onClick = { onDecide(interaction.id, "deny") }) { Text(stringResource(R.string.approval_deny)) }
+            }
+            if (payload.flag("smart_denied")) {
                 Text(
                     stringResource(R.string.approval_smart_denied),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { onDecide(interaction.id, "deny") }) { Text(stringResource(R.string.approval_deny)) }
-                OutlinedButton(onClick = { onDecide(interaction.id, "always") }) {
-                    Text(stringResource(R.string.approval_always))
-                }
-                Spacer(Modifier.size(6.dp))
-                Button(onClick = { onDecide(interaction.id, "once") }) { Text(stringResource(R.string.approval_once)) }
+            for (help in listOfNotNull(
+                R.string.approval_session_help.takeIf { session },
+                R.string.approval_always_help.takeIf { permanent },
+            )) {
+                Text(
+                    stringResource(help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

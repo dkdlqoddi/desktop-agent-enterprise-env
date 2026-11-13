@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.privateagent.android.AppGraph
 import dev.privateagent.android.BuildConfig
 import dev.privateagent.android.R
+import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.data.ScheduleRow
 import dev.privateagent.android.llm.ApiFormat
 import dev.privateagent.android.llm.Endpoint
@@ -90,6 +91,12 @@ fun SettingsScreen(graph: AppGraph) {
         ) {
             LlmSection(graph)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            // What the bundled agent runs unasked, what is closed to it and what it remembers; a build without it has
+            // none of that.
+            if (graph.agent.engine == ChatAgent.Engine.HERMES) {
+                AgentSection(graph)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            }
             ScheduleSection(graph)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             BrowserSection(graph)
@@ -109,7 +116,7 @@ fun SettingsScreen(graph: AppGraph) {
 }
 
 @Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
+internal fun Section(title: String, content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -421,6 +428,8 @@ private fun DataSection(graph: AppGraph) {
                 confirm = null
                 scope.launch {
                     graph.messages.clear()
+                    // What was allowed for this conversation ends with it.
+                    graph.grants.forgetSession()
                     graph.navigator.say(cleared)
                 }
             },

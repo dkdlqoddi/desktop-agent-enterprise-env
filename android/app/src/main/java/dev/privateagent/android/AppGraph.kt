@@ -1,6 +1,7 @@
 package dev.privateagent.android
 
 import android.app.Application
+import dev.privateagent.android.agent.AgentGrants
 import dev.privateagent.android.agent.AppActions
 import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
@@ -40,7 +41,10 @@ class AppGraph(app: Application) {
     /** The bundled Hermes agent (android/hermes/build_runtime.py); a build without it chats with the LLM directly. */
     val hermesRuntime = HermesRuntime(app)
     val hermesSession = HermesSession(hermesRuntime)
-    val hermes = HermesChat(app, messages, actions, navigator, { sites }, texts, hermesSession)
+
+    /** What the agent runs without asking: the commands allowed for good, and the kinds allowed for this conversation. */
+    val grants = AgentGrants(AgentGrants.PrefsStore(app))
+    val hermes = HermesChat(app, messages, actions, navigator, { sites }, texts, hermesSession, grants)
 
     val agent = ChatAgent(
         context = app,

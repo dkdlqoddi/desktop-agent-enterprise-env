@@ -56,10 +56,13 @@
     <string name="hermes_timeout">Hermes 채팅 처리 제한 시간을 초과했습니다.</string>
     <string name="hermes_too_large">Hermes에 전달할 내용이 너무 큽니다.</string>
     <string name="approval_title">이 명령을 실행할까요?</string>
-    <string name="approval_smart_denied">Hermes의 안전 검사가 위험하다고 판단한 명령입니다.</string>
+    <string name="approval_smart_denied">안전 검사가 위험하다고 본 명령입니다. 실행하더라도 이번 한 번뿐입니다.</string>
     <string name="approval_once">이번만 실행</string>
+    <string name="approval_session">이 대화에서 허용</string>
     <string name="approval_always">항상 허용</string>
     <string name="approval_deny">거부</string>
+    <string name="approval_session_help">이 대화에서 허용: 대화를 지우거나 앱을 닫을 때까지 같은 종류의 명령을 다시 묻지 않습니다.</string>
+    <string name="approval_always_help">항상 허용: 글자까지 같은 이 명령만 앞으로 묻지 않습니다. 설정 → 채팅 에이전트에서 취소할 수 있습니다.</string>
 
     <!-- What a turn did, under the message that ended it -->
     <string name="activity_count">한 일 %1$d건</string>
@@ -297,13 +300,24 @@
     <string name="settings_data">데이터</string>
     <string name="settings_clear_chat">대화 지우기</string>
     <string name="settings_clear_chat_title">대화를 모두 지울까요?</string>
-    <string name="settings_clear_chat_body">채팅 메시지를 모두 지웁니다. 답마다 남긴 ‘한 일’도 함께 지웁니다. 기록과 예약은 남습니다.</string>
+    <string name="settings_clear_chat_body">채팅 메시지를 모두 지웁니다. 답마다 남긴 ‘한 일’도 함께 지우고, 이 대화에서 허용한 명령은 다시 묻습니다. 기록과 예약은 남습니다.</string>
     <string name="settings_clear_records">기록 모두 지우기</string>
     <string name="settings_clear_records_title">기록을 모두 지울까요?</string>
     <string name="settings_clear_records_body">기록한 페이지와 항목을 모두 지웁니다. 되돌릴 수 없습니다.</string>
     <string name="settings_cleared">지웠습니다.</string>
     <string name="confirm_clear">지우기</string>
     <string name="confirm_cancel">취소</string>
+    <!-- The chat agent: what it runs unasked, what is closed to it, what it remembers -->
+    <string name="settings_agent">채팅 에이전트</string>
+    <string name="agent_allowed_title">묻지 않고 실행하는 명령</string>
+    <string name="agent_allowed_help">명령 확인에서 ‘항상 허용’을 고른 명령입니다. 글자까지 같은 명령만 묻지 않고 실행하며, 목록은 이 기기에만 둡니다.</string>
+    <string name="agent_allowed_empty">없습니다.</string>
+    <string name="agent_allowed_revoke">허용 취소: %1$s</string>
+    <string name="agent_allowed_revoked">이 명령은 다시 묻습니다.</string>
+    <string name="agent_session_title">이 대화에서 허용한 명령</string>
+    <string name="agent_session_none">없습니다.</string>
+    <string name="agent_session_count">명령 종류 %1$d가지를 이 대화에서 묻지 않습니다. 대화를 지우거나 앱을 닫으면 다시 묻습니다.</string>
+    <string name="agent_session_forget">다시 묻기</string>
     <string name="settings_about">정보</string>
     <string name="settings_about_body">대화와 기록은 이 기기에만 저장됩니다. 설정한 LLM에는 채팅 내용과 에이전트가 쓴 도구의 결과(기록한 광고·상품의 제목·가격·검색어, 웹 검색 결과, 에이전트의 메모리와 기술)를 보냅니다. 내장 Hermes의 웹 검색어는 DuckDuckGo로 갑니다. 앱은 광고를 대신 누르지 않고, 로봇 확인을 우회하지 않습니다.</string>
     <string name="settings_version">버전 %1$s</string>

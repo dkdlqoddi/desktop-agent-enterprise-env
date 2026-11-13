@@ -1,6 +1,7 @@
 package dev.privateagent.android.hermes
 
 import android.os.SystemClock
+import dev.privateagent.android.util.strings
 import dev.privateagent.android.util.text
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -16,6 +17,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.util.UUID
 
@@ -24,11 +26,18 @@ import java.util.UUID
  * it. One turn at a time: the turn frame goes out, then every frame the worker sends is answered until its result.
  * Model requests are answered with the app's LLM connection ([Handler.complete]), so no key reaches the worker; the
  * app's own actions run in the app ([Handler.appTool]); an approval or a clarify question waits for the user, bounded.
+ * What a turn may run without asking and what it may not touch go out with the turn ([Limits]), and the kinds of
+ * command a "this conversation" answer covers come back as a grant frame ([Handler.granted]).
  * The worker is kept for the next turn and shut down after a while without one. A stop sends cancel and kills it.
+ *
+ * [home] is HERMES_HOME; [start] starts the worker's process; [now] is a clock that only goes forward, in milliseconds.
  */
-class HermesSession(private val runtime: HermesRuntime) {
-    /** HERMES_HOME. */
-    val home get() = runtime.home
+class HermesSession(
+    val home: File,
+    private val start: () -> HermesProcess,
+    private val now: () -> Long = SystemClock::elapsedRealtime,
+) {
+    constructor(runtime: HermesRuntime) : this(runtime.home, { runtime.start() })
 
     private val turns = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -36,6 +45,17 @@ class HermesSession(private val runtime: HermesRuntime) {
 
     @Volatile
     private var process: HermesProcess? = null
+
+    /**
+     * What a turn runs without asking and what it may not touch, as worker.py takes them: the commands allowed for
+     * good ([allowed], each to the letter), the kinds of command allowed for this conversation ([sessionAllowed],
+     * Hermes' detector keys) and the paths its tools refuse ([protectedPaths]).
+     */
+    class Limits(
+        val allowed: List<String> = emptyList(),
+        val sessionAllowed: List<String> = emptyList(),
+        val protectedPaths: List<String> = emptyList(),
+    )
 
     /** What one turn sends: the frame fields of worker.py's "turn" request. */
     class Turn(
@@ -46,6 +66,7 @@ class HermesSession(private val runtime: HermesRuntime) {
         val appTools: JSONArray,
         val settings: JSONObject,
         val budgetSeconds: Int,
+        val limits: Limits = Limits(),
     )
 
     enum class InteractionKind(val key: String) { APPROVAL("approval"), CLARIFY("clarify") }
@@ -60,6 +81,9 @@ class HermesSession(private val runtime: HermesRuntime) {
 
         /** An approval or clarify the user answers; null when they did not in time, or the turn stopped. */
         suspend fun ask(kind: InteractionKind, payload: JSONObject): JSONObject?
+
+        /** The kinds of command a "this conversation" answer covers: they go out again with the later turns. */
+        fun granted(keys: List<String>) {}
 
         fun progress(event: String, tool: String, preview: String)
 
@@ -94,10 +118,10 @@ class HermesSession(private val runtime: HermesRuntime) {
         var finished = false
         try {
             send(worker, turnFrame(turn))
-            var deadline = SystemClock.elapsedRealtime() + (turn.budgetSeconds + GRACE_SECONDS) * 1000L
+            var deadline = now() + (turn.budgetSeconds + GRACE_SECONDS) * 1000L
             while (true) {
                 currentCoroutineContextEnsureActive()
-                if (SystemClock.elapsedRealtime() > deadline) throw TurnException(Problem.TIMEOUT)
+                if (now() > deadline) throw TurnException(Problem.TIMEOUT)
                 val frame = try {
                     worker.receive(POLL_MS)
                 } catch (_: HermesProcessEndedException) {
@@ -119,12 +143,13 @@ class HermesSession(private val runtime: HermesRuntime) {
                     }
                     "approval", "clarify" -> {
                         val kind = if (frame.text("type") == "approval") InteractionKind.APPROVAL else InteractionKind.CLARIFY
-                        val waited = SystemClock.elapsedRealtime()
+                        val waited = now()
                         val answer = handler.ask(kind, payload(frame))
                         // The user's thinking time is not the turn's compute time.
-                        deadline += SystemClock.elapsedRealtime() - waited
+                        deadline += now() - waited
                         send(worker, reply(kind, id, answer))
                     }
+                    "grant" -> handler.granted(frame.optJSONArray("keys")?.strings().orEmpty())
                     "progress" -> handler.progress(frame.text("event"), frame.text("tool"), frame.text("preview"))
                     "draft" -> handler.draft(frame.text("text"))
                     "result" -> {
@@ -156,7 +181,7 @@ class HermesSession(private val runtime: HermesRuntime) {
         process?.takeIf { it.isAlive }?.let { return it }
         process?.stop()
         val started = try {
-            runtime.start()
+            start()
         } catch (_: HermesUnavailableException) {
             throw TurnException(Problem.UNAVAILABLE)
         } catch (_: IOException) {
@@ -210,7 +235,10 @@ class HermesSession(private val runtime: HermesRuntime) {
         private const val SHUTDOWN_MS = 3_000L
         private const val IDLE_MS = 5 * 60_000L
 
-        /** worker.py's turn request. No browser executable: the phone has no Chromium for Hermes. */
+        /**
+         * worker.py's turn request. No browser executable: the phone has no Chromium for Hermes. No command patterns
+         * to refuse ("blocked") either: its agent has no terminal.
+         */
         fun turnFrame(turn: Turn): JSONObject = JSONObject()
             .put("type", "turn")
             .put("system", turn.system)
@@ -222,6 +250,10 @@ class HermesSession(private val runtime: HermesRuntime) {
             .put("settings", turn.settings)
             .put("chromium", "")
             .put("budget", turn.budgetSeconds)
+            .put("allowed", JSONArray(turn.limits.allowed))
+            .put("session_allowed", JSONArray(turn.limits.sessionAllowed))
+            .put("protected", JSONArray(turn.limits.protectedPaths))
+            .put("blocked", JSONArray())
 
         /** An approval or clarify frame without its routing fields, as the screen shows it. */
         fun payload(frame: JSONObject): JSONObject {
