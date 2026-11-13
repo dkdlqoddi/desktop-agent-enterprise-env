@@ -35,6 +35,14 @@ class SettingsStore(context: Context, private val box: SecretBox = SecretBox(), 
     private val recordClicksState = MutableStateFlow(prefs.getBoolean(RECORD_CLICKS, true))
     val recordClicks: StateFlow<Boolean> = recordClicksState
 
+    private val recordsKeptState = MutableStateFlow(prefs.getInt(RECORDS_KEPT, 0).takeIf { it in 0..MAX_KEPT_DAYS } ?: 0)
+
+    /**
+     * How many days the recorded pages are kept before the retention policy moves them to the trash (Upkeep); 0, the
+     * default, keeps them until the user deletes them.
+     */
+    val recordsKept: StateFlow<Int> = recordsKeptState
+
     data class SaveResult(val keyCleared: Boolean)
 
     /**
@@ -93,6 +101,12 @@ class SettingsStore(context: Context, private val box: SecretBox = SecretBox(), 
         recordClicksState.value = enabled
     }
 
+    fun setRecordsKept(days: Int) {
+        val kept = days.coerceIn(0, MAX_KEPT_DAYS)
+        prefs.edit { putInt(RECORDS_KEPT, kept) }
+        recordsKeptState.value = kept
+    }
+
     /**
      * A random value of this installation that the app's own notifications carry: the activity runs a scheduled
      * capture only for an intent that has it, not for one another app made up.
@@ -122,6 +136,10 @@ class SettingsStore(context: Context, private val box: SecretBox = SecretBox(), 
         const val KEY_ORIGIN = "llm_api_key_origin"
         const val KEY_PURPOSE = "llm_api_key"
         const val RECORD_CLICKS = "record_clicks"
+        const val RECORDS_KEPT = "records_kept_days"
+
+        /** The longest the records may be kept by days, as on the desktop (web_capture.MAX_KEPT_DAYS). */
+        const val MAX_KEPT_DAYS = 3650
         const val LAUNCH_SECRET = "launch_secret"
     }
 }

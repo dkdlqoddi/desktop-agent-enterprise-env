@@ -42,7 +42,7 @@ class AppGraph(private val app: Application) {
     val llm = LlmService()
     val notifications = Notifications(app, settings) { sites }
     val scheduler = ScheduleManager(app, schedules)
-    val upkeep = Upkeep(app, trash)
+    val upkeep = Upkeep(app, records, trash) { settings.recordsKept.value }
     val browser = BrowserController(records, settings, { sites }, { scripts })
     val actions = AppActions(app, records, browser, scheduler, notifications, navigator, { sites }, texts)
 

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,7 +57,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -100,8 +104,13 @@ fun RecordsScreen(graph: AppGraph) {
     LaunchedEffect(changes) { captures = graph.orSay(captures) { graph.records.captures() } }
     var detail by remember { mutableStateOf<ItemRow?>(null) }
     var deleting by remember { mutableStateOf<CaptureRow?>(null) }
+    // The recorded pages chosen to be deleted together, of those the list shows.
+    var chosen by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var deletingChosen by remember { mutableStateOf(false) }
+    LaunchedEffect(captures) { chosen = chosen intersect captures.map { it.id }.toSet() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val resources = LocalResources.current
     val exportEmpty = stringResource(R.string.records_export_empty)
     val exportFailed = stringResource(R.string.records_export_failed)
     val moved = stringResource(R.string.trash_moved_record)
@@ -174,11 +183,35 @@ fun RecordsScreen(graph: AppGraph) {
             RecordsView.CAPTURES -> if (captures.isEmpty()) {
                 Empty(stringResource(R.string.records_empty))
             } else {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (chosen.isEmpty()) {
+                        TextButton(onClick = { chosen = captures.map { it.id }.toSet() }) {
+                            Text(stringResource(R.string.records_select_all))
+                        }
+                    } else {
+                        Text(
+                            stringResource(R.string.records_selected, chosen.size),
+                            Modifier.padding(horizontal = 8.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        TextButton(onClick = { deletingChosen = true }) {
+                            Text(stringResource(R.string.records_delete_chosen), color = MaterialTheme.colorScheme.error)
+                        }
+                        TextButton(onClick = { chosen = emptySet() }) { Text(stringResource(R.string.records_select_none)) }
+                    }
+                }
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                     items(captures, key = { it.id }) { capture ->
                         CaptureListRow(
                             capture,
                             graph.texts,
+                            checked = capture.id in chosen,
+                            onCheck = { on -> chosen = if (on) chosen + capture.id else chosen - capture.id },
                             onClick = { navigator.showCapture(capture.id) },
                             onDelete = { deleting = capture },
                         )
@@ -213,6 +246,28 @@ fun RecordsScreen(graph: AppGraph) {
                 }
             },
             onDismiss = { deleting = null },
+        )
+    }
+    if (deletingChosen) {
+        val ids = chosen.toList()
+        Confirm(
+            title = stringResource(R.string.records_delete_chosen_title, ids.size),
+            body = stringResource(R.string.records_delete_chosen_body),
+            confirm = stringResource(R.string.confirm_clear),
+            onConfirm = {
+                deletingChosen = false
+                scope.launch {
+                    graph.orSay(Unit) {
+                        // Together to the trash, each with its items, from where 되돌리기 brings them all back.
+                        val entries = graph.records.deleteCaptures(ids)
+                        chosen = chosen - ids.toSet()
+                        val filter = navigator.recordsFilter.value
+                        if (filter.captureId in ids) navigator.recordsFilter.value = filter.copy(captureId = null)
+                        graph.sayMoved(resources.getString(R.string.trash_moved_records, entries.size), entries)
+                    }
+                }
+            },
+            onDismiss = { deletingChosen = false },
         )
     }
 }
@@ -361,11 +416,27 @@ private fun KindBadge(kind: ItemKind, texts: Texts) {
     }
 }
 
+/** A recorded page: a tap shows its items, its box chooses it to be deleted with others, its button deletes it alone. */
 @Composable
-private fun CaptureListRow(capture: CaptureRow, texts: Texts, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun CaptureListRow(
+    capture: CaptureRow,
+    texts: Texts,
+    checked: Boolean,
+    onCheck: (Boolean) -> Unit,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val label = captureLabel(capture, texts)
+    val select = stringResource(R.string.records_select, label)
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
+        leadingContent = {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = onCheck,
+                modifier = Modifier.semantics { contentDescription = select },
+            )
+        },
         overlineContent = { Text(texts.time(capture.capturedAt) + " · " + texts.source(capture.source)) },
         headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {

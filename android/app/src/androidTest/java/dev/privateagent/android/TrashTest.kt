@@ -19,6 +19,7 @@ import dev.privateagent.android.data.Restored
 import dev.privateagent.android.data.ScheduleStore
 import dev.privateagent.android.data.TrashKind
 import dev.privateagent.android.data.TrashStore
+import dev.privateagent.android.schedule.Upkeep
 import dev.privateagent.android.web.CaptureCounts
 import dev.privateagent.android.web.CaptureResult
 import dev.privateagent.android.web.CapturedItem
@@ -36,7 +37,8 @@ import java.util.UUID
 
 /**
  * The trash on the device's SQLite, in a database that lives in memory only: what each delete moves there, how it comes
- * back, and what deletes it for good. And a database of the second version, which gains the trash and keeps its data.
+ * back, what deletes it for good, and the recorded pages the retention policy moves there. And a database of the
+ * second version, which gains the trash and keeps its data.
  */
 @RunWith(AndroidJUnit4::class)
 class TrashTest {
@@ -223,6 +225,47 @@ class TrashTest {
         assertEquals(2, trash.purgeAll())
         assertEquals(0, count("trash"))
         assertEquals(0, count("trash_rows"))
+    }
+
+    @Test
+    fun theRetentionPolicyMovesThePagesOlderThanTheDaysKeptToTheTrash() = runBlocking {
+        val now = System.currentTimeMillis()
+        val day = TrashStore.DAY_MS
+        val old = save("오래된 기록", now - 10 * day)
+        val recent = save("최근 기록", now - day)
+        var kept = 0
+        val upkeep = Upkeep(context, records, trash) { kept }
+
+        // Kept until deleted, as it is unless the user chooses: nothing moves.
+        assertEquals(Upkeep.Done(retired = 0, expired = 0), upkeep.run(now))
+        assertEquals(2, records.captures().size)
+
+        // Seven days: the older page goes, marked as the policy's, with its items.
+        kept = 7
+        assertEquals(Upkeep.Done(retired = 1, expired = 0), upkeep.run(now))
+        assertNull(records.capture(old))
+        assertNotNull(records.capture(recent))
+        val entry = trash.page().entries.single()
+        assertTrue(entry.retired)
+        assertEquals(old, entry.capture!!.id)
+        assertEquals("오래된 기록", entry.title)
+
+        // A month on: the other page goes too, and the first has waited its days in the trash.
+        assertEquals(Upkeep.Done(retired = 1, expired = 1), upkeep.run(now + (TrashStore.DAYS + 1) * day))
+        assertTrue(records.captures().isEmpty())
+        assertEquals(listOf(recent), trash.page().entries.map { it.capture!!.id })
+    }
+
+    @Test
+    fun theRetentionPolicyMovesManyPagesAPartAtATime() = runBlocking {
+        val now = System.currentTimeMillis()
+        // More than one transaction takes (RecordStore.RETIRE_AT_ONCE is 200), and one page newer than the days kept.
+        repeat(450) { save("오래된 $it", now - TrashStore.DAY_MS * 8 - it) }
+        val recent = save("최근", now)
+        assertEquals(450, records.retire(now - TrashStore.DAY_MS * 7, now))
+        assertEquals(listOf(recent), records.captures().map { it.id })
+        assertEquals(mapOf(TrashKind.CAPTURE to 450), trash.counts())
+        assertTrue(trash.page(limit = TrashStore.MAX_PAGE).entries.all { it.retired })
     }
 
     @Test

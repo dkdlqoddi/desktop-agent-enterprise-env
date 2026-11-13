@@ -19,8 +19,9 @@ import java.util.UUID
 
 /**
  * The rules of the saved API Key: it stays with the server it was entered for while the address moves on that server,
- * and goes as soon as the address names another one (another host, port or scheme), so it is never sent there. The
- * test's own preferences file and Keystore key are used and removed afterwards; the app's settings are not touched.
+ * and goes as soon as the address names another one (another host, port or scheme), so it is never sent there. How
+ * long the records are kept is off until chosen, and stays. The test's own preferences file and Keystore key are used
+ * and removed afterwards; the app's settings are not touched.
  */
 @RunWith(AndroidJUnit4::class)
 class SettingsStoreTest {
@@ -37,6 +38,17 @@ class SettingsStoreTest {
 
     private fun save(endpoint: String, key: String? = null) =
         store.saveLlm(ApiFormat.OPENAI, endpoint, "test-model", key)
+
+    @Test
+    fun howLongTheRecordsAreKeptIsOffUntilChosenAndStays() {
+        assertEquals(0, store.recordsKept.value)
+        store.setRecordsKept(30)
+        assertEquals(30, SettingsStore(context, SecretBox(alias), file).recordsKept.value)
+        store.setRecordsKept(100_000)
+        assertEquals(3650, store.recordsKept.value)
+        store.setRecordsKept(-1)
+        assertEquals(0, SettingsStore(context, SecretBox(alias), file).recordsKept.value)
+    }
 
     @Test
     fun aKeyStaysWithItsServerAndGoesWhenTheAddressNamesAnother() {

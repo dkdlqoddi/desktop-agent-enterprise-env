@@ -193,6 +193,28 @@ class RecordStore(private val db: AppDatabase) {
         made
     }
 
+    /**
+     * The retention policy (Upkeep): the recorded pages captured before [before] go to the trash, the oldest first,
+     * each an entry of its own marked as moved by the policy; RETIRE_AT_ONCE a transaction, so that a page being
+     * recorded meanwhile waits little. How many went.
+     */
+    suspend fun retire(before: Long, now: Long = System.currentTimeMillis()): Int = withDatabase {
+        val database = db.writableDatabase
+        var moved = 0
+        do {
+            val made = database.inTransaction {
+                val ids = database.rawQuery(
+                    "SELECT id FROM captures WHERE captured_at < ? ORDER BY captured_at, id LIMIT $RETIRE_AT_ONCE",
+                    arrayOf(before.toString()),
+                ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getLong(0)) } }
+                database.discard(TrashKind.CAPTURE, ids, now, retired = true)
+            }
+            if (made.isNotEmpty()) db.changed()
+            moved += made.size
+        } while (made.size == RETIRE_AT_ONCE)
+        moved
+    }
+
     private fun where(filter: ItemFilter): Pair<String, Array<String>> {
         val clauses = mutableListOf("1 = 1")
         val args = mutableListOf<String>()
@@ -273,6 +295,9 @@ class RecordStore(private val db: AppDatabase) {
     }
 
     private companion object {
+        /** The pages one transaction of the retention policy moves to the trash. */
+        const val RETIRE_AT_ONCE = 200
+
         /** The items with the capture each belongs to, as [Cursor.item] reads them. */
         const val ITEMS = "SELECT i.*, c.site AS c_site, c.query AS c_query, c.captured_at AS c_captured_at, " +
             "c.url AS c_url FROM items i JOIN captures c ON c.id = i.capture_id"

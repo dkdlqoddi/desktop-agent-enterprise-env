@@ -2,11 +2,13 @@ package dev.privateagent.android.ui.settings
 
 import android.Manifest
 import android.content.Intent
+import android.content.res.Resources
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,10 +21,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -444,6 +449,7 @@ private fun DataSection(graph: AppGraph, openTrash: () -> Unit) {
             OutlinedButton(onClick = { confirm = CHAT }) { Text(stringResource(R.string.settings_clear_chat)) }
             OutlinedButton(onClick = { confirm = RECORDS }) { Text(stringResource(R.string.settings_clear_records)) }
         }
+        RecordsKept(graph)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.trash_title), style = MaterialTheme.typography.bodyLarge)
@@ -501,6 +507,68 @@ private fun DataSection(graph: AppGraph, openTrash: () -> Unit) {
         )
     }
 }
+
+/**
+ * How long the recorded pages are kept: until they are deleted (the default), or a number of days, the desktop's
+ * choices. The older ones go to the trash at each start of the app and once a day (Upkeep).
+ */
+@Composable
+private fun RecordsKept(graph: AppGraph) {
+    val kept by graph.settings.recordsKept.collectAsStateWithLifecycle()
+    var open by remember { mutableStateOf(false) }
+    val resources = LocalResources.current
+    val label = keepLabel(resources, kept)
+    val choice = stringResource(R.string.settings_records_kept_choice, label)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.settings_records_kept), style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (kept == 0) {
+                    stringResource(R.string.settings_records_kept_off)
+                } else {
+                    stringResource(R.string.settings_records_kept_on, label)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.size(8.dp))
+        Box {
+            OutlinedButton(onClick = { open = true }, modifier = Modifier.semantics { contentDescription = choice }) {
+                Text(label)
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                // A number of days set otherwise stays among the choices while it is the one kept.
+                for (days in (KEEP_DAYS + kept).distinct().sorted()) {
+                    DropdownMenuItem(
+                        text = { Text(keepLabel(resources, days)) },
+                        onClick = {
+                            open = false
+                            graph.settings.setRecordsKept(days)
+                            graph.navigator.say(
+                                if (days == 0) {
+                                    resources.getString(R.string.settings_records_kept_saved_off)
+                                } else {
+                                    resources.getString(R.string.settings_records_kept_saved_on, keepLabel(resources, days))
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun keepLabel(resources: Resources, days: Int): String = when (days) {
+    0 -> resources.getString(R.string.keep_forever)
+    365 -> resources.getString(R.string.keep_year)
+    else -> resources.getString(R.string.keep_days, days)
+}
+
+/** How long the records may be kept, as on the desktop (web-records.tsx KEEP): until deleted, or this many days. */
+private val KEEP_DAYS = listOf(0, 7, 30, 90, 180, 365)
 
 private const val CHAT = "chat"
 private const val RECORDS = "records"
