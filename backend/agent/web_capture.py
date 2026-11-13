@@ -16,6 +16,7 @@ in the Wiki folder's web-captures folder; the CSV exports go to its exports fold
 """
 
 import asyncio
+import base64
 import concurrent.futures
 import contextlib
 import csv
@@ -43,6 +44,11 @@ MAX_CAPTURES = 5000  # Captures kept: the oldest go, with their screenshots.
 MAX_TOKENS = 200  # Captures of open pages whose items a click can still name.
 MAX_PAGE = 200  # Rows a list answers at once.
 MAX_EXPORT = 50_000  # Rows a CSV export holds.
+MAX_DELETE = 1000  # Records one delete names: as many as one trash.restore brings back.
+MAX_SHOT = 20 * 1024 * 1024  # The largest screenshot the screen is sent, in bytes.
+JPEG = bytes((0xFF, 0xD8, 0xFF))  # How a JPEG file begins, as the screenshots are taken.
+# How many days the user keeps the records (web.retention): off (0, kept until deleted) unless they choose one.
+MAX_KEPT_DAYS = 3650
 QUERY_CHARS = 100
 SCROLLS = 4  # Viewports a capture scrolls down, so pages that load their items as they come into view show them.
 SCROLL_PAUSE = 0.8  # Seconds
@@ -165,6 +171,10 @@ class WebCapture:
             "web.records": self.records,
             "web.export": self.export,
             "web.delete_capture": self.delete_capture,
+            "web.delete_captures": self.delete_captures,
+            "web.screenshot": self.screenshot,
+            "web.retention": self.retention,
+            "web.retention_save": self.retention_save,
         }
 
     # The folder of the Wiki, where the screenshots and exports go.
@@ -650,6 +660,66 @@ class WebCapture:
         if not moved:
             raise UserError("기록을 찾을 수 없습니다.")
         return {"deleted": ident, "trash_ids": moved}
+
+    def delete_captures(self, params):
+        """Move the recorded pages chosen together (`ids`, 1~MAX_DELETE) to the trash with their items, at once: what
+        is gone meanwhile is passed over. How many went, and their entries for 되돌리기 (trash.restore)."""
+        ids = params.get("ids")
+        if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_DELETE:
+            raise UserError(f"지울 기록을 1~{MAX_DELETE:,}개 골라 주세요.")
+        ids = [text(ident, "기록 ID", 80) for ident in ids]
+        with self.service.db.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            moved = self.service.trash.discard_many(conn, "web_capture", ids)
+        return {"deleted": len(moved), "trash_ids": moved}
+
+    def screenshot(self, params):
+        """The screenshot of one recorded page, as the data: URL the screen shows it by (its policy lets pictures come
+        from the app or data: URLs only). Only a JPEG file of the screenshots folder is read: a record never names
+        another one."""
+        ident = text(params.get("id"), "기록 ID", 80)
+        with self.service.db.connect() as conn:
+            row = conn.execute("SELECT screenshot FROM web_captures WHERE id=?", (ident,)).fetchone()
+        if row is None:
+            raise UserError("기록을 찾을 수 없습니다.")
+        if not row[0]:
+            raise UserError("이 기록에는 스크린샷이 없습니다. 페이지를 읽을 때 찍지 못했습니다.")
+        unreadable = "스크린샷 파일을 읽지 못했습니다. Wiki 폴더의 web-captures에서 지워졌거나 손상되었을 수 있습니다."
+        shot = (self.folder / row[0]).resolve()
+        try:
+            if not shot.is_relative_to((self.folder / "web-captures").resolve()):
+                raise UserError(unreadable)
+            if shot.stat().st_size > MAX_SHOT:
+                raise UserError("스크린샷이 너무 커서 열지 못했습니다. Wiki 폴더의 web-captures에서 직접 여세요.")
+            data = shot.read_bytes()
+        except OSError:
+            raise UserError(unreadable) from None
+        if not data.startswith(JPEG):
+            raise UserError(unreadable)
+        return {"data": "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")}
+
+    def retention(self, _params=None):
+        """How many days the user keeps the records: {"days"}, 0 while they are kept until deleted."""
+        with self.service.db.connect() as conn:
+            row = conn.execute("SELECT value FROM metadata WHERE key='web_retention'").fetchone()
+        try:
+            days = json.loads(row[0])["days"] if row else 0
+        except (ValueError, KeyError, TypeError):
+            days = 0
+        return {"days": days if type(days) is int and 0 <= days <= MAX_KEPT_DAYS else 0}
+
+    def retention_save(self, params):
+        """Keep the records `days` days (0: until deleted). The retention policy then moves those older to the trash
+        once a day (Service.retain), where they wait 30 days more with their screenshots."""
+        days = params.get("days")
+        if type(days) is not int or not 0 <= days <= MAX_KEPT_DAYS:
+            raise UserError(f"보관 기간(days)은 0(계속 보관)이나 1~{MAX_KEPT_DAYS:,}일로 입력해 주세요.")
+        with self.service.db.connect() as conn:
+            conn.execute(
+                "INSERT INTO metadata VALUES ('web_retention', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (json.dumps({"days": days}),),
+            )
+        return {"days": days}
 
     def forget_screenshots(self, paths):
         """Remove the screenshot files `paths` names (relative to the Wiki folder, as the records keep them) once their

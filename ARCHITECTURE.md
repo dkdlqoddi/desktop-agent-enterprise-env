@@ -70,7 +70,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 - 비서: `tasks`, `conversations`, `messages`
 - 휴지통: `trash`(지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업, 비운 채팅(통째로 한 항목), 지운 웹 기록, 보관 정책이 옮긴 실행 기록·대화의 행과 함께 지워진 행을 JSON으로 30일 보관. 웹 기록의 스크린샷은 영구 삭제할 때 지움. 문서는 `documents.deleted_at`)
 - 채팅과 웹 기록: `agent_messages`(채팅 대화와 작업 카드, 최근 1,000개), `agent_activity`(답마다 그 턴이 한 일: 쓴 도구, 앱 작업, 확인을 받은 명령과 결정), `web_captures`(기록한 페이지), `web_items`(광고·상품·검색 결과, 직접 누른 광고의 도착 페이지)
-- `metadata`: 검색·대시보드 설정(`preferences`)과 색인 상태
+- `metadata`: 검색·대시보드 설정(`preferences`), 웹 기록의 보관 기간(`web_retention`)과 색인 상태
 
 가져온 이미지는 별도 파일 없이 HTML 안의 `data:` URI로 저장합니다. Office 그림을 내보낼 때 쓰는 임시 폴더(`private-agent-office-…`, `private-agent-pictures-…`)는 시스템 임시 폴더에 생기고, 백엔드가 시작할 때 10분 넘은 것을 지웁니다.
 
@@ -122,7 +122,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계                 |
 | `agent/agent_guard.py`, `agent/agent_memory.py`                                                                        | 보호 구역의 경로 계산, 에이전트의 기억(메모·사용자 정보) 읽기·저장과 작업 기록 지우기                    |
 | `agent/hermes_gateway.py`                                                                                              | 메신저 게이트웨이: 두 번째 워커 프로세스의 시작·재시작·종료, 모델 호출과 앱 작업의 중계                  |
-| `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV(`web.*`)                     |
+| `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV·스크린샷·보관 기간(`web.*`)  |
 
 ### electron
 
@@ -161,7 +161,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `components/windowing.ts`                               | 긴 목록에서 보이는 줄만 그리기(측정한 줄 높이)                                                 |
 | `components/agent-chat.tsx`, `agent-turn.ts`            | 첫 화면인 채팅(진행·명령 확인·질문·작업 카드·한 일), 화면을 옮겨도 이어지는 진행 중인 턴       |
 | `components/admin/hermes*.tsx`                          | 채팅 에이전트 설정: 키·도구·게이트웨이, 묻지 않는 명령과 보호 구역, 에이전트의 기억            |
-| `components/web-records.tsx`                            | 웹 기록 표와 CSV 내보내기                                                                      |
+| `components/web-records.tsx`                            | 웹 기록 표와 CSV 내보내기, 기록한 페이지(여러 개 지우기, 스크린샷, 보관 기간)                  |
 
 ### scripts
 

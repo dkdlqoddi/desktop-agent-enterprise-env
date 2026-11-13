@@ -1,3 +1,4 @@
+import base64
 import csv
 import io
 import time
@@ -5,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agent import web_capture
+from agent import service as service_module, web_capture
 from agent.db import Database
 from agent.llm import UserError
 from agent.service import Service
@@ -179,6 +180,81 @@ def test_the_screenshot_of_a_record_in_the_trash_goes_with_the_retention_policy(
     with service.db.connect() as conn:
         conn.execute("UPDATE trash SET deleted_at=?", ((datetime.now(timezone.utc) - timedelta(days=31)).isoformat(),))
     assert service.retain()["trash"] == 1 and not shot.exists()
+
+
+def test_several_records_go_to_the_trash_at_once_and_come_back_together(tmp_path):
+    service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
+    web = service.web
+    page = {"url": "https://shop.example.test/", "items": [{"ref": 0, "kind": "ad", "title": "광고 A"}]}
+    ids = [web._keep("coupang", f"검색 {index}", "chat", f"t{index}", page, b"")["capture_id"] for index in range(3)]
+    # What is gone meanwhile is passed over; the rest go together, each to an entry of its own.
+    moved = web.delete_captures({"ids": [ids[0], ids[2], "없는 기록"]})
+    assert moved["deleted"] == 2 and len(moved["trash_ids"]) == 2
+    assert [item["id"] for item in web.captures({})["captures"]] == [ids[1]]
+    titles = {item["title"] for item in service.dispatch("trash.list", {})["items"]}
+    assert titles == {"검색 0", "검색 2"}
+    assert service.dispatch("trash.restore", {"ids": moved["trash_ids"]})["restored"] == 2
+    assert {item["id"] for item in web.captures({})["captures"]} == set(ids)
+    assert web.delete_captures({"ids": ["없는 기록"]}) == {"deleted": 0, "trash_ids": []}
+    for value in ([], "전부", [1], ["x"] * (web_capture.MAX_DELETE + 1)):
+        with pytest.raises(UserError):
+            web.delete_captures({"ids": value})
+
+
+def test_a_records_screenshot_is_shown_as_a_picture_of_its_own_file_only(tmp_path):
+    service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
+    web = service.web
+    page = {"url": "https://shop.example.test/", "items": [{"ref": 0, "kind": "ad", "title": "광고 A"}]}
+    jpeg = web_capture.JPEG + b"jpeg data"
+    shot = web._keep("coupang", "a", "chat", "t1", page, jpeg)["capture_id"]
+    bare = web._keep("coupang", "b", "chat", "t2", page, b"")["capture_id"]
+    assert web.screenshot({"id": shot}) == {"data": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}
+    with pytest.raises(UserError, match="스크린샷이 없습니다"):
+        web.screenshot({"id": bare})
+    with pytest.raises(UserError, match="찾을 수 없습니다"):
+        web.screenshot({"id": "없는 기록"})
+    # A file that is no JPEG, gone, or outside the screenshots folder (a damaged row) is not read.
+    path = tmp_path / next(item for item in web.captures({})["captures"] if item["id"] == shot)["screenshot"]
+    path.write_bytes(b"<script>")
+    with pytest.raises(UserError, match="읽지 못했습니다"):
+        web.screenshot({"id": shot})
+    path.unlink()
+    with pytest.raises(UserError, match="읽지 못했습니다"):
+        web.screenshot({"id": shot})
+    outside = tmp_path / "note.jpg"
+    outside.write_bytes(jpeg)
+    with service.db.connect() as conn:
+        conn.execute("UPDATE web_captures SET screenshot=? WHERE id=?", ("../note.jpg", shot))
+    with pytest.raises(UserError, match="읽지 못했습니다"):
+        web.screenshot({"id": shot})
+
+
+def test_records_older_than_the_days_kept_go_to_the_trash_with_the_retention_policy(tmp_path, monkeypatch):
+    service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
+    web = service.web
+    page = {"url": "https://shop.example.test/", "items": [{"ref": 0, "kind": "ad", "title": "광고 A"}]}
+    for days, query in ((40, "오래된 검색"), (10, "지난주 검색"), (0, "오늘 검색")):
+        at = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        monkeypatch.setattr(web_capture, "now", lambda at=at: at)
+        web._keep("naver", query, "schedule", query, page, b"")
+    # Kept until deleted unless the user chose how long: the policy moves none.
+    assert web.retention({}) == {"days": 0}
+    assert "web_captures" not in service.retain() and web.captures({})["total"] == 3
+    assert web.retention_save({"days": 30}) == {"days": 30} and web.retention({}) == {"days": 30}
+    assert service.retain()["web_captures"] == 1
+    assert [item["query"] for item in web.captures({})["captures"]] == ["오늘 검색", "지난주 검색"]
+    entry = service.dispatch("trash.list", {})["items"][0]
+    assert (entry["kind"], entry["title"]) == ("web_capture", "오래된 검색")
+    assert entry["detail"].endswith(service_module.RETIRED)
+    assert web.retention_save({"days": 7}) == {"days": 7} and service.retain()["web_captures"] == 1
+    assert web.retention_save({"days": 0}) == {"days": 0} and "web_captures" not in service.retain()
+    for value in (-1, 3651, "30", 1.5, None, True):
+        with pytest.raises(UserError, match="보관 기간"):
+            web.retention_save({"days": value})
+    # A value the screen did not write is read as kept until deleted.
+    with service.db.connect() as conn:
+        conn.execute("UPDATE metadata SET value='{\"days\": \"많이\"}' WHERE key='web_retention'")
+    assert web.retention({}) == {"days": 0}
 
 
 def test_a_robot_check_stops_the_capture(tmp_path):

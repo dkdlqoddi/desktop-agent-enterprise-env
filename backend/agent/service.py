@@ -150,11 +150,13 @@ MESSAGES_KEPT = 200
 CONVERSATIONS_KEPT = 1000
 RETIRE_AT_ONCE = 200
 # What the policy removes, of what the newest backup holds (written before it), the oldest first: the runs older than
-# RUNS_DAYS or beyond the newest RUNS_KEPT, and the conversations beyond the newest CONVERSATIONS_KEPT.
+# RUNS_DAYS or beyond the newest RUNS_KEPT, and the conversations beyond the newest CONVERSATIONS_KEPT. The web records
+# go once they are older than the days the user keeps them (web.retention, off unless chosen), whatever the backups.
 RUNS_OLD = """SELECT id FROM runs WHERE created_at<? AND (created_at<? OR id NOT IN
     (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)) ORDER BY created_at, id"""
 CONVERSATIONS_OLD = """SELECT id FROM conversations WHERE updated_at<? AND id NOT IN
     (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?) ORDER BY updated_at, id"""
+WEB_CAPTURES_OLD = "SELECT id FROM web_captures WHERE captured_at<? ORDER BY captured_at, id"
 # What the trash says of an entry the policy moved there, beside the line that tells it apart.
 RETIRED = "오래되어 자동으로 옮김"
 # The trash is emptied a few documents a transaction, so that other writes go on meanwhile and what was done stays
@@ -1074,9 +1076,10 @@ class Service:
         is what was written before it was made: the first start of this version leaves them to the upkeep, which trims
         them after its first backup, and what was written since stays until the next backup has it. The runs and
         conversations go to the trash (retire), a conversation with its messages; one written to since the backup
-        stays. The trash is emptied either way, as it always was: what else the user deleted (`trash`, trash.py) at
-        once, the documents PURGE_AT_ONCE a transaction. Given `seconds`, it stops once they have passed, each step
-        taking at least its first transaction (`trash_left` then says that work waits for the next look)."""
+        stays. So do the web records older than the days the user keeps them, when they chose (web.retention). The
+        trash is emptied either way, as it always was: what else the user deleted (`trash`, trash.py) at once, the
+        documents PURGE_AT_ONCE a transaction. Given `seconds`, it stops once they have passed, each step taking at
+        least its first transaction (`trash_left` then says that work waits for the next look)."""
 
         def cutoff(days):
             return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -1103,6 +1106,9 @@ class Service:
                     WHERE position>? AND created_at<?)""",
                     (MESSAGES_KEPT, backed),
                 ).rowcount
+        kept = self.web.retention()["days"]
+        if kept:
+            removed["web_captures"] = self.retire("web_capture", WEB_CAPTURES_OLD, (cutoff(kept),), deadline)
         removed["trash"] = self.trash.expire(cutoff(TRASH_DAYS))
         with self.db.connect() as db:
             expired = [

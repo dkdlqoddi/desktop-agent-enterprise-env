@@ -186,6 +186,11 @@ const ALLOWED = new Set([
   'web.export',
   'web.open_exports',
   'web.delete_capture',
+  // Several records to the trash at once, a record's screenshot, and how many days the records are kept.
+  'web.delete_captures',
+  'web.screenshot',
+  'web.retention',
+  'web.retention_save',
   // The quick access to the chat (quick-access.cjs): its shortcut, tray icon and keep-running switch, kept and applied
   // by the main process; the screens' own, never an AI tool's.
   'quick.get',

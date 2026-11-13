@@ -358,6 +358,72 @@
   border-color: var(--accent-border-strong);
   background: var(--accent-tint);
 }
+/* A recorded page: its checkbox for deleting several together, and its screenshot. */
+.records-captures li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.records-captures li .records-capture {
+  flex: 1;
+  min-width: 0;
+}
+.records-captures li input[type='checkbox'] {
+  flex-shrink: 0;
+  margin: 0;
+}
+.records-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 28px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.records-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.records-more small {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+/* How long the records are kept, under the pages. */
+.records-retention {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.records-retention select {
+  width: auto;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.records-retention-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+/* A page's screenshot in its panel: the whole page at the panel's width, scrolled within it. */
+.records-shot img {
+  display: block;
+  flex-shrink: 0;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+}
 .agent-chat .link-button,
 .records-page .link-button {
   display: inline-flex;

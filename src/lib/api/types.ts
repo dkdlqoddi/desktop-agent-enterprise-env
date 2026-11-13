@@ -1263,6 +1263,12 @@ export type WebKept = {
   screenshot: boolean;
 };
 export type WebExport = { path: string; rows: number };
-// A record deleted (web.delete_capture): it waits in the trash as `trash_ids`, its screenshot with it.
+// A record deleted (web.delete_capture): it waits in the trash as `trash_ids`, its screenshot with it. Several deleted
+// together (web.delete_captures) say how many went.
 export type WebDeleted = { deleted: string; trash_ids: string[] };
+export type WebDeletedMany = { deleted: number; trash_ids: string[] };
+// A record's screenshot as a data: URL of its JPEG (web.screenshot).
+export type WebScreenshot = { data: string };
+// How many days the records are kept (web.retention): 0 while they are kept until deleted.
+export type WebRetention = { days: number };
 export type WebStatus = { open: boolean; busy: boolean; headless: boolean };
