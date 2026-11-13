@@ -191,6 +191,88 @@ test('missing configured volume returns recovery UI and never silently creates a
   await assert.rejects(fs.access(missing));
 });
 
+const COPY = `restore-${'a'.repeat(32)}.db`;
+
+// What a start of the backend leaves when it stops between the two renames of a restore (backend/agent/storage.py,
+// apply_restore): the Wiki moved into backups/, its replacement still under the name restore.json gives it, no wiki.db.
+async function stoppedRestore(root) {
+  const wiki = path.join(root, 'restoring');
+  const backups = path.join(wiki, 'backups');
+  await fs.mkdir(backups, { recursive: true });
+  await fs.writeFile(path.join(backups, 'wiki-before-restore-20261009-093000.db'), 'before');
+  await fs.writeFile(path.join(backups, COPY), 'copy');
+  await fs.writeFile(
+    path.join(backups, 'restore.json'),
+    JSON.stringify({
+      file: 'wiki-manual-20261009-090000.db',
+      staged: COPY,
+      requested_at: '2026-10-09T00:00:00+00:00',
+    }),
+  );
+  return wiki;
+}
+
+test('a folder whose restore stopped between its two renames still holds the Wiki', async (t) => {
+  const { options, config, root, starts } = await fixture(t);
+  const wiki = await stoppedRestore(root);
+  await fs.writeFile(path.join(config, 'storage.json'), JSON.stringify({ directory: wiki }));
+  const info = await new StorageManager(options).load();
+  // Not "the Wiki cannot be found": the backend starts on the folder, and its start puts the copy in the Wiki's place.
+  assert.equal(info.error, '');
+  assert.equal(info.initialized, true);
+  assert.deepEqual(starts, [wiki]);
+});
+
+test('a folder is missing its Wiki unless a restore names a copy of it that the backend would write', async (t) => {
+  const { options, config, root, starts } = await fixture(t);
+  const wiki = await stoppedRestore(root);
+  const backups = path.join(wiki, 'backups');
+  const marker = path.join(backups, 'restore.json');
+  await fs.writeFile(path.join(wiki, 'other.db'), 'not a copy');
+  await fs.writeFile(path.join(config, 'storage.json'), JSON.stringify({ directory: wiki }));
+  const missing = async (why) => {
+    const info = await new StorageManager(options).load();
+    assert.equal(info.initialized, false, why);
+    assert.match(info.error, /찾을 수 없습니다/, why);
+  };
+  // The names are rejected by their form, though the files they name exist.
+  for (const staged of [
+    '../other.db',
+    'wiki-before-restore-20261009-093000.db',
+    `restore-${'a'.repeat(31)}.db`,
+    `restore-${'A'.repeat(32)}.db`,
+    `${COPY}.partial`,
+    7,
+    null,
+  ]) {
+    await fs.writeFile(marker, JSON.stringify({ staged }));
+    await missing(`staged: ${staged}`);
+  }
+  for (const text of ['{"staged": "restore-', 'null', '[]', '7', '']) {
+    await fs.writeFile(marker, text);
+    await missing(`restore.json: ${text}`);
+  }
+  // A request whose copy is gone leaves nothing to finish it with, and so does no request at all.
+  await fs.writeFile(marker, JSON.stringify({ staged: COPY }));
+  await fs.rm(path.join(backups, COPY));
+  await missing('copy gone');
+  await fs.rm(marker);
+  await missing('no restore.json');
+  assert.equal(starts.length, 0);
+});
+
+test('a damaged storage.json that names a folder with a stopped restore offers that folder', async (t) => {
+  const { manager, config, root, starts } = await fixture(t);
+  const wiki = await stoppedRestore(root);
+  const text = JSON.stringify({ version: 1, directory: wiki }, null, 2);
+  await fs.writeFile(path.join(config, 'storage.json'), text.slice(0, text.lastIndexOf('}')));
+  const info = await manager.load();
+  assert.equal(info.initialized, false);
+  assert.equal(info.suggested_path, wiki);
+  assert.match(info.error, /이전에 쓰던 Wiki 폴더를 찾아/);
+  assert.equal(starts.length, 0);
+});
+
 test('failed initialization never persists configuration and relative paths are rejected', async (t) => {
   const { options, config } = await fixture(t);
   const manager = new StorageManager({

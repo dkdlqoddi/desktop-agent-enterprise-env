@@ -33,6 +33,29 @@ async function exists(file, limit = CHECK_LIMIT) {
   }
 }
 
+// The copy of a backup that a restore puts in the Wiki's place (backend/agent/storage.py, STAGED).
+const STAGED = /^restore-[0-9a-f]{32}\.db$/;
+
+// Whether a restore stopped between its two renames waits in `directory`. The backend carries a restore out at its next
+// start by moving wiki.db into backups/ as wiki-before-restore-….db and then renaming the copy that backups/restore.json
+// names (backups/restore-<id>.db) to wiki.db (agent/storage.py, apply_restore). A start stopped between the two renames
+// leaves the folder without a wiki.db although the Wiki is whole in backups/ and its replacement waits to take the name:
+// the next start finishes the restore. Never fails: a restore that cannot be read is none.
+async function restoring(directory, limit = CHECK_LIMIT) {
+  try {
+    const folder = path.join(directory, 'backups');
+    const text = await within(fs.readFile(path.join(folder, 'restore.json'), 'utf8'), limit);
+    const staged = JSON.parse(text.replace(/^\uFEFF/, ''))?.staged;
+    return (
+      typeof staged === 'string' &&
+      STAGED.test(staged) &&
+      (await exists(path.join(folder, staged), limit))
+    );
+  } catch {
+    return false;
+  }
+}
+
 const usable = (value) =>
   typeof value === 'string' && !value.includes('\0') && path.isAbsolute(value);
 
@@ -148,15 +171,21 @@ class StorageManager {
     return `${DAMAGED} 이전에 쓰던 Wiki 폴더를 알 수 없습니다${partial ? `(남은 경로의 앞부분: ${partial}…)` : ''}. 그 폴더(wiki.db가 있는 폴더)를 선택하거나, 새로 시작하려면 빈 폴더를 선택해 주세요. ${KEPT}`;
   }
 
+  // Whether `directory` holds the Wiki: its wiki.db, or a restore stopped before the copy took that name (restoring).
+  async holds(directory) {
+    if (await exists(path.join(directory, 'wiki.db'), this.checkLimit)) return true;
+    return restoring(directory, this.checkLimit);
+  }
+
   holdsWiki(directory) {
-    return exists(path.join(directory, 'wiki.db'), this.checkLimit).catch(() => false);
+    return this.holds(directory).catch(() => false);
   }
 
   // Whether the saved folder still holds the Wiki, as far as can be told in time.
   async check(directory) {
     let found;
     try {
-      found = await exists(path.join(directory, 'wiki.db'), this.checkLimit);
+      found = await this.holds(directory);
     } catch (error) {
       throw new Error(
         error.code === 'ETIMEDOUT'
