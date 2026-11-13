@@ -30,7 +30,7 @@ Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 에이전트: 자�
 1. 화면이 `api(method, params)`를 부릅니다(`src/lib/api/transport.ts`). `method`는 `src/lib/api/methods.generated.ts`의 `Method` 타입이어야 합니다.
 2. preload(`electron/preload.cjs`)가 `ipcRenderer.invoke('agent:request', method, params)`로 보냅니다.
 3. 메인 프로세스의 `ipcMain.handle('agent:request')`는 `allowedRequest()`(`electron/trusted-sender.cjs`)로 보낸 곳이 메인 창의 메인 프레임이고 주소가 `agent://bundle/` 또는 개발 서버인지(`trustedSender`), 메서드가 `ALLOWED`에 있는지 확인하고, 매개변수가 객체이며 JSON으로 900,000자 이하인지 봅니다. 문서의 글을 싣는 `wiki.save`와 `wiki.compare`만 문서 한도(800만 자)에 맞춰 더 크게 받고(`DOCUMENT_PARAMS`), 백엔드도 그 두 메서드의 줄만 길게 읽습니다(`backend/main.py`의 `DOCUMENT_LINES`). AI 도구의 요청은 로컬 API의 본문 1MiB 상한을 거치므로 900,000자 그대로입니다.
-4. `api.*`는 로컬 API 설정(`apiRequest`), `app.relaunch`(예약한 백업 복원을 적용하는 ‘지금 다시 시작’)는 앱을 닫고 같은 프로그램으로 다시 실행하며, 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
+4. `api.*`는 로컬 API 설정(`apiRequest`), `app.relaunch`(예약한 백업 복원을 적용하는 ‘지금 다시 시작’)는 앱을 닫고 같은 프로그램으로 다시 실행하며, `app.theme`(화면 테마 설정)은 창의 바탕색과 Electron의 테마를 그 설정에 맞추고(`window-theme.cjs`), 나머지는 `handle()`로 갑니다. `handle()`은 메인 프로세스만 할 수 있는 일(저장 위치, 진단, 앱 창 제어, 사이트 계정, LLM 비밀 값, 클립보드, 파일 선택 대화 상자, JIRA·Confluence 가져오기에 로그인 계획 붙이기)을 직접 처리하고, 나머지는 `rpc()`로 백엔드에 넘깁니다.
 5. `rpc()`는 백엔드가 (다시) 시작하는 동안 기다렸다가 `{"id", "method", "params"}` 한 줄을 표준 입력에 씁니다. 응답 제한 시간은 `RPC_TIMEOUTS`(`electron/main.cjs`)에 있으면 그 값, 없으면 330초입니다. 시간이 지나면 메인 프로세스 쪽만 실패로 끝나고 백엔드의 작업은 계속됩니다.
 6. 백엔드(`backend/main.py`)는 줄마다 처리 줄을 고릅니다. `SLOW`의 메서드와 `mode`가 `prompt`인 `wiki.search`는 느린 줄(4개), 나머지는 빠른 줄(24개)입니다. 줄이 차 있으면 기다리지 않고 바로 "진행 중인 요청이 많습니다"로 답합니다. `INTERACTIVE_METHODS`의 LLM 요청은 일괄 작업보다 먼저 갑니다(`agent/llm.py`의 `Slots`).
 7. `Service.dispatch`(`agent/service.py`)가 처리 함수를 부르고, 백엔드는 `{"id", "result"}`나 `{"id", "error"}`로 답합니다. `UserError`는 그 메시지를, 예기치 않은 예외는 로그에 남긴 뒤 오류 ID가 붙은 일반 메시지를 돌려줍니다. 스택이나 비밀 값은 화면으로 가지 않습니다.
@@ -92,7 +92,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `web-profiles/default/`                  | 웹 기록용 보이는 브라우저의 Chromium 프로필(쿠키와 로그인 상태). 사용자가 그 창에서 로그인한 사이트의 세션이 남습니다                                                                                                            |
 | `mcp/private-agent-mcp.cjs`              | stdio로만 연결하는 AI 도구가 실행하는 MCP 연결 프로그램. 로컬 API를 켤 때 씁니다                                                                                                                                                 |
 
-화면 테마는 창의 localStorage(`private-agent:theme`)에 있습니다. 배포용 exe는 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀어 실행합니다.
+화면 테마는 창의 localStorage(`private-agent:theme`)에 있습니다. 화면이 열릴 때와 테마를 바꿀 때 메인 프로세스에 알리고(`app.theme`), 창 크기를 바꾸는 동안 보이는 창의 바탕색과 Electron이 그리는 메뉴가 그 테마를 따릅니다. 배포용 exe는 앱을 `%LOCALAPPDATA%\Private Agent\app-<버전>-<빌드 시각>`에 풀어 실행합니다.
 
 ## 모듈 지도
 
@@ -142,6 +142,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `app-control.cjs`                                       | 로컬 API가 창과 화면을 다루는 명령                                                                                                       |
 | `job-progress.cjs`, `routines.cjs`, `reminders.cjs`     | 작업 진행 알림, 자동 작업·예약 실행 시각 확인(30초), 할 일 알림(15초)                                                                    |
 | `diagnostics.cjs`, `zoom.cjs`, `files.cjs`              | `app.log`와 진단 복사본, 화면 배율, 원자적 JSON 파일 쓰기                                                                                |
+| `window-theme.cjs`                                      | 창의 바탕색과 Electron의 테마(`nativeTheme.themeSource`)를 화면 테마 설정에 맞춤                                                         |
 | `quick-access.cjs`                                      | 빠른 호출: 시스템 전체 바로 가기 키, 트레이 아이콘과 메뉴, 창을 닫아도 트레이에서 계속 실행(`quick-access.json`)                         |
 | `demo.cjs`, `demo-plan.cjs`, `recorder.cjs`, `mp4.cjs`  | 데모 녹화(`record-demo.cmd`)                                                                                                             |
 

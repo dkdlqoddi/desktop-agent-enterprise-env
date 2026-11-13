@@ -181,3 +181,37 @@ test('the stylesheets and components use the palette by name, and every name the
     .map(([n, where]) => `${n} (${where})`);
   assert.deepEqual(missing, []);
 });
+
+test('the window behind the screen and the error page draw with the palette', () => {
+  // The window's own background (electron/window-theme.cjs) is the canvas of the theme the screen shows.
+  const { BACKGROUND } = require('../electron/window-theme.cjs');
+  assert.equal(BACKGROUND.light, light['--canvas']);
+  assert.equal(BACKGROUND.dark, dark['--canvas']);
+  // src/app/global-error.tsx brings its own copy of the colors it draws with, by the palette's names.
+  const page = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'app', 'global-error.tsx'),
+    'utf8',
+  );
+  const colors = (name) => {
+    const block = new RegExp(`const ${name}(?::[^=]+)? = \\{([^}]*)\\}`).exec(page);
+    assert.ok(block, `${name} is missing from global-error.tsx`);
+    return Object.fromEntries(
+      [...block[1].matchAll(/'?([\w-]+)'?:\s*'(#[0-9a-f]+)'/gi)].map(([, token, value]) => [
+        `--${token}`,
+        value,
+      ]),
+    );
+  };
+  const own = {
+    light: { ...colors('LIGHT'), ...colors('FILL') },
+    dark: { ...colors('LIGHT'), ...colors('DARK'), ...colors('FILL') },
+  };
+  for (const [name, palette] of [
+    ['light', light],
+    ['dark', { ...light, ...dark }],
+  ]) {
+    assert.ok(Object.keys(own[name]).length >= 10, `${name}: the colors were not found`);
+    for (const [token, value] of Object.entries(own[name]))
+      assert.equal(value, palette[token], `${name} ${token}`);
+  }
+});

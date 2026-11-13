@@ -276,8 +276,20 @@ test('accessibility: the main screens have no critical or serious axe findings, 
     await expect(themes.getByRole('radio', { name: '시스템 설정' })).toBeChecked();
     await themes.getByRole('radio', { name: '어둡게' }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    // The window's own background, seen while the window is resized, and Electron's theme follow the setting; a screen
+    // that loads tells the main process its setting again.
+    const windowTheme = () =>
+      app!.evaluate(({ BrowserWindow, nativeTheme }) => ({
+        background: BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase(),
+        source: nativeTheme.themeSource,
+      }));
+    await expect.poll(windowTheme).toEqual({ background: '#0f121a', source: 'dark' });
+    await app.evaluate(({ nativeTheme }) => {
+      nativeTheme.themeSource = 'system';
+    });
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect.poll(windowTheme).toEqual({ background: '#0f121a', source: 'dark' });
     await openDashboard(page);
     await visit(page, '어둡게', found);
 

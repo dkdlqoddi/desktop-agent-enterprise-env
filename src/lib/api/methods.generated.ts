@@ -173,6 +173,7 @@ export type ScreenMethod =
   | 'api.rotate_token'
   | 'api.update'
   | 'app.relaunch'
+  | 'app.theme'
   | 'diagnostics.copy'
   | 'diagnostics.open_folder'
   | 'hermes.choose'

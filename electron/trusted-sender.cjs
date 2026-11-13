@@ -193,6 +193,9 @@ const ALLOWED = new Set([
   'diagnostics.open_folder',
   // 지금 다시 시작 once a restore of a Wiki backup waits for the next start; the screens' own, never an AI tool's.
   'app.relaunch',
+  // The theme the screen shows, which the window's background and Electron's own theme follow (window-theme.cjs);
+  // the screens' own, never an AI tool's.
+  'app.theme',
 ]);
 
 // Whether an IPC message comes from the app's own screen: the main frame of the app's window (`window`, null once it

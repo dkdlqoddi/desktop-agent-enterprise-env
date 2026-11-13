@@ -12,6 +12,7 @@ const {
   globalShortcut,
   nativeImage,
   Notification,
+  nativeTheme,
   powerMonitor,
   shell,
   // Named apart from "the screen", which is the app's page throughout this file.
@@ -55,6 +56,7 @@ const { Recorder, PRIVILEGES: RECORDER_SCHEME } = require('./recorder.cjs');
 const { DemoRun, demoLaunch, renderAgain } = require('./demo.cjs');
 const demoPlan = require('./demo-plan.cjs');
 const { ScreenZoom } = require('./zoom.cjs');
+const { WindowTheme } = require('./window-theme.cjs');
 const { QuickAccess } = require('./quick-access.cjs');
 
 // The backend, which runs every browser of the app with Python Playwright, uses the Chromium packaged with the app.
@@ -125,6 +127,8 @@ let demo;
 let demoRunning;
 // The zoom of the window's screen (electron/zoom.cjs).
 let zoom;
+// The window's background and Electron's theme, as the screen's theme setting has them (electron/window-theme.cjs).
+let windowTheme;
 // The chat from anywhere on the desktop: the shortcut, the tray icon and keeping the app running there
 // (electron/quick-access.cjs).
 let quick;
@@ -1489,7 +1493,7 @@ function createWindow() {
     minWidth: 1060,
     minHeight: 720,
     title: 'Private Agent',
-    backgroundColor: '#f8f9fc',
+    backgroundColor: windowTheme.background,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -1665,6 +1669,7 @@ else {
           void diagnostics.record(`화면 배율 설정을 읽거나 저장하지 못했습니다: ${error.message}`),
       });
       void zoom.load();
+      windowTheme = new WindowTheme({ nativeTheme, windows: () => [window] });
       restarts = new Restarts({
         start: () => startBackend(storage.directory, { restart: true }),
         stop: stopBackend,
@@ -1772,13 +1777,15 @@ else {
             throw new Error('허용되지 않은 요청입니다.');
           checkParams(params, DOCUMENT_PARAMS[method]);
           await started;
-          // The screens' own requests of the main process (the local API's settings, 지금 다시 시작) never pass
-          // handle(), which AI tools reach through the local API too.
+          // The screens' own requests of the main process (the local API's settings, 지금 다시 시작, the theme the
+          // screen shows) never pass handle(), which AI tools reach through the local API too.
           const result = method.startsWith('api.')
             ? await apiRequest(method, params)
             : method === 'app.relaunch'
               ? relaunchNow()
-              : await handle(method, params);
+              : method === 'app.theme'
+                ? windowTheme.set(params.theme)
+                : await handle(method, params);
           demo?.observe(method, result, null);
           return { ok: true, result };
         } catch (error) {
