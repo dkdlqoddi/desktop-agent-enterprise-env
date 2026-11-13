@@ -344,20 +344,20 @@ function LibraryDocuments() {
     };
   }, [settled, every, filters, changed, notify]);
 
-  // Only the rows near what the list box shows are drawn (useWindowing).
-  const keys = useMemo(() => items.map((doc) => doc.id), [items]);
-  const windowing = useWindowing(keys, ROW_HEIGHT);
-  const { box, start, end, reveal } = windowing;
-
   // The keyboard moves through the rows with the arrows, Page Up/Down, Home and End, and between a row's checkbox and
   // its document with Left and Right; only one row is in the Tab order (a roving tab stop), the one last reached, or
-  // the first drawn while that one is scrolled away. Past the last row the next page comes.
+  // the first drawn before one is. Past the last row the next page comes.
+  const keys = useMemo(() => items.map((doc) => doc.id), [items]);
   const [active, setActive] = useState<{ key: string | null; column: Column }>({
     key: null,
     column: 'open',
   });
   const reached = keys.indexOf(active.key ?? '');
-  const tabStop = reached >= start && reached < end ? reached : start;
+  // Only the rows near what the list box shows are drawn (useWindowing), and the row last reached wherever it is: the
+  // wheel may scroll it far out of sight while it has the focus, which it keeps, and the arrows go on from it.
+  const windowing = useWindowing(keys, ROW_HEIGHT, reached);
+  const { box, start, reveal } = windowing;
+  const tabStop = reached >= 0 ? reached : start;
   const focusPending = useRef(false);
   const onFocusRow = useCallback(
     (key: string, column: Column) =>
@@ -572,24 +572,27 @@ function LibraryDocuments() {
         hidden={trash}
         onKeyDown={onKeyDown}
       >
-        {windowing.before > 0 && (
-          <li aria-hidden="true" className="window-spacer" style={{ height: windowing.before }} />
-        )}
-        {items.slice(start, end).map((doc, offset) => (
-          <DocumentRow
-            key={doc.id}
-            doc={doc}
-            index={start + offset}
-            count={next === null ? items.length : -1}
-            onOpen={openDocument}
-            checked={selected.has(doc.id)}
-            onToggle={onToggle}
-            tabbable={start + offset === tabStop}
-            onFocusRow={onFocusRow}
-          />
-        ))}
-        {windowing.after > 0 && (
-          <li aria-hidden="true" className="window-spacer" style={{ height: windowing.after }} />
+        {windowing.parts.map((part, place) =>
+          'gap' in part ? (
+            <li
+              key={`gap-${place}`}
+              aria-hidden="true"
+              className="window-spacer"
+              style={{ height: part.gap }}
+            />
+          ) : (
+            <DocumentRow
+              key={items[part.index].id}
+              doc={items[part.index]}
+              index={part.index}
+              count={next === null ? items.length : -1}
+              onOpen={openDocument}
+              checked={selected.has(items[part.index].id)}
+              onToggle={onToggle}
+              tabbable={part.index === tabStop}
+              onFocusRow={onFocusRow}
+            />
+          ),
         )}
         {next !== null && items.length > 0 && (
           <li ref={setSentinel} className="list-more">

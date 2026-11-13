@@ -335,6 +335,20 @@ test('documents: the library comes in pages filtered by the backend, drawn a win
     await expect(page.locator(':focus')).toHaveAttribute('aria-label', '분기 회의록 선택');
     await page.keyboard.press('Home');
     await expect(page.locator(':focus')).toHaveAttribute('aria-label', '메모 120 선택');
+    // The wheel scrolls the focused row far past the rows the list draws: it keeps the focus, and the arrows go on
+    // from it.
+    await page.keyboard.press('ArrowRight');
+    await list.hover();
+    await page.mouse.wheel(0, 6000);
+    await expect.poll(() => list.evaluate((box) => box.scrollTop)).toBeGreaterThan(3000);
+    // Drawn: the focused row first, in its place, then those near what the box shows, past the 30th.
+    await expect(rows.first()).toHaveAttribute('data-index', '0');
+    await expect(rows.nth(1)).toHaveAttribute('data-index', /^([3-9]\d|1\d\d)$/);
+    await expect(page.locator(':focus')).toContainText('메모 120');
+    expect(await rows.count()).toBeLessThan(40);
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator(':focus')).toContainText('메모 119');
+    await expect.poll(() => list.evaluate((box) => box.scrollTop)).toBeLessThan(500);
 
     // A choice spans the pages: one on the first, one on the second, deleted at once and brought back.
     await documents.getByRole('checkbox', { name: '메모 120 선택' }).check();
