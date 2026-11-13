@@ -541,10 +541,11 @@ class Assist:
         finally:
             self.update(notice="")
 
-    async def reconnect(self, page, url, error, failure):
-        """`url` did not open with `error`. When the LLM expects it to open a little later, it is opened once more after
-        the pause it names, and the response is returned; otherwise, or when that fails too, `failure` is raised with
-        the analysis as its `diagnosis`. Only the first page that fails in a browser is opened again."""
+    async def reconnect(self, page, error, failure, load):
+        """The page `load()` opens did not open with `error`. When the LLM expects it to open a little later, it is
+        opened once more by `load()` after the pause it names, and the response is returned; otherwise, or when that
+        fails too, `failure` is raised with the analysis as its `diagnosis`. Only the first page that fails in a browser
+        is opened again. `load` is how the caller opened it, within the rate of the site (browser_import.loader)."""
         if self.reconnected:
             raise failure
         self.reconnected = True
@@ -557,7 +558,7 @@ class Assist:
         self.update(notice=f"접속하지 못해 AI 분석에 따라 {wait}초 뒤 다시 접속합니다. {found['cause']}")
         try:
             await asyncio.sleep(wait)
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            response = await load()
         except Exception as again:
             if not redirected(again):
                 found["attempt"] = f"AI 분석에 따라 {wait}초 뒤 다시 접속했지만 접속하지 못했습니다."

@@ -13,7 +13,10 @@ sandbox on: the pages it opens are other people's.
 
 The importers' requests to a site go through polite(): a few a second per host (Throttle), and an answer that there
 were too many (HTTP 429, or 503 with Retry-After) is waited out and tried again, so that a routine over many pages
-neither floods the site nor loses pages to a refusal.
+neither floods the site nor loses pages to a refusal. The loads of a login page (web_login.py) and a page opened again
+with the LLM's help (web_assist.py) go through it too, so the site counts every page the app opens. A load the user
+waits on, in the login window or a login check, takes its turn as the others do but waits for a site that asked the
+app to wait no longer than USER_WAIT: the site's answer then shows rather than a window that seems to hang.
 """
 
 import asyncio
@@ -61,6 +64,10 @@ ATTEMPTS = 6
 BACKOFF = 1.0
 MAX_BACKOFF = 30.0
 MAX_WAIT = 300.0
+# A request the user waits on (a page of the login window or of a login check) waits for its host's pause, or for the
+# wait a refusal asks, this many seconds at most. Its turn in the rate takes a fraction of a second: only the other
+# importer's browser can be ahead of it on the same host.
+USER_WAIT = 5.0
 
 
 def use_shared_browsers():
@@ -157,24 +164,27 @@ class Throttle:
         self.buckets = {}  # host: (tokens, when they were counted)
         self.paused = {}  # host: the clock's time before which no request goes to it
 
-    def reserve(self, url):
-        """Seconds to wait before a request to the host of `url` goes; the request is counted."""
+    def reserve(self, url, most=None):
+        """Seconds to wait before a request to the host of `url` goes; the request is counted. It waits its turn in the
+        rate, and for a pause of the host as long as that lasts, or `most` seconds of it at most."""
         host, now = host_of(url), self.clock()
         with self.lock:
             tokens, then = self.buckets.get(host, (float(self.burst), now))
             tokens = min(float(self.burst), tokens + (now - then) * self.rate) - 1
             self.buckets[host] = (tokens, now)
-            return max(0.0, -tokens / self.rate, self.paused.get(host, now) - now)
+            paused = self.paused.get(host, now) - now
+            return max(0.0, -tokens / self.rate, paused if most is None else min(paused, most))
 
-    async def wait(self, url):
-        delay = self.reserve(url)
+    async def wait(self, url, most=None):
+        delay = self.reserve(url, most)
         if delay > 0:
             await asyncio.sleep(delay)
 
-    def pause(self, url, attempt, retry=""):
+    def pause(self, url, attempt, retry="", most=None):
         """The host of `url` refused the `attempt`-th try of a request as one too many: every request to it waits as
-        long as its Retry-After header (`retry`) asks, else for an exponential backoff with a little jitter. False
-        when it asks for more than MAX_WAIT, which a job does not wait for."""
+        long as its Retry-After header (`retry`) asks, else for an exponential backoff with a little jitter. Whether
+        the request is sent again: not when the site asks for more than MAX_WAIT, which a job does not wait for (nor
+        does any other request then), nor for more than `most` seconds, the most its sender waits."""
         seconds = retry_seconds(retry)
         if seconds is None:
             seconds = min(MAX_BACKOFF, BACKOFF * 2 ** (attempt - 1)) * (1 + random.random() / 4)
@@ -183,7 +193,7 @@ class Throttle:
         host, now = host_of(url), self.clock()
         with self.lock:
             self.paused[host] = max(self.paused.get(host, now), now + seconds)
-        return True
+        return most is None or seconds <= most
 
 
 THROTTLE = Throttle()
@@ -198,19 +208,20 @@ def answered(answer):
     return getattr(answer, "status", None), headers.get("retry-after", "") if isinstance(headers, dict) else ""
 
 
-async def polite(url, send, throttle=None):
+async def polite(url, send, throttle=None, most=None):
     """`send()`, a request to `url`, within the rate of its host (THROTTLE). An answer that it was one too many, HTTP
     429 or 503 with a Retry-After header, is waited out and the request sent again, up to ATTEMPTS times in all; the
-    last answer is returned, as any other, for the caller to tell."""
+    last answer is returned, as any other, for the caller to tell. A request the user waits on gives `most` (USER_WAIT):
+    it waits for the site no longer than that, and a refusal that asks for longer is the answer."""
     throttle = throttle or THROTTLE
     for attempt in range(1, ATTEMPTS + 1):
-        await throttle.wait(url)
+        await throttle.wait(url, most)
         answer = await send()
         status, retry = answered(answer)
         if (
             not (status == 429 or (status == 503 and retry))
             or attempt == ATTEMPTS
-            or not throttle.pause(url, attempt, retry)
+            or not throttle.pause(url, attempt, retry, most)
         ):
             return answer
 
@@ -220,18 +231,26 @@ def first_line(error):
     return " ".join(str(error).split("\n", 1)[0].split())[:200]
 
 
-async def open_page(page, url, product, assist=None):
+def loader(page, url, most=None):
+    """A function that opens `url` in `page` within the rate of its host (polite), `most` as polite takes it, and
+    returns the navigation's response."""
+    return lambda: polite(url, lambda: page.goto(url, wait_until="domcontentloaded", timeout=45000), most=most)
+
+
+async def open_page(page, url, product, assist=None, most=None):
     """Open a page of the site; a client-side redirect, e.g. to the SSO page, may replace the navigation. With the
-    LLM's help, a page that does not open may be opened once more (web_assist.Assist.reconnect)."""
+    LLM's help, a page that does not open may be opened once more (web_assist.Assist.reconnect). The login window gives
+    `most` (USER_WAIT), as polite takes it."""
+    load = loader(page, url, most)
     try:
-        return await polite(url, lambda: page.goto(url, wait_until="domcontentloaded", timeout=45000))
+        return await load()
     except Exception as error:
         if redirected(error):
             return None
         failure = UserError(f"{product}에 접속하지 못했습니다. 링크와 네트워크 연결을 확인해 주세요.")
         if assist is None:
             raise failure from error
-        return await assist.reconnect(page, url, error, failure)
+        return await assist.reconnect(page, error, failure, load)
 
 
 async def close_popup(page, popup):

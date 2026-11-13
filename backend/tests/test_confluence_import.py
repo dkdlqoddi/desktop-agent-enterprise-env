@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from agent import browser_import, confluence_import, sources
+from agent import browser_import, confluence_import, sources, web_login
 from agent.confluence_import import api_link, children, is_page_url, location_info, page_url
 from agent.db import Database
 from agent.llm import UserError
@@ -668,6 +668,97 @@ def test_requests_keep_to_a_rate_per_host_and_wait_as_long_as_a_site_asks(monkey
     refused = [{"status": 429, "retry": "0"}] * browser_import.ATTEMPTS + [{"status": 200}]
     send = answers(*refused)
     assert asyncio.run(browser_import.polite("https://wiki.test/", send, fast)) == {"status": 429, "retry": "0"}
+
+
+class Answering:
+    """A page whose site answers each load with the next of `answers` (status, Retry-After), and that keeps every
+    address it opened."""
+
+    def __init__(self, *answers):
+        self.answers, self.opened, self.url = list(answers), [], "about:blank"
+
+    async def goto(self, url, **options):
+        self.opened.append(url)
+        status, retry = self.answers.pop(0)
+        return type("Response", (), {"status": status, "headers": {"retry-after": retry} if retry else {}})()
+
+    def is_closed(self):
+        return False
+
+    def on(self, event, listener):
+        pass
+
+    def remove_listener(self, event, listener):
+        pass
+
+
+def test_a_login_page_takes_its_turn_in_the_rate_of_its_host_and_never_keeps_the_user_waiting_long(
+    service, monkeypatch
+):
+    class Recorded(browser_import.Throttle):
+        """The app's throttle on the test's clock, keeping each wait instead of sleeping it."""
+
+        def __init__(self):
+            super().__init__(rate=4, burst=1, clock=lambda: clock[0])
+            self.waited = []
+
+        async def wait(self, url, most=None):
+            self.waited.append(self.reserve(url, most))
+
+    clock = [100.0]
+    throttle = Recorded()
+    monkeypatch.setattr(browser_import, "THROTTLE", throttle)
+    login = "https://wiki.test/login.action"
+    # A sign-in's load of the login page counts with the importers' requests to its host: the next one waits its turn.
+    asyncio.run(web_login._open(Answering((200, "")), login, "Confluence"))
+    assert throttle.waited == [0] and throttle.reserve("https://wiki.test/rest/api/content/1") == pytest.approx(0.25)
+    # One the site refuses as too many is opened again once the site's wait is over, as an import's request is.
+    clock[0] += 10
+    throttle.waited.clear()
+    page = Answering((429, "2"), (200, ""))
+    asyncio.run(web_login._open(page, login, "Confluence"))
+    assert page.opened == [login, login] and throttle.waited == [0, pytest.approx(2)]
+    # A load the user waits on (the login window, a login check) still takes its turn, but waits for a site that asked
+    # the app to wait no longer than USER_WAIT, and does not send again what the site refused for longer: the site's
+    # answer shows instead. The site's wait holds for the importers' requests all the same.
+    clock[0] += 10
+    throttle.waited.clear()
+    assert throttle.pause(login, 1, "60") is True
+    page = Answering((429, "60"), (200, ""))
+    asyncio.run(web_login._open(page, login, "Confluence", most=browser_import.USER_WAIT))
+    assert page.opened == [login] and throttle.waited == [browser_import.USER_WAIT]
+    assert throttle.reserve("https://wiki.test/rest/api/content/2") == pytest.approx(60)
+    assert throttle.pause(login, 1, "3", most=browser_import.USER_WAIT) is True
+    assert throttle.reserve(login, most=browser_import.USER_WAIT) == browser_import.USER_WAIT
+
+    # The login windows and the login checks give that bound to every load of their sign-ins; an import's sign-in
+    # waits as long as the site asks (sign_in's default).
+    bounds = []
+
+    async def opened(page, url, product, assist=None, most=None):
+        bounds.append(most)
+        raise web_login.LoginError("멈춤")
+
+    class Context:
+        async def cookies(self, url):
+            return []
+
+        async def clear_cookies(self):
+            pass
+
+    monkeypatch.setattr(web_login, "_open", opened)
+    login_plan = web_login.validate_plan(plan(mode="fixed", methods=[METHODS["generic"]]))
+    for importer in (service.confluence, service.jira):
+        with pytest.raises(web_login.LoginError, match="멈춤"):
+            asyncio.run(importer._verify(Context(), Answering(), login, "https://wiki.test", login_plan, None))
+        asyncio.run(importer._login_helper(Context(), Answering(), login, "https://wiki.test", login_plan))
+    with pytest.raises(web_login.LoginError, match="멈춤"):
+        asyncio.run(
+            web_login.sign_in(
+                Context(), Answering(), login, login_plan, arrived=lambda page: False, product="Confluence"
+            )
+        )
+    assert bounds == [browser_import.USER_WAIT] * 4 + [None]
 
 
 def test_a_subpage_list_refused_as_too_many_is_asked_again_and_gives_the_versions(monkeypatch):

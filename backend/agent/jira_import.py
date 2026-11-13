@@ -19,7 +19,7 @@ import uuid
 from urllib.parse import quote, urlencode
 
 from . import diagnostics, sources
-from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page, polite
+from .browser_import import BUSY_ERROR, USER_WAIT, BrowserImporter, close_popup, open_page, polite
 from .jira import (
     FORMAT_ERROR,
     KEY,
@@ -763,7 +763,7 @@ class JiraImporter(BrowserImporter):
 
     async def _prepare_login(self, context, page, url, origin, login):
         if not login:
-            await open_page(page, url, self.product)
+            await open_page(page, url, self.product, most=USER_WAIT)
             return None
         # The user watches the automatic login and can approve a sign-in prompt once, or take over
         # by hand when it fails.
@@ -778,6 +778,7 @@ class JiraImporter(BrowserImporter):
                 login,
                 product="JIRA",
                 watched=True,
+                pause_seconds=USER_WAIT,
                 arrived=lambda value: self._at_ticket(value, origin),
                 **self._timeouts(),
             )
@@ -794,6 +795,7 @@ class JiraImporter(BrowserImporter):
             product="JIRA",
             assist=assist,
             fresh=True,
+            pause_seconds=USER_WAIT,
             arrived=lambda value: signed_in(value, origin),
             **self._timeouts(),
         )

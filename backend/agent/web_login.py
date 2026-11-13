@@ -32,6 +32,10 @@ A session the browser profile keeps may still be signed in, from the last run or
 that asks for a second factor is signed in to by hand: the sign-in then types nothing (`session`). Only a login check
 (`fresh`) always signs in anew, as it is to tell whether the account and the method work.
 
+The sign-in opens the site's page once for each method it tries, and each opening counts against the rate of the
+site's host that the importers' requests keep to (browser_import.polite): a sign-in beside a running import does not
+send the site more than that rate allows, and one that the site refuses as too many is waited out.
+
 An address may be given without its scheme (portal.example.com, jira.example.com/jira): it is then opened over https
 (with_scheme), never over http, so the account never goes over a plain connection by a fallback; a site that only
 answers over http is saved with http:// written out, the user's own choice.
@@ -477,9 +481,15 @@ async def _has_session(context, url):
         return False
 
 
-async def _open(page, url, product, assist=None):
+async def _open(page, url, product, assist=None, most=None):
+    """Open the site at `url` for a sign-in, within the rate of its host like every request of the importers
+    (browser_import.polite, which takes `most`), so that a sign-in that opens the login page again for each method
+    counts against it too."""
+    from .browser_import import loader  # Not at the top: browser_import imports this module.
+
+    load = loader(page, url, most)
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await load()
     except Exception as error:
         _alive(page)
         # A client-side redirect, e.g. to the SSO page, may replace the navigation.
@@ -488,7 +498,7 @@ async def _open(page, url, product, assist=None):
         failure = LoginError(f"{product.split()[0]}에 접속하지 못했습니다. 주소와 네트워크 연결을 확인해 주세요.")
         if assist is None:
             raise failure from None
-        await assist.reconnect(page, url, error, failure)
+        await assist.reconnect(page, error, failure, load)
 
 
 async def _shown(page, methods):
@@ -797,6 +807,7 @@ async def _assisted(
     optional_seconds,
     form_seconds,
     login_seconds,
+    pause_seconds,
 ):
     """None of the plan's methods fits the page (any more): the LLM reads the login screen (web_assist.py) and the
     fields it picks are filled as a user-defined method's, sending the account once at most, and never into the fields
@@ -808,7 +819,7 @@ async def _assisted(
     assist.update(notice="로그인 방식으로 로그인하지 못해 AI가 로그인 화면을 분석하고 있습니다.")
     try:
         await context.clear_cookies()
-        await _open(page, url, product, assist)
+        await _open(page, url, product, assist, pause_seconds)
         learned = {"before": [], "id": "", "next": "", "password": "", "submit": ""}
         filled = []
         for _ in range(ASSIST_ROUNDS):
@@ -890,6 +901,7 @@ async def sign_in(
     assist=None,
     watched=False,
     fresh=False,
+    pause_seconds=None,
 ):
     """Sign in with the plan's methods, unless the profile's session is signed in already (`fresh` signs in anyway).
 
@@ -901,7 +913,9 @@ async def sign_in(
     (web_assist.Assist), the LLM reads a login screen no method fits once, and a site that does not open may be opened
     again. In a window the user watches (`watched`), a login that does not arrive in time ends the sign-in: the user may
     be in the middle of an approval. A login screen on a page the account must not be typed into (Hosts) ends the
-    sign-in before anything is typed there. Returns {"method", "label", "detected"}, with method None when the page
+    sign-in before anything is typed there. Each opening of the site takes its turn in the rate of the site's host
+    (browser_import.polite); a sign-in the user waits on gives `pause_seconds`, the most it waits for a site that asked
+    the app to wait (browser_import.USER_WAIT). Returns {"method", "label", "detected"}, with method None when the page
     needed no login (a public page, or the profile's session signed in), `learned` when the LLM found the fields,
     `tried` when other methods were tried first and `hosts` when the account was typed: the hosts it went to, the
     site's own among them; raises LoginError, with `sent` when a login was sent.
@@ -925,7 +939,7 @@ async def sign_in(
         if not fresh and await _has_session(context, url):
             # The session the profile keeps may be signed in still: the last run's, or the login window's, where a
             # site that asks for a second factor is signed in to by hand. The account is sent only when it is not.
-            await _open(page, url, product, assist)
+            await _open(page, url, product, assist, pause_seconds)
             await _ready(page, arrived, min(form_seconds, SESSION_SECONDS))
             if await _arrived(arrived, page):
                 return {"method": None, "label": SESSION_LABEL, "detected": False}
@@ -935,7 +949,7 @@ async def sign_in(
             if candidates:
                 # Keep profile settings such as a sign-in prompt's "always allow", but sign in with a fresh session.
                 await context.clear_cookies()
-                await _open(page, url, product, assist)
+                await _open(page, url, product, assist, pause_seconds)
                 method = await _detect(page, candidates, tried, arrived, form_seconds, chosen)
             if method is ARRIVED:
                 return {"method": None, "label": "", "detected": False}
@@ -957,6 +971,7 @@ async def sign_in(
                         optional_seconds,
                         form_seconds,
                         login_seconds,
+                        pause_seconds,
                     )
                     if result is ARRIVED:
                         return {"method": None, "label": "", "detected": False}

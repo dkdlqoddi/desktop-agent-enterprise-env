@@ -19,7 +19,7 @@ from html import escape
 from urllib.parse import parse_qs, parse_qsl, unquote, unquote_plus, urlencode, urljoin, urlsplit, urlunsplit
 
 from . import diagnostics, sources
-from .browser_import import BUSY_ERROR, BrowserImporter, close_popup, open_page, polite
+from .browser_import import BUSY_ERROR, USER_WAIT, BrowserImporter, close_popup, loader, open_page, polite
 from .confluence import import_page
 from .llm import BusyError, UserError
 from .service import routine_name
@@ -439,8 +439,9 @@ async def children(request, info, on_child):
 async def open_source(page, url, origin, assist=None):
     """Open a page of the site in the browser and wait for its body. With the LLM's help (web_assist.py), a page that
     does not open may be opened once more."""
+    load = loader(page, url)
     try:
-        response = await polite(url, lambda: page.goto(url, wait_until="domcontentloaded", timeout=45000))
+        response = await load()
     except Exception as error:
         if redirected(error):  # A client-side redirect, e.g. to the SSO page, replaced the navigation.
             response = None
@@ -448,7 +449,7 @@ async def open_source(page, url, origin, assist=None):
             failure = AccessError("Confluence에 접속하지 못했습니다. 링크와 네트워크 연결을 확인해 주세요.")
             if assist is None or page.is_closed():
                 raise failure from error
-            response = await assist.reconnect(page, url, error, failure)
+            response = await assist.reconnect(page, error, failure, load)
     if response is not None and not response.ok:
         raise AccessError(f"페이지에 접근하지 못했습니다 (HTTP {response.status}).")
     if origin_of(page.url) != origin:
@@ -750,7 +751,7 @@ class ConfluenceImporter(BrowserImporter):
 
     async def _prepare_login(self, context, page, url, origin, login):
         if not login:
-            await open_page(page, url, self.product)
+            await open_page(page, url, self.product, most=USER_WAIT)
             return None
         # With a saved account the window runs the same automatic login, so the user can approve a sign-in prompt
         # ("always allow") once for later background imports, or take over by hand when it fails.
@@ -766,6 +767,7 @@ class ConfluenceImporter(BrowserImporter):
                 product=self.product,
                 arrived=arrived_at(origin),
                 watched=True,
+                pause_seconds=USER_WAIT,
                 **{**self._timeouts(), "login_seconds": self.window_seconds},
             )
         except Exception as error:
@@ -786,6 +788,7 @@ class ConfluenceImporter(BrowserImporter):
             product=self.product,
             assist=assist,
             fresh=True,
+            pause_seconds=USER_WAIT,
             arrived=lambda value: signed_in(value, origin),
             **self._timeouts(),
         )
