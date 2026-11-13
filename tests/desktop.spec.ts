@@ -716,6 +716,19 @@ test('LLM limits saved and read back; Wiki backups restored after a restart, a r
       .click();
     await question.getByRole('button', { name: '복원', exact: true }).click();
     await expect(pending).toBeVisible();
+
+    // A backend that ends unexpectedly is started again, which is not the next start of the app: the restore still
+    // waits, and the Wiki stays the one the window has been showing.
+    process.kill(await backendPid(app), 'SIGKILL');
+    await expect(
+      page.getByText('예기치 않게 종료되어 다시 시작했습니다', { exact: false }),
+    ).toBeVisible({ timeout: 60_000 });
+    expect((await request<Backups>('wiki.backups')).pending_restore?.file).toMatch(/^wiki-manual-/);
+    expect((await request<{ title: string }[]>('wiki.list')).map((doc) => doc.title)).toContain(
+      '백업 뒤 문서',
+    );
+    await expect(pending).toBeVisible();
+
     await app.evaluate(({ app: electron }) => {
       const caught = globalThis as unknown as { relaunched: unknown[]; quitAsked: boolean };
       caught.relaunched = [];

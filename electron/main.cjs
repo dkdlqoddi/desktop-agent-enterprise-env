@@ -289,13 +289,14 @@ async function migrateStorage(source, destination) {
 }
 
 // Starts the backend on the Wiki in `dataDirectory` and hands it the LLM settings. Requests wait for this (rpc).
-async function startBackend(dataDirectory) {
+// `restart`: the app starts it again after it ended on its own (restarts), not as the app starts.
+async function startBackend(dataDirectory, { restart = false } = {}) {
   /** @type {(value?: unknown) => void} */
   let open = () => {};
   const start = new Promise((resolve) => (open = resolve));
   opening = start;
   try {
-    await launchBackend(dataDirectory);
+    await launchBackend(dataDirectory, restart);
   } catch (error) {
     // A backend that did not start is asked nothing else; the caller tells why.
     await stopBackend();
@@ -306,7 +307,9 @@ async function startBackend(dataDirectory) {
   }
 }
 
-async function launchBackend(dataDirectory) {
+// A restart leaves a restore of a Wiki backup that waits for the next start of the app as it is, as the screens say it
+// does: replacing the Wiki under the open window because the backend crashed would be a surprise (agent/storage.py).
+async function launchBackend(dataDirectory, restart = false) {
   const { executable, args } = backendLaunch();
   const child = new BackendProcess({
     executable,
@@ -316,6 +319,7 @@ async function launchBackend(dataDirectory) {
       env: {
         ...process.env,
         PRIVATE_AGENT_DATA_DIR: dataDirectory,
+        PRIVATE_AGENT_DEFER_RESTORE: restart ? '1' : '',
         // Every browser of the app runs in the backend (Python Playwright): one profile per Confluence and JIRA site.
         PRIVATE_AGENT_CONFLUENCE_PROFILES: path.join(
           app.getPath('userData'),
@@ -1662,7 +1666,7 @@ else {
       });
       void zoom.load();
       restarts = new Restarts({
-        start: () => startBackend(storage.directory),
+        start: () => startBackend(storage.directory, { restart: true }),
         stop: stopBackend,
         restarted: () => {
           void diagnostics.record('백엔드를 다시 시작했습니다.');

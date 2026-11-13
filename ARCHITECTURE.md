@@ -23,7 +23,7 @@ Hermes 워커(resources/hermes, 내장 CPython) — 채팅의 에이전트: 자�
 | Electron 메인 | 창, IPC 허용 목록, 설정 파일과 비밀 값(운영체제 보안 저장소), 사이트 계정과 로그인 계획, 로컬 API·MCP 서버, 알림·자동 작업의 시각 확인, 로그·진단, 백엔드 시작·재시작 | 렌더러의 요청은 보낸 프레임과 `ALLOWED`로, AI 도구의 요청은 토큰과 허용 범위로 거릅니다                                                                                      |
 | Python 백엔드 | `wiki.db`, 검색, LLM 호출, 가져오기(Office COM 워커, Playwright Chromium), 원본 반영, 자동 작업 실행, 백업, 채팅 작업 실행과 웹 기록(보이는 Chromium 창)              | 포트를 열지 않고 메인 프로세스와 표준 입출력으로만 통신합니다. LLM 설정(API Key 포함)은 시작할 때 받아 메모리에만 두고, 사이트 비밀번호는 로그인이 필요한 요청에 담겨 옵니다 |
 
-메인 프로세스는 앱이 시작할 때 저장된 Wiki 폴더로 백엔드를 띄우고(`electron/storage.cjs`), 처음 실행이면 화면이 폴더를 고르게 합니다. 백엔드가 예기치 않게 끝나면 1초, 5초, 15초 뒤에 다시 시작합니다. 2분 안에 세 번 다시 시작하고도 또 끝나면 더 시작하지 않고 사용자에게 알립니다(`electron/restarts.cjs`).
+메인 프로세스는 앱이 시작할 때 저장된 Wiki 폴더로 백엔드를 띄우고(`electron/storage.cjs`), 처음 실행이면 화면이 폴더를 고르게 합니다. 백엔드가 예기치 않게 끝나면 1초, 5초, 15초 뒤에 다시 시작합니다. 2분 안에 세 번 다시 시작하고도 또 끝나면 더 시작하지 않고 사용자에게 알립니다(`electron/restarts.cjs`). 이렇게 다시 시작한 백엔드는 예약된 백업 복원을 앱의 다음 시작까지 그대로 둡니다(환경 변수 `PRIVATE_AGENT_DEFER_RESTORE`, `agent/storage.py`의 `apply_restore`).
 
 ## 요청 경로
 
@@ -55,7 +55,7 @@ AI 도구의 요청은 `electron/api-server.cjs`(127.0.0.1, Host·Origin 검사,
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wiki.db`               | SQLite(WAL). 스키마 버전은 `PRAGMA user_version`이고 지금은 1입니다(`backend/agent/migrations.py`)                                                                            |
 | `backups/`              | `wiki-YYYYMMDD-HHMMSS.db`(하루 한 번 자동, 최근 7개), `wiki-manual-….db`(직접 백업, 최근 7개), `wiki-before-restore-….db`(복원으로 바뀐 Wiki, 지우지 않음)                    |
-| `backups/restore.json`  | 예약된 복원. 함께 있는 `restore-<id>.db`를 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                                          |
+| `backups/restore.json`  | 예약된 복원. 함께 있는 `restore-<id>.db`를 앱의 다음 시작 때 `wiki.db` 자리에 넣고, 결과를 `last-restore.json`에 남깁니다                                                     |
 | `원본 백업/`            | 원본 반영 전에 복사한 Office 파일(파일마다 최근 5개)과 저장 단계를 적는 `.writing` 파일                                                                                       |
 | `web-captures/YYYY-MM/` | 웹 기록 때 찍은 페이지 스크린샷(`<기록 id>.jpg`)                                                                                                                              |
 | `exports/`              | 웹 기록의 CSV 내보내기(`web-records-YYYYMMDD-HHMMSS.csv`, UTF-8 BOM)                                                                                                          |

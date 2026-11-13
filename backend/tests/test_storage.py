@@ -479,3 +479,51 @@ def test_a_start_stopped_between_the_two_renames_is_finished_by_the_next(tmp_pat
     restarted = Service(Database(path), None)
     assert len(restarted.wiki_list({})) == 1
     assert restarted.dispatch("wiki.backups", {})["last_restore"]["status"] == "restored"
+
+
+def test_a_start_the_app_did_not_make_leaves_a_waiting_restore_for_the_next_start_of_the_app(tmp_path):
+    path, folder = tmp_path / "wiki.db", tmp_path / "backups"
+    service = filled(path, documents=2)
+    kept = service.dispatch("wiki.backup", {})["file"]
+    later = service.wiki_save({"title": "백업 뒤 문서", "content": "나중에 쓴 글"})
+    service.dispatch("wiki.restore_backup", {"file": kept})
+    request = json.loads((folder / storage.MARKER).read_text(encoding="utf-8"))
+    # The backend ended on its own and the app started it again: the Wiki stays as the window shows it, and the restore
+    # still waits, as many such starts as there are.
+    for _ in range(2):
+        restarted = Service(Database(path, defer_restore=True), None)
+        assert restarted.wiki_get({"id": later["id"]})["title"] == "백업 뒤 문서"
+        listed = restarted.dispatch("wiki.backups", {})
+        assert listed["pending_restore"]["file"] == kept and listed["last_restore"] is None
+        assert (folder / storage.MARKER).exists() and (folder / request["staged"]).is_file()
+    # The next start of the app carries it out.
+    started = Service(Database(path), None)
+    with pytest.raises(UserError, match="찾을 수 없습니다"):
+        started.wiki_get({"id": later["id"]})
+    listed = started.dispatch("wiki.backups", {})
+    assert listed["pending_restore"] is None and listed["last_restore"]["status"] == "restored"
+
+
+def test_a_start_the_app_did_not_make_still_finishes_a_restore_stopped_between_the_two_renames(tmp_path):
+    path, folder = tmp_path / "wiki.db", tmp_path / "backups"
+    service = filled(path, documents=1)
+    kept = service.dispatch("wiki.backup", {})["file"]
+    later = service.wiki_save({"title": "백업 뒤 문서", "content": "글"})
+    service.dispatch("wiki.restore_backup", {"file": kept})
+    path.rename(folder / "wiki-before-restore-20261009-093000.db")  # The Wiki moved, the copy not yet renamed.
+    # With no Wiki in its place, a new empty one would be worse than the restore: it is finished.
+    restarted = Service(Database(path, defer_restore=True), None)
+    assert len(restarted.wiki_list({})) == 1
+    with pytest.raises(UserError, match="찾을 수 없습니다"):
+        restarted.wiki_get({"id": later["id"]})
+    assert restarted.dispatch("wiki.backups", {})["last_restore"]["status"] == "restored"
+
+
+def test_a_start_that_leaves_a_waiting_restore_still_clears_the_copies_no_request_names(tmp_path):
+    path, folder = tmp_path / "wiki.db", tmp_path / "backups"
+    service = filled(path, documents=1)
+    service.dispatch("wiki.backup", {})
+    orphan = folder / ("restore-" + "a" * 32 + ".db")
+    orphan.write_bytes(b"half a copy")
+    Service(Database(path, defer_restore=True), None)
+    assert not orphan.exists()

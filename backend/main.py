@@ -166,8 +166,11 @@ def main():
     )
     threading.Thread(target=sweep_leftovers, name="sweep-scratch", daemon=True).start()
     database = data_dir / "wiki.db"
+    # Electron sets this when it starts the backend again after it ended on its own, not for a start of the app: a
+    # restore that waits for the next start of the app is then left as it is (storage.apply_restore).
+    defer_restore = os.environ.get("PRIVATE_AGENT_DEFER_RESTORE") == "1"
     try:
-        wiki = Database(database)
+        wiki = Database(database, defer_restore=defer_restore)
     except Refused as refused:  # Damaged, or changed by a later version: left as it is, and the user told what to do.
         diagnostics.LOG.error("the Wiki was not opened: %s", refused)
         return refuse(str(refused))

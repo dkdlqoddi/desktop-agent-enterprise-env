@@ -187,12 +187,13 @@ def inspect(path, budget=None):
     return found
 
 
-def prepare(path):
+def prepare(path, defer_restore=False):
     """Ready the Wiki at `path` for db.Database before anything writes to it: a restore asked for in the last run takes
-    its place (apply_restore), then a Wiki that is damaged, or newer than this version of the app, is refused (Refused)
-    and left as it is. Returns whether the Wiki is new: no file yet, or one without tables."""
+    its place (apply_restore; `defer_restore` leaves one that waits for a start of the app), then a Wiki that is
+    damaged, or newer than this version of the app, is refused (Refused) and left as it is. Returns whether the Wiki is
+    new: no file yet, or one without tables."""
     path = Path(path)
-    apply_restore(path)
+    apply_restore(path, defer=defer_restore)
     if not path.exists():
         return True
     found = inspect(path, budget=CHECK_BUDGET)
@@ -353,6 +354,11 @@ def snapshot(connection, path, kind="auto", keep=KEEP):
 # the Wiki is moved and the Wiki is moved before the copy takes its name, so wiki.db is always one Wiki or the other,
 # whole; a start stopped between the two renames leaves restore.json, and the next one finishes the restore. Before the
 # last rename restore.json says so ("moving"), so that a start stopped right after it is known to have restored.
+#
+# The start meant is a start of the app. The screens tell the user the restore happens when the app starts again, so a
+# backend that the app starts again after it ended on its own (a crash, antivirus) leaves the restore waiting (`defer`
+# of apply_restore) rather than replace the Wiki under a window that is open on it. Electron's check of the folder
+# (storage.cjs) knows a restore stopped between the two renames by the same files.
 
 
 def backup_file(path, name):
@@ -504,15 +510,23 @@ def move(source, target):
         raise
 
 
-def apply_restore(path):
+def apply_restore(path, defer=False):
     """Carry out the restore restore.json asks for, at a start of the backend before anything opens the Wiki at `path`
     (see the section above). How it went is kept in last-restore.json, for wiki.backups, and in the log. A restore that
     cannot be carried out leaves the Wiki as it is: one whose copy is gone is given up, one stopped by a file another
-    program holds is tried again at the next start. Returns what last-restore.json now says, or None."""
+    program holds is tried again at the next start. Returns what last-restore.json now says, or None.
+
+    `defer` is for a start the user did not make, the app starting the backend again after it ended on its own: a
+    restore that waits is left as it is, with its copy and its request, for the next start of the app, as long as the
+    Wiki is in its place. A folder without the Wiki (a start stopped between the two renames) is finished all the same,
+    as a new empty Wiki there would be worse than the restore."""
     path = Path(path)
     folder = backup_folder(path)
     if not (folder / MARKER).exists():
         remove_staged(folder)  # A copy no request names: a backend stopped while it copied, or a cancel half done.
+        return None
+    if defer and path.exists():
+        diagnostics.LOG.info("a restore waits for the next start of the app; this start leaves it")
         return None
     request = requested(folder)
     outcome = {
