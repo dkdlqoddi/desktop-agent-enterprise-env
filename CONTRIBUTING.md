@@ -9,6 +9,7 @@ Private Agent에 코드나 문서를 보태는 방법입니다. 구조는 [ARCHI
 | Node.js | 22.13 이상(`.nvmrc`는 22). `npm run ci`는 설치된 Node.js 하나로 검사합니다 |
 | Python  | 3.10 이상. 배포 파일은 3.13(`.python-version`)으로 빌드합니다              |
 | 그 밖에 | 데스크톱 실행에는 그래픽 환경, Office 관련 기능에는 Windows와 Office       |
+| Android | 앱(`android/`)에는 JDK 17 이상과 Android SDK. 없으면 `npm run ci`가 건너뜀 |
 
 ```bash
 npm ci
@@ -153,7 +154,8 @@ GitHub의 blame 화면은 이 파일을 알아서 읽습니다. 리베이스나 
 
 GitHub Actions는 쓰지 않습니다. 대신 `npm run ci`가 설치된 Node.js·Python 하나로 아래를 한 번에 실행합니다(`scripts/ci-local.mjs`). 핵심 검사만 빠르게 돌리려면 `npm run ci:core`로 E2E를 건너뜁니다.
 
-- 핵심 검사: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run typecheck:electron`, `npm run test:main`(생성 파일이 최신인지 포함), `npm run build:web`, `npm run test:python`, `npm run lint:python`, `npm run format:python:check`, `npm run notices:check`
+- 핵심 검사: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run typecheck:electron`, `npm run test:main`(생성 파일이 최신인지 포함), `npm run build:web`, `npm run test:python`, `npm run lint:python`, `npm run format:python:check`, `npm run notices:check`, Android 앱 검사(`android/`에서 Gradle 래퍼로 `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:compileDebugAndroidTestKotlin`)
+- Android 앱 검사는 JDK 17 이상(`JAVA_HOME`이나 PATH의 `java`)과 Android SDK(`ANDROID_HOME`, `ANDROID_SDK_ROOT`나 `android/local.properties`의 `sdk.dir`)가 있을 때만 실행하고, 없으면 무엇이 없는지 알리고 건너뜁니다(`scripts/android-check.mjs`). `npm run ci -- --no-android`로 뺄 수 있습니다. 기기에서 도는 계측 테스트(`:app:connectedDebugAndroidTest`)는 에뮬레이터나 기기를 연결해 따로 실행합니다([android/README.md](android/README.md#빌드와-설치)).
 - E2E: `npm run setup:electron`, `npm run build:python`(또는 `npm run ci -- --source-backend`로 건너뛰고 `backend/.venv`로 실행), `npm run build:hermes`, `npm run test:e2e`(Linux는 xvfb 가상 디스플레이)
 
 핵심 검사가 하나라도 실패하면 E2E는 건너뛰고, 끝에 통과·실패를 정리해 보여 줍니다. 처음에는 `npm ci`와 `npm run setup:python`으로 의존성을 준비하세요. 화면이나 메인 프로세스를 바꿨다면 관련 E2E 스펙(`npm run test:e2e -- tests/<이름>.spec.ts`)도 실행합니다. Windows exe는 Windows에서 `npm run build:exe`로 따로 빌드합니다.

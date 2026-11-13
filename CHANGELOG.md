@@ -80,7 +80,7 @@
 - 진단 복사본에 빌드한 커밋을 적습니다.
 - 개발 도구: 터미널 로그(`PRIVATE_AGENT_LOG_CONSOLE`), 로그 수준(`PRIVATE_AGENT_LOG_LEVEL`), 파일 변경 시 자동 재시작, debugpy 연결(`PRIVATE_AGENT_DEBUGPY`), 소스 백엔드로 E2E 실행, ruff 검사·형식(`npm run lint:python`, `npm run format:python`), ESLint 검사(`npm run lint`: 화면의 TypeScript·React 훅·접근성·Next.js 규칙, Electron 메인 프로세스의 처리되지 않은 Promise), Electron 메인 프로세스와 스크립트의 타입 검사(`npm run typecheck:electron`), 서드파티 고지 생성(`npm run notices`), 화면 메서드 타입 생성(`npm run generate:methods`), 커버리지 보고서
 - 테스트: `agent://` 프로토콜(경로 이탈, CSP 해시)과 IPC를 보낸 곳·`ALLOWED` 검사의 단위 테스트, 가져온 HTML 정제기의 XSS 사례 95가지(jsdom)
-- 로컬 CI 러너(`npm run ci`): 형식·ESLint·타입(화면·Electron)·메인 프로세스 테스트·웹 빌드·Python 테스트·ruff 검사·서드파티 고지 검사와 E2E(가상 디스플레이, 접근성 `tests/a11y.spec.ts` 포함)를 설치된 Node.js·Python 하나로 한 번에 돌립니다. `npm run ci:core`는 E2E를 빼고 핵심 검사만 실행합니다(`scripts/ci-local.mjs`).
+- 로컬 CI 러너(`npm run ci`): 형식·ESLint·타입(화면·Electron)·메인 프로세스 테스트·웹 빌드·Python 테스트·ruff 검사·서드파티 고지 검사, Android 앱 검사(JVM 단위 테스트, Android lint, 계측 테스트 컴파일. JDK 17 이상과 Android SDK가 없으면 무엇이 없는지 알리고 건너뜀)와 E2E(가상 디스플레이, 접근성 `tests/a11y.spec.ts` 포함)를 설치된 Node.js·Python 하나로 한 번에 돌립니다. `npm run ci:core`는 E2E를 빼고 핵심 검사만 실행합니다(`scripts/ci-local.mjs`).
 - 문서: [LICENSE](LICENSE)(MIT), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [SECURITY.md](SECURITY.md), [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [PRIVACY.md](PRIVACY.md), 카탈로그에서 만드는 [API 문서](docs/api.md)와 [OpenAPI](docs/openapi.json)(`npm run docs:api`)
 
 ### 변경

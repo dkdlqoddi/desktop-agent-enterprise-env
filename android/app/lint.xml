@@ -10,4 +10,9 @@
     <issue id="ChromeOsAbiSupport">
         <ignore path="build.gradle.kts" />
     </issue>
+    <!-- Newer versions of Gradle, the plugins and the libraries come as Renovate's pull requests (renovate.json).
+         These checks ask the network, so the same code would pass one day and warn the next, in the local CI too. -->
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="NewerVersionAvailable" severity="ignore" />
 </lint>
