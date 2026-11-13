@@ -220,6 +220,26 @@ test('a list in pages loads its first page when shown, the next as asked, and co
   assert.deepEqual([list.state.total, list.state.next, list.state.loading], [251, 'c199', false]);
 });
 
+test("a list in pages reads its entries where its method's pages have them, and reloads with that method's tags", async () => {
+  // The trash's pages hold their entries in `items`; a delete or a restore of what it holds changes it.
+  const { cache, pending } = backend();
+  const list = cache.list('trash.list', { kind: 'run' }, 100, 'items');
+  assert.deepEqual(list.tags, TAGS['trash.list']);
+  list.subscribe(() => {});
+  assert.deepEqual(pending[0].params, { kind: 'run', limit: 100 });
+  pending[0].resolve({ items: [{ id: 'e1' }, { id: 'e2' }], total: 2, next_cursor: null });
+  await flush();
+  assert.deepEqual(
+    [list.state.items.map((entry) => entry.id), list.state.total, list.state.next],
+    [['e1', 'e2'], 2, null],
+  );
+  void cache.invalidate(['runs']);
+  assert.deepEqual(pending[1].params, { kind: 'run', limit: 100 });
+  pending[1].resolve({ items: [{ id: 'e2' }], total: 1, next_cursor: null });
+  await flush();
+  assert.deepEqual(list.state.items, [{ id: 'e2' }]);
+});
+
 test('invalidating the documents loads a shown list again from its first page, as much as it shows, without emptying it', async () => {
   const { cache, pending } = backend();
   const list = cache.list('wiki.list', {}, 100);

@@ -1493,6 +1493,37 @@ button.tag:hover {
   font-size: 0.75rem;
   color: var(--muted);
 }
+/* The kinds the trash holds, each with its count: the list shows one of them or all. */
+.trash-kinds {
+  flex-wrap: wrap;
+  align-self: flex-start;
+}
+/* The list comes in pages and scrolls in its own box, drawing only the rows near what it shows (windowing.ts). The
+   browser must not keep a row in place by scrolling as rows come and go (scroll anchoring): the list places them. */
+.trash-entries {
+  max-height: max(320px, calc(100vh - 440px));
+  overflow: auto;
+  overflow-anchor: none;
+}
+.trash-entries li {
+  padding-inline: 4px;
+}
+.trash-entries li.selected {
+  background: var(--accent-soft);
+}
+.trash-entries li.window-spacer {
+  padding: 0;
+  border: 0;
+}
+.trash-entries li.list-more {
+  justify-content: center;
+  padding-block: 12px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.trash-entries li.list-more small {
+  font-variant-numeric: tabular-nums;
+}
 .document-tools .document-filter {
   flex: 1 1 240px;
 }

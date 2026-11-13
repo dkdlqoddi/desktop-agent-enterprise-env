@@ -362,13 +362,19 @@ export class QueryCache {
     return entry.request ?? this.fetch(entry);
   }
 
-  // The list of `method` with `params` in pages of `size` (wiki.list's documents): one per method, parameters and size.
-  // The latest are kept at the end, so the lists dropped beyond IDLE_LISTS are those no component showed for longest.
-  list<T>(method: Method, params: Record<string, unknown> = {}, size = 100): PagedList<T> {
+  // The list of `method` with `params` in pages of `size`, its entries in each page's `field` (wiki.list's documents,
+  // trash.list's items): one per method, parameters and size. The latest are kept at the end, so the lists dropped
+  // beyond IDLE_LISTS are those no component showed for longest.
+  list<T>(
+    method: Method,
+    params: Record<string, unknown> = {},
+    size = 100,
+    field = 'documents',
+  ): PagedList<T> {
     const key = `${QueryCache.key(method, params)} ${size}`;
     let list = this.lists.get(key);
     if (list) this.lists.delete(key);
-    else list = new PagedList(key, method, params, TAGS[method] ?? [], size, this.send);
+    else list = new PagedList(key, method, params, TAGS[method] ?? [], size, this.send, field);
     this.lists.set(key, list);
     const idle = [...this.lists.values()].filter((item) => !item.listeners.size && item !== list);
     for (const old of idle.slice(0, Math.max(0, idle.length - IDLE_LISTS)))

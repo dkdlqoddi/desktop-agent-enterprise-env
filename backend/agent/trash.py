@@ -20,11 +20,17 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
+from . import paging
 from .llm import UserError
 from .service import TRASH_DAYS, now, text
 
-# Entries one request names, and one list answers (the newest).
+# Entries one request names (trash.restore, trash.purge), and the newest the list answers when it asks for no page.
 MAX_ENTRIES = 1000
+# The most entries one page of the list holds (paging: `limit`).
+PAGE_LIMIT = 500
+# The order of the list: the last deleted first, and entries deleted in the same instant by their titles, so that a
+# list reads the same twice and a page goes on after the last entry of the one before (a cursor of these keys).
+ORDER = "deleted_at DESC, title, id"
 
 
 class Kind(NamedTuple):
@@ -138,6 +144,16 @@ def chunks(ids, size=500):
     return [ids[start : start + size] for start in range(0, len(ids), size)]
 
 
+def scope(p):
+    """What a request may meet of the trash, as an SQL condition on its entries with the condition's arguments: all
+    of them but the routines of the recipes `without_recipes` names, which the main process leaves out for an AI
+    tool."""
+    without = recipes(p.get("without_recipes"))
+    if not without:
+        return "1", []
+    return f"NOT (kind='routine' AND recipe IN ({','.join('?' * len(without))}))", list(without)
+
+
 class Trash:
     def __init__(self, service):
         self.service, self.db = service, service.db
@@ -151,26 +167,43 @@ class Trash:
     discard, expire = staticmethod(discard), staticmethod(expire)
 
     def list(self, p=None):
-        """The entries of the trash, the last deleted first (at most MAX_ENTRIES; `total` counts them all), and how many
-        days each waits (`days`). A routine's entry names its recipe. `without_recipes` leaves the routines of those
-        recipes out, as the main process asks for an AI tool."""
-        without = recipes((p or {}).get("without_recipes"))
-        skip = f"NOT (kind='routine' AND recipe IN ({','.join('?' * len(without))}))" if without else "1"
+        """The entries of the trash in ORDER, all of them or those of one `kind`, and how many days each waits (`days`).
+        Without `limit` and `cursor` the newest MAX_ENTRIES; with either one page of them and next_cursor (paging).
+        `total` counts the entries the list holds in all and `kinds` those of each kind in the trash, whatever `kind`
+        is, so that a screen shows how many there are while it has a page. A routine's entry names its recipe.
+        `without_recipes` leaves the routines of those recipes out, as the main process asks for an AI tool."""
+        p = p or {}
+        test, args = scope(p)
+        kind = p.get("kind")
+        if kind is not None and kind not in KINDS:
+            raise UserError(f"휴지통의 종류(kind)는 {', '.join(KINDS)} 중 하나로 입력해 주세요.")
+        paged = paging.wanted(p)
+        limit = paging.size(p, "휴지통 목록은", PAGE_LIMIT) if paged else MAX_ENTRIES
+        after = paging.decode(p, "trash", (str, str, str)) if paged else None
+        where, found = (f"{test} AND kind=?", [*args, kind]) if kind else (test, [*args])
+        if after:
+            # After the cursor's entry: written so that the index is searched from it rather than read from the top.
+            where += " AND deleted_at<=? AND (deleted_at<? OR title>? OR (title=? AND id>?))"
+            found += [after[0], after[0], after[1], after[1], after[2]]
         with self.db.connect() as db:
-            total = db.execute(f"SELECT count(*) FROM trash WHERE {skip}", without).fetchone()[0]
-            # Entries deleted in the same instant in the order of their titles, so a list reads the same twice.
+            kinds = dict(db.execute(f"SELECT kind,count(*) FROM trash WHERE {test} GROUP BY kind", args).fetchall())
             rows = db.execute(
-                f"""SELECT id,kind,item_id,title,detail,recipe,deleted_at FROM trash WHERE {skip}
-                ORDER BY deleted_at DESC, title, id LIMIT ?""",
-                (*without, MAX_ENTRIES),
+                f"""SELECT id,kind,item_id,title,detail,recipe,deleted_at FROM trash WHERE {where}
+                ORDER BY {ORDER} LIMIT ?""",
+                (*found, limit + 1),
             ).fetchall()
         items = []
-        for row in rows:
+        for row in rows[:limit]:
             item = {key: row[key] for key in ("id", "kind", "item_id", "title", "detail", "deleted_at")}
             if row["kind"] == "routine":
                 item["recipe"] = row["recipe"]
             items.append(item)
-        return {"items": items, "total": total, "days": TRASH_DAYS}
+        total = kinds.get(kind, 0) if kind else sum(kinds.values())
+        answer = {"items": items, "total": total, "kinds": kinds, "days": TRASH_DAYS}
+        if paged:
+            last = items[-1] if len(rows) > limit else None
+            answer["next_cursor"] = last and paging.encode("trash", last["deleted_at"], last["title"], last["id"])
+        return answer
 
     def routines(self, p):
         """Internal, for the main process: the routines among the entries `ids`, each with its recipe, whether it reads
@@ -207,16 +240,15 @@ class Trash:
         if not isinstance(everything, bool):
             raise UserError("휴지통을 모두 비울지(all) 확인해 주세요.")
         ids = [] if everything else entry_ids(p.get("ids"))
-        without = recipes(p.get("without_recipes"))
-        skip = f"NOT (kind='routine' AND recipe IN ({','.join('?' * len(without))}))" if without else "1"
+        test, args = scope(p)
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if everything:
-                purged = db.execute(f"DELETE FROM trash WHERE {skip}", without).rowcount
+                purged = db.execute(f"DELETE FROM trash WHERE {test}", args).rowcount
             else:
                 purged = sum(
                     db.execute(
-                        f"DELETE FROM trash WHERE id IN ({','.join('?' * len(chunk))}) AND {skip}", [*chunk, *without]
+                        f"DELETE FROM trash WHERE id IN ({','.join('?' * len(chunk))}) AND {test}", [*chunk, *args]
                     ).rowcount
                     for chunk in chunks(ids)
                 )
@@ -231,15 +263,16 @@ class Trash:
         unless Electron says the caller may have their text (`allow_files`, as Routines.guard asks for)."""
         ids = entry_ids(p.get("ids"))
         allow_files = p.get("allow_files") is True
-        without = recipes(p.get("without_recipes"))
+        test, args = scope(p)
         held = self.held(ids)
         items, notes = [], []
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for ident in ids:
-                entry = db.execute("SELECT * FROM trash WHERE id=?", (ident,)).fetchone()
-                # Gone since the list was read, or come back already as the template of a schedule before it.
-                if entry is None or (entry["kind"] == "routine" and entry["recipe"] in without):
+                # Gone since the list was read, come back already as the template of a schedule before it, or none of
+                # the caller's to meet.
+                entry = db.execute(f"SELECT * FROM trash WHERE id=? AND {test}", (ident, *args)).fetchone()
+                if entry is None:
                     continue
                 self.put_back(db, entry, allow_files, held, items, notes)
         return {"restored": len(items), "items": items, "notes": notes}

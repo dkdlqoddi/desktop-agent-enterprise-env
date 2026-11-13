@@ -4207,10 +4207,44 @@
       "get": {
         "operationId": "get_trash",
         "tags": ["trash"],
-        "summary": "휴지통 목록 (최근 삭제 순, 최대 1,000개): id·kind(conversation·run·task·prompt·schedule·routine)·item_id·title·detail·deleted_at, 전체 개수 total과 보관 일수 days",
+        "summary": "휴지통 목록 (최근 삭제 순, limit·cursor가 없으면 최대 1,000개): id·kind·item_id·title·detail·deleted_at, 조건에 맞는 개수 total, 종류별 개수 kinds, 보관 일수 days",
         "description": "메서드 trash.list · 범위 read",
         "x-scope": "read",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "description": "이 종류만",
+            "schema": {
+              "type": "string",
+              "description": "이 종류만",
+              "enum": ["conversation", "run", "task", "prompt", "schedule", "routine"]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "한 번에 받을 개수 1~500. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+            "schema": {
+              "type": "integer",
+              "description": "한 번에 받을 개수 1~500. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다",
+            "schema": {
+              "type": "string",
+              "description": "앞 응답의 next_cursor. 그 뒤부터 이어 받습니다"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "성공",

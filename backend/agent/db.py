@@ -388,6 +388,10 @@ class Database:
                     related TEXT NOT NULL DEFAULT '{}', deleted_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_trash_deleted ON trash(deleted_at);
+                -- The order of the trash's list (trash.ORDER), which its pages go on from, of all the entries and of
+                -- one kind's; and how many there are of each kind, counted without reading the entries.
+                CREATE INDEX IF NOT EXISTS idx_trash_listed ON trash(deleted_at DESC, title, id);
+                CREATE INDEX IF NOT EXISTS idx_trash_kind ON trash(kind, deleted_at DESC, title, id);
             """)  # noqa: E501
             for name, (columns, key) in SOURCE_TABLES.items():
                 db.execute(source_table(name, columns, key))

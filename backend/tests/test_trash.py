@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from agent import routines, schedules, service as service_module, trash
+from agent import paging, routines, schedules, service as service_module, trash
 from agent.db import Database
 from agent.llm import UserError
 from agent.service import Service, now
@@ -491,3 +491,49 @@ def test_the_list_answers_the_newest_entries_and_counts_them_all(service, monkey
         call(service, "tasks.delete", id=call(service, "tasks.save", title=f"할 일 {index}")["id"])
     listed = call(service, "trash.list")
     assert [item["title"] for item in listed["items"]] == ["할 일 4", "할 일 3", "할 일 2"] and listed["total"] == 5
+
+
+def test_the_list_comes_in_pages_of_all_kinds_or_one_and_counts_each_kind(service):
+    binned = [
+        call(service, "tasks.delete", id=call(service, "tasks.save", title=f"할 일 {index}")["id"])["trash_ids"][0]
+        for index in range(5)
+    ]
+    run = call(service, "prompts.run", prompt_id=prompt(service)["id"], variables={"할 일": "보고서"})
+    binned += call(service, "runs.delete", id=run["id"])["trash_ids"]
+    # Entries deleted in the same instant (as the retention policy moves them) go by their titles, then their IDs.
+    with service.db.connect() as db:
+        db.execute("UPDATE trash SET deleted_at=? WHERE kind='task'", (ago(minutes=1),))
+        db.execute("UPDATE trash SET title='할 일 1' WHERE id=?", (binned[3],))
+    order = [binned[5], binned[0], *sorted([binned[1], binned[3]]), binned[2], binned[4]]
+    assert [item["id"] for item in call(service, "trash.list")["items"]] == order
+    seen, cursor, pages = [], None, 0
+    while True:
+        page = call(service, "trash.list", limit=2, **({"cursor": cursor} if cursor else {}))
+        assert page["total"] == 6 and page["kinds"] == {"run": 1, "task": 5} and len(page["items"]) <= 2
+        seen += [item["id"] for item in page["items"]]
+        cursor, pages = page["next_cursor"], pages + 1
+        if cursor is None:
+            break
+    # Every entry once, in the order of the whole list, the two of one title and one instant apart too.
+    assert seen == order and pages == 3
+    # One kind's entries, with the counts of every kind all the same.
+    first = call(service, "trash.list", kind="task", limit=4)
+    rest = call(service, "trash.list", kind="task", limit=4, cursor=first["next_cursor"])
+    assert [item["id"] for item in first["items"] + rest["items"]] == order[1:]
+    assert (first["total"], rest["next_cursor"], rest["kinds"]) == (5, None, {"run": 1, "task": 5})
+    assert call(service, "trash.list", kind="schedule", limit=10) == {
+        "items": [],
+        "total": 0,
+        "kinds": {"run": 1, "task": 5},
+        "days": service_module.TRASH_DAYS,
+        "next_cursor": None,
+    }
+    # Without a page the newest MAX_ENTRIES, and no cursor.
+    unpaged = call(service, "trash.list", kind="task")
+    assert [item["id"] for item in unpaged["items"]] == order[1:] and "next_cursor" not in unpaged
+    for params in ({"kind": "note"}, {"limit": 0}, {"limit": 501}, {"limit": "10"}, {"cursor": "이어서"}):
+        with pytest.raises(UserError):
+            call(service, "trash.list", **params)
+    # A cursor of another list is refused rather than read as one of these.
+    with pytest.raises(UserError, match="cursor"):
+        call(service, "trash.list", cursor=paging.encode("conversations", now(), "x"))

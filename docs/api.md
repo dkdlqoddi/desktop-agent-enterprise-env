@@ -877,11 +877,14 @@ LLM이 쓰는 오늘의 브리핑
 
 #### `trash.list`
 
-휴지통 목록: 지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업 (30일 보관, 문서는 wiki.trash)
+휴지통 목록: 지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업 (30일 보관, 문서는 wiki.trash). kind로 한 종류만, limit·cursor로 나누어 받기 (total은 조건에 맞는 개수, kinds는 종류별 개수)
 
 - 범위 `read`(조회) · 허용 범위 ‘조회만’ 이상
 - MCP: `query_api`
-- `GET /api/v1/trash` — 휴지통 목록 (최근 삭제 순, 최대 1,000개): id·kind(conversation·run·task·prompt·schedule·routine)·item_id·title·detail·deleted_at, 전체 개수 total과 보관 일수 days
+- `GET /api/v1/trash` — 휴지통 목록 (최근 삭제 순, limit·cursor가 없으면 최대 1,000개): id·kind·item_id·title·detail·deleted_at, 조건에 맞는 개수 total, 종류별 개수 kinds, 보관 일수 days
+  - `kind` (query, string) 이 종류만 [conversation · run · task · prompt · schedule · routine]
+  - `limit` (query, integer) 한 번에 받을 개수 1~500. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)
+  - `cursor` (query, string) 앞 응답의 next_cursor. 그 뒤부터 이어 받습니다
 
 #### `trash.restore`
 

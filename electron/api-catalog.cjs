@@ -92,6 +92,8 @@ const WINDOW_ACTIONS = [
   'set_zoom',
 ];
 const IMPORT_KINDS = ['office', 'rtf', 'image', 'text', 'confluence', 'jira'];
+// The kinds of entry the trash holds beside documents (backend/agent/trash.py KINDS).
+const TRASH_KINDS = ['conversation', 'run', 'task', 'prompt', 'schedule', 'routine'];
 const SOURCE_KINDS = ['manual', 'rtf', 'office', 'image', 'text', 'markdown', 'confluence', 'jira'];
 // The orders of the document list (backend/agent/paging.py ORDERS): the last changed first, as the screens show it, or
 // by id, which saving a document does not change, for a tool that reads every document to the end.
@@ -250,7 +252,7 @@ const METHODS = {
 
   'trash.list': method(
     'read',
-    '휴지통 목록: 지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업 (30일 보관, 문서는 wiki.trash)',
+    '휴지통 목록: 지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업 (30일 보관, 문서는 wiki.trash). kind로 한 종류만, limit·cursor로 나누어 받기 (total은 조건에 맞는 개수, kinds는 종류별 개수)',
   ),
   'trash.restore': method(
     'write',
@@ -391,9 +393,9 @@ const DOCUMENT_BODY = {
     },
   ),
 };
-// A list in pages (wiki.list, wiki.search, assistant.conversations): with limit or cursor the answer is one page and
-// next_cursor, which the next request sends back as cursor (null after the last page). Without either the answer is
-// the whole list, as before, so neither has a default.
+// A list in pages (wiki.list, wiki.search, assistant.conversations, trash.list): with limit or cursor the answer is one
+// page and next_cursor, which the next request sends back as cursor (null after the last page). Without either the
+// answer is the whole list (the trash's newest 1,000), as before, so neither has a default.
 const PAGE = (max) => ({
   limit: integer(
     `한 번에 받을 개수 1~${max}. 주면 나누어 받습니다: 응답의 next_cursor를 다음 요청의 cursor로 (마지막 쪽은 null)`,
@@ -983,7 +985,11 @@ const GROUPS = [
         'GET',
         '/trash',
         'trash.list',
-        '휴지통 목록 (최근 삭제 순, 최대 1,000개): id·kind(conversation·run·task·prompt·schedule·routine)·item_id·title·detail·deleted_at, 전체 개수 total과 보관 일수 days',
+        '휴지통 목록 (최근 삭제 순, limit·cursor가 없으면 최대 1,000개): id·kind·item_id·title·detail·deleted_at, 조건에 맞는 개수 total, 종류별 개수 kinds, 보관 일수 days',
+        {
+          kind: string('이 종류만', { enum: TRASH_KINDS }),
+          ...PAGE(500),
+        },
       ),
       route(
         'POST',

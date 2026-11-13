@@ -303,8 +303,9 @@ export type Deleted = { deleted: number; ids: string[] };
 // What is deleted beside documents waits in a trash of its own (trash.list): a conversation, a prompt run, a task, a
 // prompt template (with its schedules), a schedule or an automatic routine (with its runs), the last deleted first.
 // `id` names the entry for trash.restore and trash.purge, `item_id` what was deleted; `detail` tells entries of the
-// same title apart, and a routine's entry names its recipe. `total` counts every entry (the list answers the newest
-// 1,000), and each waits `days` days before it is deleted for good by itself.
+// same title apart, and a routine's entry names its recipe. The list holds all the entries or those of one `kind`, a
+// page at a time with limit and cursor (the newest 1,000 without): `total` counts the entries it holds in all, `kinds`
+// those of each kind in the trash, and each waits `days` days before it is deleted for good by itself.
 export type TrashKind = 'conversation' | 'run' | 'task' | 'prompt' | 'schedule' | 'routine';
 export type TrashEntry = {
   id: string;
@@ -315,7 +316,15 @@ export type TrashEntry = {
   deleted_at: string;
   recipe?: string;
 };
-export type TrashEntries = { items: TrashEntry[]; total: number; days: number };
+export type TrashEntries = {
+  items: TrashEntry[];
+  total: number;
+  // By kind; a kind a later version deleted may be among them.
+  kinds: Partial<Record<string, number>>;
+  days: number;
+  // The cursor of the next page, null after the last; absent when no page was asked for.
+  next_cursor?: string | null;
+};
 // What deleting one of those answers: whether there was one to delete, and the entry it became, for 되돌리기
 // (trash.restore).
 export type Trashed = { ok: true; deleted: number; trash_ids: string[] };

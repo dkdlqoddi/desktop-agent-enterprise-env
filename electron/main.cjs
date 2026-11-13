@@ -36,10 +36,10 @@ const {
   RoutineRunner,
   onWake,
   readsFiles,
-  WEB_ROUTINE,
   webRoutine,
   withoutWebRoutines,
 } = require('./routines.cjs');
+const { trashValues } = require('./trash.cjs');
 const { ImportNotices } = require('./import-notices.cjs');
 const { JobProgress } = require('./job-progress.cjs');
 const { ApiError, ACCESS_LEVELS, allows, authorize, forbidden } = require('./api-catalog.cjs');
@@ -686,22 +686,15 @@ async function checkRoutineAccess(method, params, access) {
 // The trash of what is deleted beside documents (backend trash.py): conversations, runs, tasks, templates, schedules
 // and routines. The screens see and restore all of it. An AI tool meets a routine there as it meets the routines
 // themselves (checkRoutineAccess): one of the web records is none of its, so the backend leaves those out of what it
-// lists, restores and purges (without_recipes), and one that reads this PC's files or opens a site the user did not
-// register comes back only with the "full" access level. Neither is ever a value of the tool's own request.
+// lists, restores and purges, and one that reads this PC's files or opens a site the user did not register comes back
+// only with the "full" access level. What the backend gets is made in trash.cjs (trashValues), never the tool's own.
 async function trashRequest(method, params, access) {
-  const values = method === 'trash.list' ? {} : { ids: params.ids };
-  if (method === 'trash.purge') values.all = params.all;
-  if (!access)
-    return rpc(method, method === 'trash.restore' ? { ...values, allow_files: true } : values);
-  values.without_recipes = [WEB_ROUTINE];
-  if (method === 'trash.restore') {
-    values.allow_files = mayReadFiles(access);
-    if (!values.allow_files)
-      for (const routine of await rpc('trash.routines', { ids: params.ids })) {
-        if (routine.files) throw forbidden(access, 'files');
-        for (const need of routine.needs) checkLinkAccess(sites.match(need.url, need.kind), access);
-      }
-  }
+  const values = trashValues(method, params, access);
+  if (access && method === 'trash.restore' && !values.allow_files)
+    for (const routine of await rpc('trash.routines', { ids: params.ids })) {
+      if (routine.files) throw forbidden(access, 'files');
+      for (const need of routine.needs) checkLinkAccess(sites.match(need.url, need.kind), access);
+    }
   return rpc(method, values);
 }
 
