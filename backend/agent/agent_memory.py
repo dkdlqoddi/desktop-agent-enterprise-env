@@ -8,7 +8,9 @@ sessions/), which its search of earlier conversations reads.
 The agent writes all of that by itself as it works, so the user must be able to see it, correct it and delete it: the
 entries are listed, saved as the list the user left (agent.memory, agent.memory_save; the screen offers to put back an
 entry it deleted), and the records are listed by turn and by messenger conversation and deleted one at a time or all
-together (agent.memory_forget). Nothing is changed while a turn of the chat runs. The messenger gateway may run
+together (agent.memory_forget). The messenger conversations among the records are shown in the chat to read
+(agent.messenger, agent.messenger_messages): what the accounts the user listed wrote and what the agent answered,
+without its tools' calls and results. Nothing is changed while a turn of the chat runs. The messenger gateway may run
 meanwhile: a record is then deleted as Hermes deletes one, by a process of the bundled worker's (forget_sessions in
 runtime/hermes/worker.py), which keeps a conversation the gateway answers in right now and stops the gateway from
 writing a deleted one back.
@@ -47,6 +49,13 @@ ASKED = "New message from the user:\n"
 # A message Hermes keeps as JSON instead of text begins with this.
 STRUCTURED = "\x00json:"
 SESSION_ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}")
+# The messengers whose conversations the chat shows; how many conversations, and how many of one's last messages,
+# each cut to MESSAGE_CHARS; and the longest key a conversation is asked for by.
+MESSENGERS = ("telegram", "discord", "slack")
+CONVERSATIONS = 30
+CONVERSATION_MESSAGES = 200
+MESSAGE_CHARS = 4000
+KEY_CHARS = 300
 # How long the worker that deletes records may take.
 FORGET_SECONDS = 120
 NOT_FORGOTTEN = "작업 기록을 지우지 못했습니다. 잠시 뒤 다시 해 주세요."
@@ -89,6 +98,8 @@ class Memory:
             "agent.memory": self.read,
             "agent.memory_save": self.save,
             "agent.memory_forget": self.forget,
+            "agent.messenger": self.messenger,
+            "agent.messenger_messages": self.messenger_messages,
         }
 
     def folder(self):
@@ -112,6 +123,95 @@ class Memory:
                 size += path.stat().st_size
                 files += 1
         return {"files": files, "bytes": size}
+
+    @contextlib.contextmanager
+    def database(self):
+        """Hermes' session database opened to read only, or None while there is none (or it does not open)."""
+        path = self.chat.hermes.home / "state.db"
+        connection = None
+        if path.is_file():
+            with contextlib.suppress(sqlite3.Error):
+                connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        try:
+            yield connection
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def messenger(self, _params=None):
+        """The conversations of the messenger gateway, the latest first (CONVERSATIONS of them): [{"key", "source",
+        "label", "account", "title", "at", "messages"}]. One per chat, over the records Hermes starts anew in it (a
+        /new, a compression); `account` is the name or the ID of who wrote, `title` the first words they asked."""
+        marks = ",".join("?" * len(MESSENGERS))
+        try:
+            with self.database() as database:
+                rows = (
+                    database.execute(
+                        f"""SELECT s.session_key, s.source, MAX(COALESCE(s.last_activity_at, s.started_at)) AS at,
+                        SUM(s.message_count), s.display_name, s.user_id
+                        FROM sessions s WHERE s.source IN ({marks}) AND s.session_key IS NOT NULL
+                        AND s.parent_session_id IS NULL
+                        GROUP BY s.session_key ORDER BY at DESC LIMIT ?""",
+                        (*MESSENGERS, CONVERSATIONS),
+                    ).fetchall()
+                    if database
+                    else []
+                )
+                listed = []
+                for key, source, at, count, name, user in rows:
+                    first = database.execute(
+                        """SELECT m.content FROM messages m JOIN sessions s ON s.id = m.session_id
+                        WHERE s.session_key = ? AND m.role = 'user' AND COALESCE(m.observed, 0) = 0
+                        ORDER BY m.timestamp, m.id LIMIT 1""",
+                        (key,),
+                    ).fetchone()
+                    title = " ".join(diagnostics.redact(words(first[0] if first else "")).split())
+                    listed.append(
+                        {
+                            "key": str(key),
+                            "source": str(source),
+                            "label": SOURCES.get(source, str(source)),
+                            "account": str(name or user or ""),
+                            "title": title[: TITLE_CHARS - 1] + "…" if len(title) > TITLE_CHARS else title,
+                            "at": moment(at),
+                            "messages": int(count or 0),
+                        }
+                    )
+        except sqlite3.Error:
+            return []
+        return listed
+
+    def messenger_messages(self, params):
+        """One conversation of the messenger gateway (`key`, as messenger lists it): its last CONVERSATION_MESSAGES
+        messages, oldest first, [{"role": user | assistant, "text", "at"}]. What the listed account wrote and what the
+        agent answered, without the agent's tool calls, their results or its reasoning, nor what others wrote in a
+        group chat that was not addressed to the bot; what reads as a secret is hidden."""
+        key = params.get("key") if isinstance(params, dict) else None
+        if not isinstance(key, str) or not 0 < len(key) <= KEY_CHARS:
+            raise UserError("대화를 찾을 수 없습니다. 화면을 새로고침해 주세요.")
+        marks = ",".join("?" * len(MESSENGERS))
+        try:
+            with self.database() as database:
+                rows = (
+                    database.execute(
+                        f"""SELECT m.role, m.content, m.timestamp FROM messages m JOIN sessions s ON s.id = m.session_id
+                        WHERE s.session_key = ? AND s.source IN ({marks}) AND m.role IN ('user', 'assistant')
+                        AND m.active = 1 AND m._compressed_summary = 0 AND COALESCE(m.observed, 0) = 0
+                        AND COALESCE(m.display_kind, '') <> 'hidden' AND COALESCE(m.content, '') <> ''
+                        ORDER BY m.timestamp DESC, m.id DESC LIMIT ?""",
+                        (key, *MESSENGERS, CONVERSATION_MESSAGES),
+                    ).fetchall()
+                    if database
+                    else []
+                )
+        except sqlite3.Error:
+            rows = []
+        shown = []
+        for role, content, at in reversed(rows):
+            text = diagnostics.redact(words(content)).strip()
+            if text:
+                shown.append({"role": role, "text": text[:MESSAGE_CHARS], "at": moment(at)})
+        return shown
 
     def sessions(self):
         """The turns and messenger conversations Hermes keeps a record of, the latest first (SESSION_LIST of them):

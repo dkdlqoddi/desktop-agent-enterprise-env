@@ -150,7 +150,7 @@ const ALLOWED = new Set([
   'api.open_docs',
   // The agent chat (agent_chat.py): its conversation, the agent's live state, and the user's answers to the
   // approval and clarify it pauses on. The chat agent's own settings (keys, MCP servers, computer use, the messenger
-  // gateway) and whether that gateway runs.
+  // gateway), whether that gateway runs and the conversations it had (agent.messenger*, read only).
   'agent.messages',
   'agent.suggestions',
   'agent.send',
@@ -170,6 +170,8 @@ const ALLOWED = new Set([
   'agent.memory',
   'agent.memory_save',
   'agent.memory_forget',
+  'agent.messenger',
+  'agent.messenger_messages',
   'hermes.get',
   'hermes.update',
   'hermes.choose',

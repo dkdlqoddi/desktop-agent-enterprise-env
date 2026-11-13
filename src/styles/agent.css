@@ -582,6 +582,34 @@
   margin: 4px 0 0;
 }
 
+/* The messenger gateway's conversations, to read in the chat ----------------------------------- */
+.agent-messenger {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.agent-messenger > summary,
+.agent-messenger-conversation > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.agent-messenger-conversation {
+  margin-top: 8px;
+}
+.agent-messenger-messages {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* The chat agent's settings (admin → 채팅 에이전트) --------------------------------------------- */
 .hermes-settings .admin-fieldset {
   border: 1px solid var(--rule);

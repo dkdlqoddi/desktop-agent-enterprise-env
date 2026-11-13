@@ -164,6 +164,24 @@ test('messenger gateway: the user sets a bot up, a listed account is answered th
     expect(telegram.sentTo(99)).toEqual([]);
     expect(await written(path.join(directory, 'wiki', 'hermes'))).not.toContain(TOKEN);
 
+    // The conversation is in the chat to read: what the listed account wrote and the answer, and nobody else's.
+    await page
+      .getByRole('navigation', { name: '화면' })
+      .getByRole('button', { name: '채팅', exact: true })
+      .click();
+    const messenger = page.locator('.agent-messenger');
+    await expect(messenger).toContainText('메신저 대화 1개');
+    await messenger.locator('summary').first().click();
+    const conversation = messenger.locator('.agent-messenger-conversation');
+    await expect(conversation).toContainText('텔레그램');
+    await conversation.locator('summary').click();
+    const said = conversation.getByRole('list');
+    await expect(said).toContainText('안녕, 지금 뭐 할 수 있어?');
+    await expect(said).toContainText(ANSWER);
+    await expect(said).not.toContainText('나도 시켜도 되나요?');
+    await expect(messenger.locator('xpath=ancestor::*[@data-user-only]')).toHaveCount(1);
+    await openAdmin(page, '채팅 에이전트');
+
     // Turned off, the bot answers nobody.
     await toggle.click();
     await expect(toggle).not.toBeChecked();

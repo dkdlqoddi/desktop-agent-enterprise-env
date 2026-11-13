@@ -213,6 +213,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 4. 답할 사람은 사용자가 적은 계정뿐입니다(`only_listed_accounts`). Hermes가 따로 허용하는 길(페어링 승인, 모두 허용 스위치, 채팅방·역할 허용)은 그 뒤에서 다시 걸러 냅니다. 메신저에서 쓸 수 있는 명령은 자기 대화를 다루는 것뿐이고(`GATEWAY_COMMANDS`), 승인을 끄거나(`/yolo`, `/approvals`) 모델·게이트웨이를 바꾸는 명령은 Hermes의 명령 등급으로 거절합니다. 이 제한은 Hermes의 관리 설정 층(`hermes/gateway/config.yaml`)에 둡니다.
 5. 위험한 명령은 온 메신저에서 묻고, 적은 계정의 답(`/approve`·`/deny`나 버튼)을 요청 한도의 대기 시간(기본 5분)까지 기다립니다.
 6. 상태는 `gateway` 프레임으로 올라오고 화면이 `agent.gateway`로 읽습니다. Hermes의 오류 문장은 넘기지 않고 상태와 오류 코드만 넘깁니다(문장에 봇 토큰이 들어갈 수 있음). 설정이 바뀌면 다시 띄우고, 스스로 끝나면 간격을 늘려 가며 다섯 번까지 다시 띄웁니다. 앱을 닫으면 함께 끝납니다.
+7. 메신저에서 한 대화는 채팅 화면의 **메신저 대화**에서 읽기만 합니다(`agent.messenger`·`agent.messenger_messages`, `agent/agent_memory.py`). 백엔드가 `hermes/state.db`를 읽기 전용으로 열어 대화방(`session_key`)마다 적은 계정의 글과 에이전트의 답만 넘기고(도구 호출과 결과, 추론, 압축 요약, 봇을 부르지 않은 다른 사람의 글은 뺌), 비밀 값으로 보이는 글은 가립니다. 봇 토큰은 그 기록에 없고 화면으로 가지 않습니다.
 
 Android 앱(`android/`)은 같은 `shared/web-capture`를 빌드 때마다 assets로 복사해 WebView에서 쓰고, 채팅·기록·설정을 휴대폰 안에서 처리합니다. 내장 Hermes 실행 환경을 넣은 빌드에서는 같은 `worker.py`를 휴대폰에서 실행하고(터미널·파일·코드·브라우저 자동화·컴퓨터 사용은 끔), 넣지 않은 빌드에서는 설정한 LLM의 도구 호출로 계획해 카드를 확인받습니다. 채팅의 통제(명령 확인의 범위, 턴이 한 일, 보호 구역, 기억 관리)는 데스크톱의 `agent_chat.py`·`agent_guard.py`·`agent_memory.py`를 Kotlin으로 옮긴 `agent/`의 `ApprovalRules`·`AgentGrants`·`TurnActivity`·`ProtectedZones`·`AgentMemory`가 맡고, 워커에는 데스크톱과 같은 턴 프레임 필드(`allowed`·`session_allowed`·`protected`)로 넘깁니다. 구조와 빌드는 [android/README.md](android/README.md)에 있습니다.
 

@@ -161,6 +161,8 @@ export type ScreenMethod =
   | 'agent.memory_forget'
   | 'agent.memory_save'
   | 'agent.messages'
+  | 'agent.messenger'
+  | 'agent.messenger_messages'
   | 'agent.reject'
   | 'agent.send'
   | 'agent.status'

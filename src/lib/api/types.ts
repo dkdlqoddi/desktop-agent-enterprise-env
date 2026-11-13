@@ -1187,6 +1187,20 @@ export type AgentMemory = {
   kept?: number;
 };
 
+// The messenger gateway's conversations, to read in the chat (agent.messenger): one per chat of an account the user
+// listed, `key` naming it for agent.messenger_messages; `account` is its name or ID, `title` the first words it asked.
+export type AgentMessengerConversation = {
+  key: string;
+  source: string;
+  label: string;
+  account: string;
+  title: string;
+  at: string;
+  messages: number;
+};
+// One message of such a conversation: what the account wrote or what the agent answered (no tool calls or results).
+export type AgentMessengerMessage = { role: 'user' | 'assistant'; text: string; at: string };
+
 // The chat agent's own settings (hermes.*): the folder it works in, the service keys (only whether each is set), the
 // MCP servers, whether computer use is on, and the messenger gateway: whether it is on (`gateway`), the accounts each
 // bot answers (`users`, IDs separated by commas, by messenger) and its bot tokens (the keys of the group 'gateway').
