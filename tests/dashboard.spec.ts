@@ -275,8 +275,11 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
     await expect(widget(page, 'welcome').getByRole('alert')).toHaveCount(0);
 
     // Outside every such part the whole screen says so in Korean and draws the app again in place: no form, no
-    // address to load, both of which the window refuses. (The profile button writes the user's initial.)
+    // address to load, both of which the window refuses. (The profile button writes the user's initial.) The page is
+    // drawn in the theme the user chose, and the app keeps that theme when it draws again.
     await page.evaluate(() => {
+      localStorage.setItem('private-agent:theme', 'dark');
+      document.documentElement.dataset.theme = 'dark';
       const upper = String.prototype.toUpperCase;
       const test = window as unknown as { upper: boolean };
       test.upper = true;
@@ -288,11 +291,17 @@ test('dashboard: a part that fails to draw, layouts of other versions, the widge
     await nav.getByRole('button', { name: '할 일', exact: true }).click();
     await expect(page.getByRole('heading', { name: '화면을 표시하지 못했습니다' })).toBeVisible();
     await expect(page.locator('form')).toHaveCount(0);
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(15, 18, 26)');
     await page.evaluate(() => {
       (window as unknown as { upper: boolean }).upper = false;
     });
     await page.getByRole('button', { name: '다시 시도' }).click();
     await expect(nav).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.evaluate(() => {
+      localStorage.removeItem('private-agent:theme');
+      delete document.documentElement.dataset.theme;
+    });
     await goHome(page);
     await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
 

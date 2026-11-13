@@ -28,10 +28,15 @@ export function storedTheme(): Theme {
   }
 }
 
-export function saveTheme(theme: Theme) {
+// Draws `theme` on <html>, as the theme script does before the first paint.
+export function applyTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === 'system') delete root.dataset.theme;
   else root.dataset.theme = theme;
+}
+
+export function saveTheme(theme: Theme) {
+  applyTheme(theme);
   try {
     if (theme === 'system') localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, theme);

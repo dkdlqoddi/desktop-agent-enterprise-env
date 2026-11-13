@@ -35,6 +35,7 @@ import {
   type AppStores,
 } from './state';
 import StorageSetup from './storage-setup';
+import { applyTheme, storedTheme } from './theme';
 import Toasts, { useToasts } from './toast';
 import WebRecords from './web-records';
 import WorkspacePage, { WorkspaceSidebar, WORKSPACE_VIEWS, type WorkspaceView } from './workspace';
@@ -47,6 +48,9 @@ export { useApp, type AppState } from './state';
 // state's slices (./state), each owned by the component that shows it, so that a job's progress, a toast or an answer
 // being written draws its own part of the screen again and not the whole app.
 export default function App() {
+  // The whole-screen error page (app/global-error.tsx) draws an <html> of its own, and React clears the attributes of
+  // the one it gives up, the theme's among them: drawn again after 다시 시도, the app sets its theme there again.
+  useLayoutEffect(() => applyTheme(storedTheme()), []);
   const [stores] = useState(createAppStores);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [loading, setLoading] = useState(true);
