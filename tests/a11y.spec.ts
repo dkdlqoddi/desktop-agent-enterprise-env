@@ -269,6 +269,34 @@ test('accessibility: the main screens have no critical or serious axe findings, 
     await expect(stop).toHaveAttribute('data-node', first!);
     await page.keyboard.press('Tab');
     expect(await focusedNode()).toBeNull();
+    // With the documents drawn, Space shows a document's details as a click does, and Enter opens the document as a
+    // double click does, leaving it selected; closing the document gives the keyboard back to it.
+    await page.getByLabel('문서 함께 보기').check();
+    const meeting = page.getByRole('button', { name: '캐시 도입 회의 문서' });
+    await meeting.focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('.explorer-detail h3')).toHaveText('캐시 도입 회의');
+    await page.keyboard.press('Space');
+    await expect(page.locator('.explorer-detail')).toHaveCount(0);
+    await page.keyboard.press('Enter');
+    await expect(drawer(page).getByRole('complementary', { name: 'AI 분석' })).toContainText(
+      '캐시 도입 회의 요약입니다.',
+    );
+    await page.keyboard.press('Escape');
+    await expect(drawer(page)).toHaveCount(0);
+    await expect(meeting).toBeFocused();
+    await expect(meeting).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.explorer-detail h3')).toHaveText('캐시 도입 회의');
+    await page.keyboard.press('Escape');
+    await expect(meeting).toHaveAttribute('aria-pressed', 'false');
+    await page.getByRole('button', { name: '설계 검토 문서' }).dblclick();
+    await expect(drawer(page).getByRole('complementary', { name: 'AI 분석' })).toContainText(
+      '설계 검토 요약입니다.',
+    );
+    await page.keyboard.press('Escape');
+    await expect(drawer(page)).toHaveCount(0);
+    await expect(page.locator('.explorer-detail h3')).toHaveText('설계 검토');
+    await page.getByLabel('문서 함께 보기').uncheck();
 
     // The dark theme chosen in the admin page is on <html> again after a reload, before the screen draws.
     await openAdmin(page, '화면·검색·대시보드');

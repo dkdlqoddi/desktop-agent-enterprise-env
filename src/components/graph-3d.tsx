@@ -58,6 +58,8 @@ export default function Graph3D(props: {
   selected: string | null;
   hover: string | null;
   onSelect: (id: string | null) => void;
+  // Opens the document of a document node, on a double click as in the 2D graph.
+  onOpen: (id: string) => void;
   onHover: (id: string | null) => void;
   label: string;
 }) {
@@ -274,7 +276,7 @@ export default function Graph3D(props: {
     };
   }, []);
 
-  const hitAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const hitAt = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const [x, y] = [event.clientX - rect.left, event.clientY - rect.top];
     // Nearest nodes were drawn last and win overlapping hits.
@@ -325,6 +327,10 @@ export default function Graph3D(props: {
           if (!start || start.moved) return;
           const id = hitAt(e);
           latest.current.onSelect(id === latest.current.selected ? null : id);
+        }}
+        onDoubleClick={(e) => {
+          const id = hitAt(e);
+          if (id?.startsWith('d:')) latest.current.onOpen(id);
         }}
         onPointerLeave={() => {
           inside.current = false;

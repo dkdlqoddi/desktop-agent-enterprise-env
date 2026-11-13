@@ -150,6 +150,12 @@ export default function KnowledgeExplorer({
     setSelection(next);
     if (next?.type === 'keyword') onPanel('keywords');
   };
+  // A document opened from the graph (a double click, or Enter on it) is selected too: its details are there when the
+  // document window closes.
+  const openNode = (nodeId: string) => {
+    pick(nodeId);
+    onOpenDocument(nodeId.slice(2));
+  };
   if (!graph.nodes.length)
     return (
       <div className="empty">
@@ -171,6 +177,7 @@ export default function KnowledgeExplorer({
     selected: selectedNode,
     hover,
     onSelect: pick,
+    onOpen: openNode,
     onHover: setHover,
   };
   return (
@@ -243,6 +250,10 @@ export default function KnowledgeExplorer({
             {mode === '2d'
               ? '드래그로 이동 · 휠로 확대 · 키워드를 눌러 연결 보기 · 화살표 키로 이동, Enter로 선택'
               : '드래그로 회전 · 휠로 확대 · 키워드를 눌러 연결 보기'}
+            {docs &&
+              (mode === '2d'
+                ? ' · 문서는 두 번 누르거나 Enter로 열기'
+                : ' · 문서는 두 번 눌러 열기')}
             {model.omitted > 0 && ` · 문서는 키워드가 많은 ${DOCUMENT_LIMIT}개만 표시`}
           </p>
         </div>
@@ -269,6 +280,8 @@ type RendererProps = {
   selected: string | null;
   hover: string | null;
   onSelect: (id: string | null) => void;
+  // Opens the document of a document node.
+  onOpen: (id: string) => void;
   onHover: (id: string | null) => void;
 };
 // Where the overlap pass put a node, against where the layout had it.
@@ -313,6 +326,7 @@ function Graph2D({
   selected,
   hover,
   onSelect,
+  onOpen,
   onHover,
   scope,
   hint,
@@ -418,13 +432,16 @@ function Graph2D({
     });
   const dim = (id: string, set?: Set<string>) => !!highlight && !set?.has(id);
   // One node is in the Tab order; the arrow keys move between nodes by where they are drawn, Home and End go to the
-  // first and the last, and Enter or Space opens a node's connections and details as a click does.
+  // first and the last, and Enter or Space opens a node's connections and details as a click does. A document opens
+  // with Enter, as with a double click; Space shows its details.
+  const isDocument = (node: GraphNode) => node.kind === 'document';
   const nodeEvents = (node: GraphNode) => ({
     role: 'button',
     'data-node': node.id,
     tabIndex: node.id === tabStop ? 0 : -1,
     'aria-pressed': node.id === selected,
     onClick: () => onSelect(node.id === selected ? null : node.id),
+    onDoubleClick: isDocument(node) ? () => onOpen(node.id) : undefined,
     onKeyDown: (e: React.KeyboardEvent) => {
       const arrow = ARROWS[e.key];
       const target = arrow
@@ -437,6 +454,9 @@ function Graph2D({
       if (target !== undefined) {
         e.preventDefault();
         if (target) focusNode(target);
+      } else if (e.key === 'Enter' && isDocument(node)) {
+        e.preventDefault();
+        onOpen(node.id);
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         onSelect(node.id === selected ? null : node.id);
