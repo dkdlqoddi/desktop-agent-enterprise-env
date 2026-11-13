@@ -47,22 +47,9 @@ export default function SecretInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        // Narrower than its own default width beside the state and the buttons, as in a header's row.
-        style={{ minWidth: 0 }}
       />
       {inUse && (
-        <small
-          id={state}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 3,
-            flexShrink: 0,
-            fontSize: 12,
-            whiteSpace: 'nowrap',
-            color: stale ? 'var(--warn)' : 'var(--ok)',
-          }}
-        >
+        <small id={state} className={stale ? 'secret-state stale' : 'secret-state'}>
           {stale ? <CircleAlert size={13} /> : <Check size={13} />}
           {stale ? '다시 입력 필요' : '등록됨'}
         </small>
@@ -72,7 +59,6 @@ export default function SecretInput({
           type="button"
           className="text-button"
           aria-label={`${label} 다시 입력`}
-          style={{ flexShrink: 0, fontSize: 12, whiteSpace: 'nowrap' }}
           onClick={() => {
             onChange('');
             setShown(false);

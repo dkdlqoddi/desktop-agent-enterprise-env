@@ -591,14 +591,24 @@ function Graph2D({
           })}
         </g>
       </svg>
-      <div className="zoom-controls graph-zoom">
-        <button aria-label="축소" onClick={() => zoom(1 / 1.25)}>
+      <div className="graph-zoom">
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="축소"
+          onClick={() => zoom(1 / 1.25)}
+        >
           <Minus size={16} />
         </button>
-        <button aria-label="배율 초기화" onClick={() => setView({ x: 0, y: 0, k: 1 })}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="배율 초기화"
+          onClick={() => setView({ x: 0, y: 0, k: 1 })}
+        >
           <Focus size={16} />
         </button>
-        <button aria-label="확대" onClick={() => zoom(1.25)}>
+        <button type="button" className="icon-button" aria-label="확대" onClick={() => zoom(1.25)}>
           <Plus size={16} />
         </button>
       </div>

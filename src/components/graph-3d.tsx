@@ -349,18 +349,27 @@ export default function Graph3D(props: {
           } else if (e.key === 'Escape') latest.current.onSelect(null);
         }}
       />
-      <div className="zoom-controls graph-zoom">
+      <div className="graph-zoom">
         <button
+          type="button"
+          className="icon-button"
           aria-label={spin ? '자동 회전 멈추기' : '자동 회전'}
           aria-pressed={spin}
           onClick={() => setSpin(!spin)}
         >
           {spin ? <Pause size={16} /> : <Play size={16} />}
         </button>
-        <button aria-label="축소" onClick={() => turn(0, 0, 1.18)}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="축소"
+          onClick={() => turn(0, 0, 1.18)}
+        >
           <Minus size={16} />
         </button>
         <button
+          type="button"
+          className="icon-button"
           aria-label="시점 초기화"
           onClick={() => {
             camera.current = { yaw: 0.5, pitch: -0.3, distance: DISTANCE };
@@ -369,7 +378,12 @@ export default function Graph3D(props: {
         >
           <Focus size={16} />
         </button>
-        <button aria-label="확대" onClick={() => turn(0, 0, 0.85)}>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="확대"
+          onClick={() => turn(0, 0, 0.85)}
+        >
           <Plus size={16} />
         </button>
       </div>

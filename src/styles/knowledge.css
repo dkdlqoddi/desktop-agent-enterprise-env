@@ -93,7 +93,7 @@
 .explorer-hint {
   position: absolute;
   left: 16px;
-  right: 140px;
+  right: 156px;
   bottom: 14px;
   font-size: 0.75rem;
   color: var(--muted);
@@ -125,11 +125,26 @@
   outline: 3px solid var(--ink);
   outline-offset: -3px;
 }
+/* The zoom buttons over the graph: the app's icon buttons on a small panel of their own, with a ring close enough
+   not to cover the button beside. */
 .graph-zoom {
   position: absolute;
   right: 14px;
   bottom: 12px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
   background: var(--panel);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow) 12%, transparent);
+}
+.graph-zoom .icon-button {
+  width: 30px;
+  height: 30px;
+}
+.graph-zoom .icon-button:focus-visible {
+  outline-offset: 1px;
 }
 .graph-node,
 .graph-doc {

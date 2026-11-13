@@ -205,11 +205,30 @@ label.check input {
   box-shadow: 0 0 0 1px var(--ink);
 }
 .secret-input input {
+  /* Narrower than its own default width beside the state and the buttons, as in a header's row. */
+  min-width: 0;
   color: var(--ink);
   border: 0;
   box-shadow: none !important;
   padding-left: 0;
   margin: 0;
+}
+/* Whether a saved value is in use, and 다시 입력 beside it: one line each, kept whole as the field narrows. */
+.secret-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--ok);
+}
+.secret-state.stale {
+  color: var(--warn);
+}
+.secret-input .text-button {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 details.advanced summary {
   cursor: pointer;
