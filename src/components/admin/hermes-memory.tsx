@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Brain, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { api, type AgentMemory } from '@/lib/api';
+import { api, dayTime, type AgentMemory } from '@/lib/api';
 import Confirm from '../confirm';
+import { useActions } from '../state';
 
 type Target = 'memory' | 'user';
 const LISTS: { target: Target; label: string; hint: string }[] = [
@@ -23,13 +24,16 @@ const size = (bytes: number) =>
     : `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 
 // What the chat agent remembers between turns, on its settings screen (inside the data-user-only form): the entries of
-// its two memory files, which the user reads, corrects, adds to and deletes, and the records it keeps of the turns it
-// ran, which the user deletes whole. The agent writes all of it by itself; here it is the user's to see and change.
+// its two memory files, which the user reads, corrects, adds to and deletes (a deleted entry can be put back from the
+// message that says so), and the records it keeps of the turns it ran and of the messenger conversations, which the
+// user deletes one at a time or all together. The agent writes all of it by itself; here it is the user's to see and
+// change.
 export default function HermesMemory({
   notify,
 }: {
   notify: (message: string, error?: boolean) => void;
 }) {
+  const { undoable } = useActions();
   const [memory, setMemory] = useState<AgentMemory | null>(null);
   const [busy, setBusy] = useState(false);
   // The entry being edited, with its text; and what is typed to be added, by list.
@@ -49,11 +53,12 @@ export default function HermesMemory({
     void load();
   }, [load]);
 
+  // Saves a list; `done` is told once it is saved ('' tells nothing).
   const save = async (target: Target, entries: string[], done: string) => {
     setBusy(true);
     try {
       setMemory(await api<AgentMemory>('agent.memory_save', { target, entries }));
-      notify(done);
+      if (done) notify(done);
       return true;
     } catch (error) {
       notify((error as Error).message, true);
@@ -63,10 +68,55 @@ export default function HermesMemory({
     }
   };
 
-  const forget = async () => {
+  // An entry deleted goes back where it was, into the list as it is now: the agent may have written to it since.
+  const restore = async (target: Target, entry: string, index: number) => {
     try {
-      setMemory(await api<AgentMemory>('agent.memory_forget'));
-      notify('에이전트의 작업 기록을 지웠습니다.');
+      const current = await api<AgentMemory>('agent.memory');
+      const entries = current[target].entries;
+      if (entries.includes(entry)) {
+        setMemory(current);
+        return;
+      }
+      await save(
+        target,
+        [...entries.slice(0, index), entry, ...entries.slice(index)],
+        '지운 기억을 되살렸습니다.',
+      );
+    } catch (error) {
+      notify((error as Error).message, true);
+    }
+  };
+
+  const remove = async (target: Target, entries: string[], index: number) => {
+    const entry = entries[index];
+    if (
+      await save(
+        target,
+        entries.filter((_, at) => at !== index),
+        '',
+      )
+    )
+      undoable('기억을 지웠습니다.', {
+        label: '되돌리기',
+        run: () => void restore(target, entry, index),
+      });
+  };
+
+  // One record (`session`), or all of them.
+  const forget = async (session?: string) => {
+    try {
+      const next = await api<AgentMemory>(
+        'agent.memory_forget',
+        session ? { session_id: session } : {},
+      );
+      setMemory(next);
+      notify(
+        session
+          ? '작업 기록을 지웠습니다.'
+          : next.kept
+            ? `에이전트의 작업 기록을 지웠습니다. 메신저에서 지금 답하고 있는 대화 ${next.kept}개는 남겼습니다.`
+            : '에이전트의 작업 기록을 지웠습니다.',
+      );
     } catch (error) {
       notify((error as Error).message, true);
     }
@@ -141,16 +191,10 @@ export default function HermesMemory({
                       </button>
                       <Confirm
                         label="지우기"
-                        question="이 기억을 지울까요? 되돌릴 수 없습니다."
+                        question="이 기억을 지울까요? 지운 뒤 알림의 되돌리기로 되살릴 수 있습니다."
                         icon={<Trash2 size={13} />}
                         disabled={busy}
-                        onConfirm={async () => {
-                          await save(
-                            target,
-                            list.entries.filter((_, at) => at !== index),
-                            '기억을 지웠습니다.',
-                          );
-                        }}
+                        onConfirm={() => remove(target, list.entries, index)}
                       />
                     </li>
                   ),
@@ -204,16 +248,38 @@ export default function HermesMemory({
           </span>
         </div>
         <p className="admin-hint">
-          에이전트가 요청마다 남기는 내부 기록(주고받은 내용과 도구 결과)입니다. 이전 작업을 찾을 때
-          씁니다. 채팅 화면의 대화와 위의 기억은 그대로 둡니다.
+          에이전트가 요청마다, 메신저 대화마다 남기는 내부 기록(주고받은 내용과 도구 결과)입니다.
+          이전 작업을 찾을 때 씁니다. 하나씩 지우거나 모두 지울 수 있고, 메신저 게이트웨이가 켜져
+          있어도 됩니다(지금 답하고 있는 메신저 대화는 남깁니다). 채팅 화면의 대화와 위의 기억은
+          그대로 둡니다.
         </p>
+        {!!memory.sessions.length && (
+          <ul className="hermes-list hermes-memory-list" aria-label="작업 기록 목록">
+            {memory.sessions.map((session) => (
+              <li key={session.id}>
+                <span className="record-kind">{session.label}</span>
+                <span className="hermes-memory-entry">{session.title || '(내용 없음)'}</span>
+                <span className="hermes-list-note">
+                  {session.at ? `${dayTime(session.at)} · ` : ''}메시지 {session.messages}개
+                </span>
+                <Confirm
+                  label="지우기"
+                  question="이 작업 기록을 지울까요? 되돌릴 수 없습니다."
+                  icon={<Trash2 size={13} />}
+                  disabled={busy}
+                  onConfirm={() => forget(session.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
         <div>
           <Confirm
             label="작업 기록 지우기"
             question="에이전트의 작업 기록을 모두 지울까요? 되돌릴 수 없습니다."
             icon={<Trash2 size={14} />}
             disabled={busy || !memory.records.files}
-            onConfirm={forget}
+            onConfirm={() => forget()}
           />
         </div>
       </div>

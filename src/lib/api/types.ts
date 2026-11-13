@@ -1165,12 +1165,26 @@ export type AgentStatus = {
 export type AgentActive = { request_id: string; text: string };
 
 // What the agent remembers between turns (agent.memory): its own notes (`memory`) and what it keeps about the user
-// (`user`), each a list of entries with the characters used and the limit, and how much it recorded of its turns.
+// (`user`), each a list of entries with the characters used and the limit, how much it recorded of its turns and which
+// they are (`sessions`, the latest first).
 export type AgentMemoryList = { entries: string[]; chars: number; limit: number };
+// One record Hermes keeps: a turn of the chat or a messenger conversation. `label`: where it was (채팅, 텔레그램, …);
+// `title`: the first words asked, with what reads as a secret hidden; `at`: its last activity.
+export type AgentSession = {
+  id: string;
+  source: string;
+  label: string;
+  title: string;
+  at: string;
+  messages: number;
+};
 export type AgentMemory = {
   memory: AgentMemoryList;
   user: AgentMemoryList;
   records: { files: number; bytes: number };
+  sessions: AgentSession[];
+  // agent.memory_forget: the conversations left because the messenger gateway answers in them right now.
+  kept?: number;
 };
 
 // The chat agent's own settings (hermes.*): the folder it works in, the service keys (only whether each is set), the

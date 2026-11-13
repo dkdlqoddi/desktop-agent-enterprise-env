@@ -120,7 +120,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 | `agent/diagnostics.py`                                                                                                 | `backend.log`와 비밀 값 가리기, 오류 ID가 붙은 사용자 메시지                                             |
 | `agent/agent_chat.py`                                                                                                  | 채팅: 대화 보관, 에이전트가 부른 앱 작업의 검사·실행과 카드, 진행 중인 턴(`agent.*`)                     |
 | `agent/hermes.py`, `agent/hermes_llm.py`                                                                               | 내장 Hermes 워커 실행·중지와 턴의 프레임 처리(승인·질문 포함), 모델 호출의 LLM 연결 중계                 |
-| `agent/agent_guard.py`, `agent/agent_memory.py`                                                                        | 보호 구역의 경로 계산, 에이전트의 기억(메모·사용자 정보) 읽기·저장과 작업 기록 지우기                    |
+| `agent/agent_guard.py`, `agent/agent_memory.py`                                                                        | 보호 구역의 경로 계산, 에이전트의 기억(메모·사용자 정보) 읽기·저장과 작업 기록 보기·지우기               |
 | `agent/hermes_gateway.py`                                                                                              | 메신저 게이트웨이: 두 번째 워커 프로세스의 시작·재시작·종료, 모델 호출과 앱 작업의 중계                  |
 | `agent/web_capture.py`                                                                                                 | 웹 기록: 보이는 Chromium 창, 페이지 읽기, 직접 누른 광고와 도착 페이지, CSV·스크린샷·보관 기간(`web.*`)  |
 
@@ -203,7 +203,7 @@ Electron의 `userData` 폴더입니다. Windows에서는 `%APPDATA%\Private Agen
 
 에이전트의 설정(**관리 → 채팅 에이전트**)은 메인 프로세스가 `hermes.json`에 두고(`electron/hermes-settings.cjs`), 시작할 때와 바뀔 때 `agent.configure`로 백엔드에 넘깁니다: 작업 폴더(터미널과 파일 도구가 시작하는 곳), 컴퓨터 사용, MCP 서버, 서비스 키, 요청 한도, 메신저 게이트웨이(켜기, 봇마다 답할 계정, 봇 토큰). MCP 서버 설정의 값(env, headers, 인수, 주소)은 워커가 `config.yaml`에 쓰지 않고 환경 변수 참조로 바꿔 넘깁니다(`worker.py`의 `mcp_servers`). 워커는 시작할 때 받은 설정만 씁니다: Wiki의 `hermes` 폴더에 놓인 `.env`와 이 PC의 `/etc/hermes` 설정은 읽지 않습니다(`own_settings_only`).
 
-보호 구역은 턴마다 백엔드가 경로 목록으로 만들어(`agent/agent_guard.py`: 앱의 설정 폴더, Wiki의 데이터베이스와 백업, 자격 증명이 있는 곳, 사용자가 더한 폴더. 에이전트의 홈과 작업 폴더는 그 안에 있어도 열어 둠) 워커에 넘깁니다. 워커는 그 경로를 Hermes 파일 도구의 읽기·쓰기 거절 규칙에 더하고(`guard_files`), 파일 찾기(`search_files`)가 보호 구역을 담은 폴더를 훑을 때는 그 안의 것을 결과와 개수, 찾지 못했을 때의 안내에서 빼며(`guard_searches`. ripgrep의 제외 규칙은 찾기를 시작한 폴더 아래에만 들어, 찾은 뒤에 거름), 경로를 적은 명령과 사용자가 적은 패턴을 Hermes의 `approvals.deny`로 넘겨 승인과 관계없이 거절하게 합니다(`denied_commands`). 에이전트의 기억은 `hermes/memories`의 두 파일(`MEMORY.md`, `USER.md`)이고, 턴이 돌지 않을 때 `agent/agent_memory.py`가 읽고 저장합니다.
+보호 구역은 턴마다 백엔드가 경로 목록으로 만들어(`agent/agent_guard.py`: 앱의 설정 폴더, Wiki의 데이터베이스와 백업, 자격 증명이 있는 곳, 사용자가 더한 폴더. 에이전트의 홈과 작업 폴더는 그 안에 있어도 열어 둠) 워커에 넘깁니다. 워커는 그 경로를 Hermes 파일 도구의 읽기·쓰기 거절 규칙에 더하고(`guard_files`), 파일 찾기(`search_files`)가 보호 구역을 담은 폴더를 훑을 때는 그 안의 것을 결과와 개수, 찾지 못했을 때의 안내에서 빼며(`guard_searches`. ripgrep의 제외 규칙은 찾기를 시작한 폴더 아래에만 들어, 찾은 뒤에 거름), 경로를 적은 명령과 사용자가 적은 패턴을 Hermes의 `approvals.deny`로 넘겨 승인과 관계없이 거절하게 합니다(`denied_commands`). 에이전트의 기억은 `hermes/memories`의 두 파일(`MEMORY.md`, `USER.md`)이고, 턴이 돌지 않을 때 `agent/agent_memory.py`가 읽고 저장합니다. 작업 기록(`hermes/state.db`)은 읽기 전용으로 열어 요청·메신저 대화마다 보여 주고, 하나를 지우거나 메신저 게이트웨이가 켜진 동안 모두 지울 때는 워커를 `forget` 프레임으로 한 번 띄워 Hermes의 `delete_session`으로 지웁니다(메시지·검색 색인·파일이 함께 가고, 게이트웨이가 지금 답하고 있는 대화는 남김). 게이트웨이가 꺼져 있으면 모두 지우기는 기록 파일을 통째로 지웁니다.
 
 메신저 게이트웨이(`agent/hermes_gateway.py`)는 Hermes의 게이트웨이를 같은 `worker.py`의 두 번째 프로세스로 실행합니다(`run_gateway`). 사용자가 켜고, 봇 토큰과 답할 계정을 모두 넣은 메신저가 하나라도 있을 때만 띄웁니다.
 

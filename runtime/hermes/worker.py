@@ -7,16 +7,19 @@ frame, which performs it with the app's own LLM connection. The agent's tools ru
 browser, MCP, memory, skills, computer use, web search); the app's own actions (document search, web records,
 tasks, schedules) run in the parent, reached as "app_tool" frames.
 
-A process serves one of two things, by the first frame it gets. A "turn" runs one message of the chat: dangerous
+A process serves one of three things, by the first frame it gets. A "turn" runs one message of the chat: dangerous
 commands ask the user through an "approval" frame (what a "this conversation" answer covers follows as a "grant"
 frame), clarify questions through a "clarify" frame, and progress and draft text stream up as "progress" and "draft"
 frames; the process is kept for the next turn. A "gateway" runs
 Hermes' messenger gateway until it is shut down (run_gateway): the accounts the user listed write to their bot in
-Telegram, Discord or Slack, and the agent answers there, asking them there before a dangerous command. Either way its
-home is the Wiki's hermes folder.
+Telegram, Discord or Slack, and the agent answers there, asking them there before a dangerous command. A "forget"
+deletes records of the agent's turns and conversations as Hermes deletes one, tells how it went in a "forgotten"
+frame and ends (forget_sessions). Either way its home is the Wiki's hermes folder.
 
-Frames to the parent: inference, approval, grant, app_tool, clarify, progress, draft, result, error, gateway.
-Frames from the parent: turn, gateway, completion, approval_reply, app_tool_reply, clarify_reply, cancel, shutdown.
+Frames to the parent: inference, approval, grant, app_tool, clarify, progress, draft, result, error, gateway,
+forgotten.
+Frames from the parent: turn, gateway, forget, completion, approval_reply, app_tool_reply, clarify_reply, cancel,
+shutdown.
 """
 import contextlib
 import json
@@ -70,6 +73,8 @@ MAX_ALLOWED, MAX_DENIED = 200, 600
 # (or the gateway) is not given its own (max_iterations, answer_seconds); a question waits twice that.
 ITERATIONS, MAX_ITERATIONS = 24, 200
 ANSWER_SECONDS, MAX_ANSWER_SECONDS = 300, 1800
+# The most records one "forget" names.
+MAX_FORGET = 100
 
 
 def emit(frame):
@@ -695,6 +700,44 @@ def run_turn(request):
             database.close()
 
 
+# -- the record of the turns and conversations -----------------------------------------------------------------------
+
+
+def forget_sessions(request):
+    """Delete records of the agent's turns and messenger conversations from its session database: those named
+    (`sessions`), or every one (`everything`). Each goes as Hermes deletes one: its messages, search index and files
+    with it, and a mark that keeps a running gateway from writing it back. One the messenger gateway (another process)
+    answers in right now is kept (held). Tells how many went and how many were kept."""
+    import sqlite3
+
+    from hermes_state import SessionDB
+    from hermes_state_errors import SessionActiveWriteGuardError
+
+    path = HOME / "state.db"
+    deleted = held = 0
+    if path.is_file():
+        if request.get("everything"):
+            # Every record, a subagent's and a continuation's too: one that went with the one it belongs to is gone
+            # by the time it is asked for.
+            with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True,
+                                                    timeout=5)) as listed:
+                names = [row[0] for row in listed.execute("SELECT id FROM sessions")]
+        else:
+            names = [name for name in request.get("sessions") or () if isinstance(name, str) and name][:MAX_FORGET]
+        database = SessionDB(path)
+        try:
+            for name in names:
+                try:
+                    deleted += bool(database.delete_session(
+                        name, sessions_dir=HOME / "sessions", exclude_active_write_guards=True,
+                        include_compression_chain=True))
+                except SessionActiveWriteGuardError:
+                    held += 1
+        finally:
+            database.close()
+    emit({"type": "forgotten", "deleted": deleted, "held": held})
+
+
 # -- the messenger gateway -----------------------------------------------------------------------------------------
 
 
@@ -899,7 +942,7 @@ def reader_loop(requests):
             if agent is not None:
                 with contextlib.suppress(Exception):
                     agent.interrupt(hard_cancel=True)
-        elif kind in ("turn", "gateway", "shutdown"):
+        elif kind in ("turn", "gateway", "forget", "shutdown"):
             requests.put(frame)
 
 
@@ -925,6 +968,16 @@ def main():
                 except Exception as error:
                     emit({"type": "error", "kind": type(error).__name__})
                     emit({"type": "gateway", "state": "failed", "platforms": {}})
+                OUTPUT.flush()
+                os._exit(0)
+            if request.get("type") == "forget":
+                # Like a gateway, a deletion is the whole life of its process.
+                try:
+                    bundled_paths()
+                    own_settings_only()
+                    forget_sessions(request)
+                except Exception as error:
+                    emit({"type": "error", "kind": type(error).__name__})
                 OUTPUT.flush()
                 os._exit(0)
             CHANNEL.reset()

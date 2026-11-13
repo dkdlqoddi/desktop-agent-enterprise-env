@@ -250,12 +250,33 @@ test('agent chat: a command is asked about with how far each answer reaches, and
     await expect(forgetting.locator('[data-destructive]')).toHaveCount(1);
     await forgetting.locator('[data-destructive]').click();
     await expect(remembered).toHaveCount(1);
-    expect(
-      await readFile(path.join(directory, 'wiki', 'hermes', 'memories', 'USER.md'), 'utf8'),
-    ).toBe('답은 두 문장 안에 한다');
-    // The records the agent kept of the turns above are deleted whole, after a question.
+    const userFile = path.join(directory, 'wiki', 'hermes', 'memories', 'USER.md');
+    expect(await readFile(userFile, 'utf8')).toBe('답은 두 문장 안에 한다');
+    // The message that says so puts it back where it was.
+    await page
+      .getByRole('status')
+      .filter({ hasText: '기억을 지웠습니다.' })
+      .getByRole('button', { name: '되돌리기' })
+      .click();
+    await expect(page.getByText('지운 기억을 되살렸습니다.')).toBeVisible();
+    await expect(remembered).toHaveCount(2);
+    await expect(remembered.nth(1)).toContainText('오전에 일한다');
+    expect(await readFile(userFile, 'utf8')).toBe('답은 두 문장 안에 한다\n§\n오전에 일한다');
+    // The records the agent kept of the turns above are listed by what each was asked; one is deleted on its own.
     const records = page.locator('.hermes-memory').filter({ hasText: '작업 기록' });
     await expect(records).toContainText(/파일 \d+개/);
+    const turns = page.getByRole('list', { name: '작업 기록 목록' }).locator('li');
+    await expect(turns.first()).toContainText('채팅');
+    const listed = await turns.count();
+    expect(listed).toBeGreaterThan(1);
+    await turns.first().getByRole('button', { name: '지우기' }).click();
+    await page
+      .getByRole('group', { name: /이 작업 기록을 지울까요\?/ })
+      .locator('[data-destructive]')
+      .click();
+    await expect(page.getByText('작업 기록을 지웠습니다.', { exact: true })).toBeVisible();
+    await expect(turns).toHaveCount(listed - 1);
+    // Then all of them, whole, after a question.
     await records.getByRole('button', { name: '작업 기록 지우기' }).click();
     await page
       .getByRole('group', { name: /에이전트의 작업 기록을 모두 지울까요\?/ })
