@@ -41,9 +41,7 @@ import dev.privateagent.android.agent.ChatAgent
 import dev.privateagent.android.agent.HermesChat
 import dev.privateagent.android.hermes.HermesSession
 import dev.privateagent.android.util.flag
-import dev.privateagent.android.util.strings
 import dev.privateagent.android.util.text
-import org.json.JSONArray
 import org.json.JSONObject
 
 /** Which planner the chat uses, as the desktop's badge shows it. */
@@ -188,75 +186,62 @@ fun ApprovalPrompt(interaction: HermesChat.Interaction, onDecide: (String, Strin
     }
 }
 
-/** The questions Hermes asked to go on: a choice (or several) or a short answer each. */
+/**
+ * The questions Hermes asked to go on, as the desktop asks them: a choice (or several) or an answer in the user's own
+ * words each. A question with choices has a box for any other answer too, which Hermes counts on (ClarifyAnswers).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ClarifyPrompt(interaction: HermesChat.Interaction, onAnswer: (String, JSONObject) -> Unit) {
-    val questions = remember(interaction.id) { questions(interaction.payload) }
-    val answers = remember(interaction.id) { mutableStateMapOf<String, List<String>>() }
+fun ClarifyPrompt(interaction: HermesChat.Interaction, onAnswer: (String, JSONObject) -> Unit) {
+    val questions = remember(interaction.id) { ClarifyQuestion.of(interaction.payload) }
+    val chosen = remember(interaction.id) { mutableStateMapOf<String, List<String>>() }
+    val written = remember(interaction.id) { mutableStateMapOf<String, String>() }
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.clarify_title), style = MaterialTheme.typography.titleSmall)
             for (question in questions) {
                 Text(question.text, style = MaterialTheme.typography.bodyMedium)
+                val own = written[question.id].orEmpty()
                 if (question.choices.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (choice in question.choices) {
-                            val chosen = answers[question.id].orEmpty()
+                            val picked = chosen[question.id].orEmpty()
                             FilterChip(
-                                selected = choice in chosen,
+                                // A single answer in the user's own words takes the place of a choice.
+                                selected = choice in picked && (question.multiple || own.isBlank()),
                                 onClick = {
-                                    answers[question.id] = when {
+                                    if (!question.multiple) written[question.id] = ""
+                                    chosen[question.id] = when {
                                         !question.multiple -> listOf(choice)
-                                        choice in chosen -> chosen - choice
-                                        else -> chosen + choice
+                                        choice in picked -> picked - choice
+                                        else -> picked + choice
                                     }
                                 },
-                                label = { Text(choice) },
+                                label = {
+                                    Text(
+                                        ClarifyAnswers.recommended(choice)
+                                            ?.let { stringResource(R.string.clarify_recommended, it) } ?: choice,
+                                    )
+                                },
                             )
                         }
                     }
-                } else {
-                    OutlinedTextField(
-                        value = answers[question.id]?.firstOrNull().orEmpty(),
-                        onValueChange = { answers[question.id] = listOf(it) },
-                        placeholder = { Text(stringResource(R.string.clarify_answer_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 3,
-                    )
                 }
+                val hint = if (question.choices.isEmpty()) R.string.clarify_answer_hint else R.string.clarify_other_hint
+                OutlinedTextField(
+                    value = own,
+                    onValueChange = { written[question.id] = it.take(ClarifyAnswers.MAX_WRITTEN) },
+                    placeholder = { Text(stringResource(hint)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                )
             }
             Button(
-                onClick = { onAnswer(interaction.id, answerJson(questions, answers)) },
+                onClick = { onAnswer(interaction.id, ClarifyAnswers.json(questions, chosen, written)) },
                 modifier = Modifier.align(Alignment.End),
             ) {
                 Text(stringResource(R.string.clarify_send))
             }
         }
     }
-}
-
-private class Question(val id: String, val text: String, val choices: List<String>, val multiple: Boolean)
-
-private fun questions(payload: JSONObject): List<Question> {
-    val list = payload.optJSONArray("questions") ?: JSONArray()
-    return (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { question ->
-        Question(
-            id = question.text("qid"),
-            text = question.text("question"),
-            choices = question.optJSONArray("choices")?.strings().orEmpty(),
-            multiple = question.optBoolean("multi_select"),
-        )
-    }
-}
-
-/** {qid: answer}, a list of choices for a multi-select question; unanswered questions are left out. */
-private fun answerJson(questions: List<Question>, answers: Map<String, List<String>>): JSONObject {
-    val json = JSONObject()
-    for (question in questions) {
-        val values = answers[question.id].orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
-        if (values.isEmpty()) continue
-        json.put(question.id, if (question.multiple) JSONArray(values) else values.first())
-    }
-    return json
 }

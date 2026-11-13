@@ -84,6 +84,8 @@
     <string name="activity_result_cancelled">답하지 않음</string>
     <string name="clarify_title">조금 더 알려 주세요</string>
     <string name="clarify_answer_hint">답을 입력하세요</string>
+    <string name="clarify_other_hint">보기에 없으면 직접 적어 주세요</string>
+    <string name="clarify_recommended">%1$s (추천)</string>
     <string name="clarify_send">보내기</string>
 
     <!-- Action cards -->

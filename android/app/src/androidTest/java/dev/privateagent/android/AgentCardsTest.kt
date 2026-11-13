@@ -1,9 +1,11 @@
 package dev.privateagent.android
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.privateagent.android.agent.Activity
 import dev.privateagent.android.agent.ActivityStep
@@ -12,7 +14,9 @@ import dev.privateagent.android.agent.StepKind
 import dev.privateagent.android.hermes.HermesSession
 import dev.privateagent.android.ui.chat.ActivityNote
 import dev.privateagent.android.ui.chat.ApprovalPrompt
+import dev.privateagent.android.ui.chat.ClarifyPrompt
 import dev.privateagent.android.ui.theme.PrivateAgentTheme
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -20,8 +24,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The card that asks about a command, with the scopes the question offers, and the list of what a turn did under the
- * message that ended it.
+ * The card that asks about a command, with the scopes the question offers, the card of Hermes' questions, and the list
+ * of what a turn did under the message that ended it.
  */
 @RunWith(AndroidJUnit4::class)
 class AgentCardsTest {
@@ -68,6 +72,30 @@ class AgentCardsTest {
         compose.onNodeWithText("안전 검사가 위험하다고 본 명령입니다. 실행하더라도 이번 한 번뿐입니다.").assertIsDisplayed()
         compose.onNodeWithText("거부").performClick()
         assertEquals(listOf("deny"), decisions)
+    }
+
+    @Test
+    fun aQuestionWithChoicesTakesAnAnswerInTheUsersOwnWordsToo() {
+        val answers = mutableListOf<JSONObject>()
+        val question = JSONObject().put("qid", "q0").put("question", "어느 사이트에서 찾을까요?")
+            .put("choices", JSONArray(listOf("쿠팡 (Recommended)", "네이버")))
+        val asked = HermesChat.Interaction(
+            "question-2",
+            HermesSession.InteractionKind.CLARIFY,
+            JSONObject().put("questions", JSONArray().put(question)),
+        )
+        compose.setContent { PrivateAgentTheme { ClarifyPrompt(asked) { _, answer -> answers += answer } } }
+        // Hermes' mark of the choice it recommends is said in the card's words.
+        compose.onNodeWithText("쿠팡 (추천)").assertIsDisplayed()
+        compose.onNodeWithText("보기에 없으면 직접 적어 주세요").assertIsDisplayed()
+        // The user's own words take the place of the choice picked before them...
+        compose.onNodeWithText("네이버").performClick()
+        compose.onNode(hasSetTextAction()).performTextInput("11번가")
+        compose.onNodeWithText("보내기").performClick()
+        // ...and a choice picked after them takes theirs.
+        compose.onNodeWithText("네이버").performClick()
+        compose.onNodeWithText("보내기").performClick()
+        assertEquals(listOf("11번가", "네이버"), answers.map { it.getString("q0") })
     }
 
     @Test
