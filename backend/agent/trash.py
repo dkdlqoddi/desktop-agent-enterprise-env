@@ -1,19 +1,27 @@
 """The trash of what the user deletes beside documents: conversations, prompt runs, tasks, prompt templates, prompt
-schedules and automatic routines.
+schedules and automatic routines, the chat cleared (대화 비우기) and the pages of the web records; and of the runs and
+conversations the retention policy removes (Service.retain).
 
 A deleted document waits where it is (documents.deleted_at), as much refers to it. These rows are read all over the
-backend instead (the reminders, the runner of the schedules and routines, the briefing, the retention policy), so a
-deleted one leaves its table as it always did, and nothing that reads the table can meet it: a schedule or a routine in
-the trash never runs, and a task in it never reminds. What left is kept here for service.TRASH_DAYS: the row itself
-(`payload`) and the rows that went with it (`related`: a conversation's messages, a template's schedules, a routine's
-runs), as JSON by column name.
+backend instead (the reminders, the runner of the schedules and routines, the briefing, the retention policy, the
+chat's turns), so a deleted one leaves its table as it always did, and nothing that reads the table can meet it: a
+schedule or a routine in the trash never runs, a task in it never reminds and a chat in it is no turn's conversation.
+What left is kept here for service.TRASH_DAYS: the row itself (`payload`) and the rows that went with it (`related`: a
+conversation's messages, a template's schedules, a routine's runs, a web record's items), as JSON by column name. The
+chat goes whole, as one entry: its messages with what each turn did. A web record's screenshot stays in the Wiki
+folder's web-captures until its entry is deleted for good.
 
 A restore puts the rows back by the columns their tables have now: a column the row lacks takes its default and a value
 whose column is gone is left out, so what an earlier version deleted still comes back. A schedule or routine that comes
 back does not run for the times that passed while it was away: its next run is counted from now. Only trash.purge,
 which the local API gives the `destructive` scope, and the retention policy (Service.retain, after TRASH_DAYS) delete an
-entry for good."""
+entry for good.
 
+The chat and the web records are the user's alone (AGENTS.md: agent.* and web.* are not in the local API): the main
+process names the kinds an AI tool meets here (`only_kinds`), never theirs, so a tool neither lists nor restores nor
+purges what they put here, nor learns its title. The same goes for the web records' routines (`without_recipes`)."""
+
+import functools
 import json
 import sqlite3
 import uuid
@@ -47,13 +55,34 @@ KINDS = {
     "prompt": Kind("prompts", "프롬프트 템플릿", "title", (("schedules", "prompt_id", "created_at, id"),)),
     "schedule": Kind("schedules", "예약", "name"),
     "routine": Kind("routines", "자동 작업", "name", (("routine_runs", "routine_id", "created_at, id"),)),
+    # The whole chat at once (discard_chat): its messages and what each turn did.
+    "chat": Kind("agent_messages", "채팅", "title"),
+    # A page of the web records, by what was searched for (or its title), with its items.
+    "web_capture": Kind("web_captures", "웹 기록", "query", (("web_items", "capture_id", "position"),)),
 }
+
+
+@functools.cache
+def site_names():
+    """The web records' sites by their keys, as the records name them (shared/web-capture/sites.json)."""
+    from .web_capture import load_sites
+
+    return {key: site["name"] for key, site in load_sites().items()}
+
+
+def title_of(kind, row):
+    """What the list calls an entry: its row's name; a web record searched for nothing goes by its page's title."""
+    return str(row.get(KINDS[kind].title) or row.get("title") or row.get("url") or "")[:200]
 
 
 def detail(db, kind, row, related):
     """A line that tells an entry from another of the same title, as the list shows it under the title."""
     if kind == "conversation":
         return f"메시지 {len(related['messages']):,}개"
+    if kind == "web_capture":
+        site = site_names().get(row.get("site")) or ""
+        found = f"광고 {row.get('ad_count') or 0} · 상품 {row.get('product_count') or 0} · 검색 결과 "
+        return " · ".join(part for part in (site, found + str(row.get("result_count") or 0)) if part)
     if kind == "run":
         made = "예약 실행" if row.get("kind") == "scheduled" else "직접 실행"
         return made + (" · 실패" if row.get("status") == "error" else "")
@@ -79,38 +108,87 @@ def discard(db, kind, ident):
     kept is the row deleted): the row and what the delete takes with it are kept, then deleted as before. What a delete
     method answers: `deleted` (1, or 0 when there was none) and the entry made (`trash_ids`), which trash.restore
     brings back."""
+    made = discard_many(db, kind, [ident])
+    return {"ok": True, "deleted": len(made), "trash_ids": made}
+
+
+ENTRY = """INSERT INTO trash (id,kind,item_id,title,detail,recipe,payload,related,deleted_at)
+    VALUES (?,?,?,?,?,?,?,?,?)"""
+
+
+def discard_many(db, kind, ids, note=""):
+    """Move the `kind`s named `ids` to the trash as discard does one, each to an entry of its own, a chunk of them a
+    statement: what the retention policy moves, and the web records chosen together. `note` ends the line under the
+    entry's title, saying why it went when nobody deleted it. The entries made, in the order of `ids`; an ID whose row
+    is not there makes none."""
+    if kind == "chat":
+        raise ValueError("The chat goes whole: discard_chat.")
     spec = KINDS[kind]
-    row = db.execute(f"SELECT * FROM {spec.table} WHERE id=?", (ident,)).fetchone()
-    if row is None:
-        return {"ok": True, "deleted": 0, "trash_ids": []}
-    row = dict(row)
-    related = {
-        table: [dict(item) for item in db.execute(f"SELECT * FROM {table} WHERE {owner}=? ORDER BY {order}", (ident,))]
-        for table, owner, order in spec.related
-    }
-    entry = str(uuid.uuid4())
+    made = []
+    for chunk in chunks(list(dict.fromkeys(ids))):
+        marks = ",".join("?" * len(chunk))
+        rows = {row["id"]: dict(row) for row in db.execute(f"SELECT * FROM {spec.table} WHERE id IN ({marks})", chunk)}
+        related = {ident: {table: [] for table, _, _ in spec.related} for ident in rows}
+        for table, owner, order in spec.related:
+            for item in db.execute(f"SELECT * FROM {table} WHERE {owner} IN ({marks}) ORDER BY {order}", chunk):
+                related[item[owner]][table].append(dict(item))
+        stamp = now()
+        for ident in chunk:
+            row = rows.get(ident)
+            if row is None:
+                continue
+            entry = str(uuid.uuid4())
+            db.execute(
+                ENTRY,
+                (
+                    entry,
+                    kind,
+                    ident,
+                    title_of(kind, row),
+                    " · ".join(part for part in (detail(db, kind, row, related[ident]), note) if part),
+                    str(row.get("kind") or "") if kind == "routine" else "",
+                    json.dumps(row, ensure_ascii=False),
+                    json.dumps(related[ident], ensure_ascii=False),
+                    stamp,
+                ),
+            )
+            made.append(entry)
+        if rows:
+            db.execute(f"DELETE FROM {spec.table} WHERE id IN ({marks})", chunk)
+    return made
+
+
+def discard_chat(db):
+    """Move the chat (agent_chat.py) to the trash as one entry, within the caller's transaction: every message with
+    what each turn did (agent_activity), named by the first thing the user asked. What was allowed for this
+    conversation is not kept here: it ends with 대화 비우기, and a restore brings back the messages alone. The entry
+    made, or none for a chat without messages."""
+    messages = [dict(row) for row in db.execute("SELECT * FROM agent_messages ORDER BY seq")]
+    if not messages:
+        return []
+    activity = [dict(row) for row in db.execute("SELECT * FROM agent_activity ORDER BY seq")]
+    asked = next((m["content"] for m in messages if m["role"] == "user" and str(m["content"] or "").strip()), "")
+    title = " ".join(str(asked).split())[:80] or "채팅"
+    ident, entry = str(uuid.uuid4()), str(uuid.uuid4())
+    row = {"id": ident, "title": title, "first_at": messages[0]["created_at"], "last_at": messages[-1]["created_at"]}
+    related = {"agent_messages": messages, "agent_activity": activity}
     db.execute(
-        """INSERT INTO trash (id,kind,item_id,title,detail,recipe,payload,related,deleted_at)
-        VALUES (?,?,?,?,?,?,?,?,?)""",
+        ENTRY,
         (
             entry,
-            kind,
+            "chat",
             ident,
-            str(row.get(spec.title) or "")[:200],
-            detail(db, kind, row, related),
-            str(row.get("kind") or "") if kind == "routine" else "",
+            title,
+            f"메시지 {len(messages):,}개",
+            "",
             json.dumps(row, ensure_ascii=False),
             json.dumps(related, ensure_ascii=False),
             now(),
         ),
     )
-    db.execute(f"DELETE FROM {spec.table} WHERE id=?", (ident,))
-    return {"ok": True, "deleted": 1, "trash_ids": [entry]}
-
-
-def expire(db, before):
-    """Delete for good the entries deleted before `before` (the retention policy); how many."""
-    return db.execute("DELETE FROM trash WHERE deleted_at<?", (before,)).rowcount
+    db.execute("DELETE FROM agent_messages")
+    db.execute("DELETE FROM agent_activity")
+    return [entry]
 
 
 def insert(db, table, row):
@@ -123,11 +201,38 @@ def insert(db, table, row):
     )
 
 
+def numbered_back(db, table, rows, key):
+    """Put `rows` back into `table` keeping their numbers (`key`, the INTEGER PRIMARY KEY that orders them), unless one
+    of them is in use (a Wiki whose numbering began anew): then they all take new ones, in the same order. Their old
+    numbers to their new ones, and whether they changed."""
+    rows = [row for row in rows if isinstance(row, dict)]
+    numbers = [row[key] for row in rows if row.get(key) is not None]
+    renumber = any(
+        db.execute(f"SELECT 1 FROM {table} WHERE {key} IN ({','.join('?' * len(chunk))}) LIMIT 1", chunk).fetchone()
+        for chunk in chunks(numbers)
+    )
+    moved = {}
+    for row in rows:
+        insert(db, table, {column: value for column, value in row.items() if not (renumber and column == key)})
+        moved[row.get(key)] = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+    return moved, renumber
+
+
 def entry_ids(value):
     """The distinct entries a request names, in the order given."""
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_ENTRIES:
         raise UserError(f"휴지통의 항목을 1~{MAX_ENTRIES:,}개 선택해 주세요.")
     return list(dict.fromkeys(text(ident, "ID", 80) for ident in value))
+
+
+def kinds(value):
+    """The kinds of entry a request may meet at all (`only_kinds`), None for every kind: the main process names those an
+    AI tool may meet (never the chat's or the web records'), never the tool itself."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value or not all(isinstance(name, str) and name in KINDS for name in value):
+        raise UserError("휴지통에서 다룰 종류(only_kinds)를 확인해 주세요.")
+    return tuple(dict.fromkeys(value))
 
 
 def recipes(value):
@@ -145,13 +250,18 @@ def chunks(ids, size=500):
 
 
 def scope(p):
-    """What a request may meet of the trash, as an SQL condition on its entries with the condition's arguments: all
-    of them but the routines of the recipes `without_recipes` names, which the main process leaves out for an AI
-    tool."""
-    without = recipes(p.get("without_recipes"))
-    if not without:
-        return "1", []
-    return f"NOT (kind='routine' AND recipe IN ({','.join('?' * len(without))}))", list(without)
+    """What a request may meet of the trash, as an SQL condition on its entries with the condition's arguments: the
+    entries of the kinds `only_kinds` names (all without it) but the routines of the recipes `without_recipes` names.
+    The main process names both for an AI tool."""
+    only, without = kinds(p.get("only_kinds")), recipes(p.get("without_recipes"))
+    clauses, args = [], []
+    if only is not None:
+        clauses.append(f"kind IN ({','.join('?' * len(only))})")
+        args += only
+    if without:
+        clauses.append(f"NOT (kind='routine' AND recipe IN ({','.join('?' * len(without))}))")
+        args += without
+    return " AND ".join(clauses) or "1", args
 
 
 class Trash:
@@ -164,14 +274,41 @@ class Trash:
             "trash.routines": self.routines,
         }
 
-    discard, expire = staticmethod(discard), staticmethod(expire)
+    discard, discard_many, discard_chat = staticmethod(discard), staticmethod(discard_many), staticmethod(discard_chat)
+
+    def expire(self, before):
+        """Delete for good the entries deleted before `before` (the retention policy), with the screenshots of the web
+        records among them; how many."""
+        with self.db.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            shots = self.screenshots(db, "deleted_at<?", [before])
+            count = db.execute("DELETE FROM trash WHERE deleted_at<?", (before,)).rowcount
+        self.service.web.forget_screenshots(shots)
+        return count
+
+    @staticmethod
+    def screenshots(db, test, args):
+        """The screenshots of the web records among the entries `test` keeps, which go once those are deleted for good:
+        their files, relative to the Wiki folder, but one a record outside the trash names too."""
+        found = []
+        for (payload,) in db.execute(f"SELECT payload FROM trash WHERE kind='web_capture' AND {test}", args):
+            try:
+                shot = json.loads(payload).get("screenshot")
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(shot, str) and shot:
+                found.append(shot)
+        if found:
+            live = {row[0] for row in db.execute("SELECT screenshot FROM web_captures WHERE screenshot!=''")}
+            found = [shot for shot in found if shot not in live]
+        return found
 
     def list(self, p=None):
         """The entries of the trash in ORDER, all of them or those of one `kind`, and how many days each waits (`days`).
         Without `limit` and `cursor` the newest MAX_ENTRIES; with either one page of them and next_cursor (paging).
         `total` counts the entries the list holds in all and `kinds` those of each kind in the trash, whatever `kind`
         is, so that a screen shows how many there are while it has a page. A routine's entry names its recipe.
-        `without_recipes` leaves the routines of those recipes out, as the main process asks for an AI tool."""
+        `only_kinds` and `without_recipes` leave out what an AI tool may not meet, as the main process asks (scope)."""
         p = p or {}
         test, args = scope(p)
         kind = p.get("kind")
@@ -234,33 +371,32 @@ class Trash:
         return found
 
     def purge(self, p):
-        """Delete the chosen entries for good, or all of them (`all`): nothing brings them back. `without_recipes`
-        leaves the routines of those recipes where they are."""
+        """Delete the chosen entries for good, or all of them (`all`): nothing brings them back, nor the screenshots of
+        the web records among them. What a caller may not meet (scope) stays where it is."""
         everything = p.get("all", False)
         if not isinstance(everything, bool):
             raise UserError("휴지통을 모두 비울지(all) 확인해 주세요.")
         ids = [] if everything else entry_ids(p.get("ids"))
         test, args = scope(p)
+        shots, purged = [], 0
         with self.db.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if everything:
-                purged = db.execute(f"DELETE FROM trash WHERE {test}", args).rowcount
-            else:
-                purged = sum(
-                    db.execute(
-                        f"DELETE FROM trash WHERE id IN ({','.join('?' * len(chunk))}) AND {test}", [*chunk, *args]
-                    ).rowcount
-                    for chunk in chunks(ids)
-                )
+            for chunk in [None] if everything else chunks(ids):
+                where = test if chunk is None else f"id IN ({','.join('?' * len(chunk))}) AND {test}"
+                found = args if chunk is None else [*chunk, *args]
+                shots += self.screenshots(db, where, found)
+                purged += db.execute(f"DELETE FROM trash WHERE {where}", found).rowcount
+        self.service.web.forget_screenshots(shots)
         return {"purged": purged}
 
     def restore(self, p):
         """Bring the chosen entries back, all or none of them: each row with the rows that went with it. An entry no
         longer in the trash is passed over (`restored` counts those that came back, a template that came back for its
         schedule among them; `items` names them). `notes` tells what did not come back as it was: a schedule or routine
-        restored turned off. Refused, with nothing restored: an entry whose ID is in use again, a schedule whose
-        template was deleted for good, a routine beyond the most there may be, and a routine that reads this PC's files
-        unless Electron says the caller may have their text (`allow_files`, as Routines.guard asks for)."""
+        restored turned off, and a chat put back beside the one there is now. Refused, with nothing restored: an entry
+        whose ID is in use again, a schedule whose template was deleted for good, a routine beyond the most there may
+        be, and a routine that reads this PC's files unless Electron says the caller may have their text
+        (`allow_files`, as Routines.guard asks for). What a caller may not meet (scope) is passed over."""
         ids = entry_ids(p.get("ids"))
         allow_files = p.get("allow_files") is True
         test, args = scope(p)
@@ -311,11 +447,17 @@ class Trash:
         except ValueError:
             raise UserError(f"‘{title}’ {spec.label}: 휴지통에 남은 내용을 읽을 수 없어 복원하지 못했습니다.") from None
         taken = f"‘{title}’ {spec.label}: 같은 ID의 항목이 이미 있어 복원하지 못했습니다."
-        if db.execute(f"SELECT 1 FROM {spec.table} WHERE id=?", (row["id"],)).fetchone():
+        # The chat's entry stands for no row of its own (discard_chat).
+        if entry["kind"] != "chat" and db.execute(f"SELECT 1 FROM {spec.table} WHERE id=?", (row["id"],)).fetchone():
             raise UserError(taken)
         try:
             if entry["kind"] == "conversation":
                 self.conversation_back(db, row, related)
+            elif entry["kind"] == "chat":
+                self.chat_back(db, related, notes)
+            elif entry["kind"] == "web_capture":
+                insert(db, "web_captures", row)
+                numbered_back(db, "web_items", related.get("web_items") or [], "id")
             elif entry["kind"] == "task":
                 # Its document was deleted for good meanwhile: the task comes back without a source.
                 if (
@@ -358,16 +500,20 @@ class Trash:
     @staticmethod
     def conversation_back(db, row, related):
         insert(db, "conversations", row)
-        messages = [message for message in related.get("messages") or [] if isinstance(message, dict)]
-        numbers = [message["seq"] for message in messages if message.get("seq") is not None]
-        # The messages keep their numbers, which order them, unless one is in use (a Wiki whose numbering began anew):
-        # then they take new ones in the same order.
-        renumber = any(
-            db.execute(f"SELECT 1 FROM messages WHERE seq IN ({','.join('?' * len(chunk))}) LIMIT 1", chunk).fetchone()
-            for chunk in chunks(numbers)
-        )
-        for message in messages:
-            insert(db, "messages", {key: value for key, value in message.items() if not (renumber and key == "seq")})
+        numbered_back(db, "messages", related.get("messages") or [], "seq")
+
+    @staticmethod
+    def chat_back(db, related, notes):
+        """Put the chat's messages back with what each turn did. A chat there is now stays: the messages come back
+        before it, by their numbers, or after it when those are in use. Nothing comes back of what was allowed for that
+        conversation: 대화 비우기 ended it (AgentChat.clear)."""
+        there = db.execute("SELECT 1 FROM agent_messages LIMIT 1").fetchone()
+        moved, renumbered = numbered_back(db, "agent_messages", related.get("agent_messages") or [], "seq")
+        for step in related.get("agent_activity") or []:
+            if isinstance(step, dict) and step.get("seq") in moved:
+                insert(db, "agent_activity", {**step, "seq": moved[step["seq"]]})
+        if there:
+            notes.append(f"채팅에 지금 대화가 있어 복원한 메시지를 그 {'뒤' if renumbered else '앞'}에 두었습니다.")
 
     def schedule_back(self, db, row, held, notes):
         """Put a prompt schedule back: turned on as it was unless its one time has passed or as many are on as may be,

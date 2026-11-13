@@ -301,12 +301,15 @@ export type Trash = { documents: WikiDocument[]; days: number };
 // What a deletion answers: the ids moved to the trash, for 되돌리기 (wiki.restore).
 export type Deleted = { deleted: number; ids: string[] };
 // What is deleted beside documents waits in a trash of its own (trash.list): a conversation, a prompt run, a task, a
-// prompt template (with its schedules), a schedule or an automatic routine (with its runs), the last deleted first.
-// `id` names the entry for trash.restore and trash.purge, `item_id` what was deleted; `detail` tells entries of the
-// same title apart, and a routine's entry names its recipe. The list holds all the entries or those of one `kind`, a
-// page at a time with limit and cursor (the newest 1,000 without): `total` counts the entries it holds in all, `kinds`
-// those of each kind in the trash, and each waits `days` days before it is deleted for good by itself.
-export type TrashKind = 'conversation' | 'run' | 'task' | 'prompt' | 'schedule' | 'routine';
+// prompt template (with its schedules), a schedule or an automatic routine (with its runs), the chat cleared (all of it
+// at once) or a page of the web records (with its items and screenshot), the last deleted first; the runs and
+// conversations the retention policy removes as well. `id` names the entry for trash.restore and trash.purge, `item_id`
+// what was deleted; `detail` tells entries of the same title apart, and a routine's entry names its recipe. The list
+// holds all the entries or those of one `kind`, a page at a time with limit and cursor (the newest 1,000 without):
+// `total` counts the entries it holds in all, `kinds` those of each kind in the trash, and each waits `days` days
+// before it is deleted for good by itself.
+export type TrashKind =
+  'conversation' | 'run' | 'task' | 'prompt' | 'schedule' | 'routine' | 'chat' | 'web_capture';
 export type TrashEntry = {
   id: string;
   kind: TrashKind;
@@ -326,7 +329,7 @@ export type TrashEntries = {
   next_cursor?: string | null;
 };
 // What deleting one of those answers: whether there was one to delete, and the entry it became, for 되돌리기
-// (trash.restore).
+// (trash.restore). 대화 비우기 (agent.clear) answers alike: no entry for an empty chat.
 export type Trashed = { ok: true; deleted: number; trash_ids: string[] };
 // What trash.restore answers: the entries that came back (a template that came back for its schedule among them) and
 // what did not come back as it was, such as a schedule restored turned off.
@@ -1260,5 +1263,6 @@ export type WebKept = {
   screenshot: boolean;
 };
 export type WebExport = { path: string; rows: number };
-export type WebDeleted = { deleted: string };
+// A record deleted (web.delete_capture): it waits in the trash as `trash_ids`, its screenshot with it.
+export type WebDeleted = { deleted: string; trash_ids: string[] };
 export type WebStatus = { open: boolean; busy: boolean; headless: boolean };

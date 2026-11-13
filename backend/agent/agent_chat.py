@@ -1353,11 +1353,12 @@ class AgentChat:
         return self.public(self.row(seq))
 
     def clear(self, _params=None):
-        """대화 비우기: the messages go with the activity of their turns, and what was allowed for this conversation
-        is asked about again."""
+        """대화 비우기: the messages go with the activity of their turns, to the trash (trash.discard_chat), where they
+        wait 30 days for the user to restore them; and what was allowed for this conversation is asked about again.
+        A restore brings the messages back, never what was allowed: that ends here."""
         with self.service.db.connect() as db:
-            db.execute("DELETE FROM agent_messages")
-            db.execute("DELETE FROM agent_activity")
+            db.execute("BEGIN IMMEDIATE")
+            moved = self.service.trash.discard_chat(db)
         with self.lock:
             self.session_allowed = []
-        return {"ok": True}
+        return {"ok": True, "deleted": len(moved), "trash_ids": moved}

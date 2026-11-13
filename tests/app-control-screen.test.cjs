@@ -178,3 +178,39 @@ test('the rest of the screen follows the access level', async () => {
   assert.deepEqual(pressed, ['CSV 내보내기', '지우기']);
   assert.equal(window.document.querySelector('[aria-label="모델 이름"]').value, 'x');
 });
+
+test('the trash is the user\'s alone, at the "full" level too: it holds the chat cleared and the web records deleted', async () => {
+  screen();
+  window.document.querySelector('.admin').insertAdjacentHTML(
+    'beforeend',
+    `<div class="trash-section" data-user-only="trash">
+      <div role="radiogroup" aria-label="종류"><button role="radio">채팅 1</button></div>
+      <input type="checkbox" aria-label="모두 선택" />
+      <ul aria-label="휴지통"><li>
+        <input type="checkbox" aria-label="내 메일함을 정리해 줘 선택" />
+        <button>내 메일함을 정리해 줘 복원</button>
+        <button data-destructive="">영구 삭제</button>
+      </li></ul>
+    </div>`,
+  );
+  const pressed = [];
+  for (const button of window.document.querySelectorAll('.trash-section button'))
+    button.addEventListener('click', () => pressed.push(button.textContent));
+  for (const allow_admin of [false, true])
+    for (const name of [
+      '채팅 1',
+      '내 메일함을 정리해 줘 복원',
+      '영구 삭제',
+      '모두 선택',
+      '내 메일함을 정리해 줘 선택',
+    ])
+      await assert.rejects(clickControl({ name, exact: true, allow_admin }), /휴지통은 사용자만/);
+  assert.deepEqual(pressed, []);
+  for (const box of window.document.querySelectorAll('.trash-section input'))
+    assert.equal(box.checked, false);
+  // The chat's own areas still say why they are the user's.
+  await assert.rejects(
+    clickControl({ name: '보내기', exact: true, allow_admin: true }),
+    /채팅은 사용자만/,
+  );
+});

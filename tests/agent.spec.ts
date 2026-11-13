@@ -10,6 +10,7 @@ import {
   drawer,
   launch,
   llmServer,
+  openAdmin,
   toolCalls,
 } from './helpers';
 
@@ -172,14 +173,26 @@ test('agent chat: the agent opens a page and records its ad live, and the record
     await expect(pending).toHaveCount(0);
     await expect(chatBox(page)).toBeEnabled();
 
-    // Clearing the conversation asks first, with the button an AI tool may press only at the "full" access level.
-    await page.getByRole('button', { name: '대화 비우기' }).click();
-    const confirm = page.getByRole('group', { name: /대화를 모두 지울까요\?/ });
-    await expect(confirm.locator('[data-destructive]')).toHaveCount(1);
-    await confirm.locator('[data-destructive]').click();
-    await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
-    expect(await request<unknown[]>(page, 'agent.messages')).toEqual([]);
-    // The records stay, until the user deletes one with its screenshot.
+    // Clearing the conversation asks first, with the button an AI tool may press only at the "full" access level. It
+    // goes to the trash, from where 되돌리기 brings it back as it was.
+    const clearChat = async () => {
+      await page.getByRole('button', { name: '대화 비우기' }).click();
+      const confirm = page.getByRole('group', { name: /대화를 모두 휴지통으로 옮길까요\?/ });
+      await expect(confirm.locator('[data-destructive]')).toHaveCount(1);
+      await confirm.locator('[data-destructive]').click();
+      await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
+      expect(await request<unknown[]>(page, 'agent.messages')).toEqual([]);
+    };
+    await clearChat();
+    await page
+      .getByRole('status')
+      .filter({ hasText: '대화를 휴지통으로 옮겼습니다.' })
+      .getByRole('button', { name: '되돌리기' })
+      .click();
+    await expect(log).toContainText(SLOWLY);
+    await expect(record).toContainText('광고 1건');
+    await clearChat();
+    // The records stay, until the user deletes one: it waits in the trash with its screenshot.
     const kept = await request<{ captures: { id: string; screenshot: string }[] }>(
       page,
       'web.captures',
@@ -196,12 +209,29 @@ test('agent chat: the agent opens a page and records its ad live, and the record
       .getByRole('button', { name: /광고 1/ })
       .click();
     await page.getByRole('button', { name: '이 기록 지우기' }).click();
-    const question = page.getByRole('group', { name: /이 페이지의 기록과 스크린샷을 지울까요\?/ });
+    const question = page.getByRole('group', {
+      name: /이 페이지의 기록과 스크린샷을 휴지통으로 옮길까요\?/,
+    });
     await question.locator('[data-destructive]').click();
-    await expect(page.getByText('기록과 스크린샷을 지웠습니다.')).toBeVisible();
+    await expect(page.getByText('기록을 휴지통으로 옮겼습니다.')).toBeVisible();
     await expect(page.getByText('기록이 없습니다', { exact: true })).toBeVisible();
-    await expect(stat(screenshot)).rejects.toThrow();
     expect((await request<{ total: number }>(page, 'web.records')).total).toBe(0);
+    expect((await stat(screenshot)).size).toBeGreaterThan(0);
+    // Both wait in 관리 → 휴지통, which is the user's alone; deleted for good there, the record takes its screenshot.
+    await openAdmin(page, '휴지통');
+    await expect(page.locator('.trash-section')).toHaveAttribute('data-user-only', 'trash');
+    const bin = page.getByRole('list', { name: '휴지통' });
+    await expect(bin.getByRole('listitem')).toHaveCount(2);
+    await expect(bin.getByRole('listitem').first()).toContainText('운동화 검색');
+    await expect(bin.getByRole('listitem').first()).toContainText('웹 기록 · 광고 1');
+    await expect(bin.getByRole('listitem').nth(1)).toContainText(`채팅 · 메시지 4개`);
+    await bin.getByRole('button', { name: '운동화 검색 영구 삭제' }).click();
+    await page
+      .getByRole('group', { name: '영구 삭제할까요? 되돌릴 수 없습니다.' })
+      .getByRole('button', { name: '영구 삭제', exact: true })
+      .click();
+    await expect(bin.getByRole('listitem')).toHaveCount(1);
+    await expect(stat(screenshot)).rejects.toThrow();
     expect(errors).toEqual([]);
   } finally {
     await app?.close();

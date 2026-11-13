@@ -76,6 +76,16 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
         "어제": [f"어제 {index}" for index in range(2, 6)],
     }
     assert [doc["id"] for doc in service.wiki_trash({})["documents"]] == [recent]
+    # The runs and the conversation it removed wait in the trash, the conversation with all its messages, saying why
+    # they went; restored, the conversation is whole again.
+    binned = service.dispatch("trash.list", {})
+    assert binned["kinds"] == {"run": 6, "conversation": 1}
+    assert {item["detail"].split(" · ")[-1] for item in binned["items"]} == {service_module.RETIRED}
+    old = [item for item in binned["items"] if item["kind"] == "conversation"]
+    assert [(item["item_id"], item["detail"]) for item in old] == [("지난주", f"메시지 6개 · {service_module.RETIRED}")]
+    assert service.dispatch("trash.restore", {"ids": [old[0]["id"]]})["restored"] == 1
+    assert len(service.dispatch("assistant.history", {"id": "지난주"})) == 6
+    service.dispatch("assistant.delete", {"id": "지난주"})
     # Nothing more to remove: the same again changes nothing.
     assert service.retain() == {"runs": 0, "conversations": 0, "messages": 0, "trash": 0, "documents": 0}
     # What was written since that backup is in no backup yet: it stays, however much of it there is, until the next
@@ -91,6 +101,24 @@ def test_the_policy_keeps_the_newest_runs_messages_and_conversations(service, mo
         assert db.execute("SELECT count(*) FROM messages WHERE conversation_id='방금'").fetchone()[0] == 9
         assert [row[0] for row in db.execute("SELECT id FROM runs ORDER BY id")] == [f"new-{i}" for i in range(9)]
         assert {row[0] for row in db.execute("SELECT id FROM conversations")} == {"방금", "오늘"}
+
+
+def test_many_old_runs_go_to_the_trash_a_few_a_transaction_and_a_start_out_of_time_leaves_them_to_the_upkeep(
+    service, monkeypatch
+):
+    monkeypatch.setattr(service_module, "RETIRE_AT_ONCE", 3)
+    add_runs(service, [ago(days=service_module.RUNS_DAYS + 1, minutes=index) for index in range(8)])
+    service.backup("manual")
+    # Out of time after its first transaction: the rest waits for the upkeep's next look, as documents do.
+    assert service.retain(seconds=-1)["runs"] == 3 and service.trash_left
+    assert len(service.runs_list({})) == 5
+    # The oldest went first.
+    moved = {item["item_id"] for item in service.dispatch("trash.list", {})["items"]}
+    assert moved == {"run-7", "run-6", "run-5"}
+    service.retained_at = time.time()
+    service.daily()
+    assert not service.trash_left and service.runs_list({}) == []
+    assert service.dispatch("trash.list", {})["kinds"] == {"run": 8}
 
 
 def test_a_large_expired_trash_is_emptied_in_steps_and_never_holds_the_start(service, monkeypatch):

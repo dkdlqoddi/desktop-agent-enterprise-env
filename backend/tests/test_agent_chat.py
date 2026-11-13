@@ -278,6 +278,50 @@ def test_one_message_at_a_time_and_history_is_kept_and_cleared(service):
     assert service.dispatch("agent.messages", {}) == []
 
 
+def test_a_cleared_chat_waits_in_the_trash_and_comes_back_without_what_was_allowed_for_it(service):
+    approval = {"kind": "approval", "text": "rm -rf ./old", "note": "", "result": "session", "at": now()}
+    with service.db.connect() as db:
+        service.agent.store(db, "user", "  오래된 빌드 폴더를\n지워 줘  ")
+        service.agent.store(db, "assistant", "지웠습니다.", (), "hermes", {"steps": [approval], "more": 0})
+    service.agent.granted(["recursive delete"])
+    before = service.dispatch("agent.messages", {})
+    cleared = service.dispatch("agent.clear", {})
+    assert cleared["ok"] and cleared["deleted"] == 1 and len(cleared["trash_ids"]) == 1
+    # The chat is empty, its activity with it, and what was allowed for it is asked about again.
+    assert service.dispatch("agent.messages", {}) == [] and service.dispatch("agent.activity", {}) == {"approvals": []}
+    assert service.dispatch("agent.grants", {}) == {"session": []}
+    assert "오래된 빌드" not in service.agent.context("새 요청")
+    entry = service.dispatch("trash.list", {})["items"][0]
+    assert (entry["kind"], entry["title"], entry["detail"]) == ("chat", "오래된 빌드 폴더를 지워 줘", "메시지 2개")
+    # An empty chat makes no entry.
+    assert service.dispatch("agent.clear", {}) == {"ok": True, "deleted": 0, "trash_ids": []}
+    # It comes back as it was, what each turn did with it; never what was allowed for that conversation.
+    assert service.dispatch("trash.restore", {"ids": cleared["trash_ids"]})["notes"] == []
+    assert service.dispatch("agent.messages", {}) == before
+    assert service.dispatch("agent.grants", {}) == {"session": []}
+    # A chat there is now stays: what comes back goes before it by its numbers, or after it when those are in use.
+    for taken, place in ((False, "앞"), (True, "뒤")):
+        cleared = service.dispatch("agent.clear", {})["trash_ids"]
+        with service.db.connect() as db:
+            if taken:
+                db.execute(
+                    "INSERT INTO agent_messages(seq,role,content,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (before[0]["seq"], "user", "새 대화", now(), now()),
+                )
+            else:
+                service.agent.store(db, "user", "새 대화")
+        restored = service.dispatch("trash.restore", {"ids": cleared})
+        assert restored["notes"] == [f"채팅에 지금 대화가 있어 복원한 메시지를 그 {place}에 두었습니다."]
+        shown = service.dispatch("agent.messages", {})
+        assert [message["content"] for message in shown] == (
+            ["새 대화", *[m["content"] for m in before]] if taken else [*[m["content"] for m in before], "새 대화"]
+        )
+        # What a turn did stays with its answer under the number it took.
+        assert [message["activity"] for message in shown if message["role"] == "assistant"] == [before[1]["activity"]]
+        with service.db.connect() as db:
+            db.execute("DELETE FROM agent_messages WHERE content='새 대화'")
+
+
 @pytest.mark.parametrize(
     ("said", "shown"),
     [

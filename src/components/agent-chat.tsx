@@ -45,6 +45,8 @@ import {
   type AgentRoutineLine,
   type AgentSuggestion,
   type AgentTaskLine,
+  type TrashRestored,
+  type Trashed,
 } from '@/lib/api';
 import { useChatFocus } from './chat-focus';
 import Confirm from './confirm';
@@ -542,7 +544,7 @@ function Suggestions({ onPick }: { onPick: (text: string) => void }) {
 }
 
 export default function AgentChat() {
-  const { notify } = useActions();
+  const { notify, undoable } = useActions();
   // The turn in progress lives outside this screen (agent-turn.ts): it goes on while another screen is shown, and is
   // shown again, with its progress and the question it waits on, when the chat is.
   const { turn } = useStores();
@@ -654,8 +656,24 @@ export default function AgentChat() {
   const clear = async () => {
     // A conversation read before this one was cleared must not come back as it answers.
     loads.current += 1;
-    await api('agent.clear');
+    const { trash_ids: ids } = await api<Trashed>('agent.clear');
     setMessages([]);
+    // It waits in the trash, from where 되돌리기 brings the messages back; what was allowed for it stays forgotten.
+    if (ids.length)
+      undoable('대화를 휴지통으로 옮겼습니다.', {
+        label: '되돌리기',
+        run: async () => {
+          try {
+            const { restored, notes } = await api<TrashRestored>('trash.restore', { ids });
+            if (!restored)
+              notify('휴지통에 없는 대화입니다. 이미 복원했거나 영구 삭제했습니다.', true);
+            for (const note of notes) notify(note, false, true);
+          } catch (error) {
+            notify(error instanceof Error ? error.message : String(error), true);
+          }
+          await load();
+        },
+      });
   };
 
   return (
@@ -671,7 +689,7 @@ export default function AgentChat() {
           {!!messages?.length && (
             <Confirm
               label="대화 비우기"
-              question="대화를 모두 지울까요? 답마다 남긴 ‘한 일’도 함께 지우고, 이 대화에서 허용한 명령은 다시 묻습니다. 웹 기록과 할 일은 그대로 둡니다."
+              question="대화를 모두 휴지통으로 옮길까요? 답마다 남긴 ‘한 일’도 함께 옮기고, 30일 안에 복원할 수 있습니다. 이 대화에서 허용한 명령은 복원해도 다시 묻습니다. 웹 기록과 할 일은 그대로 둡니다."
               icon={<Trash2 size={15} />}
               onConfirm={clear}
               disabled={!!sending}

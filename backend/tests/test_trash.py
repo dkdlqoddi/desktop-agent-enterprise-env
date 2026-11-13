@@ -537,3 +537,36 @@ def test_the_list_comes_in_pages_of_all_kinds_or_one_and_counts_each_kind(servic
     # A cursor of another list is refused rather than read as one of these.
     with pytest.raises(UserError, match="cursor"):
         call(service, "trash.list", cursor=paging.encode("conversations", now(), "x"))
+
+
+# The kinds the main process lets an AI tool meet in the trash (electron/api-catalog.cjs TRASH_KINDS).
+TOOL_KINDS = ["conversation", "run", "task", "prompt", "schedule", "routine"]
+
+
+def test_what_the_chat_and_the_web_records_put_in_the_trash_is_none_of_an_ai_tools(service):
+    with service.db.connect() as db:
+        service.agent.store(db, "user", "내 메일함을 정리해 줘")
+    chat = call(service, "agent.clear")["trash_ids"]
+    page = {"url": "https://shop.example.test/", "items": [{"ref": 0, "kind": "ad", "title": "광고"}]}
+    record = service.web._keep("coupang", "병원 예약", "chat", "t1", page, b"jpeg")["capture_id"]
+    web = call(service, "web.delete_capture", id=record)["trash_ids"]
+    task = call(service, "tasks.delete", id=call(service, "tasks.save", title="할 일")["id"])["trash_ids"]
+    hidden = {"only_kinds": TOOL_KINDS, "without_recipes": ["web_capture"]}
+    # A tool's list has neither their entries nor their titles, nor counts them, in pages or not, of a kind or all.
+    for params in ({}, {"limit": 10}, {"kind": "chat"}, {"kind": "web_capture", "limit": 10}):
+        listed = call(service, "trash.list", **hidden, **params)
+        assert [item["id"] for item in listed["items"]] == ([] if "kind" in params else task)
+        assert listed["kinds"] == {"task": 1} and listed["total"] == (0 if "kind" in params else 1)
+        assert "메일함" not in json.dumps(listed, ensure_ascii=False) and "병원" not in str(listed)
+    # Named or not, they neither come back nor go for good, one by one or with all of the trash.
+    assert call(service, "trash.restore", ids=[*chat, *web], allow_files=True, **hidden)["restored"] == 0
+    assert call(service, "trash.purge", ids=[*chat, *web], **hidden) == {"purged": 0}
+    assert call(service, "trash.purge", all=True, **hidden) == {"purged": 1}
+    assert {item["id"] for item in entries(service)} == {*chat, *web}
+    # The user's own screen meets them all and restores them.
+    assert call(service, "trash.restore", ids=[*chat, *web])["restored"] == 2
+    assert [m["content"] for m in call(service, "agent.messages")] == ["내 메일함을 정리해 줘"]
+    assert [item["id"] for item in service.web.captures({})["captures"]] == [record]
+    for value in ([], ["note"], "task", [1]):
+        with pytest.raises(UserError, match="only_kinds"):
+            call(service, "trash.list", only_kinds=value)

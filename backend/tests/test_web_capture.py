@@ -129,27 +129,56 @@ def test_the_days_of_a_period_are_the_users_own_and_its_last_day_counts(tmp_path
         web.records({"until": "2026-13-45"})
 
 
-def test_deleting_a_capture_removes_its_items_and_screenshot_only(tmp_path):
+def test_a_deleted_capture_waits_in_the_trash_and_its_screenshot_goes_only_with_it_for_good(tmp_path):
     service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
     web = service.web
-    page = {"url": "https://shop.example.test/", "items": [{"ref": 0, "kind": "ad", "title": "광고 A"}]}
+    page = {
+        "url": "https://shop.example.test/",
+        "title": "검색 결과",
+        "items": [{"ref": 0, "kind": "ad", "title": "광고 A"}, {"ref": 1, "kind": "product", "title": "상품 B"}],
+    }
     first = web._keep("coupang", "a", "chat", "t1", page, b"jpeg")
-    second = web._keep("coupang", "b", "chat", "t2", page, b"jpeg")
+    second = web._keep("other", "", "manual", "t2", page, b"jpeg")
     shots = {item["id"]: tmp_path / item["screenshot"] for item in web.captures({})["captures"]}
     assert all(shot.is_file() for shot in shots.values())
+    items = web.records({"capture_id": first["capture_id"]})["items"]
+    deleted = web.delete_capture({"id": first["capture_id"]})
+    assert deleted["deleted"] == first["capture_id"] and len(deleted["trash_ids"]) == 1
+    # Gone from the records, waiting in the trash by what was searched for, its screenshot kept meanwhile.
+    assert [item["id"] for item in web.captures({})["captures"]] == [second["capture_id"]]
+    assert web.records({})["total"] == 2 and shots[first["capture_id"]].is_file()
+    entry = service.dispatch("trash.list", {})["items"][0]
+    assert (entry["kind"], entry["title"]) == ("web_capture", "a")
+    assert entry["detail"] == "쿠팡 · 광고 1 · 상품 1 · 검색 결과 0"
+    with pytest.raises(UserError, match="찾을 수 없습니다"):
+        web.delete_capture({"id": first["capture_id"]})
+    # It comes back as it was, items and all.
+    assert service.dispatch("trash.restore", {"ids": deleted["trash_ids"]})["restored"] == 1
+    assert web.records({"capture_id": first["capture_id"]})["items"] == items
+    # Deleted for good, it takes its screenshot along; a page searched for nothing goes by its title.
+    deleted = web.delete_capture({"id": first["capture_id"]})["trash_ids"]
+    assert service.dispatch("trash.purge", {"ids": deleted}) == {"purged": 1}
+    assert not shots[first["capture_id"]].exists()
     outside = tmp_path / "wiki-note.txt"
     outside.write_text("keep")
     with service.db.connect() as conn:  # A damaged row naming another file leaves that file alone.
         conn.execute("UPDATE web_captures SET screenshot=? WHERE id=?", ("../wiki-note.txt", second["capture_id"]))
-    assert web.delete_capture({"id": first["capture_id"]}) == {"deleted": first["capture_id"]}
-    assert not shots[first["capture_id"]].exists()
-    assert [item["id"] for item in web.captures({})["captures"]] == [second["capture_id"]]
-    assert web.records({})["total"] == 1
     web.delete_capture({"id": second["capture_id"]})
-    assert outside.read_text() == "keep"
-    assert web.records({})["total"] == 0
-    with pytest.raises(UserError, match="찾을 수 없습니다"):
-        web.delete_capture({"id": first["capture_id"]})
+    assert service.dispatch("trash.list", {})["items"][0]["title"] == "검색 결과"
+    assert service.dispatch("trash.purge", {"all": True}) == {"purged": 1}
+    assert outside.read_text() == "keep" and web.records({})["total"] == 0
+
+
+def test_the_screenshot_of_a_record_in_the_trash_goes_with_the_retention_policy(tmp_path):
+    service = Service(Database(tmp_path / "wiki.db"), FakeLLM())
+    page = {"url": "https://shop.example.test/", "items": [{"ref": 0, "kind": "ad", "title": "광고 A"}]}
+    kept = service.web._keep("naver", "캠핑", "schedule", "t1", page, b"jpeg")
+    shot = tmp_path / service.web.captures({})["captures"][0]["screenshot"]
+    service.web.delete_capture({"id": kept["capture_id"]})
+    assert service.retain()["trash"] == 0 and shot.is_file()
+    with service.db.connect() as conn:
+        conn.execute("UPDATE trash SET deleted_at=?", ((datetime.now(timezone.utc) - timedelta(days=31)).isoformat(),))
+    assert service.retain()["trash"] == 1 and not shot.exists()
 
 
 def test_a_robot_check_stops_the_capture(tmp_path):

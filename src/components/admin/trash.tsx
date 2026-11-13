@@ -8,8 +8,10 @@ import {
   useSyncExternalStore,
 } from 'react';
 import {
+  Bot,
   CalendarClock,
   ChevronsDown,
+  Globe2,
   History,
   ListChecks,
   LoaderCircle,
@@ -42,6 +44,8 @@ const KINDS: Record<TrashKind, { label: string; object: string; icon: LucideIcon
   prompt: { label: '프롬프트 템플릿', object: '프롬프트 템플릿을', icon: MessageSquareText },
   schedule: { label: '예약', object: '예약을', icon: CalendarClock },
   routine: { label: '자동 작업', object: '자동 작업을', icon: Repeat2 },
+  chat: { label: '채팅', object: '채팅을', icon: Bot },
+  web_capture: { label: '웹 기록', object: '웹 기록을', icon: Globe2 },
 };
 // An entry of a kind this version does not know (a later version deleted it) is listed all the same.
 const OTHER = { label: '항목', object: '항목을', icon: Trash2 };
@@ -91,10 +95,15 @@ function useTrashPages(kind: string) {
 }
 
 // The trash of what is deleted beside documents (trash.list): conversations, prompt runs, tasks, prompt templates,
-// schedules and automatic routines wait here to be restored, or to be deleted for good by the user, one or many at a
-// time. The list loads a page at a time and draws only the rows near what it shows, so a trash of thousands (the runs
-// the retention policy moves here among them) stays quick; it shows one kind or all. The documents' trash stays with
-// the document list.
+// schedules and automatic routines, the chat cleared and the web records deleted wait here to be restored, or to be
+// deleted for good by the user, one or many at a time. The list loads a page at a time and draws only the rows near
+// what it shows, so a trash of thousands (the runs the retention policy moves here among them) stays quick; it shows
+// one kind or all. The documents' trash stays with the document list.
+//
+// It is the user's alone (data-user-only="trash"): what the chat and the web records put here is no AI tool's to
+// restore or delete, as the chat and the web records are not, so the local API's screen control presses and types
+// nothing here at any access level (app-control.ts guard). A tool has trash.list, trash.restore and trash.purge, which
+// leave those entries out (electron/trash.cjs).
 export default function TrashSection() {
   const { notify, invalidate } = useActions();
   const counts = useQuery<TrashEntries>('trash.list', COUNTS);
@@ -236,16 +245,17 @@ export default function TrashSection() {
   const days = counts.data?.days ?? 30;
   const lead = (
     <p className="section-lead">
-      지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업은 {days}일 동안 여기에 있다가
-      자동으로 지워집니다. 복원하면 함께 지워진 메시지·예약·실행 기록도 돌아오고, 예약과 자동 작업은
-      휴지통에 있던 동안 지난 실행을 건너뛰고 다음 차례부터 실행합니다. 지운 문서는 지식 보관함 →
-      문서의 휴지통에 있습니다.
+      지운 대화·실행 기록·할 일·프롬프트 템플릿·예약·자동 작업, 비운 채팅과 지운 웹 기록은 {days}일
+      동안 여기에 있다가 자동으로 지워집니다. 보관 정책이 정리한 오래된 실행 기록과 대화도 여기로
+      옵니다. 복원하면 함께 지워진 메시지·예약·실행 기록도 돌아오고(웹 기록은 스크린샷과 함께),
+      예약과 자동 작업은 휴지통에 있던 동안 지난 실행을 건너뛰고 다음 차례부터 실행합니다. 지운
+      문서는 지식 보관함 → 문서의 휴지통에 있습니다.
     </p>
   );
   const error = counts.error ?? list.error;
   if (!counts.data || !list.loaded)
     return (
-      <div className="trash-section">
+      <div className="trash-section" data-user-only="trash">
         {lead}
         {error ? (
           <p className="inline-error" role="alert">
@@ -275,7 +285,7 @@ export default function TrashSection() {
   const total = list.total ?? 0;
   const shownAll = items.length > 0 && chosen.length === items.length;
   return (
-    <div className="trash-section">
+    <div className="trash-section" data-user-only="trash">
       {lead}
       {error && (
         <p className="inline-error" role="alert">

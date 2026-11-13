@@ -14,6 +14,7 @@ import {
 import {
   api,
   dayTime,
+  type TrashRestored,
   type WebCaptures,
   type WebDeleted,
   type WebExport,
@@ -40,7 +41,7 @@ type Filters = { site: string; kind: string; text: string; since: string; until:
 const EMPTY: Filters = { site: '', kind: '', text: '', since: '', until: '' };
 
 export default function WebRecords() {
-  const { notify } = useActions();
+  const { notify, undoable } = useActions();
   const tab = useWorkspaceTab();
   const [sites, setSites] = useState<WebSite[]>([]);
   const [filters, setFilters] = useState<Filters>(EMPTY);
@@ -127,10 +128,23 @@ export default function WebRecords() {
       setOffset(0);
     });
 
+  // The record goes to the trash with its screenshot, from where 되돌리기 (or 관리 → 휴지통) brings it back.
   const remove = async () => {
     try {
-      await api<WebDeleted>('web.delete_capture', { id: capture });
-      notify('기록과 스크린샷을 지웠습니다.');
+      const { trash_ids: ids } = await api<WebDeleted>('web.delete_capture', { id: capture });
+      undoable('기록을 휴지통으로 옮겼습니다.', {
+        label: '되돌리기',
+        run: async () => {
+          try {
+            const { restored } = await api<TrashRestored>('trash.restore', { ids });
+            if (!restored)
+              notify('휴지통에 없는 기록입니다. 이미 복원했거나 영구 삭제했습니다.', true);
+          } catch (error) {
+            notify(error instanceof Error ? error.message : String(error), true);
+          }
+          await load();
+        },
+      });
       setCapture('');
       setOffset(0);
     } catch (error) {
@@ -244,7 +258,7 @@ export default function WebRecords() {
           </button>
           <Confirm
             label="이 기록 지우기"
-            question="이 페이지의 기록과 스크린샷을 지울까요? 되돌릴 수 없습니다."
+            question="이 페이지의 기록과 스크린샷을 휴지통으로 옮길까요? 30일 안에 복원할 수 있습니다."
             icon={<Trash2 size={13} />}
             onConfirm={remove}
           />

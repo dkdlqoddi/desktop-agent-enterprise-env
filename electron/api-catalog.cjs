@@ -92,7 +92,10 @@ const WINDOW_ACTIONS = [
   'set_zoom',
 ];
 const IMPORT_KINDS = ['office', 'rtf', 'image', 'text', 'confluence', 'jira'];
-// The kinds of entry the trash holds beside documents (backend/agent/trash.py KINDS).
+// The kinds of entry of the trash beside documents an AI tool meets (backend/agent/trash.py KINDS): those the API
+// deletes into it. The trash also holds the chat cleared and the web records deleted, which are the user's alone as the
+// chat and the web records are (agent.* and web.* are not in this catalog): electron/trash.cjs names these kinds to
+// the backend for every request of a tool, so a kind the trash takes later is none of a tool's until it is added here.
 const TRASH_KINDS = ['conversation', 'run', 'task', 'prompt', 'schedule', 'routine'];
 const SOURCE_KINDS = ['manual', 'rtf', 'office', 'image', 'text', 'markdown', 'confluence', 'jira'];
 // The orders of the document list (backend/agent/paging.py ORDERS): the last changed first, as the screens show it, or
@@ -1285,6 +1288,7 @@ module.exports = {
   IMPORT_KINDS,
   SOURCE_KINDS,
   DOCUMENT_ORDERS,
+  TRASH_KINDS,
   ApiError,
   allows,
   forbidden,

@@ -141,11 +141,22 @@ LIVE = "deleted_at IS NULL"
 # conversation keeps its newest MESSAGES_KEPT messages (the screen shows the last 100) and the newest CONVERSATIONS_KEPT
 # conversations stay (the screen lists 50); the trash is emptied of what has waited TRASH_DAYS, the documents in it and
 # what else the user deleted (trash.py). The logs lose only what a backup of the Wiki holds: what was written before the
-# newest one was made. The automatic routines keep their last 30 runs each by themselves (routines.MAX_RUNS).
+# newest one was made. The runs and conversations it removes go to the trash first, to wait TRASH_DAYS there as what
+# the user deletes does, RETIRE_AT_ONCE a transaction, the oldest first; the messages beyond those a conversation keeps
+# are deleted. The automatic routines keep their last 30 runs each by themselves (routines.MAX_RUNS).
 RUNS_KEPT = 2000
 RUNS_DAYS = 90
 MESSAGES_KEPT = 200
 CONVERSATIONS_KEPT = 1000
+RETIRE_AT_ONCE = 200
+# What the policy removes, of what the newest backup holds (written before it), the oldest first: the runs older than
+# RUNS_DAYS or beyond the newest RUNS_KEPT, and the conversations beyond the newest CONVERSATIONS_KEPT.
+RUNS_OLD = """SELECT id FROM runs WHERE created_at<? AND (created_at<? OR id NOT IN
+    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?)) ORDER BY created_at, id"""
+CONVERSATIONS_OLD = """SELECT id FROM conversations WHERE updated_at<? AND id NOT IN
+    (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?) ORDER BY updated_at, id"""
+# What the trash says of an entry the policy moved there, beside the line that tells it apart.
+RETIRED = "오래되어 자동으로 옮김"
 # The trash is emptied a few documents a transaction, so that other writes go on meanwhile and what was done stays
 # done; at the backend's start for START_PURGE_SECONDS at most (deleting a document costs about what indexing it did,
 # and the Wiki must open), the rest with the upkeep's next look.
@@ -1058,12 +1069,14 @@ class Service:
         return {"purged": purged}
 
     def retain(self, seconds=None):
-        """Apply the retention policy (RUNS_KEPT and the others): what it removed, counted by table. The logs (runs,
-        conversations, messages) lose only what the newest backup of the Wiki still holds, which is what was written
-        before it was made: the first start of this version leaves them to the upkeep, which trims them after its first
-        backup, and what was written since stays until the next backup has it. The trash is emptied either way, as it
-        always was: what else the user deleted (`trash`, trash.py) at once, the documents PURGE_AT_ONCE a transaction
-        and for `seconds` at most when given (`trash_left` then says that documents wait for the next look)."""
+        """Apply the retention policy (RUNS_KEPT and the others): what it moved to the trash or removed, counted by
+        table. The logs (runs, conversations, messages) lose only what the newest backup of the Wiki still holds, which
+        is what was written before it was made: the first start of this version leaves them to the upkeep, which trims
+        them after its first backup, and what was written since stays until the next backup has it. The runs and
+        conversations go to the trash (retire), a conversation with its messages; one written to since the backup
+        stays. The trash is emptied either way, as it always was: what else the user deleted (`trash`, trash.py) at
+        once, the documents PURGE_AT_ONCE a transaction. Given `seconds`, it stops once they have passed, each step
+        taking at least its first transaction (`trash_left` then says that work waits for the next look)."""
 
         def cutoff(days):
             return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -1075,28 +1088,23 @@ class Service:
             )
         except OSError:  # The backups folder cannot be read: no backup to count on.
             backed = ""
-        removed = {}
-        with self.db.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            if backed:
-                removed["runs"] = db.execute(
-                    """DELETE FROM runs WHERE created_at<? AND (created_at<? OR id NOT IN
-                    (SELECT id FROM runs ORDER BY created_at DESC LIMIT ?))""",
-                    (backed, cutoff(RUNS_DAYS), RUNS_KEPT),
-                ).rowcount
-                # A conversation goes with its messages (ON DELETE CASCADE); one written to since the backup stays.
-                removed["conversations"] = db.execute(
-                    """DELETE FROM conversations WHERE updated_at<? AND id NOT IN
-                    (SELECT id FROM conversations ORDER BY updated_at DESC LIMIT ?)""",
-                    (backed, CONVERSATIONS_KEPT),
-                ).rowcount
+        removed, deadline = {}, None if seconds is None else time.monotonic() + seconds
+        self.trash_left = False
+        if backed:
+            removed["runs"] = self.retire("run", RUNS_OLD, (backed, cutoff(RUNS_DAYS), RUNS_KEPT), deadline)
+            removed["conversations"] = self.retire(
+                "conversation", CONVERSATIONS_OLD, (backed, CONVERSATIONS_KEPT), deadline
+            )
+            with self.db.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
                 removed["messages"] = db.execute(
                     """DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq, created_at,
                     row_number() OVER (PARTITION BY conversation_id ORDER BY seq DESC) AS position FROM messages)
                     WHERE position>? AND created_at<?)""",
                     (MESSAGES_KEPT, backed),
                 ).rowcount
-            removed["trash"] = self.trash.expire(db, cutoff(TRASH_DAYS))
+        removed["trash"] = self.trash.expire(cutoff(TRASH_DAYS))
+        with self.db.connect() as db:
             expired = [
                 row[0]
                 for row in db.execute(
@@ -1105,8 +1113,7 @@ class Service:
             ]
         # The rest of the trash stays for the user to restore. Routines leave out the sources of what goes, as after
         # the user's own purge (sources.purge).
-        removed["documents"], deadline = 0, None if seconds is None else time.monotonic() + seconds
-        self.trash_left = False
+        removed["documents"] = 0
         for start in range(0, len(expired), PURGE_AT_ONCE):
             with self.db.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
@@ -1121,6 +1128,22 @@ class Service:
                 ", ".join(f"{count} {table}" for table, count in removed.items() if count),
             )
         return removed
+
+    def retire(self, kind, query, args, deadline):
+        """Move what the retention policy removes of `kind`, the rows `query` selects, to the trash RETIRE_AT_ONCE a
+        transaction, so that other writes go on meanwhile: how many. Out of time (`deadline`) with some left,
+        `trash_left` says so, and the upkeep's next look goes on."""
+        moved = 0
+        while True:
+            with self.db.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                ids = [row[0] for row in db.execute(f"{query} LIMIT ?", (*args, RETIRE_AT_ONCE))]
+                moved += len(self.trash.discard_many(db, kind, ids, RETIRED))
+            if len(ids) < RETIRE_AT_ONCE:
+                return moved
+            if deadline is not None and time.monotonic() > deadline:
+                self.trash_left = True
+                return moved
 
     def upkeep(self):
         """Start the Wiki's daily upkeep in the background when it is due (UPKEEP_EVERY); quick otherwise. Electron's

@@ -640,24 +640,29 @@ class WebCapture:
         return found
 
     def delete_capture(self, params):
-        """Remove one recorded page with its items and its screenshot, at once: the screen asks first."""
+        """Move one recorded page with its items to the trash (trash.py), where it waits 30 days for the user to restore
+        it, its screenshot kept until then: the screen asks first. The web records are the user's alone, and so is
+        their entry there (an AI tool does not meet it)."""
         ident = text(params.get("id"), "기록 ID", 80)
         with self.service.db.connect() as conn:
-            row = conn.execute("SELECT screenshot FROM web_captures WHERE id=?", (ident,)).fetchone()
-            if row is None:
-                raise UserError("기록을 찾을 수 없습니다.")
-            conn.execute("DELETE FROM web_items WHERE capture_id=?", (ident,))
-            conn.execute("DELETE FROM web_captures WHERE id=?", (ident,))
-        if row[0]:
-            # Only a file of the screenshots folder: the column never names another one.
-            folder = (self.folder / "web-captures").resolve()
-            shot = (self.folder / row[0]).resolve()
+            conn.execute("BEGIN IMMEDIATE")
+            moved = self.service.trash.discard_many(conn, "web_capture", [ident])
+        if not moved:
+            raise UserError("기록을 찾을 수 없습니다.")
+        return {"deleted": ident, "trash_ids": moved}
+
+    def forget_screenshots(self, paths):
+        """Remove the screenshot files `paths` names (relative to the Wiki folder, as the records keep them) once their
+        records are gone for good. Only a file of the screenshots folder: a record never names another one, and one
+        that does (a damaged row) leaves that file alone."""
+        folder = (self.folder / "web-captures").resolve()
+        for relative in paths:
+            shot = (self.folder / relative).resolve()
             if shot.is_relative_to(folder):
                 try:
                     shot.unlink(missing_ok=True)
                 except OSError:
                     diagnostics.LOG.warning("웹 기록 스크린샷을 지우지 못했습니다.", exc_info=True)
-        return {"deleted": ident}
 
     def export(self, params):
         """Write the records the filters select to a CSV file (UTF-8 with BOM, which Excel reads) in the Wiki folder's
