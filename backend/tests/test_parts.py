@@ -185,6 +185,78 @@ def test_the_pages_of_a_files_parts_are_one_page_again():
     assert "<title>이상한 문서</title>" in odd and "<p>하나</p><p>둘</p>" in odd
 
 
+# A sheet as earlier versions cut it between parts: each part that went on opened the sheet's section again with its
+# heading and " (계속)", and its table with the columns and header (parts.repeated).
+COLUMNS = '<colgroup><col style="width:40pt"><col></colgroup><thead><tr><th></th><th>A</th></tr></thead>'
+SHEET = '<section class="sheet"><h2>매출 &amp; 비용</h2><table class="cells">' + COLUMNS
+GOES_ON = '<section class="sheet"><h2>매출 &amp; 비용 (계속)</h2><table class="cells">' + COLUMNS
+MEMO = '<section class="sheet"><h2>메모</h2><p>끝</p></section>'
+
+
+def rows(*numbers):
+    return "".join(f"<tr><th>{number}</th><td>값 {number}</td></tr>" for number in numbers)
+
+
+def sheet_pages():
+    """The three parts of a workbook's page, and the page they make whole (as the parser writes it again)."""
+    pages = [
+        page("매출 (1/3)", f"{SHEET}<tbody>{rows(1, 2)}</tbody></table></section>", "excel"),
+        page("매출 (2/3)", f"{GOES_ON}<tbody>{rows(3, 4)}</tbody></table></section>", "excel"),
+        page("매출 (3/3)", f"{GOES_ON}<tbody>{rows(5)}</tbody></table></section>{MEMO}", "excel"),
+    ]
+    # The parser writes the columns again as <col/>.
+    columns = '<colgroup><col style="width:40pt"/><col/></colgroup><thead><tr><th></th><th>A</th></tr></thead>'
+    whole = page(
+        "매출",
+        f'<section class="sheet"><h2>매출 &amp; 비용</h2><table class="cells">{columns}<tbody>{rows(1, 2, 3, 4, 5)}'
+        f"</tbody></table></section>{MEMO}",
+        "excel",
+    )
+    return pages, whole
+
+
+def test_what_an_earlier_version_repeated_where_it_cut_a_table_or_a_section_goes():
+    """As earlier versions cut a long page: the part that went on opened the section again with its heading and
+    " (계속)", and the table with its columns and header, or a table of Word's with its header row, and a numbered list
+    numbered on. The page made one shows each once, as the page was before it was cut."""
+    pages, whole = sheet_pages()
+    assert join_pages(pages, "매출") == whole
+    word = '<table style="border-collapse:collapse">'
+    header = "<tr><th>키</th><th>값</th></tr>"
+    first = page(
+        "문서 (1/2)", f"<p>소개</p>{word}<tbody>{header}<tr><td>1</td><td>가</td></tr></tbody></table>", "word"
+    )
+    second = page(
+        "문서 (2/2)", f"{word}{header}<tbody><tr><td>2</td><td>나</td></tr></tbody></table><p>맺음</p>", "word"
+    )
+    assert join_pages([first, second], "문서") == page(
+        "문서",
+        f"<p>소개</p>{word}<tbody>{header}<tr><td>1</td><td>가</td></tr><tr><td>2</td><td>나</td></tr></tbody></table>"
+        "<p>맺음</p>",
+        "word",
+    )
+    listed = [page("목록 (1/2)", "<ol><li>하나</li><li>둘</li></ol>", "word")]
+    listed.append(page("목록 (2/2)", '<ol start="3"><li>셋</li></ol>', "word"))
+    assert join_pages(listed, "목록") == page("목록", "<ol><li>하나</li><li>둘</li><li>셋</li></ol>", "word")
+    # What only looks alike is left as the parts have it: another table that follows (without the header repeated, or
+    # of other attributes), a section of another heading, a list numbered otherwise, and a part that begins with text.
+    for following in (
+        f"{word}<tbody><tr><td>2</td><td>나</td></tr></tbody></table>",
+        f'<table style="width:100%">{header}<tbody><tr><td>2</td><td>나</td></tr></tbody></table>',
+        "글로 시작하는 부분" + f"{word}{header}<tbody><tr><td>2</td></tr></tbody></table>",
+    ):
+        joined = join_pages([first, page("문서 (2/2)", following, "word")], "문서")
+        assert joined == page(
+            "문서", f"<p>소개</p>{word}<tbody>{header}<tr><td>1</td><td>가</td></tr></tbody></table>{following}", "word"
+        )
+    joined = join_pages([pages[0], page("매출 (2/2)", MEMO, "excel")], "매출")
+    assert joined == page("매출", f"{SHEET}<tbody>{rows(1, 2)}</tbody></table></section>{MEMO}", "excel")
+    other = page("목록 (2/2)", '<ol start="7"><li>일곱</li></ol>', "word")
+    assert join_pages([listed[0], other], "목록") == page(
+        "목록", '<ol><li>하나</li><li>둘</li></ol><ol start="7"><li>일곱</li></ol>', "word"
+    )
+
+
 def test_the_title_of_a_part_gives_the_title_of_its_import():
     assert whole_title("보고서 (2/5)", 2, 5) == "보고서"
     assert whole_title("보고서 (2/5)", 3, 5) == "보고서 (2/5)"  # not the number this part had
@@ -372,6 +444,36 @@ def test_the_parts_of_a_file_become_one_html_document(tmp_path):
     doc = service.wiki_get({"id": ids[0]})
     assert (doc["format"], doc["content"], doc["has_html"]) == ("markdown", "회의 1\n\n고친 회의 2", True)
     assert service.wiki_source_html({"id": ids[0]})["html"] == page("회의", "<p>회의 1</p><p>회의 2</p>", "word")
+
+
+def test_the_parts_of_a_sheet_become_one_page_without_what_they_repeated(tmp_path):
+    path = tmp_path / "wiki.db"
+    service = Service(Database(path), None)
+    pages, whole = sheet_pages()
+    values = {"source_path": "/문서/매출.xlsx", "source_hash": "bytes-4", "application": "Excel"}
+    texts = [page_text(item) for item in pages]
+    assert "(계속)" in texts[1] and texts[1].count("| --- |") == 1  # As the parts were saved.
+    first, *_ = legacy(service, "office_sources", values, texts, "매출", pages)
+    service = Service(Database(path), None)
+    doc = service.wiki_get({"id": first})
+    # The page shows the sheet once; the text is the page's, so search and the AI read no repeated header either.
+    assert (doc["title"], doc["format"], doc["html"]) == ("매출", "html", whole)
+    assert doc["content"] == page_text(whole) and "(계속)" not in doc["content"]
+    assert doc["content"].count("| --- |") == 1 and doc["source"]["edited"] is False
+    assert service.wiki_source_markdown({"id": first})["markdown"] == doc["content"]
+    # A part whose text the user changed keeps their text in the document; the page is made one all the same.
+    pages, whole = sheet_pages()
+    values = {"source_path": "/문서/비용.xlsx", "source_hash": "bytes-5", "application": "Excel"}
+    ids = legacy(service, "office_sources", values, [page_text(item) for item in pages], "비용", pages)
+    with service.db.connect() as db:
+        db.execute("UPDATE documents SET content='고친 둘째 부분', format='markdown', revision=2 WHERE id=?", (ids[1],))
+    service = Service(Database(path), None)
+    doc = service.wiki_get({"id": ids[0]})
+    assert (doc["format"], doc["source"]["edited"]) == ("markdown", True)
+    assert doc["content"] == "\n\n".join([page_text(pages[0]), "고친 둘째 부분", page_text(pages[2])])
+    assert service.wiki_source_html({"id": ids[0]})["html"] == whole.replace(
+        "<title>매출</title>", "<title>비용</title>"
+    )
 
 
 def test_a_part_left_alone_only_loses_its_number(tmp_path):

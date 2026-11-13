@@ -8,9 +8,10 @@ is cut between its lines or rows. What is kept ends with a note saying that the 
 Earlier versions cut a text longer than 80,000 characters into several documents titled "<title> (2/5)", each with a
 source row numbered `part` of `parts`. merge() makes the documents of such an import one: the first of them takes the
 text and the page of all, and the others are deleted with a note of where they went (merged_documents), so that a
-link, a citation or a task that names one of them finds the whole document. Database.merge_parts does so for every
-such import at the backend's start, for as long as its time allows and then beside the requests; sources.py and
-Service.document do it sooner for the import they are asked about."""
+link, a citation or a task that names one of them finds the whole document. The pages of a file's parts become the
+page the file had, without what the earlier version repeated where it cut them (join_pages). Database.merge_parts does
+so for every such import at the backend's start, for as long as its time allows and then beside the requests;
+sources.py and Service.document do it sooner for the import they are asked about."""
 
 import re
 import time
@@ -377,10 +378,111 @@ def join_markdown(texts):
     return "\n".join(lines)
 
 
+# What earlier versions repeated where they cut an element between two parts: the element was opened again in the
+# next part, a table with its columns and header, a section (a sheet, a slide, a page) with its heading followed by
+# GOES_ON, and a numbered list numbered on from its items before.
+SECTIONS = {"section", "div", "article"}
+GOES_ON = " (계속)"
+
+
+def elements(node):
+    """The children of `node` that are elements."""
+    return [child for child in node.children if isinstance(child, Tag)]
+
+
+def edge(nodes):
+    """The first of `nodes` when it is an element, past white space; None when text comes first."""
+    for node in nodes:
+        if isinstance(node, Tag):
+            return node
+        if str(node).strip():
+            return None
+    return None
+
+
+def numbered(tag):
+    """The number of a numbered list's first item, as earlier versions read it."""
+    return int(tag["start"]) if str(tag.get("start", "")).isdigit() else 1
+
+
+def repeated(before, after, within=None):
+    """How many first children of `after` an earlier version repeated, when `after`, the first element of a part, is
+    `before`, the last element of the part before it, opened again where the version cut it: the same tag with the same
+    attributes, beginning with what it repeated there (a table's columns and header, a section's heading with GOES_ON)
+    or numbered on from it (a numbered list, whose start is then that of its next item). Inside a table that went on
+    (`within`), its body went on too. None when it is not that: another element that follows, or one whose beginning
+    it did not repeat, which cannot be told apart from another."""
+    if not isinstance(before, Tag) or not isinstance(after, Tag) or before.name != after.name:
+        return None
+    if before.name == "ol":
+        kept = {name: value for name, value in after.attrs.items() if name != "start"}
+        items = sum(child.name == "li" for child in elements(before))
+        same = kept == {name: value for name, value in before.attrs.items() if name != "start"}
+        return 0 if same and numbered(after) == numbered(before) + items else None
+    if before.attrs != after.attrs:
+        return None
+    if before.name == "tbody" and within == "table":
+        return 0
+    began, begins = elements(before), elements(after)
+    if before.name == "table":
+        head = [child for child in began if child.name in ("colgroup", "thead")]
+        row = before.find("tr")
+        if not any(child.name == "thead" for child in head) and row is not None and header_row(row):
+            head.append(row)
+        found = [str(child) for child in begins[: len(head)]] == [str(child) for child in head]
+        return len(head) if head and found else None
+    heading = began[0] if began else None
+    if before.name in SECTIONS and heading is not None and heading.name in HEADINGS and begins:
+        again = begins[0]
+        if (again.name, again.attrs) == (heading.name, heading.attrs) and again.get_text() == (
+            " ".join(heading.get_text().split()) + GOES_ON
+        ):
+            return 1
+    return None
+
+
+def stitch(before, after, within=None):
+    """Make `after` go on in `before` where an earlier version cut it into two parts (repeated): without what it
+    repeated, its children follow those of `before`, and where the two meet, an element that went on inside it (a
+    sheet's table in its section, a table's body) goes on as well. Whether it did."""
+    count = repeated(before, after, within)
+    if count is None:
+        return False
+    for child in elements(after)[:count]:
+        child.decompose()
+    inner = edge(reversed(before.contents)), edge(after.contents)
+    for child in list(after.contents):
+        before.append(child.extract())
+    after.decompose()
+    if None not in inner:
+        stitch(*inner, within=before.name)
+    return True
+
+
+def stitched(bodies):
+    """The bodies of a page's parts as one body with each seam stitched (stitch), or None when no part goes on from the
+    one before it. Pictures stay out of the parser."""
+    pictures = []
+
+    def keep(match):
+        pictures.append(match.group(2))
+        return f'{match.group(1)}data:,private-agent-picture-{len(pictures) - 1}"'
+
+    whole, seams = BeautifulSoup("", "html.parser"), 0
+    for body in bodies:
+        part = BeautifulSoup(PICTURE.sub(keep, body), "html.parser")
+        before, after = edge(reversed(whole.contents)), edge(part.contents)
+        seams += before is not None and after is not None and stitch(before, after)
+        for node in list(part.contents):
+            whole.append(node.extract())
+    return TOKEN.sub(lambda match: pictures[int(match.group(1))], str(whole)) if seams else None
+
+
 def join_pages(pages, title):
     """The HTML pages of a file's parts as one page titled `title`: the first page's head around what each part shows.
-    A table or section that went on from one part into the next stays as the parts had it, the next one beginning with
-    the header it repeated; the file's next import makes the page anew."""
+    Where an earlier version cut a table, a section or a numbered list between two parts, the second part opened it
+    again, repeating the table's columns and header or the section's heading with " (계속)", or numbering the list on:
+    it goes on in one element again, without what was repeated (stitched)."""
     bodies, head = [], None
     for page in pages:
         root, end = ROOT.search(page), page.rfind(END)
@@ -390,14 +492,16 @@ def join_pages(pages, title):
             continue
         bodies.append(page[root.end() : end])
         head = head or page[: root.end()]
+    body = stitched(bodies) if len(bodies) > 1 else None
+    body = "".join(bodies) if body is None else body
     if head is None:
         from .html_document import page as new_page
 
-        return new_page(title, "".join(bodies), "")
+        return new_page(title, body, "")
     named = TITLE.search(head)
     if named:
         head = head[: named.start(1)] + escape(title) + head[named.end(1) :]
-    return head + "".join(bodies) + END
+    return head + body + END
 
 
 def parted(db, table):
@@ -455,9 +559,19 @@ def merge(db, table, key):
                 [row["doc_id"] for row in used],
             )
         }
-        join = join_markdown if not pages else "\n\n".join
-        content = join([row["content"] for row in used])
-        values["markdown"] = join([row["markdown"] for row in used])
+        page = None
+        if pages:
+            page = join_pages([pages[row["doc_id"]] for row in used if row["doc_id"] in pages], title)
+        if page is not None and len(pages) == len(used):
+            # The text of the page made one (join_pages), which leaves out the headers and headings the parts repeated;
+            # a document with a part whose text the user changed keeps the texts of its parts, theirs included.
+            values["markdown"] = page_text(page)
+            mine = any(row["content"] != row["markdown"] for row in used)
+            content = "\n\n".join(row["content"] for row in used) if mine else values["markdown"]
+        else:
+            join = join_markdown if not pages else "\n\n".join
+            content = join([row["content"] for row in used])
+            values["markdown"] = join([row["markdown"] for row in used])
         if "written" in {column[1] for column in db.execute(f"PRAGMA table_info({table})")}:
             # What write-backs put into the file was kept by part: the next write reads the file again instead.
             values["written"] = ""
@@ -477,8 +591,7 @@ def merge(db, table, key):
         )
         for name in ("keywords", "relations", "doc_nodes"):
             db.execute(f"DELETE FROM {name} WHERE doc_id=?", (ident,))
-        if pages:
-            page = join_pages([pages[row["doc_id"]] for row in used if row["doc_id"] in pages], title)
+        if page is not None:
             db.execute(
                 "INSERT INTO document_html(doc_id,html) VALUES(?,?) "
                 "ON CONFLICT(doc_id) DO UPDATE SET html=excluded.html",
