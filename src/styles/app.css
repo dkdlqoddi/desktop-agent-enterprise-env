@@ -2500,7 +2500,8 @@ dialog.drawer {
   flex-wrap: wrap;
   gap: 6px;
 }
-.restore-result > span {
+.restore-result > span,
+.restore-preparing > span {
   flex: 1;
 }
 .backup-list {

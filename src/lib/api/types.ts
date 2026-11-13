@@ -350,6 +350,9 @@ export type Backups = {
   backups: Backup[];
   // The restore the next start of the app carries out (wiki.restore_backup).
   pending_restore: { file: string; requested_at: string } | null;
+  // The restore being prepared: the backend checks the backup and copies it, which takes minutes for a large Wiki and
+  // can outlast the request that asked. It becomes pending_restore when the copy is made.
+  preparing_restore: { file: string; started_at: string } | null;
   // How the last restore went; `before` is the backup the Wiki it replaced became.
   last_restore: {
     file: string;

@@ -1660,7 +1660,7 @@
       "get": {
         "operationId": "get_backups",
         "tags": ["backups"],
-        "summary": "백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore)과 지난 복원 결과(last_restore)",
+        "summary": "백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore), 백업을 확인하고 복사하는 동안의 준비 중인 복원(preparing_restore, 끝나면 pending_restore가 됨)과 지난 복원 결과(last_restore)",
         "description": "메서드 wiki.backups · 범위 write",
         "x-scope": "write",
         "parameters": [],
@@ -1722,7 +1722,7 @@
       "post": {
         "operationId": "post_backups_restore",
         "tags": ["backups"],
-        "summary": "백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다",
+        "summary": "백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다. 큰 Wiki는 준비에 몇 분이 걸려 요청이 시간 초과로 끝날 수 있는데, 백엔드는 준비를 이어 가므로 GET /backups의 preparing_restore가 비고 pending_restore가 생길 때까지 기다려 확인합니다",
         "description": "메서드 wiki.restore_backup · 범위 destructive · LLM이나 브라우저를 기다려 몇 분까지 걸릴 수 있음",
         "x-scope": "destructive",
         "parameters": [],

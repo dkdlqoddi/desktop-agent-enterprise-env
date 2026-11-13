@@ -9,6 +9,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -527,3 +528,51 @@ def test_a_start_that_leaves_a_waiting_restore_still_clears_the_copies_no_reques
     orphan.write_bytes(b"half a copy")
     Service(Database(path, defer_restore=True), None)
     assert not orphan.exists()
+
+
+def test_a_restore_being_prepared_is_listed_until_it_is_ready_or_has_failed(tmp_path, monkeypatch):
+    service = filled(tmp_path / "wiki.db", documents=1)
+    kept = service.dispatch("wiki.backup", {})["file"]
+    assert service.dispatch("wiki.backups", {})["preparing_restore"] is None
+    started, release = threading.Event(), threading.Event()
+    real = storage.stage_restore
+
+    def slow(path, name):
+        started.set()
+        assert release.wait(30)
+        return real(path, name)
+
+    monkeypatch.setattr(storage, "stage_restore", slow)
+    answer = {}
+    worker = threading.Thread(target=lambda: answer.update(service.dispatch("wiki.restore_backup", {"file": kept})))
+    worker.start()
+    try:
+        assert started.wait(30)
+        # What the screen asks after its request ran out of time while the backend goes on with the copy.
+        listed = service.dispatch("wiki.backups", {})
+        assert listed["pending_restore"] is None
+        assert listed["preparing_restore"]["file"] == kept and listed["preparing_restore"]["started_at"]
+        with pytest.raises(UserError, match="진행 중입니다"):
+            service.dispatch("wiki.restore_backup", {"cancel": True})
+    finally:
+        release.set()
+        worker.join(30)
+    assert answer["restart_required"] is True
+    listed = service.dispatch("wiki.backups", {})
+    assert listed["preparing_restore"] is None and listed["pending_restore"]["file"] == kept
+    # A preparation that fails is no longer listed as under way, and nothing waits.
+    service.dispatch("wiki.restore_backup", {"cancel": True})
+
+    def failing(*_):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage, "stage_restore", failing)
+    with pytest.raises(UserError, match="복원을 준비하지 못했습니다"):
+        service.dispatch("wiki.restore_backup", {"file": kept})
+    listed = service.dispatch("wiki.backups", {})
+    assert listed["preparing_restore"] is None and listed["pending_restore"] is None
+    # A name that names no backup is refused without being listed.
+    monkeypatch.undo()
+    with pytest.raises(UserError, match="백업 목록"):
+        service.dispatch("wiki.restore_backup", {"file": 7})
+    assert service.dispatch("wiki.backups", {})["preparing_restore"] is None

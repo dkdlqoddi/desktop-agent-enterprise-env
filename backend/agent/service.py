@@ -217,6 +217,10 @@ class Service:
         self.active, self.active_lock = {}, threading.Lock()
         # One backup, or copy of a backup to restore, at a time: the daily one and those asked for.
         self.backup_lock = threading.Lock()
+        # The restore being prepared, {"file", "started_at"}, while wiki.restore_backup checks and copies its backup
+        # (minutes for a large Wiki on a slow drive): a request that outlasts the window's limit leaves the screen to
+        # ask wiki.backups how it ended.
+        self.restore_preparing = None
         self.upkeep_lock, self.upkeep_thread = threading.Lock(), None
         self.upkeep_at = time.monotonic() + UPKEEP_DELAY
         # An interrupted extraction must remain retryable on the next startup.
@@ -1106,13 +1110,16 @@ class Service:
             self.backup_lock.release()
 
     def wiki_backups(self, _):
-        """The Wiki's backups, the newest first, with the restore the next start carries out and how the last went."""
+        """The Wiki's backups, the newest first, with the restore the next start carries out, the one being prepared
+        (it becomes the pending one when its copy is made) and how the last went."""
         path = self.db.path
+        preparing = self.restore_preparing
         return {
             "folder": str(storage.backup_folder(path)),
             "keep": storage.KEEP,
             "backups": storage.backups(path),
             "pending_restore": storage.pending_restore(path),
+            "preparing_restore": dict(preparing) if preparing else None,
             "last_restore": storage.last_restore(path),
         }
 
@@ -1138,7 +1145,10 @@ class Service:
                     "cancelled": cancelled,
                     "message": "예약한 복원을 취소했습니다." if cancelled else "예약한 복원이 없습니다.",
                 }
-            request = storage.stage_restore(self.db.path, p.get("file"))
+            file = p.get("file")
+            if isinstance(file, str):
+                self.restore_preparing = {"file": file, "started_at": datetime.now(timezone.utc).isoformat()}
+            request = storage.stage_restore(self.db.path, file)
         except UserError:
             raise
         except Exception as error:
@@ -1148,6 +1158,7 @@ class Service:
                 )
             ) from None
         finally:
+            self.restore_preparing = None
             self.backup_lock.release()
         return {
             "restart_required": True,

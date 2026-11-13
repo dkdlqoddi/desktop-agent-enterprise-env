@@ -18,6 +18,7 @@ import {
 } from '@/lib/api';
 import { changedForm } from '../app-control';
 import Confirm from '../confirm';
+import { afterFailedRestore, endOfPreparing } from '../restore-outcome';
 import { useActions } from '../state';
 
 const KINDS: Record<BackupKind, string> = {
@@ -25,6 +26,9 @@ const KINDS: Record<BackupKind, string> = {
   manual: '직접',
   before_restore: '복원 전',
 };
+
+// How often the list is read again while a restore is being prepared, so that its end shows without the user's doing.
+const PREPARING_POLL = 4000;
 
 // A file's size as the lists show it.
 export const fileSize = (bytes: number) =>
@@ -36,12 +40,16 @@ export const fileSize = (bytes: number) =>
 // cannot replace the Wiki under the backend that has it open, so it waits for the next start of the app: the list says
 // which one waits, offers to start again now or to take the restore back, and tells how the last restore went. Restoring
 // asks first, and its button is marked data-destructive: an AI tool reaches it only at the "full" access level, as the
-// local API itself allows the restore (electron/api-catalog.cjs).
+// local API itself allows the restore (electron/api-catalog.cjs). The restore is prepared before it waits (the backup
+// is checked and copied, which takes minutes for a large Wiki), and the window's request gives up after 15 minutes
+// while the backend goes on: the list says it is being prepared, is read again until that ends, and tells how it did.
 export default function BackupsSection() {
   const { notify } = useActions();
   const [backups, setBackups] = useState<Backups | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'' | 'backup' | 'cancel' | 'restart'>('');
+  // The backup a restore was just asked for, until the answer and the list that follows it are in.
+  const [asking, setAsking] = useState('');
   // A restore just asked for: the keyboard goes on to 지금 다시 시작, as the row's 복원 it came from is now disabled.
   const restartButton = useRef<HTMLButtonElement>(null);
   const [scheduled, setScheduled] = useState(false);
@@ -52,15 +60,40 @@ export default function BackupsSection() {
   }, [scheduled, backups]);
   const load = useCallback(async () => {
     try {
-      setBackups(await api<Backups>('wiki.backups'));
+      const loaded = await api<Backups>('wiki.backups');
+      setBackups(loaded);
       setError('');
+      return loaded;
     } catch (e) {
       setError((e as Error).message);
+      return null;
     }
   }, []);
   useEffect(() => {
     void load();
   }, [load]);
+  // The restore being prepared: the one this screen asked for, or one found under way (the screen was opened meanwhile,
+  // or its request ran out of time). The list is read again until the copy ends. `preparing` is what the backend says,
+  // so the buttons of a restore that waits (an earlier one) are held only by that: a restore just asked for finds them
+  // ready when its list arrives, and the keyboard goes on to 지금 다시 시작.
+  const preparing = backups?.preparing_restore?.file ?? '';
+  const preparingFile = asking || preparing;
+  const polling = preparing !== '';
+  useEffect(() => {
+    if (!polling) return;
+    const timer = window.setInterval(() => void load(), PREPARING_POLL);
+    return () => window.clearInterval(timer);
+  }, [polling, load]);
+  // How a copy the screen saw being made ended: nothing else tells a user whose request ran out of time meanwhile.
+  const seen = useRef('');
+  useEffect(() => {
+    if (!backups) return;
+    const ended = endOfPreparing(seen.current, backups);
+    seen.current = backups.preparing_restore?.file ?? '';
+    if (ended === 'scheduled') notify('복원을 예약했습니다. 앱을 다시 시작하면 Wiki를 되돌립니다.');
+    else if (ended === 'failed')
+      notify('복원을 준비하지 못했습니다. 백업을 골라 다시 복원해 주세요.', true);
+  }, [backups, notify]);
 
   // A backup now, beside the daily one the app makes by itself.
   async function backUp() {
@@ -76,13 +109,28 @@ export default function BackupsSection() {
     }
   }
   async function restore(file: string) {
+    setAsking(file);
+    let failure: Error | null = null;
     try {
       await api<RestoreScheduled>('wiki.restore_backup', { file });
       setScheduled(true);
     } catch (e) {
-      notify((e as Error).message, true);
+      failure = e as Error;
     }
-    await load();
+    const loaded = await load();
+    setAsking('');
+    if (!failure) return;
+    // The request may have run out of time while the backend goes on with the copy, or the copy may have ended since:
+    // the list says which, so that a restore made ready later is not left to be found at the next start.
+    const outcome = afterFailedRestore(loaded, file);
+    if (outcome === 'preparing')
+      notify(
+        '복원 준비가 오래 걸려 응답을 기다리지 못했습니다. 준비는 계속되며, 끝나면 복원이 예약됩니다.',
+      );
+    else if (outcome === 'scheduled') {
+      notify('복원을 예약했습니다. 앱을 다시 시작하면 Wiki를 되돌립니다.');
+      setScheduled(true);
+    } else notify(failure.message, true);
   }
   async function cancel() {
     setBusy('cancel');
@@ -156,6 +204,16 @@ export default function BackupsSection() {
             </span>
           </p>
         ))}
+      {preparingFile && (
+        <div className="banner restore-preparing" role="status">
+          <LoaderCircle className="spin" size={15} aria-hidden="true" />
+          <span>
+            복원을 준비하는 중입니다. {when(preparingFile)}을(를) 확인하고 복사하며, Wiki가 크면 몇
+            분 걸립니다. 끝나면 ‘복원 예약됨’으로 바뀝니다. 그 전에 앱을 닫으면 복원은 예약되지
+            않습니다.
+          </span>
+        </div>
+      )}
       {pending && (
         <div className="banner warn restore-pending" role="status">
           <CircleAlert size={15} aria-hidden="true" />
@@ -168,7 +226,7 @@ export default function BackupsSection() {
               ref={restartButton}
               type="button"
               className="button primary small"
-              disabled={!!busy}
+              disabled={!!busy || !!preparing}
               onClick={() => void restart()}
             >
               {busy === 'restart' ? (
@@ -181,7 +239,7 @@ export default function BackupsSection() {
             <button
               type="button"
               className="button secondary small"
-              disabled={!!busy}
+              disabled={!!busy || !!preparing}
               onClick={() => void cancel()}
             >
               <Undo2 size={14} aria-hidden="true" />
@@ -211,7 +269,7 @@ export default function BackupsSection() {
                     name={`${label} 백업 복원`}
                     icon={<ArchiveRestore size={14} />}
                     question={`${label} 백업으로 Wiki를 되돌릴까요? 앱을 다시 시작할 때 복원하며, 지금의 Wiki는 ‘복원 전’ 백업으로 남깁니다.`}
-                    disabled={!!busy || waiting}
+                    disabled={!!busy || waiting || !!preparingFile}
                     onConfirm={() => restore(backup.file)}
                   />
                 </li>
@@ -222,7 +280,11 @@ export default function BackupsSection() {
           <p className="muted">아직 백업이 없습니다. ‘지금 백업’으로 바로 만들 수 있습니다.</p>
         ))}
       <div className="form-actions">
-        <button className="button secondary" disabled={!!busy} onClick={() => void backUp()}>
+        <button
+          className="button secondary"
+          disabled={!!busy || !!preparingFile}
+          onClick={() => void backUp()}
+        >
           {busy === 'backup' ? (
             <LoaderCircle className="spin" size={15} />
           ) : (

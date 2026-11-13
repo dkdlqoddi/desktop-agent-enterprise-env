@@ -158,7 +158,7 @@ const METHODS = {
   'wiki.purge': method('destructive', '휴지통의 문서 영구 삭제 (ids, 또는 all: true로 비우기)'),
   'wiki.backups': method(
     'write',
-    'Wiki 백업 목록: 하루 한 번 자동·직접 만든 백업과 복원 전 Wiki, 예약된 복원과 지난 복원 결과',
+    'Wiki 백업 목록: 하루 한 번 자동·직접 만든 백업과 복원 전 Wiki, 예약된 복원과 준비 중인 복원, 지난 복원 결과',
   ),
   'wiki.backup': method(
     'write',
@@ -742,7 +742,7 @@ const GROUPS = [
         'GET',
         '/backups',
         'wiki.backups',
-        '백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore)과 지난 복원 결과(last_restore)',
+        '백업 목록 (최근 순): file·kind(auto·manual·before_restore)·created_at·size, 예약된 복원(pending_restore), 백업을 확인하고 복사하는 동안의 준비 중인 복원(preparing_restore, 끝나면 pending_restore가 됨)과 지난 복원 결과(last_restore)',
       ),
       route(
         'POST',
@@ -754,7 +754,7 @@ const GROUPS = [
         'POST',
         '/backups/restore',
         'wiki.restore_backup',
-        '백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다',
+        '백업으로 Wiki 되돌리기 예약 (허용 범위 ‘전체’). 백업을 검사해 복사해 두고, 앱을 다시 실행할 때 지금 Wiki를 복원 전 백업으로 옮긴 뒤 복원합니다. restart_required가 true면 앱을 다시 실행해야 합니다. 큰 Wiki는 준비에 몇 분이 걸려 요청이 시간 초과로 끝날 수 있는데, 백엔드는 준비를 이어 가므로 GET /backups의 preparing_restore가 비고 pending_restore가 생길 때까지 기다려 확인합니다',
         {
           file: string('복원할 백업 파일 이름 (GET /backups의 file). cancel이 true면 생략'),
           cancel: boolean('예약한 복원 취소', { default: false }),
