@@ -262,21 +262,42 @@ const USER_ONLY =
 // The trash's screen (admin/trash.tsx) holds what the chat and the web records put there, which is the user's alone.
 const USER_ONLY_TRASH =
   '관리 → 휴지통은 사용자만 다룰 수 있습니다. 비운 채팅과 지운 웹 기록도 있는 곳이라, AI 도구는 허용 범위와 관계없이 이 화면에 입력하거나 그 버튼을 누를 수 없습니다. 휴지통은 call_api의 trash.list·trash.restore·trash.purge로 다루세요.';
+// The web records (web-records.tsx), which no method of the local API reaches either.
+const USER_ONLY_RECORDS =
+  '웹 기록은 사용자만 다룰 수 있습니다. 사이트에서 본 광고·상품과 사용자가 누른 광고의 기록이라, AI 도구는 허용 범위와 관계없이 이 화면에 입력하거나 그 버튼을 누를 수 없습니다.';
+// An area of a later screen that no entry below names is the user's all the same.
+const USER_ONLY_OTHER =
+  '이 영역은 사용자만 다룰 수 있어, AI 도구는 허용 범위와 관계없이 여기에 입력하거나 그 버튼을 누를 수 없습니다.';
 
-// The chat belongs to the user alone (data-user-only): what is typed there is carried out by an agent with a terminal,
-// files and a browser on this PC, and the prompt that asks before a dangerous command is the user's own decision. No
-// access level reaches it, "full" neither, nor does a demo recording: the words of a document a tool has read could
-// otherwise have the tool run a command here and approve it itself. The agent's own settings (admin → 채팅 에이전트)
-// are the user's in the same way: an MCP server there is a command the agent starts without asking, and the accounts
-// of the messenger gateway may write to the agent and answer its approvals from outside the PC. So is the trash
-// (data-user-only="trash"), which holds the chat cleared and the web records deleted.
+// The areas the user alone may use, by the value of their data-user-only: what an AI tool is told such an area is
+// called, and why it may not type or press there.
+type UserOnlyArea = { name: string; refusal: string };
+const USER_ONLY_AREAS = new Map<string, UserOnlyArea>([
+  ['chat', { name: '채팅', refusal: USER_ONLY }],
+  ['agent', { name: '관리 → 채팅 에이전트', refusal: USER_ONLY }],
+  ['trash', { name: '관리 → 휴지통', refusal: USER_ONLY_TRASH }],
+  ['records', { name: '웹 기록', refusal: USER_ONLY_RECORDS }],
+]);
+const userOnlyArea = (area: Element): UserOnlyArea =>
+  USER_ONLY_AREAS.get(area.getAttribute('data-user-only') ?? '') ?? {
+    name: squash(area.getAttribute('aria-label') ?? '') || '사용자만 다루는 영역',
+    refusal: USER_ONLY_OTHER,
+  };
+
+// The chat belongs to the user alone (data-user-only="chat"): what is typed there is carried out by an agent with a
+// terminal, files and a browser on this PC, and the prompt that asks before a dangerous command is the user's own
+// decision. No access level reaches it, "full" neither, nor does a demo recording: the words of a document a tool has
+// read could otherwise have the tool run a command here and approve it itself. The agent's own settings (admin → 채팅
+// 에이전트, data-user-only="agent") are the user's in the same way: an MCP server there is a command the agent starts
+// without asking, and the accounts of the messenger gateway may write to the agent and answer its approvals from
+// outside the PC. So are the trash (data-user-only="trash"), which holds the chat cleared and the web records deleted,
+// and the web records themselves (data-user-only="records"), which the local API's methods do not reach either.
 // The admin page and passwords decide what the API itself may do, and the import box and a document's update from its
 // file read this PC's files (marked data-requires-full); only the "full" access level reaches them. So does the
 // button that carries out a deletion or an emptying (data-destructive): the words of a document may ask for it.
 function guard(element: Element, target: Target) {
   const own = element.closest('[data-user-only]');
-  if (own)
-    throw new Error(own.getAttribute('data-user-only') === 'trash' ? USER_ONLY_TRASH : USER_ONLY);
+  if (own) throw new Error(userOnlyArea(own).refusal);
   if (target.allow_admin) return;
   if (element.closest('[data-destructive]'))
     throw new Error(

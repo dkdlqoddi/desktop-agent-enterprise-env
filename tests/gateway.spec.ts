@@ -115,7 +115,7 @@ test('messenger gateway: the user sets a bot up, a listed account is answered th
     await openAdmin(page, '채팅 에이전트');
     const form = page.locator('.hermes-settings');
     // The agent's settings are the user's alone: an AI tool's screen control is refused here at every access level.
-    await expect(form).toHaveAttribute('data-user-only', '');
+    await expect(form).toHaveAttribute('data-user-only', 'agent');
     const gateway = form.getByRole('group', { name: '메신저 게이트웨이' });
     const toggle = gateway.getByRole('checkbox', { name: '메신저 게이트웨이 켜기' });
     await expect(toggle).not.toBeChecked();

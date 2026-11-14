@@ -49,13 +49,13 @@ function load(file) {
 }
 const { clickControl, fillControl, readScreen } = load('src/components/app-control.ts');
 
-// A screen with the chat (the user's alone), a page of the app, the admin page with the chat agent's settings (the
-// user's alone as well) and a deletion's confirmation.
+// A screen with the chat (the user's alone), a page of the app, the web records and the admin page with the chat
+// agent's settings (the user's alone as well), and a deletion's confirmation.
 function screen() {
   window.document.body.innerHTML = `
-    <nav class="sidebar"><button>홈</button><button>채팅</button></nav>
+    <nav class="sidebar"><button>홈</button><button>채팅</button><button>웹 기록</button></nav>
     <main>
-      <section class="agent-chat" data-user-only="">
+      <section class="agent-chat" data-user-only="chat">
         <button class="agent-example">오늘 기록한 광고 요약해 줘</button>
         <div class="agent-card"><button>확인 후 실행</button><button>취소</button></div>
         <div class="agent-interaction approval">
@@ -68,14 +68,24 @@ function screen() {
           <button type="button">중지</button>
         </form>
       </section>
-      <section class="records">
+      <section class="library">
         <form><input aria-label="검색어" /><button type="submit">찾기</button></form>
-        <button>CSV 내보내기</button>
+        <button>목록 내보내기</button>
         <button data-destructive="">지우기</button>
       </section>
+      <div class="workspace-page records-page" data-user-only="records">
+        <button>열린 페이지 기록</button><button>CSV 내보내기</button>
+        <label>사이트 <select><option value="">전체</option><option value="coupang">쿠팡</option></select></label>
+        <label>기록 검색 <input type="search" placeholder="제목·검색어로 찾기" /></label>
+        <ul aria-label="최근 기록한 페이지"><li>
+          <input type="checkbox" aria-label="쿠팡 노트북 선택" />
+          <button>쿠팡 노트북 스크린샷 보기</button>
+        </li></ul>
+        <button data-destructive="">선택한 기록 지우기</button>
+      </div>
       <div class="admin">
         <input aria-label="모델 이름" />
-        <div class="admin-form hermes-settings" data-user-only="">
+        <div class="admin-form hermes-settings" data-user-only="agent">
           <textarea aria-label="MCP 서버 (JSON)"></textarea>
           <button>MCP 저장</button>
           <input type="checkbox" aria-label="메신저 게이트웨이 켜기" />
@@ -160,8 +170,8 @@ test('the chat agent\'s settings are the user\'s alone, at the "full" level too'
 test('the rest of the screen follows the access level', async () => {
   const { pressed, submitted } = screen();
   // Below "full": the pages of the app, but neither a deletion's confirmation nor the admin page.
-  assert.deepEqual(await clickControl({ name: 'CSV 내보내기' }), {
-    clicked: 'CSV 내보내기',
+  assert.deepEqual(await clickControl({ name: '목록 내보내기' }), {
+    clicked: '목록 내보내기',
     role: 'button',
   });
   assert.deepEqual(await fillControl({ label: '검색어', value: '노트북', submit: true }), {
@@ -170,12 +180,12 @@ test('the rest of the screen follows the access level', async () => {
   });
   await assert.rejects(clickControl({ name: '지우기' }), /‘전체’일 때만/);
   await assert.rejects(fillControl({ label: '모델 이름', value: 'x' }), /‘전체’일 때만/);
-  assert.deepEqual(pressed, ['CSV 내보내기']);
+  assert.deepEqual(pressed, ['목록 내보내기']);
   assert.deepEqual(submitted, ['']);
   // "full" reaches those two.
   await clickControl({ name: '지우기', allow_admin: true });
   await fillControl({ label: '모델 이름', value: 'x', allow_admin: true });
-  assert.deepEqual(pressed, ['CSV 내보내기', '지우기']);
+  assert.deepEqual(pressed, ['목록 내보내기', '지우기']);
   assert.equal(window.document.querySelector('[aria-label="모델 이름"]').value, 'x');
 });
 
@@ -213,4 +223,40 @@ test('the trash is the user\'s alone, at the "full" level too: it holds the chat
     clickControl({ name: '보내기', exact: true, allow_admin: true }),
     /채팅은 사용자만/,
   );
+});
+
+test('the web records are the user\'s alone, at the "full" level too', async () => {
+  // What the sites showed the user and the ads they pressed: no method of the local API reaches them, and no click or
+  // typing of a tool does.
+  screen();
+  const pressed = [];
+  for (const button of window.document.querySelectorAll('.records-page button'))
+    button.addEventListener('click', () => pressed.push(button.textContent));
+  for (const allow_admin of [false, true]) {
+    for (const name of [
+      '열린 페이지 기록',
+      'CSV 내보내기',
+      '쿠팡 노트북 스크린샷 보기',
+      '쿠팡 노트북 선택',
+      '선택한 기록 지우기',
+    ])
+      await assert.rejects(clickControl({ name, exact: true, allow_admin }), /웹 기록은 사용자만/);
+    for (const params of [
+      { label: '기록 검색', value: '노트북' },
+      { label: '제목·검색어로 찾기', value: '노트북', submit: true },
+      { label: '사이트', value: '쿠팡' },
+    ])
+      await assert.rejects(fillControl({ ...params, allow_admin }), /웹 기록은 사용자만/);
+  }
+  assert.deepEqual(pressed, []);
+  for (const field of window.document.querySelectorAll('.records-page input, .records-page select'))
+    assert.equal(
+      field.type === 'checkbox' ? field.checked : field.value,
+      field.type === 'checkbox' ? false : '',
+    );
+  // The way there is a button like the others.
+  assert.deepEqual(await clickControl({ name: '웹 기록', exact: true }), {
+    clicked: '웹 기록',
+    role: 'button',
+  });
 });

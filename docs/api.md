@@ -38,7 +38,7 @@ Private Agent 0.1.0이 AI 도구(Claude Code, Codex, OpenCode, Antigravity 등)�
 
 - `read`(조회만): 검색과 문서·할 일·대화·실행 기록 조회만 허용합니다. 아무것도 바꾸지 않습니다.
 - `write`(조회·변경·앱 제어): 문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(대화·실행 기록을 포함해 지운 것은 모두 휴지통으로 가고, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 가져온 Office 문서의 원본 파일에 반영하기와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.
-- `full`(전체): 이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅 화면과 관리 → 채팅 에이전트만은 어느 범위에서도 AI 도구가 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 AI 도구로 다룰 수 없습니다.
+- `full`(전체): 이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통만은 어느 범위에서도 AI 도구가 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 API로도 다룰 수 없습니다.
 
 메서드마다 범위가 있고, 범위마다 쓸 수 있는 허용 범위가 정해져 있습니다.
 
@@ -1844,7 +1844,7 @@ Take a screenshot of the app window (PNG). Passwords, keys and LLM header values
 
 누르기 · 범위 `control` · 메서드 `app.click`
 
-Click a button, tab, link, checkbox or switch of the app by its visible name or label (see app_read_screen). Admin page controls need the "full" access level. The chat screen is the user's alone: nothing in it can be clicked at any access level.
+Click a button, tab, link, checkbox or switch of the app by its visible name or label (see app_read_screen). Admin page controls need the "full" access level. The chat, the web records, the chat agent's settings and the trash are the user's alone: nothing in them can be clicked at any access level.
 
 - `name` (string, 필수) Visible name or aria-label.
 - `role` (string) Kind of control. [button · tab · link · checkbox · switch · option]
@@ -1855,7 +1855,7 @@ Click a button, tab, link, checkbox or switch of the app by its visible name or 
 
 입력하기 · 범위 `control` · 메서드 `app.fill`
 
-Type a value into an input of the app found by its label, aria-label or placeholder, optionally submitting its form (e.g. label '검색 또는 질문' is the search box). Admin page inputs and passwords need the "full" access level. The chat screen is the user's alone: its message box takes nothing at any access level.
+Type a value into an input of the app found by its label, aria-label or placeholder, optionally submitting its form (e.g. label '검색 또는 질문' is the search box). Admin page inputs and passwords need the "full" access level. The chat, the web records, the chat agent's settings and the trash are the user's alone: their inputs take nothing at any access level.
 
 - `label` (string, 필수) Label, aria-label or placeholder of the input.
 - `value` (string) Value to enter ('' or omitted clears the input).

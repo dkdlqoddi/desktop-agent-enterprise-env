@@ -296,6 +296,19 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     expect(typedChat.json.error.message).toContain('채팅은 사용자만');
     await expect(chatBox(page)).toHaveValue('');
     await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
+
+    // So are the web records: a tool may go there, but presses and types nothing on that screen.
+    expect((await ai.tool('app_navigate', { view: 'records' })).isError).toBe(false);
+    await expect(page.getByRole('heading', { name: '웹 기록', level: 1 })).toBeVisible();
+    for (const refused of [
+      await ai.tool('app_click', { name: '열린 페이지 기록' }),
+      await ai.tool('app_click', { name: 'CSV 내보내기' }),
+      await ai.tool('app_fill', { label: '검색어', value: '노트북' }),
+    ]) {
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0].text).toContain('웹 기록은 사용자만');
+    }
+    await expect(page.getByPlaceholder('제목·검색어로 찾기')).toHaveValue('');
     expect((await ai.tool('app_navigate', { view: 'home' })).isError).toBe(false);
 
     // The web records are not open to AI tools, and neither is the routine that records a site's search on a schedule

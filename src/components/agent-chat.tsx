@@ -701,7 +701,7 @@ export default function AgentChat() {
       {/* The user's alone (data-user-only): what is typed here is carried out by an agent with a terminal, files and a
           browser on this PC, and the answer to its question before a dangerous command is the user's decision. The
           local API's screen control (app-control.ts) types and clicks nothing in it, at any access level. */}
-      <section className="agent-chat" aria-label="에이전트와의 대화" data-user-only="">
+      <section className="agent-chat" aria-label="에이전트와의 대화" data-user-only="chat">
         <MessengerConversations />
         {messages === null ? (
           <div className="agent-loading">

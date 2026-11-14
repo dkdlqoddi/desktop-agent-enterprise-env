@@ -195,7 +195,7 @@ export default function HermesSection() {
     ) || Object.keys(typed(MESSENGERS.flatMap((messenger) => messenger.tokens))).length > 0;
 
   return (
-    <div className="admin-form hermes-settings" data-user-only="">
+    <div className="admin-form hermes-settings" data-user-only="agent">
       <p className="section-lead">
         채팅의 내장 Hermes 에이전트가 쓰는 서비스 키와 설정입니다. 키는 운영체제 보안 저장소에
         암호화해 두며, 화면과 AI 도구에는 값이 아니라 설정 여부만 보입니다. 모델 호출은 항상 관리 →

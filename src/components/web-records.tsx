@@ -267,8 +267,11 @@ export default function WebRecords() {
   const items = records?.items ?? [];
   const current = shownCaptures?.find((item) => item.id === capture);
   const shownAll = !!shownCaptures?.length && chosen.length === shownCaptures.length;
+  // The user's alone (data-user-only), the panel with a page's screenshot inside it too: what the sites showed the user
+  // and the ads they pressed are no AI tool's, as no method of the local API reaches them. The local API's screen
+  // control (app-control.ts) types and presses nothing here, at any access level.
   return (
-    <div className="workspace-page records-page">
+    <div className="workspace-page records-page" data-user-only="records">
       <header className="page-heading">
         <div>
           <p className="eyebrow">WEB RECORDS</p>
