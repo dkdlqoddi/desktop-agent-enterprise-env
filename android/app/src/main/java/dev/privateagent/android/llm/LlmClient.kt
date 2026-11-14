@@ -9,7 +9,6 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.io.InputStream
-import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
@@ -19,15 +18,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLException
 
-/** Why an LLM request gave no reply; the screen turns it into a message (never the request, the key or a stack). */
+/**
+ * Why an LLM request gave no reply; the screen turns it into a message (never the request, the key or a stack).
+ * INSECURE: the address is neither https:// nor http://, or the platform refused to send it in cleartext.
+ */
 class LlmException(val kind: Kind, val status: Int? = null) : Exception("LLM request failed: $kind") {
     enum class Kind { AUTH, REQUEST, RATE_LIMIT, SERVER, STATUS, REDIRECT, TIMEOUT, NETWORK, TLS, INSECURE, FORMAT, REFUSED }
 }
 
 /**
- * Sends one request to the user's LLM endpoint and returns the response body. HTTPS only, the platform's certificate
- * checks as they are (never relaxed), no redirects followed (one would carry the API Key to another address), and one
- * deadline for the whole exchange. Nothing about the request is logged.
+ * Sends one request to the user's LLM endpoint and returns the response body. HTTPS goes through the platform's stack
+ * with its certificate checks as they are (never relaxed). Plain HTTP is only for an endpoint the user typed with
+ * http:// (Endpoint.normalize never makes one of an address without it) and goes over a socket of its own
+ * ([PlainHttpPost]), as the app keeps cleartext off everywhere else; no other scheme is opened. No redirects are
+ * followed (one would carry the API Key to another address, or an https request on over http), and one deadline
+ * covers the whole exchange. Nothing about the request is logged.
  */
 class LlmClient(
     private val totalTimeoutMs: Long = 60_000,
@@ -39,9 +44,13 @@ class LlmClient(
         } catch (_: IOException) {
             throw LlmException(LlmException.Kind.NETWORK)
         }
-        if (url.protocol != "https") throw LlmException(LlmException.Kind.INSECURE)
-        val connection = withContext(Dispatchers.IO) { url.openConnection() } as? HttpsURLConnection
-            ?: throw LlmException(LlmException.Kind.INSECURE)
+        val exchange = when (url.protocol) {
+            "https" -> (withContext(Dispatchers.IO) { url.openConnection() } as? HttpsURLConnection)
+                ?.let(::HttpsExchange) ?: throw LlmException(LlmException.Kind.INSECURE)
+            "http" -> PlainHttpPost(url, connectTimeoutMs, totalTimeoutMs.toInt())
+            // Never a file:, jar: or other URL the platform would open as well.
+            else -> throw LlmException(LlmException.Kind.INSECURE)
+        }
         val finished = AtomicBoolean(false)
         val timedOut = AtomicBoolean(false)
         // The deadline of the whole exchange; cancelling the caller (the user's stop button) ends it the same way.
@@ -50,38 +59,47 @@ class LlmClient(
                 delay(totalTimeoutMs)
                 timedOut.set(true)
             } finally {
-                if (!finished.get()) connection.disconnect()
+                if (!finished.get()) exchange.abort()
             }
         }
         try {
-            withContext(Dispatchers.IO) { exchange(connection, headers, body) }
+            withContext(Dispatchers.IO) { request(exchange, headers, body) }
         } catch (failure: IOException) {
             throw if (timedOut.get()) LlmException(LlmException.Kind.TIMEOUT) else failure.toLlmException()
         } finally {
             finished.set(true)
             watchdog.cancel()
-            connection.disconnect()
+            exchange.abort()
         }
     }
 
-    private fun exchange(connection: HttpsURLConnection, headers: Map<String, String>, body: JSONObject): JSONObject {
-        val bytes = body.toString().toByteArray(Charsets.UTF_8)
-        connection.instanceFollowRedirects = false
-        connection.useCaches = false
-        connection.connectTimeout = connectTimeoutMs
-        connection.readTimeout = totalTimeoutMs.toInt()
-        connection.requestMethod = "POST"
-        connection.doOutput = true
-        connection.setFixedLengthStreamingMode(bytes.size)
-        for ((name, value) in headers) connection.setRequestProperty(name, value)
-        connection.outputStream.use { it.write(bytes) }
-        val status = connection.responseCode
-        if (status !in 200..299) {
-            // The error body is read and dropped: it is not shown, and it may repeat what the request sent.
-            runCatching { connection.errorStream?.use { drain(it) } }
-            throw statusException(status)
+    /** The platform's HTTPS stack, its certificate checks as they are, told not to follow a redirect. */
+    private inner class HttpsExchange(private val connection: HttpsURLConnection) : LlmExchange {
+        override fun send(headers: Map<String, String>, body: ByteArray): LlmAnswer {
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.connectTimeout = connectTimeoutMs
+            connection.readTimeout = totalTimeoutMs.toInt()
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.setFixedLengthStreamingMode(body.size)
+            for ((name, value) in headers) connection.setRequestProperty(name, value)
+            connection.outputStream.use { it.write(body) }
+            val status = connection.responseCode
+            return LlmAnswer(status, if (status in 200..299) connection.inputStream else connection.errorStream)
         }
-        val text = connection.inputStream.use { read(it) }
+
+        override fun abort() = connection.disconnect()
+    }
+
+    private fun request(exchange: LlmExchange, headers: Map<String, String>, body: JSONObject): JSONObject {
+        val answer = exchange.send(headers, body.toString().toByteArray(Charsets.UTF_8))
+        if (answer.status !in 200..299) {
+            // The error body is read and dropped: it is not shown, and it may repeat what the request sent.
+            runCatching { answer.body?.use { drain(it) } }
+            throw statusException(answer.status)
+        }
+        val text = answer.body?.use { read(it) } ?: throw LlmException(LlmException.Kind.FORMAT)
         return try {
             JSONObject(text)
         } catch (_: JSONException) {

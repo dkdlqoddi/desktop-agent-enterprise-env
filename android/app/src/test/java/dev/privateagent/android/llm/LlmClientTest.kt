@@ -28,10 +28,10 @@ import kotlin.concurrent.thread
 
 /**
  * The client against an HTTPS server of the test's own, on this machine: it posts and reads an answer, a redirect
- * (which would carry the API Key to another address) ends the request with its status, and a plain http address is
- * never contacted. The server's certificate is made for the test and trusted only by this JVM for its duration; the
- * client's own checks stay on. The JVM's stack never follows a POST it streams, so whether the client turns following
- * off is checked on the device's stack (LlmRedirectTest).
+ * (which would carry the API Key to another address) ends the request with its status, and an address of a scheme
+ * other than https and http is never opened (plain http: PlainHttpTest). The server's certificate is made for the
+ * test and trusted only by this JVM for its duration; the client's own checks stay on. The JVM's stack never follows a
+ * POST it streams, so whether the client turns following off is checked on the device's stack (LlmRedirectTest).
  */
 class LlmClientTest {
     private lateinit var folder: File
@@ -164,12 +164,20 @@ class LlmClientTest {
     }
 
     @Test
-    fun aPlainHttpAddressIsNeverContacted() = runBlocking {
-        try {
-            LlmClient().post("http://127.0.0.1:${server.localPort}/v1/ok", headers, JSONObject())
-            fail("A plain http address was contacted")
-        } catch (refused: LlmException) {
-            assertEquals(LlmException.Kind.INSECURE, refused.kind)
+    fun anAddressOfAnotherSchemeIsNeverOpened() = runBlocking {
+        val file = File(folder, "answer.json").apply { writeText("""{"ok":true}""") }
+        val addresses = listOf(
+            file.toURI().toString(),
+            "jar:${file.toURI()}!/a",
+            "ftp://127.0.0.1:${server.localPort}/v1",
+        )
+        for (address in addresses) {
+            try {
+                LlmClient().post(address, headers, JSONObject())
+                fail("$address was opened")
+            } catch (refused: LlmException) {
+                assertEquals(address, LlmException.Kind.INSECURE, refused.kind)
+            }
         }
         assertTrue(hits.isEmpty())
     }

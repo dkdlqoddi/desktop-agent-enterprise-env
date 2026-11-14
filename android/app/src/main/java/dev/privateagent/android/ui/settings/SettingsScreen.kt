@@ -158,7 +158,6 @@ private fun LlmSection(graph: AppGraph) {
     fun endpointProblem(problem: Endpoint.Problem): String = resources.getString(
         when (problem) {
             Endpoint.Problem.EMPTY -> R.string.endpoint_error_empty
-            Endpoint.Problem.INSECURE_HTTP -> R.string.endpoint_error_http
             Endpoint.Problem.UNSUPPORTED_SCHEME -> R.string.endpoint_error_scheme
             Endpoint.Problem.INVALID -> R.string.endpoint_error_invalid
             Endpoint.Problem.CREDENTIALS -> R.string.endpoint_error_credentials
@@ -222,6 +221,18 @@ private fun LlmSection(graph: AppGraph) {
             supportingText = { Text(stringResource(R.string.settings_endpoint_help)) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
         )
+        // An http:// address the user typed is used, but it crosses the network unencrypted: said while it is there.
+        val unencrypted = remember(endpoint) {
+            (Endpoint.normalize(endpoint) as? Endpoint.Check.Ok)?.let { Endpoint.unencrypted(it.url) } == true
+        }
+        if (unencrypted) {
+            Text(
+                stringResource(R.string.settings_endpoint_http_warning),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
         OutlinedTextField(
             value = model,
             onValueChange = { model = it },

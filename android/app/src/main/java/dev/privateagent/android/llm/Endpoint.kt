@@ -4,13 +4,14 @@ import java.net.URI
 import java.net.URISyntaxException
 
 /**
- * The rules for the LLM endpoint the user enters. An address without a scheme is saved as https://. A plain http://
- * address is refused rather than allowed: cleartext traffic is off for the whole app (network_security_config.xml),
- * because Android cannot allow it for only the one host a user typed at run time, and an http request would carry the
- * API Key and the conversation unencrypted.
+ * The rules for the LLM endpoint the user enters, as on the desktop: HTTPS is the default and is never turned into
+ * HTTP. An address without a scheme is saved as https://; a plain http:// address is used only when the user typed
+ * http:// (a local LLM on the same Wi-Fi, say), and the settings warn that it travels unencrypted. Such an endpoint is
+ * reached over the LLM client's own socket (PlainHttp.kt): cleartext stays off for the rest of the app
+ * (network_security_config.xml), as Android cannot permit it for just the one host a user typed at run time.
  */
 object Endpoint {
-    enum class Problem { EMPTY, INSECURE_HTTP, UNSUPPORTED_SCHEME, INVALID, CREDENTIALS, FRAGMENT }
+    enum class Problem { EMPTY, UNSUPPORTED_SCHEME, INVALID, CREDENTIALS, FRAGMENT }
 
     sealed interface Check {
         data class Ok(val url: String) : Check
@@ -19,6 +20,7 @@ object Endpoint {
     }
 
     private val SCHEME = Regex("^[A-Za-z][A-Za-z0-9+.-]*://")
+    private val LOOPBACK_V4 = Regex("^127(?:\\.\\d{1,3}){3}$")
     private const val MAX_URL = 2048
 
     fun normalize(input: String): Check {
@@ -29,11 +31,7 @@ object Endpoint {
         }
         val withScheme = if (SCHEME.containsMatchIn(text)) text else "https://$text"
         val scheme = withScheme.substringBefore("://").lowercase()
-        when (scheme) {
-            "https" -> Unit
-            "http" -> return Check.Rejected(Problem.INSECURE_HTTP)
-            else -> return Check.Rejected(Problem.UNSUPPORTED_SCHEME)
-        }
+        if (scheme != "https" && scheme != "http") return Check.Rejected(Problem.UNSUPPORTED_SCHEME)
         val uri = try {
             URI(withScheme)
         } catch (_: URISyntaxException) {
@@ -42,12 +40,28 @@ object Endpoint {
         if (uri.host.isNullOrEmpty()) return Check.Rejected(Problem.INVALID)
         if (uri.rawUserInfo != null) return Check.Rejected(Problem.CREDENTIALS)
         if (uri.rawFragment != null) return Check.Rejected(Problem.FRAGMENT)
-        return Check.Ok("https" + withScheme.substring(scheme.length))
+        // The scheme the address has, in lower case: http only ever because the user wrote it.
+        return Check.Ok(scheme + withScheme.substring(scheme.length))
+    }
+
+    /**
+     * Whether requests to [url] cross the network unencrypted: an http:// endpoint anywhere but on this phone itself.
+     * One on the phone (localhost, 127.0.0.0/8, ::1) never leaves it, as the desktop's warning has it for its own PC.
+     */
+    fun unencrypted(url: String): Boolean {
+        val uri = try {
+            URI(url)
+        } catch (_: URISyntaxException) {
+            return false
+        }
+        if (!uri.scheme.equals("http", ignoreCase = true)) return false
+        val host = uri.host?.lowercase() ?: return false
+        return host != "localhost" && !host.endsWith(".localhost") && host != "[::1]" && !LOOPBACK_V4.matches(host)
     }
 
     /**
      * The server an endpoint is on (scheme, host and port), which a saved API Key belongs to: a key is never sent to
-     * another server than the one it was entered for.
+     * another server than the one it was entered for, nor over http:// when it was entered for https://.
      */
     fun origin(url: String): String? = try {
         val uri = URI(url)

@@ -23,8 +23,8 @@ fun interface HermesModel {
 /**
  * The user's LLM connection as Hermes' model, like the desktop's hermes_llm.py: an OpenAI-compatible API takes the
  * messages and tools as they are, the Anthropic Messages API gets them converted and its answer converted back. The
- * connection's model always replaces the one Hermes names. HTTPS, no redirects, the platform's certificate checks and
- * one deadline per request come with [LlmClient].
+ * connection's model always replaces the one Hermes names. HTTPS (or the http:// endpoint the user typed), no
+ * redirects, the platform's certificate checks and one deadline per request come with [LlmClient].
  */
 class LlmHermesModel(private val client: LlmClient, private val connection: LlmConnection) : HermesModel {
     override suspend fun complete(request: JSONObject): JSONObject {

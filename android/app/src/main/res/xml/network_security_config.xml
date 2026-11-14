@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- HTTPS only, for the LLM requests and the in-app browser alike, with the system's certificate authorities. Android
-     cannot allow cleartext for just the one host a user types at run time, so http:// stays off everywhere; the
-     settings refuse an http:// LLM endpoint and the browser offers to open an http:// page in another browser. -->
+<!-- Cleartext stays off for the whole app, with the system's certificate authorities, for the LLM requests and the
+     in-app browser alike: the platform's HTTP stack and the WebView send nothing over http://, wherever a page, a form
+     or a redirect points them (WebView asks the app nothing about a form's POST redirected to http, so no code of the
+     app could stop that one), and the browser offers to open an http:// page in another browser. Android cannot permit
+     cleartext for just the one host a user types at run time, so an LLM endpoint the user typed with http:// (a local
+     LLM on the same Wi-Fi) is reached over the LLM client's own socket (llm/PlainHttp.kt), which this setting does not
+     govern. Keep cleartext off here. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
