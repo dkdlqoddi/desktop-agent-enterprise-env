@@ -161,6 +161,8 @@ GitHub Actions는 쓰지 않습니다. 대신 `npm run ci`가 설치된 Node.js�
 
 핵심 검사가 하나라도 실패하면 E2E는 건너뛰고, 끝에 통과·실패를 정리해 보여 줍니다. 처음에는 `npm ci`와 `npm run setup:python`으로 의존성을 준비하세요. 화면이나 메인 프로세스를 바꿨다면 관련 E2E 스펙(`npm run test:e2e -- tests/<이름>.spec.ts`)도 실행합니다. Windows exe는 Windows에서 `npm run build:exe`로 따로 빌드합니다.
 
+`main`에는 브랜치 보호 규칙이 없고 변경은 `main`에 바로 푸시합니다. 자동으로 막아 주는 검사가 없으니 푸시하기 전에 `npm run ci`가 모두 통과하는지 확인합니다.
+
 ## 월간 의존성 갱신
 
 Electron(Chromium 포함), Playwright의 Chromium, Python과 내장 Hermes는 보안 수정이 자주 나오므로 한 달에 한 번 올립니다. [Renovate](renovate.json) GitHub 앱을 설치하면 매달 1일에 나온 지 14일이 지난 릴리스로 PR이 올라오고, 설치하기 전에는 아래 순서를 직접 밟습니다.
