@@ -181,9 +181,8 @@ async function harness(
               { role: 'button', name: '이 위치에 저장하고 시작' },
             ],
           };
-        // The app opens on the chat once the Wiki is ready.
-        if (screen.view === 'chat')
-          return { controls: [{ role: 'input', name: '메시지', value: '' }] };
+        // The app opens on the chat once the Wiki is ready, which the reading leaves out and names (the user's alone).
+        if (screen.view === 'chat') return { controls: [], user_only: ['채팅'] };
         const controls = [
           { role: 'button', name: '위젯 편집' },
           { role: 'input', name: '가져올 링크 또는 경로', value: screen.input },

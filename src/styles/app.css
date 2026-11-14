@@ -2783,6 +2783,28 @@ dialog.drawer {
   outline: 3px solid var(--accent) !important;
   outline-offset: 1px !important;
 }
+/* What the user alone may use (data-user-only: the chat, the chat agent's settings, the trash, the web records) is
+   left out of what the local API reads off the screen and of its captures of the window (app-control.ts). For the one
+   task of a reading <html> carries data-screen-reading: visibility takes the text out of innerText and, unlike
+   display, keeps the layout and with it where the user scrolled to. While a capture is taken it carries
+   data-screen-capture: opacity leaves the areas undrawn and, unlike visibility, keeps the keyboard where the user is
+   typing. A transition outranks !important and would show the old value on, so none runs meanwhile. */
+html[data-screen-reading] [data-user-only],
+html[data-screen-reading] [data-user-only] * {
+  visibility: hidden !important;
+  transition: none !important;
+}
+html[data-screen-reading] [data-user-only]::before,
+html[data-screen-reading] [data-user-only]::after,
+html[data-screen-reading] [data-user-only] *::before,
+html[data-screen-reading] [data-user-only] *::after {
+  visibility: hidden !important;
+}
+html[data-screen-capture] [data-user-only],
+html[data-screen-capture] [data-user-only] * {
+  opacity: 0 !important;
+  transition: none !important;
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

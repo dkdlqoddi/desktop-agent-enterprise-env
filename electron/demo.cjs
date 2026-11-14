@@ -465,8 +465,9 @@ class DemoRun {
       () => this.click('이 위치에 저장하고 시작', 'button'),
       150_000,
     );
-    // The app opens on the chat; the demo works the dashboard.
-    await this.waitFor(async () => !!(await this.findControl((item) => item.name === '메시지')), {
+    // The app opens on the chat; the demo works the dashboard. The chat is the user's alone, which a reading of the
+    // screen leaves out and names: that it is there is all the demo needs.
+    await this.waitFor(async () => !!(await this.screen()).user_only?.includes('채팅'), {
       timeout: 90_000,
       message: 'Wiki를 연 뒤 첫 화면이 열리지 않았습니다.',
     });

@@ -11,11 +11,11 @@ import {
   editingDocument,
   fillControl,
   inTurn,
-  maskSecrets,
+  maskCapture,
   readScreen,
   refuseWhileWriting,
   scrollPanel,
-  unmaskSecrets,
+  unmaskCapture,
   watchDrafts,
 } from './app-control';
 import AgentChat from './agent-chat';
@@ -279,10 +279,11 @@ function control(stores: AppStores, type: string, params: Record<string, unknown
     // Before the window closes: what the user changed and has not saved.
     case 'unsaved':
       return { unsaved: changedForm() };
-    case 'mask_secrets':
-      return maskSecrets();
-    case 'unmask_secrets':
-      return unmaskSecrets();
+    // A capture of the window: what it may not show, and back as it was.
+    case 'mask_capture':
+      return maskCapture();
+    case 'unmask_capture':
+      return unmaskCapture();
     case 'open_document': {
       const terms = Array.isArray(params.terms) ? (params.terms as string[]) : [];
       actions.openDocument(text(params.id), terms.length ? { terms, sections: [] } : null);

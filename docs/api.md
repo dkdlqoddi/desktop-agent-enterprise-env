@@ -38,7 +38,7 @@ Private Agent 0.1.0이 AI 도구(Claude Code, Codex, OpenCode, Antigravity 등)�
 
 - `read`(조회만): 검색과 문서·할 일·대화·실행 기록 조회만 허용합니다. 아무것도 바꾸지 않습니다.
 - `write`(조회·변경·앱 제어): 문서·할 일·프롬프트·예약·자동 작업을 만들고 고치고 지우며(대화·실행 기록을 포함해 지운 것은 모두 휴지통으로 가고, 30일 안에 복원 가능), 등록한 사이트의 JIRA·Confluence 링크 가져오기·AI 분석·질문, Wiki 백업 만들기와 앱 화면 제어를 허용합니다. 이 PC의 파일·폴더 가져오기(이를 읽는 자동 작업 포함), 가져온 Office 문서의 원본 파일에 반영하기와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기, 백업 복원, LLM 연결·로그인 AI 분석 설정과 사이트 계정은 쓸 수 없습니다.
-- `full`(전체): 이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통만은 어느 범위에서도 AI 도구가 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 API로도 다룰 수 없습니다.
+- `full`(전체): 이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통만은 어느 범위에서도 AI 도구가 읽거나 캡처하거나 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 API로도 다룰 수 없습니다.
 
 메서드마다 범위가 있고, 범위마다 쓸 수 있는 허용 범위가 정해져 있습니다.
 
@@ -1125,7 +1125,7 @@ LLM 연결 설정 바꾸기
 
 ### 앱 제어 (`app`)
 
-사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요.
+사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통은 사용자만 다루는 곳이라, 허용 범위와 관계없이 화면 읽기에서 빠지고(읽은 글의 맨 앞에 뺀 영역을 적음) 캡처에는 비어 보이며 누르거나 입력할 수 없습니다.
 
 #### `app.status`
 
@@ -1208,19 +1208,19 @@ LLM 연결 설정 바꾸기
 
 #### `app.read_screen`
 
-지금 화면의 글과 누를 수 있는 항목
+지금 화면의 글과 누를 수 있는 항목 (사용자만 다루는 영역은 빼고)
 
 - 범위 `control`(앱 제어) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `app_read_screen`, `call_api`
-- `GET /api/v1/app/screen` — 지금 화면의 글과 누를 수 있는 항목
+- `GET /api/v1/app/screen` — 지금 화면의 글과 누를 수 있는 항목. 사용자만 다루는 영역은 빼고, 뺀 영역의 이름은 user_only에
 
 #### `app.screenshot`
 
-앱 창 화면 캡처 (PNG)
+앱 창 화면 캡처 (PNG, 사용자만 다루는 영역은 비움)
 
 - 범위 `control`(앱 제어) · 허용 범위 ‘조회·변경·앱 제어’ 이상
 - MCP: `app_screenshot`, `call_api`
-- `GET /api/v1/app/screenshot` — 앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64
+- `GET /api/v1/app/screenshot` — 앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64. 비밀 입력란은 점으로, 사용자만 다루는 영역은 비워서 캡처
   - `max_width` (query, integer) 최대 너비(px) 320~3840 [기본 1280]
   - `format` (query, string) 응답 형식 [png · json, 기본 "png"]
 
@@ -1830,13 +1830,13 @@ Type a search or question into the app's search box and run it, so the user sees
 
 화면 읽기 · 범위 `control` · 메서드 `app.read_screen`
 
-Read what the app shows now as text, with the buttons, tabs, links and inputs that app_click and app_fill can use.
+Read what the app shows now as text, with the buttons, tabs, links and inputs that app_click and app_fill can use. The chat, the web records, the chat agent's settings and the trash are the user's alone: they are left out at any access level, and the answer names those on the screen.
 
 #### `app_screenshot`
 
 화면 캡처 · 범위 `control` · 메서드 `app.screenshot`
 
-Take a screenshot of the app window (PNG). Passwords, keys and LLM header values show as dots. The window must not be minimized: use app_window show first.
+Take a screenshot of the app window (PNG). Passwords, keys and LLM header values show as dots. The chat, the web records, the chat agent's settings and the trash are the user's alone: they are left blank at any access level. The window must not be minimized: use app_window show first.
 
 - `max_width` (integer) Maximum width in pixels (320-3840, default 1280).
 

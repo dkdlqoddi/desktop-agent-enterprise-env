@@ -290,6 +290,32 @@ test('returns screenshots as images', async () => {
   assert.match(shot.content[1].text, /10×5/);
 });
 
+test('names the areas of the user alone that a reading or a capture left out, in its own words', async () => {
+  const { tool } = setup({
+    'app.read_screen': {
+      view: 'chat',
+      reader: null,
+      text: '[사용자만 다루는 영역이라 읽지 않았습니다: 채팅]\n\n홈',
+      controls: [{ role: 'button', name: '홈' }],
+      user_only: ['채팅'],
+    },
+    'app.screenshot': {
+      mime: 'image/png',
+      width: 10,
+      height: 5,
+      data: 'iVBORw==',
+      user_only: ['웹 기록', '관리 → 휴지통'],
+    },
+  });
+  const reading = (await tool('app_read_screen', {})).content[0].text;
+  assert.match(outside(reading), /^screen: chat\. Left out as the user's alone: 채팅\. What it/);
+  const shot = await tool('app_screenshot', {});
+  assert.equal(
+    shot.content[1].text,
+    "Screenshot of the app window, 10×5. Left blank as the user's alone: 웹 기록, 관리 → 휴지통.",
+  );
+});
+
 test('offers the manual and every document as resources, page by page', async () => {
   const documents = Array.from({ length: 100 }, (_, i) => ({
     ...doc,

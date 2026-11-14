@@ -275,10 +275,14 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     expect((await ai.tool('app_navigate', { view: 'home' })).isError).toBe(false);
 
     // The chat is the user's alone: an agent with a terminal, files and a browser on this PC carries out what is typed
-    // there, so a tool may look at it but neither types into it nor presses its buttons.
+    // there, so a tool may go there but neither reads it nor types into it nor presses its buttons.
     expect((await ai.tool('app_navigate', { view: 'chat' })).isError).toBe(false);
     await expect(chatBox(page)).toBeVisible();
-    expect((await ai.tool('app_read_screen')).content[0].text).toContain('메시지');
+    const chatScreen = (await ai.tool('app_read_screen')).content[0].text!;
+    expect(chatScreen).toContain("Left out as the user's alone: 채팅.");
+    expect(data(chatScreen)).toContain('[사용자만 다루는 영역이라 읽지 않았습니다: 채팅]');
+    expect(data(chatScreen)).not.toContain('메시지');
+    expect(data(chatScreen)).not.toContain('무엇을 맡길까요?');
     // One of the requests the chat offers above its box (what they say follows the app's data).
     const offered = page.getByRole('group', { name: '제안' }).getByRole('button').first();
     await expect(offered).toBeVisible();
@@ -297,9 +301,12 @@ test('AI tools: local API and MCP server with the admin page, manual, data, app 
     await expect(chatBox(page)).toHaveValue('');
     await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
 
-    // So are the web records: a tool may go there, but presses and types nothing on that screen.
+    // So are the web records: a tool may go there, but reads nothing of that screen and presses and types nothing on it.
     expect((await ai.tool('app_navigate', { view: 'records' })).isError).toBe(false);
     await expect(page.getByRole('heading', { name: '웹 기록', level: 1 })).toBeVisible();
+    const recordsScreen = (await ai.tool('app_read_screen')).content[0].text!;
+    expect(recordsScreen).toContain("Left out as the user's alone: 웹 기록.");
+    expect(data(recordsScreen)).not.toContain('열린 페이지 기록');
     for (const refused of [
       await ai.tool('app_click', { name: '열린 페이지 기록' }),
       await ai.tool('app_click', { name: 'CSV 내보내기' }),

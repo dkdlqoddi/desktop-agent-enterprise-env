@@ -183,6 +183,13 @@ function untrusted(text, limit = MAX_DATA) {
 const withData = (lead, data, next = '') =>
   [lead, untrusted(data), next].filter(Boolean).join('\n');
 
+// The areas the user alone may use that the screen held, which the app left out of a reading or a capture. Their
+// names are the app's own (채팅, 웹 기록, …), not the screen's data.
+const leftOut = (names, lead = 'Left out') =>
+  Array.isArray(names) && names.length
+    ? ` ${lead} as the user's alone: ${names.map((name) => clip(name, 40)).join(', ')}.`
+    : '';
+
 function sourceText(source) {
   if (!source) return 'written in the app';
   const label = SOURCE_LABELS[source.kind] ?? source.kind;
@@ -1114,7 +1121,7 @@ const TOOLS = [
     'app_read_screen',
     '화면 읽기',
     'control',
-    'Read what the app shows now as text, with the buttons, tabs, links and inputs that app_click and app_fill can use.',
+    "Read what the app shows now as text, with the buttons, tabs, links and inputs that app_click and app_fill can use. The chat, the web records, the chat agent's settings and the trash are the user's alone: they are left out at any access level, and the answer names those on the screen.",
     {},
     async (_args, ctx) => {
       const screen = await ctx.call('app.read_screen', {});
@@ -1124,9 +1131,10 @@ const TOOLS = [
             `- ${item.role}: ${item.name}${item.disabled ? ' (disabled)' : ''}${item.selected ? ' (selected)' : ''}${item.checked !== undefined ? ` (${item.checked ? 'on' : 'off'})` : ''}${item.value !== undefined ? ` = "${clip(item.value, 80)}"` : ''}`,
         )
         .join('\n');
-      // The screen shows documents and answers: its words and the names of its controls are data.
+      // The screen shows documents and answers: its words and the names of its controls are data. The areas left out
+      // are named by the app itself.
       return withData(
-        `screen: ${screen.view}${screen.reader ? ' + document panel' : ''}. What it shows, then the controls app_click and app_fill can use:`,
+        `screen: ${screen.view}${screen.reader ? ' + document panel' : ''}.${leftOut(screen.user_only)} What it shows, then the controls app_click and app_fill can use:`,
         `${screen.text}\n\ncontrols:\n${controls}`,
       );
     },
@@ -1135,7 +1143,7 @@ const TOOLS = [
     'app_screenshot',
     '화면 캡처',
     'control',
-    'Take a screenshot of the app window (PNG). Passwords, keys and LLM header values show as dots. The window must not be minimized: use app_window show first.',
+    "Take a screenshot of the app window (PNG). Passwords, keys and LLM header values show as dots. The chat, the web records, the chat agent's settings and the trash are the user's alone: they are left blank at any access level. The window must not be minimized: use app_window show first.",
     {
       max_width: integer('Maximum width in pixels (320-3840, default 1280).', {
         minimum: 320,
@@ -1146,7 +1154,10 @@ const TOOLS = [
       const shot = await ctx.call('app.screenshot', { max_width: args.max_width ?? 1280 });
       return [
         { type: 'image', data: shot.data, mimeType: shot.mime },
-        { type: 'text', text: `Screenshot of the app window, ${shot.width}×${shot.height}.` },
+        {
+          type: 'text',
+          text: `Screenshot of the app window, ${shot.width}×${shot.height}.${leftOut(shot.user_only, 'Left blank')}`,
+        },
       ];
     },
   ),

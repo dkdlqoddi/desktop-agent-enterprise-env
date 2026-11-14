@@ -60,7 +60,8 @@ const GATEWAY_STATES: Record<HermesGateway['state'], string> = {
 // runs without asking and may not touch (hermes-guard.tsx), what it remembers (hermes-memory.tsx) and the messenger
 // gateway, and how long and how far a request may go (hermes-limits.tsx). Model calls always go through 관리 → LLM
 // 연결, so model-provider keys are refused here. All of
-// it is the user's alone (data-user-only): an AI tool's screen control cannot type or press here at any access level.
+// it is the user's alone (data-user-only): an AI tool's screen control cannot type or press here, nor read or capture
+// it, at any access level.
 export default function HermesSection() {
   const { notify } = useActions();
   const [state, setState] = useState<HermesSettings | null>(null);
@@ -199,8 +200,9 @@ export default function HermesSection() {
       <p className="section-lead">
         채팅의 내장 Hermes 에이전트가 쓰는 서비스 키와 설정입니다. 키는 운영체제 보안 저장소에
         암호화해 두며, 화면과 AI 도구에는 값이 아니라 설정 여부만 보입니다. 모델 호출은 항상 관리 →
-        LLM 연결로만 하므로, 모델 제공자 키는 여기에 넣을 수 없습니다. 이 화면은 사용자만 바꿀 수
-        있습니다(AI 도구의 화면 제어는 어느 허용 범위에서도 여기에 입력하거나 누르지 못합니다).
+        LLM 연결로만 하므로, 모델 제공자 키는 여기에 넣을 수 없습니다. 이 화면은 사용자만 보고 바꿀
+        수 있습니다(AI 도구의 화면 제어는 어느 허용 범위에서도 여기에 입력하거나 누르지 못하고, 이
+        화면을 읽거나 캡처하지도 못합니다).
       </p>
       {!state.secure_storage && (
         <p className="admin-warn">

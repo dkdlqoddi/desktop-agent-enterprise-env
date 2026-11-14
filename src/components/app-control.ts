@@ -29,6 +29,12 @@ const TEXT_LIMIT = 20_000;
 const CONTROL_LIMIT = 200;
 // An input's value as the screen reading shows it; a document being written can be millions of characters.
 const VALUE_LIMIT = 500;
+// What the user alone may use (data-user-only: the areas named with guard below) is left out of what a tool reads off
+// the screen and of a capture of the window: the stylesheet leaves it undrawn while <html> carries one of these
+// (styles/app.css).
+const USER_ONLY_AREA = '[data-user-only]';
+const READING = 'data-screen-reading';
+const CAPTURING = 'data-screen-capture';
 
 const squash = (value: string) => value.replace(/\s+/g, ' ').trim();
 const fold = (value: string) => squash(value).toLowerCase();
@@ -205,25 +211,45 @@ function describe(element: Element): ScreenControl {
   return control;
 }
 
+// What the screen shows as text, with the controls a tool may use. What the user alone may use is left out, its text
+// and its controls, and the text begins by naming those areas, so that a tool knows why it sees nothing of them
+// (`user_only` names them too). The stylesheet hides them while <html> carries READING, which is set and removed
+// within this one task: the screen is never drawn without them, and hiding by visibility, unlike display, keeps the
+// layout and with it where the user scrolled to.
 export function readScreen() {
-  const text = document.body.innerText
+  const user_only = areaNames(userOnlyAreas());
+  const root = document.documentElement;
+  root.setAttribute(READING, '');
+  let shown: string;
+  try {
+    shown = document.body.innerText;
+  } finally {
+    root.removeAttribute(READING);
+  }
+  const text = shown
     .replace(/[ \t]+/g, ' ')
     .replace(/\n\s*\n\s*\n+/g, '\n\n')
     .trim();
   const controls = [
     ...document.querySelectorAll(`${Object.values(CLICKABLE).join(', ')}, ${FIELDS}`),
   ]
-    .filter(visible)
+    .filter((element) => !element.closest(USER_ONLY_AREA) && visible(element))
     .slice(0, CONTROL_LIMIT)
     .map(describe)
     .filter((control) => control.name || control.role === 'input');
+  const note = user_only.length
+    ? `[사용자만 다루는 영역이라 읽지 않았습니다: ${user_only.join(', ')}]\n\n`
+    : '';
   return {
-    text: text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}…` : text,
+    text: note + (text.length > TEXT_LIMIT ? `${text.slice(0, TEXT_LIMIT)}…` : text),
     controls,
+    user_only,
   };
 }
 
-// The one element `wanted` names: exact names first, then names containing it; `index` picks among several.
+// The one element `wanted` names: exact names first, then names containing it; `index` picks among several. The
+// controls of an area the user alone may use are none of a tool's to find, as the screen reading leaves them out: a
+// name is never matched against theirs, and no message lists them.
 function pick<T extends Element>(
   elements: T[],
   names: (element: T) => string[],
@@ -231,15 +257,13 @@ function pick<T extends Element>(
   target: Target,
 ) {
   const goal = fold(wanted);
-  const exact = elements.filter((element) => names(element).some((name) => fold(name) === goal));
+  const usable = elements.filter((element) => !element.closest(USER_ONLY_AREA));
+  const exact = usable.filter((element) => names(element).some((name) => fold(name) === goal));
   const found =
     target.exact || exact.length
       ? exact
-      : elements.filter((element) => names(element).some((name) => fold(name).includes(goal)));
-  if (!found.length)
-    throw new Error(
-      `‘${wanted}’에 맞는 항목이 화면에 없습니다. 화면 읽기(app.read_screen)로 이름을 확인해 주세요.`,
-    );
+      : usable.filter((element) => names(element).some((name) => fold(name).includes(goal)));
+  if (!found.length) throw new Error(notFound(wanted));
   if (target.index !== null && target.index !== undefined) {
     if (!found[target.index])
       throw new Error(
@@ -270,7 +294,7 @@ const USER_ONLY_OTHER =
   '이 영역은 사용자만 다룰 수 있어, AI 도구는 허용 범위와 관계없이 여기에 입력하거나 그 버튼을 누를 수 없습니다.';
 
 // The areas the user alone may use, by the value of their data-user-only: what an AI tool is told such an area is
-// called, and why it may not type or press there.
+// called, when the screen reading and a capture leave it out, and why it may not type or press there.
 type UserOnlyArea = { name: string; refusal: string };
 const USER_ONLY_AREAS = new Map<string, UserOnlyArea>([
   ['chat', { name: '채팅', refusal: USER_ONLY }],
@@ -284,6 +308,26 @@ const userOnlyArea = (area: Element): UserOnlyArea =>
     refusal: USER_ONLY_OTHER,
   };
 
+// The areas the user alone may use that the screen holds now, each once (not one inside another) and in the page's
+// order. Left undrawn while the window is captured, they are on the screen all the same: their boxes are asked, not
+// their drawing.
+function userOnlyAreas() {
+  return [...document.querySelectorAll(USER_ONLY_AREA)].filter(
+    (area) => !area.parentElement?.closest(USER_ONLY_AREA) && area.getClientRects().length > 0,
+  );
+}
+const areaNames = (areas: Element[]) => [...new Set(areas.map((area) => userOnlyArea(area).name))];
+
+// Nothing a tool may use goes by `wanted`. With an area the user alone may use on the screen, the answer is why that
+// area is out of reach, whether or not it holds such a control, so that it tells nothing of what is in there.
+function notFound(wanted: string) {
+  const areas = userOnlyAreas();
+  if (!areas.length)
+    return `‘${wanted}’에 맞는 항목이 화면에 없습니다. 화면 읽기(app.read_screen)로 이름을 확인해 주세요.`;
+  const reasons = new Set(areas.map((area) => userOnlyArea(area).refusal));
+  return `${[...reasons].join(' ')} 그 밖의 화면에는 ‘${wanted}’에 맞는 항목이 없습니다.`;
+}
+
 // The chat belongs to the user alone (data-user-only="chat"): what is typed there is carried out by an agent with a
 // terminal, files and a browser on this PC, and the prompt that asks before a dangerous command is the user's own
 // decision. No access level reaches it, "full" neither, nor does a demo recording: the words of a document a tool has
@@ -291,12 +335,14 @@ const userOnlyArea = (area: Element): UserOnlyArea =>
 // 에이전트, data-user-only="agent") are the user's in the same way: an MCP server there is a command the agent starts
 // without asking, and the accounts of the messenger gateway may write to the agent and answer its approvals from
 // outside the PC. So are the trash (data-user-only="trash"), which holds the chat cleared and the web records deleted,
-// and the web records themselves (data-user-only="records"), which the local API's methods do not reach either.
+// and the web records themselves (data-user-only="records"), which the local API's methods do not reach either. None
+// of them is read or captured for a tool either (readScreen, maskCapture), nor does a tool learn their controls'
+// names: pick never matches them, and this refuses one should it be reached all the same.
 // The admin page and passwords decide what the API itself may do, and the import box and a document's update from its
 // file read this PC's files (marked data-requires-full); only the "full" access level reaches them. So does the
 // button that carries out a deletion or an emptying (data-destructive): the words of a document may ask for it.
 function guard(element: Element, target: Target) {
-  const own = element.closest('[data-user-only]');
+  const own = element.closest(USER_ONLY_AREA);
   if (own) throw new Error(userOnlyArea(own).refusal);
   if (target.allow_admin) return;
   if (element.closest('[data-destructive]'))
@@ -408,14 +454,17 @@ export async function fillControl(
   return { filled: nameOf(element), submitted: !!params.submit };
 }
 
-// Passwords, keys and header values drawn as dots while the window is captured (electron/app-control.cjs), also those
-// an eye button shows; drawn as they were once captured, or after a few seconds should that word never come.
+// While the window is captured (electron/app-control.cjs): passwords, keys and header values are drawn as dots, also
+// those an eye button shows, and what the user alone may use is not drawn at all (CAPTURING on <html>,
+// styles/app.css), an area that comes onto the screen meanwhile neither. All is drawn as before once captured, or
+// after a few seconds should that word never come. The attribute is set also when the screen holds none of it now, so
+// the main process lifts it after every capture.
 const DOTS = '-webkit-text-security';
 let masked: { element: HTMLElement; value: string; priority: string }[] = [];
 let unmaskTimer: ReturnType<typeof setTimeout> | undefined;
 
-export async function maskSecrets() {
-  unmaskSecrets();
+export async function maskCapture() {
+  unmaskCapture();
   masked = [...document.querySelectorAll<HTMLElement>('input, textarea')]
     .filter(secret)
     .map((element) => ({
@@ -423,22 +472,25 @@ export async function maskSecrets() {
       value: element.style.getPropertyValue(DOTS),
       priority: element.style.getPropertyPriority(DOTS),
     }));
-  if (!masked.length) return { secrets: 0, painted: true };
+  const user_only = areaNames(userOnlyAreas());
+  document.documentElement.setAttribute(CAPTURING, '');
   for (const { element } of masked) element.style.setProperty(DOTS, 'disc', 'important');
-  unmaskTimer = setTimeout(unmaskSecrets, 5000);
-  // Shown once a frame has been drawn with the dots: the second frame's callback comes after it. A window that draws
-  // nothing (covered, throttled) never gets there.
+  unmaskTimer = setTimeout(unmaskCapture, 5000);
+  // Answered once a frame has been drawn so: the second frame's callback comes after it. So also when the screen holds
+  // nothing to leave out now, as the window still shows its last frame until it draws one, which may be from before
+  // (the chat a tool has just moved away from). A window that draws nothing (covered, throttled) never gets there.
   const painted = await Promise.race([
     new Promise<boolean>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))),
     ),
     pause(1000).then(() => false),
   ]);
-  return { secrets: masked.length, painted };
+  return { secrets: masked.length, user_only, painted };
 }
 
-export function unmaskSecrets() {
+export function unmaskCapture() {
   clearTimeout(unmaskTimer);
+  document.documentElement.removeAttribute(CAPTURING);
   for (const { element, value, priority } of masked)
     element.style.setProperty(DOTS, value, priority);
   masked = [];

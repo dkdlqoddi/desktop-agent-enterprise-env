@@ -73,7 +73,7 @@
     },
     {
       "name": "app",
-      "description": "앱 제어 — 사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요."
+      "description": "앱 제어 — 사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통은 사용자만 다루는 곳이라, 허용 범위와 관계없이 화면 읽기에서 빠지고(읽은 글의 맨 앞에 뺀 영역을 적음) 캡처에는 비어 보이며 누르거나 입력할 수 없습니다."
     }
   ],
   "paths": {
@@ -5817,7 +5817,7 @@
       "get": {
         "operationId": "get_app_screen",
         "tags": ["app"],
-        "summary": "지금 화면의 글과 누를 수 있는 항목",
+        "summary": "지금 화면의 글과 누를 수 있는 항목. 사용자만 다루는 영역은 빼고, 뺀 영역의 이름은 user_only에",
         "description": "메서드 app.read_screen · 범위 control",
         "x-scope": "control",
         "parameters": [],
@@ -5849,7 +5849,7 @@
       "get": {
         "operationId": "get_app_screenshot",
         "tags": ["app"],
-        "summary": "앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64",
+        "summary": "앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64. 비밀 입력란은 점으로, 사용자만 다루는 영역은 비워서 캡처",
         "description": "메서드 app.screenshot · 범위 control",
         "x-scope": "control",
         "parameters": [

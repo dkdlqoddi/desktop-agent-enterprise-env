@@ -22,7 +22,7 @@ const ACCESS_LEVELS = [
     id: 'full',
     label: '전체',
     description:
-      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통만은 어느 범위에서도 AI 도구가 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 API로도 다룰 수 없습니다.',
+      '이 PC의 파일·폴더 가져오기(가져온 파일의 본문을 AI 도구가 읽게 됨), 가져온 Office 문서의 원본 파일에 반영하기(이 PC의 원본 파일을 고침)와 원본 백업 복원, 등록하지 않은 사이트의 링크, 휴지통 비우기(영구 삭제), 백업으로 Wiki 되돌리기, LLM 연결·로그인 AI 분석 설정, 사이트 계정과 로그인 창, 관리 화면에서의 클릭·입력과 삭제 확인까지 모두 허용합니다. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통만은 어느 범위에서도 AI 도구가 읽거나 캡처하거나 입력하거나 누를 수 없고(사용자만), 웹 기록과 그 예약은 API로도 다룰 수 없습니다.',
   },
 ];
 const DEFAULT_ACCESS = 'read';
@@ -320,8 +320,11 @@ const METHODS = {
   'app.open_run': method('control', '문서 창에서 실행 기록 열기'),
   'app.new_document': method('control', '새 문서 편집 창 열기 (저장은 사용자가)'),
   'app.close_reader': method('control', '문서 창 닫기'),
-  'app.read_screen': method('control', '지금 화면의 글과 누를 수 있는 항목'),
-  'app.screenshot': method('control', '앱 창 화면 캡처 (PNG)'),
+  'app.read_screen': method(
+    'control',
+    '지금 화면의 글과 누를 수 있는 항목 (사용자만 다루는 영역은 빼고)',
+  ),
+  'app.screenshot': method('control', '앱 창 화면 캡처 (PNG, 사용자만 다루는 영역은 비움)'),
   'app.click': method('control', '화면의 버튼·탭·링크를 이름으로 누르기'),
   'app.fill': method('control', '화면의 입력란을 이름으로 채우기'),
   'app.notify': method('control', '앱 안내 또는 시스템 알림 보이기'),
@@ -1159,7 +1162,7 @@ const GROUPS = [
     id: 'app',
     title: '앱 제어',
     description:
-      '사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요.',
+      '사용자가 보고 있는 데스크톱 앱을 다룹니다. 화면을 바꾸는 요청은 사용자의 작업을 방해하지 않도록 필요할 때만 쓰세요. 채팅·웹 기록 화면과 관리 → 채팅 에이전트·휴지통은 사용자만 다루는 곳이라, 허용 범위와 관계없이 화면 읽기에서 빠지고(읽은 글의 맨 앞에 뺀 영역을 적음) 캡처에는 비어 보이며 누르거나 입력할 수 없습니다.',
     routes: [
       route('GET', '/app', 'app.status', '앱·창·현재 화면·저장소·LLM 상태'),
       route('POST', '/app/window', 'app.window', '창 다루기', {
@@ -1193,12 +1196,17 @@ const GROUPS = [
         { title: string('제목'), content: string('본문 Markdown') },
       ),
       route('POST', '/app/close-reader', 'app.close_reader', '문서 창 닫기'),
-      route('GET', '/app/screen', 'app.read_screen', '지금 화면의 글과 누를 수 있는 항목'),
+      route(
+        'GET',
+        '/app/screen',
+        'app.read_screen',
+        '지금 화면의 글과 누를 수 있는 항목. 사용자만 다루는 영역은 빼고, 뺀 영역의 이름은 user_only에',
+      ),
       route(
         'GET',
         '/app/screenshot',
         'app.screenshot',
-        '앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64',
+        '앱 창 캡처. 기본은 PNG 이미지, format=json이면 base64. 비밀 입력란은 점으로, 사용자만 다루는 영역은 비워서 캡처',
         {
           max_width: integer('최대 너비(px) 320~3840', {
             default: 1280,

@@ -102,8 +102,8 @@ function useTrashPages(kind: string) {
 //
 // It is the user's alone (data-user-only="trash"): what the chat and the web records put here is no AI tool's to
 // restore or delete, as the chat and the web records are not, so the local API's screen control presses and types
-// nothing here at any access level (app-control.ts guard). A tool has trash.list, trash.restore and trash.purge, which
-// leave those entries out (electron/trash.cjs).
+// nothing here, and neither reads nor captures it, at any access level (app-control.ts). A tool has trash.list,
+// trash.restore and trash.purge, which leave those entries out (electron/trash.cjs).
 export default function TrashSection() {
   const { notify, invalidate } = useActions();
   const counts = useQuery<TrashEntries>('trash.list', COUNTS);

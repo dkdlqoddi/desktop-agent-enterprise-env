@@ -66,15 +66,21 @@ class FakeNotification extends EventEmitter {
   }
 }
 
-function setup() {
+function setup(options = {}) {
   const fake = fakeWindow();
   const control = new AppControl({
     window: () => fake.win,
     Notification: FakeNotification,
     timeout: 200,
+    ...options,
   });
   return { control, ...fake };
 }
+
+// The commands sent so far, by their type.
+const types = (sent) => sent.map((item) => item.payload.type);
+// Lets the promises in flight settle, such as a capture's turn coming.
+const settled = () => new Promise((resolve) => setImmediate(resolve));
 
 test('sends commands to the screen once it is ready, and settles them with its reply', async () => {
   const { control, sent } = setup();
@@ -131,42 +137,106 @@ test('sends one command at a time, and never one its caller has given up on', as
   assert.equal(sent.length, 3);
 });
 
-test('captures passwords, keys and header values as dots, or not at all', async () => {
+test('captures with passwords as dots and what the user alone may use left blank, or not at all', async () => {
   const { control, sent, win } = setup();
   const captured = [];
   const capture = win.webContents.capturePage;
   win.webContents.capturePage = () => {
-    captured.push(sent.map((item) => item.payload.type));
+    captured.push(types(sent));
     return capture();
   };
   control.attach();
   const reply = (result) => control.settle({ id: sent.at(-1).payload.id, ok: true, result });
   const shot = control.screenshot({ max_width: 1280 });
-  assert.equal(sent.at(-1).payload.type, 'mask_secrets');
-  reply({ secrets: 2, painted: true });
-  assert.equal((await shot).width, 1280);
-  await new Promise((resolve) => setImmediate(resolve));
-  // Captured once the dots were drawn, and drawn as they were after.
-  assert.deepEqual(captured, [['mask_secrets']]);
-  assert.equal(sent.at(-1).payload.type, 'unmask_secrets');
+  await settled();
+  assert.equal(sent.at(-1).payload.type, 'mask_capture');
+  reply({ secrets: 2, user_only: ['채팅'], painted: true });
+  const taken = await shot;
+  assert.equal(taken.width, 1280);
+  // The areas left blank are named with the picture.
+  assert.deepEqual(taken.user_only, ['채팅']);
+  // Captured once the screen was drawn so, and drawn as before after.
+  assert.deepEqual(captured, [['mask_capture']]);
+  assert.equal(sent.at(-1).payload.type, 'unmask_capture');
   reply({ shown: true });
-  // A window that could not draw them (covered, throttled) is not captured.
-  const covered = control.screenshot({});
-  reply({ secrets: 1, painted: false });
-  await assert.rejects(covered, /가린 화면/);
-  await new Promise((resolve) => setImmediate(resolve));
+  // A window that could not draw a frame so (covered, throttled) is not captured: neither the dots nor the blank
+  // areas, nor a screen with nothing to leave out now, as the window would show a frame from before (the chat a tool
+  // has just moved away from).
+  for (const mask of [
+    { secrets: 1, user_only: [], painted: false },
+    { secrets: 0, user_only: ['웹 기록'], painted: false },
+    { secrets: 0, user_only: [], painted: false },
+  ]) {
+    const covered = control.screenshot({});
+    await settled();
+    reply(mask);
+    await assert.rejects(covered, /가린 화면/);
+    assert.equal(sent.at(-1).payload.type, 'unmask_capture');
+    reply({ shown: true });
+  }
   assert.equal(captured.length, 1);
-  assert.equal(sent.at(-1).payload.type, 'unmask_secrets');
-  reply({ shown: true });
-  // Nothing secret on the screen: nothing to draw again.
+  // Nothing to leave out on the screen: the screen is told the capture is over all the same, since it leaves out an
+  // area that comes meanwhile too.
   const plain = control.screenshot({});
-  reply({ secrets: 0, painted: true });
-  await plain;
-  assert.equal(sent.at(-1).payload.type, 'mask_secrets');
-  // A screen that does not answer is not captured.
-  const silent = control.screenshot({});
-  await assert.rejects(silent, /응답하지 않습니다/);
+  await settled();
+  reply({ secrets: 0, user_only: [], painted: true });
+  assert.deepEqual((await plain).user_only, []);
+  assert.deepEqual(types(sent).slice(-2), ['mask_capture', 'unmask_capture']);
+  reply({ shown: true });
+  // A screen that does not answer is not captured, nor one still loading, while the window may show the one before.
+  await assert.rejects(control.screenshot({}), /응답하지 않습니다/);
+  control.detach();
+  await assert.rejects(control.screenshot({}), /준비되지 않았습니다/);
   assert.equal(captured.length, 2);
+});
+
+test('takes one capture at a time, so that one ending draws nothing back while another is taken', async () => {
+  const { control, sent, win } = setup();
+  const releases = [];
+  const capture = win.webContents.capturePage;
+  win.webContents.capturePage = () =>
+    new Promise((resolve) => releases.push(() => resolve(capture())));
+  control.attach();
+  const reply = (result) => control.settle({ id: sent.at(-1).payload.id, ok: true, result });
+  const first = control.screenshot({});
+  const second = control.screenshot({});
+  await settled();
+  reply({ secrets: 0, user_only: ['채팅'], painted: true });
+  await settled();
+  // The first is being captured: the second has not asked the screen for anything yet.
+  assert.deepEqual(types(sent), ['mask_capture']);
+  releases.shift()();
+  assert.deepEqual((await first).user_only, ['채팅']);
+  // The first's end reaches the screen before the second's beginning.
+  assert.deepEqual(types(sent), ['mask_capture', 'unmask_capture']);
+  reply({ shown: true });
+  await settled();
+  assert.deepEqual(types(sent), ['mask_capture', 'unmask_capture', 'mask_capture']);
+  reply({ secrets: 0, user_only: ['채팅'], painted: true });
+  await settled();
+  releases.shift()();
+  assert.deepEqual((await second).user_only, ['채팅']);
+  assert.equal(sent.at(-1).payload.type, 'unmask_capture');
+});
+
+test('throws a capture away that took so long that the screen may have drawn all again', async () => {
+  let clock = 0;
+  const { control, sent, win } = setup({ now: () => clock });
+  const capture = win.webContents.capturePage;
+  win.webContents.capturePage = async () => {
+    clock += 3500;
+    return capture();
+  };
+  control.attach();
+  const shot = control.screenshot({});
+  await settled();
+  control.settle({
+    id: sent.at(-1).payload.id,
+    ok: true,
+    result: { secrets: 0, user_only: ['관리 → 휴지통'], painted: true },
+  });
+  await assert.rejects(shot, /너무 오래/);
+  assert.equal(sent.at(-1).payload.type, 'unmask_capture');
 });
 
 test('reloads the screen only while the user has nothing unsaved on it', async () => {
@@ -229,12 +299,21 @@ test('moves, shows and zooms the window within its limits', () => {
 });
 
 test('captures the window as PNG, scaled down, but not while it is minimized', async () => {
-  const { control, state } = setup();
-  const shot = await control.screenshot({ max_width: 1280 });
-  assert.deepEqual([shot.mime, shot.width, shot.height], ['image/png', 1280, 800]);
-  assert.equal(Buffer.from(shot.data, 'base64').toString(), 'png 1280x800');
+  const { control, state, sent } = setup();
+  control.attach();
+  const shot = control.screenshot({ max_width: 1280 });
+  await settled();
+  control.settle({
+    id: sent.at(-1).payload.id,
+    ok: true,
+    result: { secrets: 0, user_only: [], painted: true },
+  });
+  const taken = await shot;
+  assert.deepEqual([taken.mime, taken.width, taken.height], ['image/png', 1280, 800]);
+  assert.equal(Buffer.from(taken.data, 'base64').toString(), 'png 1280x800');
   state.minimized = true;
   await assert.rejects(control.screenshot({}), /최소화/);
+  assert.equal(sent.length, 2);
 });
 
 test('checks navigation and passes the access level to clicks and typing', async () => {

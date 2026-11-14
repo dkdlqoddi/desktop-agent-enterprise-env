@@ -2,6 +2,10 @@ const { randomUUID } = require('node:crypto');
 const { ADMIN_SECTIONS, ApiError, TABS, VIEWS, WINDOW_ACTIONS } = require('./api-catalog.cjs');
 
 const ROLES = ['button', 'tab', 'link', 'checkbox', 'switch', 'option'];
+// How long a capture may take once the screen has left out what it may not show. The screen draws that again by itself
+// five seconds after it began (src/components/app-control.ts), which includes up to a second of waiting for the frame
+// drawn without it.
+const CAPTURE_LIMIT = 3000;
 
 function text(value, name, limit, required = true) {
   if (value === undefined || value === null || value === '') {
@@ -23,12 +27,20 @@ function optionalInteger(value, name, min, max) {
 // Lets the local API drive the desktop app: the window itself here, and the screen through commands that the renderer
 // answers (src/components/app-control.ts) once it has registered for them after each load.
 class AppControl {
-  constructor({ window, Notification, timeout = 10_000, minWidth = 1060, minHeight = 720 }) {
+  constructor({
+    window,
+    Notification,
+    timeout = 10_000,
+    minWidth = 1060,
+    minHeight = 720,
+    now = Date.now,
+  }) {
     this.window = window;
     this.Notification = Notification;
     this.timeout = timeout;
     this.minWidth = minWidth;
     this.minHeight = minHeight;
+    this.now = now;
     this.ready = false;
     this.pending = new Map();
     this.notifications = new Set();
@@ -36,6 +48,8 @@ class AppControl {
     // same batch of an AI tool's calls cannot land while a fill waits to submit its form.
     this.waiting = [];
     this.current = null;
+    // Captures of the window, one after another: one ending would otherwise draw again what another is capturing.
+    this.capturing = Promise.resolve();
   }
 
   attach() {
@@ -208,7 +222,16 @@ class AppControl {
     return this.windowState();
   }
 
-  async screenshot(params) {
+  screenshot(params) {
+    const run = this.capturing.then(() => this.capture(params));
+    this.capturing = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
+  async capture(params) {
     const win = this.live();
     const width = optionalInteger(params.max_width, 'max_width', 320, 3840) ?? 1280;
     if (win.isMinimized() || !win.isVisible())
@@ -216,15 +239,27 @@ class AppControl {
         '창이 최소화되었거나 숨겨져 있어 캡처할 수 없습니다. app.window의 show로 창을 연 뒤 다시 시도해 주세요.',
       );
     // Passwords, keys and LLM header values never show in a capture, also while their eye button shows them: the
-    // screen draws them as dots for it, and as before afterwards. A screen that cannot say it did so (one that does not
-    // answer) is not captured; one still loading has none to show.
-    const mask = this.ready ? await this.command('mask_secrets') : { secrets: 0 };
+    // screen draws them as dots for it. Nor does what the user alone may use (the chat, the chat agent's settings, the
+    // trash, the web records), which the screen leaves undrawn meanwhile, an area that comes onto it too, and names
+    // (`user_only`). It draws all as before afterwards. A screen that cannot say it has drawn a frame so is not
+    // captured, also when it holds nothing to leave out now, as the window shows its last frame until it draws one: one
+    // that does not answer, one that draws nothing (covered, throttled), and one still loading, while the window may
+    // show the screen before it.
+    const mask = await this.command('mask_capture');
+    const masked = this.now();
     try {
-      if (mask?.secrets && !mask.painted)
+      if (!mask?.painted)
         throw new Error(
-          '비밀번호·키 입력란을 가린 화면을 그리지 못해 캡처하지 않았습니다. app.window의 show로 창을 앞으로 가져온 뒤 다시 시도해 주세요.',
+          '비밀번호·키 입력란과 사용자만 다루는 영역을 가린 화면을 그리지 못해 캡처하지 않았습니다. app.window의 show로 창을 앞으로 가져온 뒤 다시 시도해 주세요.',
         );
+      const hidden = Array.isArray(mask.user_only) ? mask.user_only : [];
       let image = await win.webContents.capturePage();
+      // The screen draws them again by itself after a few seconds (app-control.ts): a capture that took that long may
+      // hold them.
+      if (this.now() - masked > CAPTURE_LIMIT)
+        throw new Error(
+          '화면을 캡처하는 데 너무 오래 걸려 그 캡처를 쓰지 않았습니다. 다시 시도해 주세요.',
+        );
       if (image.isEmpty())
         throw new Error('화면을 캡처하지 못했습니다. 창을 연 뒤 다시 시도해 주세요.');
       if (image.getSize().width > width) image = image.resize({ width, quality: 'good' });
@@ -234,13 +269,16 @@ class AppControl {
         width: size.width,
         height: size.height,
         data: image.toPNG().toString('base64'),
+        user_only: hidden,
       };
     } finally {
-      // Also when the window has gone meanwhile (the screen then draws them again by itself).
-      if (mask?.secrets)
-        Promise.resolve()
-          .then(() => this.command('unmask_secrets'))
-          .catch(() => {});
+      // Always, as the screen leaves undrawn also an area that came meanwhile, and in line before the next capture's
+      // beginning. A window gone meanwhile has nothing to tell: the screen then draws all again by itself.
+      try {
+        this.command('unmask_capture').catch(() => {});
+      } catch {
+        // The window is closed.
+      }
     }
   }
 
