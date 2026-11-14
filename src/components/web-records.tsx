@@ -31,7 +31,7 @@ import {
 import Confirm from './confirm';
 import EmptyState from './empty-state';
 import Modal from './modal';
-import { useActions, useWorkspaceTab } from './state';
+import { useUserOnlyNotices, useWorkspaceTab } from './state';
 
 const PAGE = 50;
 const KINDS = [
@@ -63,7 +63,8 @@ type Filters = { site: string; kind: string; text: string; since: string; until:
 const EMPTY: Filters = { site: '', kind: '', text: '', since: '', until: '' };
 
 export default function WebRecords() {
-  const { notify, undoable } = useActions();
+  // What the records' screen tells, its 되돌리기 too, is the user's alone as the records are.
+  const { notify, undoable } = useUserOnlyNotices('records');
   const tab = useWorkspaceTab();
   const [sites, setSites] = useState<WebSite[]>([]);
   const [filters, setFilters] = useState<Filters>(EMPTY);

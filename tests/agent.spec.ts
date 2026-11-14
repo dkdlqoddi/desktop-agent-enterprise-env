@@ -173,8 +173,9 @@ test('agent chat: the agent opens a page and records its ad live, and the record
     await expect(pending).toHaveCount(0);
     await expect(chatBox(page)).toBeEnabled();
 
-    // Clearing the conversation asks first, with the button an AI tool may press only at the "full" access level. It
-    // goes to the trash, from where 되돌리기 brings it back as it was.
+    // Clearing the conversation asks first, with a confirming button marked as a deletion's. It goes to the trash, from
+    // where 되돌리기 brings it back as it was. Both, like the whole chat and its messages, are the user's alone: no AI
+    // tool presses them at any access level (tests/user-only.spec.ts).
     const clearChat = async () => {
       await page.getByRole('button', { name: '대화 비우기' }).click();
       const confirm = page.getByRole('group', { name: /대화를 모두 휴지통으로 옮길까요\?/ });

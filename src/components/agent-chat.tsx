@@ -52,7 +52,7 @@ import MessengerConversations from './agent-messenger';
 import { useChatFocus } from './chat-focus';
 import Confirm from './confirm';
 import EmptyState from './empty-state';
-import { useActions, useAgentTurn, useStores } from './state';
+import { useActions, useAgentTurn, useStores, useUserOnlyNotices } from './state';
 
 const TOOL_ICONS: Record<AgentTool, LucideIcon> = {
   search_documents: FileSearch,
@@ -545,7 +545,8 @@ function Suggestions({ onPick }: { onPick: (text: string) => void }) {
 }
 
 export default function AgentChat() {
-  const { notify, undoable } = useActions();
+  // What the chat tells, its 되돌리기 too, is the user's alone as the chat is.
+  const { notify, undoable } = useUserOnlyNotices('chat');
   // The turn in progress lives outside this screen (agent-turn.ts): it goes on while another screen is shown, and is
   // shown again, with its progress and the question it waits on, when the chat is.
   const { turn } = useStores();

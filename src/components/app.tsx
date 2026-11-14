@@ -23,6 +23,7 @@ import Dashboard from './dashboard';
 import ErrorBoundary from './error-boundary';
 import { useJobsFeed } from './import-jobs';
 import Reader from './reader';
+import { isWebRoutine, WEB_ROUTINE_AREA } from './routine-form';
 import SearchPanel, { Omnibox, useSearchSession } from './search-panel';
 import {
   createAppStores,
@@ -158,9 +159,11 @@ function useMainProcess(stores: AppStores) {
       window.privateAgent?.onRoutineEvent?.((event) => {
         if (event.type === 'open') return actions.showRoutine(event.routine_id);
         void actions.invalidate(['routines']).catch(() => {});
-        // News or a failure; the main process shows a system notification instead while the window is unfocused.
+        // News or a failure; the main process shows a system notification instead while the window is unfocused. What
+        // a run of the web records' routine found is the user's alone, as the routine is.
+        const { notify } = isWebRoutine(event.kind) ? actions.userOnly(WEB_ROUTINE_AREA) : actions;
         if (event.notify && (event.changed || event.status === 'error') && document.hasFocus())
-          actions.notify(
+          notify(
             event.status === 'error'
               ? `자동 작업이 실패했습니다 · ${event.name}: ${event.error}`
               : `자동 작업 · ${event.name}: ${event.summary}`,

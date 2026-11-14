@@ -24,6 +24,7 @@ import { QueryCache, type PagedState, type QueryState, type Tag } from '@/lib/qu
 import { createStore, useStore, type Store } from '@/lib/store';
 import type { AdminSection, SiteDraft } from './admin';
 import { AgentTurn, NO_TURN, type AgentTurnState } from './agent-turn';
+import type { UserOnly } from './app-control';
 import { AnswerStream, pending, type AnswersState, type LiveAnswer } from './answers';
 import { JobsFeed, NO_JOBS, type ImportJobs, type JobsState } from './import-jobs';
 import type { Focus, ReaderTarget } from './reader';
@@ -64,6 +65,10 @@ export type Actions = {
   notify: (message: string, error?: boolean, notice?: boolean) => void;
   // A message with a way back, e.g. 되돌리기 after documents went to the trash.
   undoable: (message: string, action: ToastAction) => void;
+  // The messages of an area the user alone may use (its data-user-only value, app-control.ts), such as the chat
+  // cleared with its 되돌리기: what they tell and the way back they offer are no AI tool's either (toast.tsx). The same
+  // pair for an area every time, as effects depend on them.
+  userOnly: (area: UserOnly) => Notices;
   savePreferences: (patch: Partial<Preferences>) => Promise<void>;
   reloadPreferences: () => Promise<void>;
   setSettings: (settings: Settings) => void;
@@ -205,10 +210,24 @@ export function createAppStores(): AppStores {
   };
   const notify = (message: string, error = false, notice = false) =>
     toast({ message, error, notice });
+  const areas = new Map<UserOnly, Notices>();
+  const userOnly = (area: UserOnly) => {
+    let notices = areas.get(area);
+    if (!notices) {
+      notices = {
+        notify: (message, error = false, notice = false) =>
+          toast({ message, error, notice, userOnly: area }),
+        undoable: (message, action) => toast({ message, error: false, action, userOnly: area }),
+      };
+      areas.set(area, notices);
+    }
+    return notices;
+  };
+  // What the chat's turn tells is the chat's, which is the user's alone.
   const turn = new AgentTurn({
     store: createStore<AgentTurnState>(NO_TURN),
     request: (method, params) => api(method, params),
-    notify,
+    notify: userOnly('chat').notify,
     // Told while another screen is shown, with the way to the chat; one the agent waits on stays until it is read.
     prompt: (message, waits) =>
       toast({
@@ -216,6 +235,7 @@ export function createAppStores(): AppStores {
         error: false,
         notice: waits,
         action: { label: '채팅 열기', run: () => navigate('chat') },
+        userOnly: 'chat',
       }),
     shown: () => session.get().view === 'chat',
   });
@@ -228,6 +248,7 @@ export function createAppStores(): AppStores {
     invalidate,
     notify,
     undoable: (message, action) => toast({ message, error: false, action }),
+    userOnly,
     savePreferences: (change) =>
       preferencesRequest(() => api<Preferences>('preferences.save', change), change),
     reloadPreferences: () => preferencesRequest(() => api<Preferences>('preferences.get')),
@@ -353,6 +374,9 @@ export function useAnalysis() {
 
 export const useActions = () => useStores().actions;
 export const useNotify = () => useStores().actions.notify;
+export type Notices = Pick<Actions, 'notify' | 'undoable'>;
+// The messages of an area the user alone may use (Actions.userOnly).
+export const useUserOnlyNotices = (area: UserOnly) => useStores().actions.userOnly(area);
 
 export function useSearch() {
   const search = useContext(SearchContext);

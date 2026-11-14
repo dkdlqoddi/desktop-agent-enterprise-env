@@ -116,10 +116,20 @@ test('notifies only news and failures, never a focused window, and only when the
     [false, false, true, false],
   );
   quiet.runner.stop();
-  const focused = setup({ focused: true, events: [[run()]] });
+  // The window is told each run's kind: what a run of the web records' routine found is a notice of the user's alone.
+  const focused = setup({
+    focused: true,
+    events: [[run(), run({ id: 'w', kind: 'web_capture', name: '노트북 광고 기록' })]],
+  });
   await focused.runner.tick();
   assert.equal(focused.notifications.length, 0);
-  assert.equal(focused.sent.length, 1);
+  assert.deepEqual(
+    focused.sent.map((event) => [event.run_id, event.kind]),
+    [
+      ['run-1', 'jira_watch'],
+      ['w', 'web_capture'],
+    ],
+  );
   focused.runner.stop();
 });
 

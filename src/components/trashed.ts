@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { api, type TrashRestored, type Trashed } from '@/lib/api';
 import type { Tag } from '@/lib/query';
+import type { UserOnly } from './app-control';
 import { useActions } from './state';
 
 // The deletes whose rows wait in the trash (trash.list, backend/agent/trash.py) for 30 days instead of being gone.
@@ -14,9 +15,13 @@ type Delete =
 
 // Deletes one of those and says so with 되돌리기, which brings it back from the trash (trash.restore) and reloads the
 // lists of `tags`. A delete that fails is the caller's to show. Nothing is said when there was nothing left to delete
-// (it was deleted elsewhere a moment before): the list the caller reloads shows it gone.
-export function useDiscard() {
-  const { notify, undoable, invalidate } = useActions();
+// (it was deleted elsewhere a moment before): the list the caller reloads shows it gone. What is deleted from an area
+// the user alone may use (`area`, such as a routine of the web records) is said in that area's messages, whose way
+// back no AI tool presses.
+export function useDiscard(area?: UserOnly) {
+  const actions = useActions();
+  const { invalidate } = actions;
+  const { notify, undoable } = area ? actions.userOnly(area) : actions;
   return useCallback(
     async (method: Delete, id: string, message: string, tags: readonly Tag[]) => {
       const { trash_ids: ids } = await api<Trashed>(method, { id });

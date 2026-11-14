@@ -44,9 +44,11 @@ import RoutineForm, {
   draftFrom,
   draftOf,
   leftRoutineForm,
+  isWebRoutine,
   RecipeNeeds,
   type RoutineDraft,
   userOnlyRoutine,
+  WEB_ROUTINE_AREA,
 } from '../routine-form';
 import { useNow } from '../run-history';
 import { useActions, useQuery, useRoutineFocus } from '../state';
@@ -114,8 +116,13 @@ function useCatalog() {
 // found, and the form that sets one up, in place of the list.
 export default function RoutinesWidget() {
   const routineFocus = useRoutineFocus();
-  const { notify, invalidate, watchJobs } = useActions();
+  const actions = useActions();
+  const { notify, invalidate, watchJobs } = actions;
   const discard = useDiscard();
+  // A routine of the web records is the user's alone (userOnlyRoutine), and so is what is said about it.
+  const discardWeb = useDiscard(WEB_ROUTINE_AREA);
+  const noticesOf = (kind: string) =>
+    isWebRoutine(kind) ? actions.userOnly(WEB_ROUTINE_AREA) : actions;
   const { catalog, error: catalogError, retry: retryCatalog } = useCatalog();
   // The routines load with the widget and again when they change (a run ended, an AI tool changed one). While a run is
   // queued or running, the main process sends them as they change (electron/job-progress.cjs), with what the run is
@@ -163,12 +170,12 @@ export default function RoutinesWidget() {
     if (row || !routines.some((routine) => routine.id === reveal)) setReveal(null);
     row?.scrollIntoView({ block: 'start', behavior: 'instant' });
   }, [reveal, routines, catalog, mode]);
-  async function act(key: string, action: () => Promise<unknown>) {
+  async function act(key: string, action: () => Promise<unknown>, kind = '') {
     setBusy(key);
     try {
       await action();
     } catch (error) {
-      notify((error as Error).message, true);
+      noticesOf(kind).notify((error as Error).message, true);
     } finally {
       setBusy('');
       // The list, and the results other widgets show: a deleted routine takes its results with it.
@@ -202,7 +209,7 @@ export default function RoutinesWidget() {
             const soon =
               !!routine.next_run_at &&
               new Date(routine.next_run_at).getTime() < Date.now() + 60_000;
-            notify(
+            noticesOf(routine.kind).notify(
               `‘${routine.name}’ 자동 작업을 저장했습니다.${
                 routine.enabled && routine.next_run_at
                   ? soon
@@ -269,8 +276,10 @@ export default function RoutinesWidget() {
                         const enabled = e.target.checked;
                         setFlipped((current) => ({ ...current, [routine.id]: enabled }));
                         // Kept until the change's own reload: a list read or sent before it is saved has the old state.
-                        void act(`toggle:${routine.id}`, () =>
-                          api('routines.toggle', { id: routine.id, enabled }),
+                        void act(
+                          `toggle:${routine.id}`,
+                          () => api('routines.toggle', { id: routine.id, enabled }),
+                          routine.kind,
                         ).then(() =>
                           setFlipped((current) => {
                             const next = { ...current };
@@ -345,8 +354,10 @@ export default function RoutinesWidget() {
                         title="중지"
                         disabled={!!busy}
                         onClick={() =>
-                          void act(`cancel:${routine.id}`, () =>
-                            api('routines.cancel', { id: routine.id }),
+                          void act(
+                            `cancel:${routine.id}`,
+                            () => api('routines.cancel', { id: routine.id }),
+                            routine.kind,
                           )
                         }
                       >
@@ -359,12 +370,16 @@ export default function RoutinesWidget() {
                         title="지금 실행"
                         disabled={!!busy}
                         onClick={() =>
-                          void act(`run:${routine.id}`, async () => {
-                            await api('routines.run', { id: routine.id });
-                            setOpen(routine.id);
-                            // The import box shows the run's imports as 자동 작업 ‘이름’ while it lasts.
-                            watchJobs();
-                          })
+                          void act(
+                            `run:${routine.id}`,
+                            async () => {
+                              await api('routines.run', { id: routine.id });
+                              setOpen(routine.id);
+                              // The import box shows the run's imports as 자동 작업 ‘이름’ while it lasts.
+                              watchJobs();
+                            },
+                            routine.kind,
+                          )
                         }
                       >
                         {busy === `run:${routine.id}` ? (
@@ -391,13 +406,16 @@ export default function RoutinesWidget() {
                       question="자동 작업을 휴지통으로 옮길까요? 30일 안에 복원할 수 있고, 만든 Wiki 문서는 남습니다."
                       disabled={!!busy}
                       onConfirm={() =>
-                        act('delete', () =>
-                          discard(
-                            'routines.delete',
-                            routine.id,
-                            '자동 작업을 휴지통으로 옮겼습니다.',
-                            ['routines'],
-                          ),
+                        act(
+                          'delete',
+                          () =>
+                            (isWebRoutine(routine.kind) ? discardWeb : discard)(
+                              'routines.delete',
+                              routine.id,
+                              '자동 작업을 휴지통으로 옮겼습니다.',
+                              ['routines'],
+                            ),
+                          routine.kind,
                         )
                       }
                     />
@@ -478,7 +496,8 @@ function RoutineCatalog({
 
 // What a routine's latest runs found: the chosen run in full, the earlier ones by a line.
 function RoutineResults({ routine }: { routine: Routine }) {
-  const { notify } = useActions();
+  const actions = useActions();
+  const { notify } = isWebRoutine(routine.kind) ? actions.userOnly(WEB_ROUTINE_AREA) : actions;
   const { data, error, reload } = useQuery<RoutineRun[]>('routines.runs', {
     id: routine.id,
     limit: 6,

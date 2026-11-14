@@ -179,6 +179,7 @@ export type RoutineEvent =
       type: 'finished';
       routine_id: string;
       run_id: string;
+      kind: string;
       name: string;
       notify: boolean;
       status: RoutineStatus;

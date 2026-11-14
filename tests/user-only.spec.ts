@@ -5,13 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chatBox, chooseStorage, connectLlm, launch, llmServer, openAdmin } from './helpers';
 
-// What the user alone may use (data-user-only: the chat, the web records, 관리 → 채팅 에이전트 and 관리 → 휴지통) is
-// out of an AI tool's reach at the "full" access level too: a reading of the screen leaves it out and names it, a
-// capture shows it blank, and a click or a typing aimed at it is refused. tests/app-control-screen.test.cjs checks the
-// screen's side on its own; here the app's stylesheet and Chromium's drawing and innerText do it.
+// What the user alone may use (data-user-only: the chat, the web records and their routines, 관리 → 채팅 에이전트 and
+// 관리 → 휴지통, and the notices about them) is out of an AI tool's reach at the "full" access level too: a reading of
+// the screen leaves it out and names it, a capture shows it blank, and a click or a typing aimed at it is refused.
+// tests/app-control-screen.test.cjs checks the screen's side on its own; here the app's stylesheet and Chromium's
+// drawing and innerText do it.
 
 const ASKED = 'PLAN-ZEBRA 폴더를 정리해 줘';
 const ANSWERED = 'ANSWER-ORCA 폴더를 정리했습니다.';
+// A request whose answer the test holds back, to end the turn while another screen is shown.
+const SLOW = 'SLOW-HERON 천천히 답해 줘';
+const SLOWLY = 'SLOWLY-HERON 천천히 답했습니다.';
 
 type ToolResult = { content: { type: string; text?: string; data?: string }[]; isError: boolean };
 type Box = { x: number; y: number; width: number; height: number };
@@ -103,11 +107,14 @@ async function copiedToken(app: ElectronApplication, page: Page) {
 test('AI tools: what the user alone may use is left out of screen readings and captures, at every access level', async () => {
   test.setTimeout(180_000);
   const directory = await mkdtemp(path.join(tmpdir(), 'private-agent-user-only-'));
-  // The chat's agent answers at once: the bundled Hermes with the model's plain answer, a source run without it with
-  // one JSON plan of no actions.
-  const llm = await llmServer(({ payload }) =>
-    payload.tools?.length ? ANSWERED : { message: ANSWERED, actions: [] },
-  );
+  // The chat's agent answers at once, but for SLOW: the bundled Hermes with the model's plain answer, a source run
+  // without it with one JSON plan of no actions.
+  let release!: (text: string) => void;
+  const held = new Promise<string>((resolve) => (release = resolve));
+  const llm = await llmServer(async ({ content, payload }) => {
+    const text = content.includes('SLOW-HERON') ? await held : ANSWERED;
+    return payload.tools?.length ? text : { message: text, actions: [] };
+  });
   let app: ElectronApplication | undefined;
   try {
     app = await launch(directory);
@@ -199,6 +206,45 @@ test('AI tools: what the user alone may use is left out of screen readings and c
     expect(captured.content[0].type).toBe('image');
     expect(captured.content[1].text).toContain("Left blank as the user's alone: 채팅.");
 
+    // What the chat tells on another screen is the chat's too: that its agent has ended, with 채팅 열기.
+    await chatBox(page).fill(SLOW);
+    await chatBox(page).press('Enter');
+    await page
+      .getByRole('navigation', { name: '화면' })
+      .getByRole('button', { name: '홈', exact: true })
+      .click();
+    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    release(SLOWLY);
+    const ended = page.getByRole('status').filter({ hasText: '채팅 에이전트가 작업을 마쳤습니다' });
+    await expect(ended).toBeVisible({ timeout: 60_000 });
+    const home = (await ai.tool('app_read_screen')).content[0].text!;
+    expect(home).toContain("Left out as the user's alone: 채팅.");
+    expect(data(home)).not.toContain('작업을 마쳤습니다');
+    expect(data(home)).not.toContain('채팅 열기');
+    const opened = await ai.tool('app_click', { name: '채팅 열기' });
+    expect(opened.isError).toBe(true);
+    expect(opened.content[0].text).toContain('채팅은 사용자만');
+    await expect(page.getByRole('button', { name: '위젯 편집' })).toBeVisible();
+    await ended.getByRole('button', { name: '채팅 열기' }).click();
+    await expect(log).toContainText(SLOWLY);
+    // So is the notice of the chat cleared, with the 되돌리기 that would bring it back.
+    await page.getByRole('button', { name: '대화 비우기' }).click();
+    await page
+      .getByRole('group', { name: /대화를 모두 휴지통으로/ })
+      .getByRole('button', { name: '대화 비우기' })
+      .click();
+    const cleared = page.getByRole('status').filter({ hasText: '대화를 휴지통으로 옮겼습니다' });
+    await expect(cleared).toBeVisible();
+    const emptied = data((await ai.tool('app_read_screen')).content[0].text!);
+    expect(emptied).not.toContain('휴지통으로 옮겼습니다');
+    expect(emptied).not.toContain('되돌리기');
+    const undo = await ai.tool('app_click', { name: '되돌리기' });
+    expect(undo.isError).toBe(true);
+    expect(undo.content[0].text).toContain('채팅은 사용자만');
+    await expect(page.getByText('무엇을 맡길까요?', { exact: true })).toBeVisible();
+    await cleared.getByRole('button', { name: '알림 닫기' }).click();
+    await expect(cleared).toHaveCount(0);
+
     // The web records are the user's alone in the same way.
     expect((await ai.tool('app_navigate', { view: 'records' })).isError).toBe(false);
     await expect(page.getByRole('heading', { name: '웹 기록', level: 1 })).toBeVisible();
@@ -280,6 +326,26 @@ test('AI tools: what the user alone may use is left out of screen readings and c
     );
     await form.getByRole('button', { name: '취소' }).click();
     await expect(form).toHaveCount(0);
+    // Deleting it says so with a 되돌리기 that is the user's alone, as the routine is.
+    await page.getByRole('button', { name: '노트북 광고 기록 삭제' }).click();
+    await page
+      .getByRole('group', { name: /자동 작업을 휴지통으로 옮길까요/ })
+      .getByRole('button', { name: '삭제' })
+      .click();
+    const deleted = page
+      .getByRole('status')
+      .filter({ hasText: '자동 작업을 휴지통으로 옮겼습니다' });
+    await expect(deleted).toBeVisible();
+    await expect(page.locator('.routine-row')).toHaveCount(1);
+    const binned = (await ai.tool('app_read_screen')).content[0].text!;
+    expect(binned).toContain("Left out as the user's alone: 웹 기록의 자동 작업.");
+    expect(data(binned)).not.toContain('휴지통으로 옮겼습니다');
+    const restore = await ai.tool('app_click', { name: '되돌리기' });
+    expect(restore.isError).toBe(true);
+    expect(restore.content[0].text).toContain(ROUTINE_ONLY);
+    await expect(page.locator('.routine-row')).toHaveCount(1);
+    await deleted.getByRole('button', { name: '알림 닫기' }).click();
+    await expect(deleted).toHaveCount(0);
 
     // And so are the chat agent's settings and the trash, on the admin page the "full" level otherwise reaches.
     for (const [section, area, name, words] of [

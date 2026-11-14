@@ -18,14 +18,12 @@ import { useActions, useConfigured } from './state';
 // The routines that record a site's ads and products belong to the web records, which are the user's alone: no method
 // of the local API shows, makes or runs one (electron/routines.cjs), and on the screen their rows, the choice of their
 // kind and their form are an area the local API's screen control neither reads, captures nor presses at any access
-// level (data-user-only, app-control.ts). What is made of `kinds` (a row's, a form's, a group's of the choice) is
-// marked so when all of them are such routines.
-const WEB_ROUTINE = 'web_capture';
-const WEB_ROUTINE_AREA: UserOnly = 'web-routine';
+// level (data-user-only, app-control.ts), as are the messages about them. What is made of `kinds` (a row's, a form's,
+// a group's of the choice) is marked so when all of them are such routines.
+export const WEB_ROUTINE_AREA: UserOnly = 'web-routine';
+export const isWebRoutine = (kind: string | undefined) => kind === 'web_capture';
 export const userOnlyRoutine = (...kinds: string[]) =>
-  kinds.length && kinds.every((kind) => kind === WEB_ROUTINE)
-    ? { 'data-user-only': WEB_ROUTINE_AREA }
-    : {};
+  kinds.length && kinds.every(isWebRoutine) ? { 'data-user-only': WEB_ROUTINE_AREA } : {};
 
 // What the form edits: the recipe's fields and the schedule; urls and paths as one entry a line.
 export type RoutineDraft = RoutineSchedule & {

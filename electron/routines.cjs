@@ -120,10 +120,13 @@ class RoutineRunner {
         // News only: a run that found something, or a failure that is not the same as the last run's. The window
         // shows its own notice when it has focus.
         const news = run.notify && (run.changed || (run.status === 'error' && !run.quiet));
+        // The kind tells the window whether the run is the web records' (web_capture), whose notice is the user's
+        // alone (src/components/routine-form.tsx).
         this.send({
           type: 'finished',
           routine_id: run.routine_id,
           run_id: run.id,
+          kind: run.kind,
           name: run.name,
           notify: news,
           status: run.status,

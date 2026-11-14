@@ -11,7 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, type HermesGateway, type HermesKey, type HermesSettings } from '@/lib/api';
-import { useActions } from '../state';
+import { useUserOnlyNotices } from '../state';
 import SecretInput from '../secret-input';
 import HermesGuard from './hermes-guard';
 import HermesLimits from './hermes-limits';
@@ -63,7 +63,8 @@ const GATEWAY_STATES: Record<HermesGateway['state'], string> = {
 // it is the user's alone (data-user-only): an AI tool's screen control cannot type or press here, nor read or capture
 // it, at any access level.
 export default function HermesSection() {
-  const { notify } = useActions();
+  // What these settings tell is the user's alone as they are.
+  const { notify } = useUserOnlyNotices('agent');
   const [state, setState] = useState<HermesSettings | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [mcp, setMcp] = useState('');

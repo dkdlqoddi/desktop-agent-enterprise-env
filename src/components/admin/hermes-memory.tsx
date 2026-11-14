@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Brain, Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { api, dayTime, type AgentMemory } from '@/lib/api';
 import Confirm from '../confirm';
-import { useActions } from '../state';
+import { useUserOnlyNotices } from '../state';
 
 type Target = 'memory' | 'user';
 const LISTS: { target: Target; label: string; hint: string }[] = [
@@ -33,7 +33,8 @@ export default function HermesMemory({
 }: {
   notify: (message: string, error?: boolean) => void;
 }) {
-  const { undoable } = useActions();
+  // The way back to a deleted memory is the user's alone, as the settings are.
+  const { undoable } = useUserOnlyNotices('agent');
   const [memory, setMemory] = useState<AgentMemory | null>(null);
   const [busy, setBusy] = useState(false);
   // The entry being edited, with its text; and what is typed to be added, by list.

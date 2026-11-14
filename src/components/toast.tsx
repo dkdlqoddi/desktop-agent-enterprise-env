@@ -8,16 +8,20 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, CircleAlert, Info, X } from 'lucide-react';
+import type { UserOnly } from './app-control';
 import { subscribeModals, topModal } from './modal';
 
 // A way back from what a message tells, e.g. 되돌리기 after a deletion.
 export type ToastAction = { label: string; run: () => Promise<void> | void };
-// notice: a caution the user should read, which stays until closed as an error does.
+// notice: a caution the user should read, which stays until closed as an error does. userOnly: the area of the user's
+// alone the message comes from (its data-user-only value, app-control.ts), such as the chat cleared with its
+// 되돌리기: what it tells and the way back it offers are no AI tool's either, which neither reads nor presses it.
 export type ToastMessage = {
   message: string;
   error: boolean;
   notice?: boolean;
   action?: ToastAction;
+  userOnly?: UserOnly;
 };
 type Item = ToastMessage & { id: number };
 
@@ -139,6 +143,7 @@ export default function Toasts({
         }}
         popover="manual"
         className={`toast ${item.error ? 'error' : item.notice ? 'notice' : ''}`}
+        data-user-only={item.userOnly}
         // Errors and notices interrupt; a success is read out once the screen reader is free.
         role={alert ? 'alert' : 'status'}
         aria-live={alert ? undefined : 'polite'}

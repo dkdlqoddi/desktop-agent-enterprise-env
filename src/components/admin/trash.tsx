@@ -32,7 +32,7 @@ import {
 } from '@/lib/api';
 import type { Tag } from '@/lib/query';
 import { rove } from '../roving';
-import { useActions, useQuery, useStores } from '../state';
+import { useActions, useQuery, useStores, useUserOnlyNotices } from '../state';
 import { useWindowing } from '../windowing';
 import Confirm from '../confirm';
 
@@ -105,7 +105,9 @@ function useTrashPages(kind: string) {
 // nothing here, and neither reads nor captures it, at any access level (app-control.ts). A tool has trash.list,
 // trash.restore and trash.purge, which leave those entries out (electron/trash.cjs).
 export default function TrashSection() {
-  const { notify, invalidate } = useActions();
+  const { invalidate } = useActions();
+  // What it tells (the titles restored or deleted for good) is the user's alone as the trash is.
+  const { notify } = useUserOnlyNotices('trash');
   const counts = useQuery<TrashEntries>('trash.list', COUNTS);
   const [kind, setKind] = useState('');
   const list = useTrashPages(kind);
