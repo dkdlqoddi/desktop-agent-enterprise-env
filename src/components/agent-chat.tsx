@@ -137,8 +137,8 @@ function EngineBadge({ engine }: { engine: AgentEngine | null }) {
 // A dangerous command the agent paused on: the user allows it or refuses it, and the turn goes on. How far an answer
 // reaches is said beside it: this run, this kind of command for the conversation, or this very command for good. A
 // command the safety check itself refused can only be run this once, and one that is not a single plain command
-// cannot be allowed for good. The decision is the user's alone: the whole conversation is out of an AI tool's reach
-// (data-user-only on its section).
+// cannot be allowed for good. The decision is the user's alone: the whole chat page is out of an AI tool's reach
+// (data-user-only on it).
 function ApprovalPrompt({
   approval,
   onDecide,
@@ -677,8 +677,12 @@ export default function AgentChat() {
       });
   };
 
+  // The user's alone (data-user-only), its heading with 대화 비우기 too: what is typed here is carried out by an agent
+  // with a terminal, files and a browser on this PC, and the answer to its question before a dangerous command is the
+  // user's decision. The local API's screen control (app-control.ts) types and clicks nothing on this page, and neither
+  // reads nor captures it, at any access level.
   return (
-    <div className="workspace-page agent-page">
+    <div className="workspace-page agent-page" data-user-only="chat">
       <header className="page-heading">
         <div>
           <p className="eyebrow">AGENT</p>
@@ -698,11 +702,7 @@ export default function AgentChat() {
           )}
         </div>
       </header>
-      {/* The user's alone (data-user-only): what is typed here is carried out by an agent with a terminal, files and a
-          browser on this PC, and the answer to its question before a dangerous command is the user's decision. The
-          local API's screen control (app-control.ts) types and clicks nothing in it, and neither reads nor captures
-          it, at any access level. */}
-      <section className="agent-chat" aria-label="에이전트와의 대화" data-user-only="chat">
+      <section className="agent-chat" aria-label="에이전트와의 대화">
         <MessengerConversations />
         {messages === null ? (
           <div className="agent-loading">

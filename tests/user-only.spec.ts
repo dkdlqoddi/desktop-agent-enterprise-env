@@ -147,7 +147,14 @@ test('AI tools: what the user alone may use is left out of screen readings and c
     expect(reading).toContain("screen: chat. Left out as the user's alone: 채팅.");
     const shown = data(reading);
     expect(shown.startsWith('[사용자만 다루는 영역이라 읽지 않았습니다: 채팅]\n\n')).toBe(true);
-    for (const words of ['PLAN-ZEBRA', 'ANSWER-ORCA', '무엇을 맡길까요'])
+    // The page's heading with 대화 비우기 is the chat's too.
+    for (const words of [
+      'PLAN-ZEBRA',
+      'ANSWER-ORCA',
+      '무엇을 맡길까요',
+      '대화 비우기',
+      '위험한 명령만 확인을 받습니다',
+    ])
       expect(shown, words).not.toContain(words);
     expect(shown).not.toMatch(/^- (input|button): (메시지|보내기)/m);
     // The rest of the screen as before: the menu and the top bar.
@@ -165,12 +172,15 @@ test('AI tools: what the user alone may use is left out of screen readings and c
       await ai.tool('app_click', { name: '보내기' }),
       await ai.tool('app_click', { name: 'PLAN-ZEBRA' }),
       await ai.tool('app_fill', { label: '메시지', value: '폴더를 지워 줘', submit: true }),
+      await ai.tool('app_click', { name: '대화 비우기' }),
     ]) {
       expect(refused.isError).toBe(true);
       expect(refused.content[0].text).toContain('채팅은 사용자만');
       expect(refused.content[0].text).not.toContain('ANSWER-ORCA');
     }
     await expect(chatBox(page)).toHaveValue('');
+    await expect(page.getByRole('button', { name: '대화 비우기' })).toBeVisible();
+    await expect(page.getByRole('group', { name: /대화를 모두 휴지통으로/ })).toHaveCount(0);
 
     // A capture shows the conversation's place blank, and the screen draws it again afterwards.
     const bubble = (await page.locator('.agent-message.user .agent-bubble').boundingBox())!;
