@@ -1121,7 +1121,7 @@ const TOOLS = [
     'app_read_screen',
     '화면 읽기',
     'control',
-    "Read what the app shows now as text, with the buttons, tabs, links and inputs that app_click and app_fill can use. The chat, the web records, the chat agent's settings and the trash are the user's alone: they are left out at any access level, and the answer names those on the screen.",
+    "Read what the app shows now as text, with the buttons, tabs, links and inputs that app_click and app_fill can use. The chat, the web records and their routines, the chat agent's settings and the trash are the user's alone: they are left out at any access level, and the answer names those on the screen.",
     {},
     async (_args, ctx) => {
       const screen = await ctx.call('app.read_screen', {});
@@ -1143,7 +1143,7 @@ const TOOLS = [
     'app_screenshot',
     '화면 캡처',
     'control',
-    "Take a screenshot of the app window (PNG). Passwords, keys and LLM header values show as dots. The chat, the web records, the chat agent's settings and the trash are the user's alone: they are left blank at any access level. The window must not be minimized: use app_window show first.",
+    "Take a screenshot of the app window (PNG). Passwords, keys and LLM header values show as dots. The chat, the web records and their routines, the chat agent's settings and the trash are the user's alone: they are left blank at any access level. The window must not be minimized: use app_window show first.",
     {
       max_width: integer('Maximum width in pixels (320-3840, default 1280).', {
         minimum: 320,
@@ -1165,7 +1165,7 @@ const TOOLS = [
     'app_click',
     '누르기',
     'control',
-    'Click a button, tab, link, checkbox or switch of the app by its visible name or label (see app_read_screen). Admin page controls need the "full" access level. The chat, the web records, the chat agent\'s settings and the trash are the user\'s alone: nothing in them can be clicked at any access level.',
+    'Click a button, tab, link, checkbox or switch of the app by its visible name or label (see app_read_screen). Admin page controls need the "full" access level. The chat, the web records and their routines, the chat agent\'s settings and the trash are the user\'s alone: nothing in them can be clicked at any access level.',
     {
       name: string('Visible name or aria-label.', { required: true }),
       role: string('Kind of control.', {
@@ -1185,7 +1185,7 @@ const TOOLS = [
     'app_fill',
     '입력하기',
     'control',
-    "Type a value into an input of the app found by its label, aria-label or placeholder, optionally submitting its form (e.g. label '검색 또는 질문' is the search box). Admin page inputs and passwords need the \"full\" access level. The chat, the web records, the chat agent's settings and the trash are the user's alone: their inputs take nothing at any access level.",
+    "Type a value into an input of the app found by its label, aria-label or placeholder, optionally submitting its form (e.g. label '검색 또는 질문' is the search box). Admin page inputs and passwords need the \"full\" access level. The chat, the web records and their routines, the chat agent's settings and the trash are the user's alone: their inputs take nothing at any access level.",
     {
       label: string('Label, aria-label or placeholder of the input.', { required: true }),
       value: string("Value to enter ('' or omitted clears the input)."),

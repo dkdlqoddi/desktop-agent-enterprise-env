@@ -289,19 +289,27 @@ const USER_ONLY_TRASH =
 // The web records (web-records.tsx), which no method of the local API reaches either.
 const USER_ONLY_RECORDS =
   '웹 기록은 사용자만 다룰 수 있습니다. 사이트에서 본 광고·상품과 사용자가 누른 광고의 기록이라, AI 도구는 허용 범위와 관계없이 이 화면에 입력하거나 그 버튼을 누를 수 없습니다.';
+// The web records' automatic routines on the routines' screen (widgets/routines.tsx), which no method of the local API
+// shows, makes or runs either (electron/routines.cjs).
+const USER_ONLY_WEB_ROUTINE =
+  '웹 기록의 자동 작업(사이트 광고·상품 기록)은 사용자만 다룰 수 있습니다. 웹 기록처럼, AI 도구는 허용 범위와 관계없이 그 작업을 보거나 만들거나 실행하거나 바꿀 수 없습니다.';
 // An area of a later screen that no entry below names is the user's all the same.
 const USER_ONLY_OTHER =
   '이 영역은 사용자만 다룰 수 있어, AI 도구는 허용 범위와 관계없이 여기에 입력하거나 그 버튼을 누를 수 없습니다.';
 
+// The values of data-user-only, one for each kind of area the user alone may use.
+export type UserOnly = 'chat' | 'agent' | 'trash' | 'records' | 'web-routine';
 // The areas the user alone may use, by the value of their data-user-only: what an AI tool is told such an area is
 // called, when the screen reading and a capture leave it out, and why it may not type or press there.
 type UserOnlyArea = { name: string; refusal: string };
-const USER_ONLY_AREAS = new Map<string, UserOnlyArea>([
+const AREAS: [UserOnly, UserOnlyArea][] = [
   ['chat', { name: '채팅', refusal: USER_ONLY }],
   ['agent', { name: '관리 → 채팅 에이전트', refusal: USER_ONLY }],
   ['trash', { name: '관리 → 휴지통', refusal: USER_ONLY_TRASH }],
   ['records', { name: '웹 기록', refusal: USER_ONLY_RECORDS }],
-]);
+  ['web-routine', { name: '웹 기록의 자동 작업', refusal: USER_ONLY_WEB_ROUTINE }],
+];
+const USER_ONLY_AREAS = new Map<string, UserOnlyArea>(AREAS);
 const userOnlyArea = (area: Element): UserOnlyArea =>
   USER_ONLY_AREAS.get(area.getAttribute('data-user-only') ?? '') ?? {
     name: squash(area.getAttribute('aria-label') ?? '') || '사용자만 다루는 영역',
@@ -335,7 +343,8 @@ function notFound(wanted: string) {
 // 에이전트, data-user-only="agent") are the user's in the same way: an MCP server there is a command the agent starts
 // without asking, and the accounts of the messenger gateway may write to the agent and answer its approvals from
 // outside the PC. So are the trash (data-user-only="trash"), which holds the chat cleared and the web records deleted,
-// and the web records themselves (data-user-only="records"), which the local API's methods do not reach either. None
+// and the web records themselves (data-user-only="records") with their automatic routines on the routines' screen
+// (data-user-only="web-routine"), which the local API's methods do not reach either. None
 // of them is read or captured for a tool either (readScreen, maskCapture), nor does a tool learn their controls'
 // names: pick never matches them, and this refuses one should it be reached all the same.
 // The admin page and passwords decide what the API itself may do, and the import box and a document's update from its

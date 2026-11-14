@@ -213,6 +213,74 @@ test('AI tools: what the user alone may use is left out of screen readings and c
       "Left blank as the user's alone: 웹 기록.",
     );
 
+    // So are the web records' routines on the routines' screen: their rows, the choice of their kind and its form.
+    // The other routines are a tool's as before.
+    for (const routine of [
+      {
+        kind: 'web_capture',
+        name: '노트북 광고 기록',
+        config: { site: 'google', query: '노트북' },
+      },
+      { kind: 'analyze_new', name: '새 문서 분석', config: { limit: 20, retry: false } },
+    ]) {
+      const saved = await page.evaluate(
+        (values) =>
+          window.privateAgent!.request('routines.save', {
+            ...values,
+            frequency: 'daily',
+            run_time: '09:00',
+            enabled: false,
+          }),
+        routine,
+      );
+      expect(saved.ok, JSON.stringify(saved)).toBe(true);
+    }
+    const ROUTINE_ONLY = '웹 기록의 자동 작업(사이트 광고·상품 기록)은 사용자만';
+    expect((await ai.tool('app_navigate', { view: 'automation', tab: 'routines' })).isError).toBe(
+      false,
+    );
+    await expect(page.locator('.routine-row')).toHaveCount(2);
+    const routines = (await ai.tool('app_read_screen')).content[0].text!;
+    expect(routines).toContain("Left out as the user's alone: 웹 기록의 자동 작업.");
+    expect(data(routines)).toContain('새 문서 분석');
+    expect(data(routines)).not.toContain('노트북');
+    for (const name of [
+      '노트북 광고 기록 지금 실행',
+      '노트북 광고 기록 자동 작업 켜기',
+      '노트북 광고 기록 수정',
+      '노트북 광고 기록 삭제',
+      '노트북 광고 기록 결과 보기',
+    ]) {
+      const refused = await ai.tool('app_click', { name, exact: true });
+      expect(refused.isError, name).toBe(true);
+      expect(refused.content[0].text).toContain(ROUTINE_ONLY);
+    }
+    await expect(
+      page.getByRole('switch', { name: '노트북 광고 기록 자동 작업 켜기' }),
+    ).not.toBeChecked();
+    expect((await ai.tool('app_click', { name: '새 문서 분석 결과 보기' })).isError).toBe(false);
+    await expect(page.getByRole('button', { name: '새 문서 분석 결과 닫기' })).toBeVisible();
+    // Among the kinds to choose from, the web records' is the user's alone too, and so is its form.
+    expect((await ai.tool('app_click', { name: '새 자동 작업' })).isError).toBe(false);
+    await expect(page.getByRole('region', { name: '자동 작업 종류' })).toBeVisible();
+    const kinds = data((await ai.tool('app_read_screen')).content[0].text!);
+    expect(kinds).toContain('새 문서 AI 분석');
+    expect(kinds).not.toContain('사이트 광고·상품 기록');
+    const chosen = await ai.tool('app_click', { name: '사이트 광고·상품 기록' });
+    expect(chosen.isError).toBe(true);
+    expect(chosen.content[0].text).toContain(ROUTINE_ONLY);
+    await page.getByRole('button', { name: /사이트 광고·상품 기록/ }).click();
+    const form = page.getByRole('form', { name: '새 자동 작업 · 사이트 광고·상품 기록' });
+    await expect(form).toBeVisible();
+    const typed = await ai.tool('app_fill', { label: '검색어', value: '휴대폰' });
+    expect(typed.isError).toBe(true);
+    expect(typed.content[0].text).toContain(ROUTINE_ONLY);
+    expect(data((await ai.tool('app_read_screen')).content[0].text!)).not.toContain(
+      '정한 시각에 브라우저 창을 열고',
+    );
+    await form.getByRole('button', { name: '취소' }).click();
+    await expect(form).toHaveCount(0);
+
     // And so are the chat agent's settings and the trash, on the admin page the "full" level otherwise reaches.
     for (const [section, area, name, words] of [
       ['chat', 'agent', '관리 → 채팅 에이전트', '서비스 키와 설정입니다'],

@@ -46,6 +46,7 @@ import RoutineForm, {
   leftRoutineForm,
   RecipeNeeds,
   type RoutineDraft,
+  userOnlyRoutine,
 } from '../routine-form';
 import { useNow } from '../run-history';
 import { useActions, useQuery, useRoutineFocus } from '../state';
@@ -251,8 +252,10 @@ export default function RoutinesWidget() {
                 data-routine={routine.id}
                 className={`routine-row${routine.enabled ? '' : ' paused'}${expanded ? ' open' : ''}`}
                 // A routine that brings files of this PC to the Wiki: AI tools may only start or switch it
-                // with the "full" access level, as the import box.
+                // with the "full" access level, as the import box. One of the web records' is theirs at no level
+                // (userOnlyRoutine).
                 {...(routine.files ? { 'data-requires-full': '' } : {})}
+                {...userOnlyRoutine(routine.kind)}
               >
                 <div className="routine-line">
                   <label className="switch">
@@ -430,19 +433,21 @@ function RoutineCatalog({
         미리 만들어 둔 작업을 골라 주소·조건과 주기만 정하면, 앱이 그 주기마다 확인하고 찾은 것을
         알려 줍니다.
       </p>
-      {groups.map((group) => (
-        <section key={group}>
-          <h3>{group}</h3>
-          <div className="recipe-grid">
-            {catalog
-              .filter((recipe) => recipe.group === group)
-              .map((recipe) => {
+      {groups.map((group) => {
+        const recipes = catalog.filter((recipe) => recipe.group === group);
+        // The web records' kind is the user's alone to choose, and so is a group of that kind only.
+        return (
+          <section key={group} {...userOnlyRoutine(...recipes.map((recipe) => recipe.kind))}>
+            <h3>{group}</h3>
+            <div className="recipe-grid">
+              {recipes.map((recipe) => {
                 const Icon = ROUTINE_ICONS[recipe.kind] ?? Workflow;
                 return (
                   <button
                     key={recipe.kind}
                     type="button"
                     className="recipe-card"
+                    {...userOnlyRoutine(recipe.kind)}
                     onClick={() => onPick(recipe)}
                   >
                     <span className="routine-icon" aria-hidden="true">
@@ -456,9 +461,10 @@ function RoutineCatalog({
                   </button>
                 );
               })}
-          </div>
-        </section>
-      ))}
+            </div>
+          </section>
+        );
+      })}
       {onClose && (
         <div className="form-actions">
           <button type="button" className="button secondary small" onClick={onClose}>
@@ -648,7 +654,11 @@ export function RoutineFeed() {
           {runs.map((run) => {
             const Icon = ROUTINE_ICONS[run.kind] ?? Workflow;
             return (
-              <li key={run.id} className={run.changed ? 'changed' : run.status}>
+              <li
+                key={run.id}
+                className={run.changed ? 'changed' : run.status}
+                {...userOnlyRoutine(run.kind)}
+              >
                 <button
                   type="button"
                   onClick={() =>
